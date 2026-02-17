@@ -1,23 +1,23 @@
 # CODEOWNERS (role-based placeholders)
-# Replace @role-* with real GitHub handles/teams when available.
+# Temporary ownership mapped to @apexpark until team handles exist.
 
 # Global defaults
-* @role-maintainers
+* @apexpark
 
 # Agent and governance
-/AGENTS.md @role-maintainers @role-security
-/CHANGELOG.md @role-maintainers
-/docs/02-versioning-and-releases.md @role-maintainers @role-contracts
-/docs/03-contracts-and-compatibility.md @role-contracts @role-maintainers
-/docs/17-verification-protocol.md @role-maintainers
+/AGENTS.md @apexpark
+/CHANGELOG.md @apexpark
+/docs/02-versioning-and-releases.md @apexpark
+/docs/03-contracts-and-compatibility.md @apexpark
+/docs/17-verification-protocol.md @apexpark
 
 # Policies
-/docs/11-data-integrity-policy.md @role-data-integrity
-/docs/12-risk-and-execution-policy.md @role-risk @role-execution
-/docs/13-secrets-and-security.md @role-security
-/docs/15-observability-and-alerting.md @role-observability
-/docs/16-ui-styling-guide.md @role-ui
+/docs/11-data-integrity-policy.md @apexpark
+/docs/12-risk-and-execution-policy.md @apexpark
+/docs/13-secrets-and-security.md @apexpark
+/docs/15-observability-and-alerting.md @apexpark
+/docs/16-ui-styling-guide.md @apexpark
 
 # Contracts
-/specs/contracts/ @role-contracts
-/specs/examples/ @role-contracts
+/specs/contracts/ @apexpark
+/specs/examples/ @apexpark

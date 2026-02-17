@@ -1,0 +1,49 @@
+name: docs-ci
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+jobs:
+  markdown-structure:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Validate required docs exist
+        run: |
+          set -euo pipefail
+          test -f AGENTS.md
+          test -f README.md
+          test -f CHANGELOG.md
+          test -f docs/README.md
+          test -f docs/00-guardrails.md
+          test -f docs/01-product-scope.md
+          test -f docs/02-versioning-and-releases.md
+          test -f docs/03-contracts-and-compatibility.md
+          test -f docs/04-repo-structure-and-ownership.md
+          test -f docs/05-agent-build-workflow.md
+          test -f docs/07-dependency-and-supply-chain-policy.md
+          test -f docs/10-architecture.md
+          test -f docs/11-data-integrity-policy.md
+          test -f docs/12-risk-and-execution-policy.md
+          test -f docs/13-secrets-and-security.md
+          test -f docs/14-testing-standards.md
+          test -f docs/15-observability-and-alerting.md
+          test -f docs/16-ui-styling-guide.md
+          test -f docs/17-verification-protocol.md
+          test -f docs/adr/ADR-0001-hybrid-rust-python.md
+          test -f docs/playbooks/backfill-runbook.md
+          test -f docs/playbooks/incident-runbook.md
+          test -f specs/contracts/README.md
+          test -f specs/examples/README.md
+
+      - name: Validate docs index links
+        run: |
+          set -euo pipefail
+          grep -q 'docs/07-dependency-and-supply-chain-policy.md' docs/README.md
+          grep -q 'docs/17-verification-protocol.md' docs/README.md
+          grep -q 'docs/02-versioning-and-releases.md' README.md
