@@ -1,0 +1,55 @@
+# Observability And Alerting
+
+## Purpose
+
+Define required telemetry, health signals, and alert policies.
+
+## Hard Rules
+
+1. `MUST` emit structured logs with correlation IDs.
+2. `MUST` emit metrics for ingestion, backfill, execution, and account reconciliation.
+3. `MUST` expose health endpoints for each service.
+4. `MUST` alert on unresolved data gaps affecting active strategies.
+5. `MUST` alert on order submission failures and reconciliation mismatches.
+6. `MUST` preserve audit trail for user-initiated control actions.
+
+## Minimum Metrics
+
+1. Data ingestion:
+- Message throughput
+- Ingestion lag
+- Duplicate/out-of-order count
+- Gap count by symbol/timeframe
+
+2. Backfill:
+- Job success/failure rate
+- Mean repair latency
+- Unresolved interval count
+
+3. Execution and risk:
+- Order ack latency
+- Reject/cancel rates
+- Risk check fail counts
+- Kill switch activation count
+
+4. Account:
+- Reconciliation drift
+- Margin utilization
+- PnL update lag
+
+## Alert Severity
+
+1. `P1`: live trading safety risk (integrity breach, unreconciled positions, repeated order failures).
+2. `P2`: degraded operation requiring operator action soon.
+3. `P3`: informational trend warnings.
+
+## Acceptance Checks
+
+1. Alerts are routed and actionable with context fields.
+2. Dashboards show integrity and execution health at a glance.
+3. Incident timeline can be reconstructed from logs and events.
+
+## Out Of Scope
+
+1. Enterprise SIEM integration in initial local-first phase.
+2. Multi-region failover monitoring at MVP stage.

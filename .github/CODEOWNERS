@@ -1,0 +1,23 @@
+# CODEOWNERS (role-based placeholders)
+# Replace @role-* with real GitHub handles/teams when available.
+
+# Global defaults
+* @role-maintainers
+
+# Agent and governance
+/AGENTS.md @role-maintainers @role-security
+/CHANGELOG.md @role-maintainers
+/docs/02-versioning-and-releases.md @role-maintainers @role-contracts
+/docs/03-contracts-and-compatibility.md @role-contracts @role-maintainers
+/docs/17-verification-protocol.md @role-maintainers
+
+# Policies
+/docs/11-data-integrity-policy.md @role-data-integrity
+/docs/12-risk-and-execution-policy.md @role-risk @role-execution
+/docs/13-secrets-and-security.md @role-security
+/docs/15-observability-and-alerting.md @role-observability
+/docs/16-ui-styling-guide.md @role-ui
+
+# Contracts
+/specs/contracts/ @role-contracts
+/specs/examples/ @role-contracts
