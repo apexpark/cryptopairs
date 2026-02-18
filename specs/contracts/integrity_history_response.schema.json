@@ -1,0 +1,41 @@
+{
+  "$id": "https://cryptopairs/specs/contracts/integrity_history_response.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "IntegrityHistoryResponse",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["instrument", "timeframe", "rows"],
+  "properties": {
+    "instrument": {
+      "type": "string"
+    },
+    "timeframe": {
+      "type": "string",
+      "enum": ["1m", "15m", "1h"]
+    },
+    "rows": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "start_ts",
+          "end_ts",
+          "status",
+          "coverage_pct",
+          "reason",
+          "checked_at"
+        ],
+        "properties": {
+          "start_ts": { "type": "string", "format": "date-time" },
+          "end_ts": { "type": "string", "format": "date-time" },
+          "status": { "$ref": "integrity_status.schema.json" },
+          "coverage_pct": { "type": "number", "minimum": 0, "maximum": 100 },
+          "reason": { "type": "string" },
+          "checked_at": { "type": "string", "format": "date-time" }
+        }
+      }
+    }
+  },
+  "version": "0.1.0"
+}

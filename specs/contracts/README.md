@@ -11,3 +11,4 @@ Current baseline contracts:
 - `specs/contracts/data_query_response.schema.json`
 - `specs/contracts/candle.schema.json`
 - `specs/contracts/integrity_status.schema.json`
+- `specs/contracts/integrity_history_response.schema.json`

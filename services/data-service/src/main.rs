@@ -3,6 +3,7 @@ use data_service::{
     config::Settings,
     repository::{MarketDataRepository, PostgresMarketDataRepository},
     worker::spawn_backfill_worker,
+    ws_worker::spawn_trade_ingest_worker,
     AppState,
 };
 use kraken_adapter::{KrakenFuturesRestClient, MarketDataAdapter};
@@ -30,6 +31,7 @@ async fn main() -> anyhow::Result<()> {
         settings.symbols.clone(),
         settings.backfill_interval_seconds,
     );
+    let _trade_ingest_worker = spawn_trade_ingest_worker(state.clone(), settings.symbols.clone());
 
     let app = build_router(state);
 

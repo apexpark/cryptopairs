@@ -76,6 +76,15 @@ Current behavior:
 - Performs targeted Kraken backfill only for missing ranges.
 - Re-queries local store and returns data + integrity report.
 - Background worker continuously backfills configured symbols (`KRAKEN_SYMBOLS`).
+- WebSocket worker subscribes to Kraken Futures trade feed and persists live trades.
+
+## Integrity History Endpoint
+
+```bash
+GET /v1/integrity/history?instrument=PI_XBTUSD&timeframe=1m&limit=100
+```
+
+Returns recent integrity audit rows from `data_quality_intervals`.
 
 ## Bootstrap Historical Backfill
 
