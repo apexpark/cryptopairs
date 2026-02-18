@@ -1,0 +1,8 @@
+{
+  "instrument": "PI_XBTUSD",
+  "timeframe": "1m",
+  "decision": "BLOCKED",
+  "reason": "integrity gate blocked signal: no integrity history for instrument=PI_XBTUSD timeframe=1m",
+  "min_coverage_pct": 99.5,
+  "evaluated_at": "2026-02-18T13:00:00Z"
+}

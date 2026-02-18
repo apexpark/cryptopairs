@@ -6,3 +6,4 @@ Current scaffolds:
 - `services/kraken-adapter`
 - `services/data-service`
 - `services/execution-service`
+- `services/account-service`

@@ -35,6 +35,63 @@ services:
     volumes:
       - redis-data:/data
 
+  data-service:
+    image: rust:1.93
+    container_name: cryptopairs-data-service
+    profiles: ["app"]
+    working_dir: /workspace
+    command: ["bash", "-lc", "cargo run -p data-service --bin data-service"]
+    environment:
+      POSTGRES_URL: postgres://${POSTGRES_USER:-cryptopairs}:${POSTGRES_PASSWORD:-cryptopairs}@timescaledb:5432/${POSTGRES_DB:-cryptopairs}
+      DATA_SERVICE_PORT: 8080
+      KRAKEN_BASE_URL: ${KRAKEN_BASE_URL:-https://futures.kraken.com}
+      DATA_INTEGRITY_THRESHOLD_PCT: ${DATA_INTEGRITY_THRESHOLD_PCT:-99.5}
+    ports:
+      - "8080:8080"
+    depends_on:
+      timescaledb:
+        condition: service_healthy
+    volumes:
+      - ./:/workspace
+
+  account-service:
+    image: rust:1.93
+    container_name: cryptopairs-account-service
+    profiles: ["app"]
+    working_dir: /workspace
+    command: ["bash", "-lc", "cargo run -p account-service --bin account-service"]
+    environment:
+      POSTGRES_URL: postgres://${POSTGRES_USER:-cryptopairs}:${POSTGRES_PASSWORD:-cryptopairs}@timescaledb:5432/${POSTGRES_DB:-cryptopairs}
+      ACCOUNT_SERVICE_PORT: 8081
+      ACCOUNT_RECONCILE_INTERVAL_SECS: ${ACCOUNT_RECONCILE_INTERVAL_SECS:-60}
+      ACCOUNT_RECONCILE_MAX_SNAPSHOT_AGE_SECS: ${ACCOUNT_RECONCILE_MAX_SNAPSHOT_AGE_SECS:-120}
+      ACCOUNT_RECONCILE_MAX_DRIFT_NOTIONAL: ${ACCOUNT_RECONCILE_MAX_DRIFT_NOTIONAL:-25.0}
+    ports:
+      - "8081:8081"
+    depends_on:
+      timescaledb:
+        condition: service_healthy
+    volumes:
+      - ./:/workspace
+
+  execution-service:
+    image: rust:1.93
+    container_name: cryptopairs-execution-service
+    profiles: ["app"]
+    working_dir: /workspace
+    command: ["bash", "-lc", "cargo run -p execution-service --bin execution-service"]
+    environment:
+      POSTGRES_URL: postgres://${POSTGRES_USER:-cryptopairs}:${POSTGRES_PASSWORD:-cryptopairs}@timescaledb:5432/${POSTGRES_DB:-cryptopairs}
+      EXECUTION_SERVICE_PORT: 8082
+      INTEGRITY_MIN_COVERAGE_PCT: ${INTEGRITY_MIN_COVERAGE_PCT:-99.5}
+    ports:
+      - "8082:8082"
+    depends_on:
+      timescaledb:
+        condition: service_healthy
+    volumes:
+      - ./:/workspace
+
 volumes:
   timescaledb-data:
   redis-data:

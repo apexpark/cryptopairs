@@ -25,6 +25,14 @@ This project follows SemVer as defined in `docs/02-versioning-and-releases.md`.
 - Integrity history API endpoint (`GET /v1/integrity/history`) backed by persisted quality intervals.
 - Kraken WebSocket trade ingest worker (`services/data-service/src/ws_worker.rs`) with reconnect + live trade persistence.
 - Trade storage table initialization (`trades`) and repository insert path.
+- `account-service` reconciliation scheduler with persisted drift checks and a manual run endpoint (`POST /v1/account/reconcile/run`).
+- `execution-service` HTTP API endpoint (`GET /v1/execution/decision`) for fail-closed integrity gate decisions from stored integrity history.
+- Docker Compose app profile wiring for `data-service`, `account-service`, and `execution-service`.
+- New contracts and examples:
+  - `specs/contracts/execution_decision_response.schema.json`
+  - `specs/contracts/reconcile_run_response.schema.json`
+  - `specs/examples/execution_decision_response_blocked.example.json`
+  - `specs/examples/reconcile_run_response.example.json`
 
 ### Changed
 

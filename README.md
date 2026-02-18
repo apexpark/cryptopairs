@@ -46,9 +46,18 @@ Start local storage dependencies:
 docker compose up -d
 ```
 
+Start Rust application services in Docker:
+
+```bash
+docker compose --profile app up -d data-service account-service execution-service
+```
+
 Services:
 - TimescaleDB (PostgreSQL) on `localhost:5432`
 - Redis on `localhost:6379`
+- Data service on `localhost:8080` (app profile)
+- Account service on `localhost:8081` (app profile)
+- Execution service on `localhost:8082` (app profile)
 
 ## Run Checks
 
@@ -85,6 +94,22 @@ GET /v1/integrity/history?instrument=PI_XBTUSD&timeframe=1m&limit=100
 ```
 
 Returns recent integrity audit rows from `data_quality_intervals`.
+
+## Execution Decision Endpoint
+
+```bash
+GET /v1/execution/decision?instrument=PI_XBTUSD&timeframe=1m
+```
+
+Returns a fail-closed decision (`ALLOWED` or `BLOCKED`) using persisted integrity history.
+
+## Account Reconcile Run Endpoint
+
+```bash
+POST /v1/account/reconcile/run
+```
+
+Runs a reconciliation pass for all accounts with recent snapshots and persists results.
 
 ## Bootstrap Historical Backfill
 
