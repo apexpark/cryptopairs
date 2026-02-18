@@ -3,6 +3,21 @@
 version = 4
 
 [[package]]
+name = "account-service"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "axum",
+ "chrono",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tokio-postgres",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
 name = "aho-corasick"
 version = "1.1.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -318,8 +333,11 @@ dependencies = [
 name = "execution-service"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
  "chrono",
  "common-types",
+ "tokio",
+ "tokio-postgres",
 ]
 
 [[package]]

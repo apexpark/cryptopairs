@@ -1,6 +1,7 @@
 [workspace]
 members = [
   "crates/common-types",
+  "services/account-service",
   "services/kraken-adapter",
   "services/data-service",
   "services/execution-service",
