@@ -63,6 +63,11 @@ This project follows SemVer as defined in `docs/02-versioning-and-releases.md`.
   - `specs/contracts/strategy_pairs_reoptimize_response.schema.json`
   - `specs/examples/strategy_pairs_cues_response.example.json`
   - `specs/examples/strategy_pairs_reoptimize_response.example.json`
+- Shadow decision-support model in `strategy-service`:
+  - Deterministic logistic scorer trained from recent `strategy_signal_performance` rows.
+  - Cue-level `shadow_ml` diagnostics plus per-variant shadow probability/rank fields.
+  - New audit table `strategy_shadow_model_runs`.
+  - Reoptimize response counters for model availability and persisted shadow runs.
 
 ### Changed
 - Product/risk/architecture docs now explicitly define manual-first live trading for MVP.

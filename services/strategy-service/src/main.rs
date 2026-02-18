@@ -10,7 +10,10 @@ use common_types::Timeframe;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
-use strategy_service::{evaluate_pair, PairCue, PairEvaluationInput, PairEvaluationOutput};
+use strategy_service::{
+    annotate_with_shadow_model, evaluate_pair, train_shadow_model, PairCue, PairEvaluationInput,
+    PairEvaluationOutput, Regime, ShadowModelTrainingRow, SignalVariant,
+};
 use tokio::net::TcpListener;
 use tokio_postgres::{types::ToSql, Client, NoTls};
 use tracing::info;
@@ -54,6 +57,8 @@ struct StrategySettings {
     funding_drag_bps: f64,
     min_samples_target: usize,
     reopt_interval_secs: u64,
+    shadow_ml_min_rows: usize,
+    shadow_ml_training_limit: usize,
 }
 
 impl StrategySettings {
@@ -76,6 +81,8 @@ impl StrategySettings {
         let funding_drag_bps = parse_env_f64("STRATEGY_FUNDING_DRAG_BPS", 0.6);
         let min_samples_target = parse_env_usize("STRATEGY_MIN_SAMPLES_TARGET", 8);
         let reopt_interval_secs = parse_env_u64("STRATEGY_REOPT_INTERVAL_SECS", 3600);
+        let shadow_ml_min_rows = parse_env_usize("STRATEGY_SHADOW_ML_MIN_ROWS", 64);
+        let shadow_ml_training_limit = parse_env_usize("STRATEGY_SHADOW_ML_TRAINING_LIMIT", 1200);
 
         Self {
             bind_addr: format!("0.0.0.0:{port}"),
@@ -97,6 +104,8 @@ impl StrategySettings {
             funding_drag_bps,
             min_samples_target,
             reopt_interval_secs,
+            shadow_ml_min_rows,
+            shadow_ml_training_limit,
         }
     }
 
@@ -166,6 +175,7 @@ impl StrategyRepository {
                     timeframe TEXT NOT NULL,
                     signal_variant TEXT NOT NULL,
                     window_end TIMESTAMPTZ NOT NULL,
+                    score_last DOUBLE PRECISION NOT NULL,
                     sample_count INTEGER NOT NULL,
                     win_rate DOUBLE PRECISION NOT NULL,
                     edge_bps DOUBLE PRECISION NOT NULL,
@@ -183,6 +193,25 @@ impl StrategyRepository {
                     opportunity_score DOUBLE PRECISION NOT NULL,
                     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
                     PRIMARY KEY (pair_id, timeframe)
+                 );
+                 ALTER TABLE strategy_signal_performance
+                 ADD COLUMN IF NOT EXISTS score_last DOUBLE PRECISION NOT NULL DEFAULT 0;
+                 CREATE TABLE IF NOT EXISTS strategy_shadow_model_runs (
+                    pair_id TEXT NOT NULL,
+                    timeframe TEXT NOT NULL,
+                    run_at TIMESTAMPTZ NOT NULL,
+                    model_name TEXT NOT NULL,
+                    status TEXT NOT NULL,
+                    training_rows INTEGER NOT NULL,
+                    positive_rate DOUBLE PRECISION NOT NULL,
+                    precision DOUBLE PRECISION NOT NULL,
+                    brier_score DOUBLE PRECISION NOT NULL,
+                    recommended_variant TEXT NOT NULL,
+                    recommended_probability DOUBLE PRECISION NOT NULL,
+                    agrees_with_selected BOOLEAN NOT NULL,
+                    rationale TEXT NOT NULL DEFAULT '',
+                    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                    PRIMARY KEY (pair_id, timeframe, run_at)
                  );",
             )
             .await?;
@@ -232,11 +261,12 @@ impl StrategyRepository {
                 .client
                 .execute(
                     "INSERT INTO strategy_signal_performance
-                     (pair_id, timeframe, signal_variant, window_end, sample_count, win_rate,
+                     (pair_id, timeframe, signal_variant, window_end, score_last, sample_count, win_rate,
                       edge_bps, reliability, regime, opportunity_score, rationale)
-                     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
+                     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
                      ON CONFLICT (pair_id, timeframe, signal_variant, window_end)
                      DO UPDATE SET
+                       score_last = EXCLUDED.score_last,
                        sample_count = EXCLUDED.sample_count,
                        win_rate = EXCLUDED.win_rate,
                        edge_bps = EXCLUDED.edge_bps,
@@ -249,6 +279,7 @@ impl StrategyRepository {
                         &timeframe.as_str(),
                         &variant.variant,
                         &evaluation.cue.evaluated_at,
+                        &variant.score_last,
                         &(variant.sample_count as i32),
                         &variant.win_rate,
                         &variant.edge_bps,
@@ -285,6 +316,94 @@ impl StrategyRepository {
         summary.selected_rows_written += selected_written as usize;
 
         Ok(summary)
+    }
+
+    async fn fetch_shadow_training_rows(
+        &self,
+        pair_id: &str,
+        timeframe: Timeframe,
+        limit: i64,
+    ) -> anyhow::Result<Vec<ShadowModelTrainingRow>> {
+        let rows = self
+            .client
+            .query(
+                "SELECT signal_variant, regime, score_last, sample_count, win_rate, reliability, edge_bps
+                 FROM strategy_signal_performance
+                 WHERE pair_id=$1 AND timeframe=$2
+                 ORDER BY window_end DESC
+                 LIMIT $3",
+                &[&pair_id, &timeframe.as_str(), &limit],
+            )
+            .await?;
+
+        let mut result = Vec::with_capacity(rows.len());
+        for row in rows {
+            let variant_raw: String = row.get(0);
+            let regime_raw: String = row.get(1);
+            let Some(variant) = SignalVariant::parse(&variant_raw) else {
+                continue;
+            };
+            let Some(regime) = Regime::parse(&regime_raw) else {
+                continue;
+            };
+            let sample_count: i32 = row.get(3);
+            result.push(ShadowModelTrainingRow {
+                variant,
+                regime,
+                score_last: row.get(2),
+                sample_count: sample_count.max(0) as usize,
+                win_rate: row.get(4),
+                reliability: row.get(5),
+                edge_bps: row.get(6),
+            });
+        }
+        Ok(result)
+    }
+
+    async fn record_shadow_model_run(
+        &self,
+        timeframe: Timeframe,
+        evaluation: &PairEvaluationOutput,
+    ) -> anyhow::Result<usize> {
+        let diagnostics = &evaluation.cue.shadow_ml;
+        let rationale = diagnostics.rationale_codes.join("|");
+        let written = self
+            .client
+            .execute(
+                "INSERT INTO strategy_shadow_model_runs
+                 (pair_id, timeframe, run_at, model_name, status, training_rows, positive_rate, precision,
+                  brier_score, recommended_variant, recommended_probability, agrees_with_selected, rationale)
+                 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
+                 ON CONFLICT (pair_id, timeframe, run_at)
+                 DO UPDATE SET
+                    model_name = EXCLUDED.model_name,
+                    status = EXCLUDED.status,
+                    training_rows = EXCLUDED.training_rows,
+                    positive_rate = EXCLUDED.positive_rate,
+                    precision = EXCLUDED.precision,
+                    brier_score = EXCLUDED.brier_score,
+                    recommended_variant = EXCLUDED.recommended_variant,
+                    recommended_probability = EXCLUDED.recommended_probability,
+                    agrees_with_selected = EXCLUDED.agrees_with_selected,
+                    rationale = EXCLUDED.rationale",
+                &[
+                    &evaluation.cue.pair_id as &(dyn ToSql + Sync),
+                    &timeframe.as_str(),
+                    &evaluation.cue.evaluated_at,
+                    &diagnostics.model_name,
+                    &diagnostics.status,
+                    &(diagnostics.training_rows as i32),
+                    &diagnostics.positive_rate,
+                    &diagnostics.precision,
+                    &diagnostics.brier_score,
+                    &diagnostics.recommended_variant,
+                    &diagnostics.recommended_probability,
+                    &diagnostics.agrees_with_selected,
+                    &rationale,
+                ],
+            )
+            .await?;
+        Ok(written as usize)
     }
 
     async fn fetch_selected_variant(
@@ -357,6 +476,9 @@ struct ReoptimizeResponse {
     cues_generated: usize,
     performance_rows_written: usize,
     selected_rows_written: usize,
+    shadow_model_runs_written: usize,
+    shadow_model_available: usize,
+    shadow_model_unavailable: usize,
     errors: Vec<ReoptError>,
 }
 
@@ -418,6 +540,8 @@ async fn main() -> anyhow::Result<()> {
         exit_band = settings.exit_band,
         stop_band = settings.stop_band,
         reopt_interval_secs = settings.reopt_interval_secs,
+        shadow_ml_min_rows = settings.shadow_ml_min_rows,
+        shadow_ml_training_limit = settings.shadow_ml_training_limit,
         "strategy-service started"
     );
 
@@ -435,6 +559,9 @@ fn spawn_reoptimize_worker(state: AppState) -> tokio::task::JoinHandle<()> {
             let mut cues_generated = 0usize;
             let mut performance_rows_written = 0usize;
             let mut selected_rows_written = 0usize;
+            let mut shadow_model_runs_written = 0usize;
+            let mut shadow_model_available = 0usize;
+            let mut shadow_model_unavailable = 0usize;
 
             for timeframe in &state.settings.timeframes {
                 for pair in &state.settings.pairs {
@@ -442,6 +569,10 @@ fn spawn_reoptimize_worker(state: AppState) -> tokio::task::JoinHandle<()> {
                     match evaluate_pair_for_timeframe(&state, pair, *timeframe).await {
                         Ok(output) => {
                             cues_generated += usize::from(output.cue.actionable);
+                            match output.cue.shadow_ml.status.as_str() {
+                                "AVAILABLE" => shadow_model_available += 1,
+                                _ => shadow_model_unavailable += 1,
+                            }
                             match state
                                 .repository
                                 .record_evaluation(*timeframe, &output)
@@ -457,6 +588,21 @@ fn spawn_reoptimize_worker(state: AppState) -> tokio::task::JoinHandle<()> {
                                         timeframe = %timeframe.as_str(),
                                         error = %error,
                                         "failed to persist strategy evaluation"
+                                    );
+                                }
+                            }
+                            match state
+                                .repository
+                                .record_shadow_model_run(*timeframe, &output)
+                                .await
+                            {
+                                Ok(written) => shadow_model_runs_written += written,
+                                Err(error) => {
+                                    tracing::warn!(
+                                        pair_id = %pair.pair_id(),
+                                        timeframe = %timeframe.as_str(),
+                                        error = %error,
+                                        "failed to persist shadow model run"
                                     );
                                 }
                             }
@@ -478,6 +624,9 @@ fn spawn_reoptimize_worker(state: AppState) -> tokio::task::JoinHandle<()> {
                 cues_generated,
                 performance_rows_written,
                 selected_rows_written,
+                shadow_model_runs_written,
+                shadow_model_available,
+                shadow_model_unavailable,
                 "strategy reoptimize tick complete"
             );
         }
@@ -580,6 +729,9 @@ async fn reoptimize(
     let mut cues_generated = 0usize;
     let mut performance_rows_written = 0usize;
     let mut selected_rows_written = 0usize;
+    let mut shadow_model_runs_written = 0usize;
+    let mut shadow_model_available = 0usize;
+    let mut shadow_model_unavailable = 0usize;
     let mut errors = vec![];
 
     for timeframe in &requested_timeframes {
@@ -588,6 +740,10 @@ async fn reoptimize(
             match evaluate_pair_for_timeframe(&state, pair, *timeframe).await {
                 Ok(output) => {
                     cues_generated += usize::from(output.cue.actionable);
+                    match output.cue.shadow_ml.status.as_str() {
+                        "AVAILABLE" => shadow_model_available += 1,
+                        _ => shadow_model_unavailable += 1,
+                    }
                     match state
                         .repository
                         .record_evaluation(*timeframe, &output)
@@ -602,6 +758,18 @@ async fn reoptimize(
                             timeframe: timeframe.as_str().to_string(),
                             error: error.to_string(),
                         }),
+                    }
+                    if let Err(error) = state
+                        .repository
+                        .record_shadow_model_run(*timeframe, &output)
+                        .await
+                        .map(|written| shadow_model_runs_written += written)
+                    {
+                        errors.push(ReoptError {
+                            pair_id: pair.pair_id(),
+                            timeframe: timeframe.as_str().to_string(),
+                            error: format!("shadow model run persist failed: {error}"),
+                        });
                     }
                 }
                 Err(error) => errors.push(ReoptError {
@@ -623,6 +791,9 @@ async fn reoptimize(
         cues_generated,
         performance_rows_written,
         selected_rows_written,
+        shadow_model_runs_written,
+        shadow_model_available,
+        shadow_model_unavailable,
         errors,
     }))
 }
@@ -652,7 +823,7 @@ async fn evaluate_pair_for_timeframe(
         ));
     }
 
-    evaluate_pair(PairEvaluationInput {
+    let mut output = evaluate_pair(PairEvaluationInput {
         pair_id: pair.pair_id(),
         left_instrument: pair.left.clone(),
         right_instrument: pair.right.clone(),
@@ -667,7 +838,47 @@ async fn evaluate_pair_for_timeframe(
         max_half_life_bars: state.settings.max_half_life_bars(timeframe),
         funding_drag_bps: state.settings.funding_drag_bps,
         min_samples_target: state.settings.min_samples_target,
-    })
+    })?;
+
+    let training_rows = match state
+        .repository
+        .fetch_shadow_training_rows(
+            &pair.pair_id(),
+            timeframe,
+            state.settings.shadow_ml_training_limit as i64,
+        )
+        .await
+    {
+        Ok(rows) => rows,
+        Err(error) => {
+            tracing::warn!(
+                pair_id = %pair.pair_id(),
+                timeframe = %timeframe.as_str(),
+                error = %error,
+                "shadow training history unavailable"
+            );
+            annotate_with_shadow_model(&mut output, None);
+            output
+                .cue
+                .shadow_ml
+                .rationale_codes
+                .push("TRAINING_QUERY_FAILED".to_string());
+            return Ok(output);
+        }
+    };
+
+    let model = train_shadow_model(&training_rows, state.settings.shadow_ml_min_rows);
+    let diagnostics = annotate_with_shadow_model(&mut output, model.as_ref());
+    if diagnostics.status == "UNAVAILABLE" {
+        tracing::info!(
+            pair_id = %pair.pair_id(),
+            timeframe = %timeframe.as_str(),
+            rows = training_rows.len(),
+            "shadow model unavailable for current evaluation"
+        );
+    }
+
+    Ok(output)
 }
 
 fn align_closes(

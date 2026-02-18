@@ -21,6 +21,18 @@
         "cost_estimate_bps": 0.6,
         "actionable": true,
         "rationale_codes": [],
+        "shadow_ml": {
+          "status": "AVAILABLE",
+          "model_name": "LOGISTIC_V1",
+          "training_rows": 512,
+          "positive_rate": 0.54,
+          "precision": 0.67,
+          "brier_score": 0.21,
+          "recommended_variant": "ROBUST_Z",
+          "recommended_probability": 0.72,
+          "agrees_with_selected": true,
+          "rationale_codes": []
+        },
         "evaluated_at": "2026-02-18T20:09:00Z"
       },
       "variants": [
@@ -33,6 +45,8 @@
           "reliability": 0.75,
           "regime_fit": 1.0,
           "opportunity_score": 6.63,
+          "shadow_success_probability": 0.64,
+          "shadow_rank_score": 7.26,
           "rationale_codes": []
         },
         {
@@ -44,6 +58,8 @@
           "reliability": 0.82,
           "regime_fit": 0.9,
           "opportunity_score": 7.42,
+          "shadow_success_probability": 0.72,
+          "shadow_rank_score": 9.06,
           "rationale_codes": []
         }
       ],

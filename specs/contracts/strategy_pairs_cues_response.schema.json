@@ -68,6 +68,40 @@
                 "type": "array",
                 "items": { "type": "string" }
               },
+              "shadow_ml": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "status",
+                  "model_name",
+                  "training_rows",
+                  "positive_rate",
+                  "precision",
+                  "brier_score",
+                  "recommended_variant",
+                  "recommended_probability",
+                  "agrees_with_selected",
+                  "rationale_codes"
+                ],
+                "properties": {
+                  "status": { "type": "string", "enum": ["AVAILABLE", "UNAVAILABLE"] },
+                  "model_name": { "type": "string" },
+                  "training_rows": { "type": "integer", "minimum": 0 },
+                  "positive_rate": { "type": "number", "minimum": 0, "maximum": 1 },
+                  "precision": { "type": "number", "minimum": 0, "maximum": 1 },
+                  "brier_score": { "type": "number", "minimum": 0, "maximum": 1 },
+                  "recommended_variant": {
+                    "type": "string",
+                    "enum": ["COINTEGRATION_Z", "ROBUST_Z", "VOL_NORMALIZED", "FUNDING_ADJUSTED", "NONE"]
+                  },
+                  "recommended_probability": { "type": "number", "minimum": 0, "maximum": 1 },
+                  "agrees_with_selected": { "type": "boolean" },
+                  "rationale_codes": {
+                    "type": "array",
+                    "items": { "type": "string" }
+                  }
+                }
+              },
               "evaluated_at": { "type": "string", "format": "date-time" }
             }
           },
@@ -99,6 +133,14 @@
                 "reliability": { "type": "number", "minimum": 0, "maximum": 1 },
                 "regime_fit": { "type": "number", "minimum": 0 },
                 "opportunity_score": { "type": "number" },
+                "shadow_success_probability": {
+                  "type": ["number", "null"],
+                  "minimum": 0,
+                  "maximum": 1
+                },
+                "shadow_rank_score": {
+                  "type": ["number", "null"]
+                },
                 "rationale_codes": {
                   "type": "array",
                   "items": { "type": "string" }

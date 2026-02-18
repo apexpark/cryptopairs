@@ -5,6 +5,9 @@
   "cues_generated": 1,
   "performance_rows_written": 12,
   "selected_rows_written": 3,
+  "shadow_model_runs_written": 3,
+  "shadow_model_available": 2,
+  "shadow_model_unavailable": 1,
   "errors": [
     {
       "pair_id": "PI_XBTUSD__PI_ETHUSD",

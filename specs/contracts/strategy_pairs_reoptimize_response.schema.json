@@ -41,6 +41,18 @@
       "type": "integer",
       "minimum": 0
     },
+    "shadow_model_runs_written": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "shadow_model_available": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "shadow_model_unavailable": {
+      "type": "integer",
+      "minimum": 0
+    },
     "errors": {
       "type": "array",
       "items": {
