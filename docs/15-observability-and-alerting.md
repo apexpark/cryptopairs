@@ -26,13 +26,19 @@ Define required telemetry, health signals, and alert policies.
 - Mean repair latency
 - Unresolved interval count
 
-3. Execution and risk:
+3. Strategy cues:
+- Cue generation count by timeframe
+- Actionable cue count by pair
+- Champion variant selection drift
+- Reoptimize success/failure counts
+
+4. Execution and risk:
 - Order ack latency
 - Reject/cancel rates
 - Risk check fail counts
 - Kill switch activation count
 
-4. Account:
+5. Account:
 - Reconciliation drift
 - Margin utilization
 - PnL update lag

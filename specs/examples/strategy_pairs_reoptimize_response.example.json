@@ -1,0 +1,15 @@
+{
+  "generated_at": "2026-02-18T20:11:00Z",
+  "timeframes": ["1m", "15m", "1h"],
+  "pairs_processed": 3,
+  "cues_generated": 1,
+  "performance_rows_written": 12,
+  "selected_rows_written": 3,
+  "errors": [
+    {
+      "pair_id": "PI_XBTUSD__PI_ETHUSD",
+      "timeframe": "1h",
+      "error": "insufficient aligned candles for pair=PI_XBTUSD__PI_ETHUSD timeframe=1h bars=81"
+    }
+  ]
+}

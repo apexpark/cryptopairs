@@ -49,7 +49,7 @@ docker compose up -d
 Start Rust application services in Docker:
 
 ```bash
-docker compose --profile app up -d data-service account-service execution-service
+docker compose --profile app up -d data-service account-service execution-service strategy-service
 ```
 
 Services:
@@ -58,6 +58,7 @@ Services:
 - Data service on `localhost:8080` (app profile)
 - Account service on `localhost:8081` (app profile)
 - Execution service on `localhost:8082` (app profile)
+- Strategy service on `localhost:8083` (app profile)
 
 ## Run Checks
 
@@ -132,6 +133,22 @@ POST /v1/account/reconcile/run
 
 Runs a reconciliation pass for all accounts with recent snapshots and persists results.
 
+## Strategy Pairs Cues Endpoint
+
+```bash
+GET /v1/strategy/pairs/cues?timeframe=1m&limit=20
+```
+
+Returns adaptive pairs cue candidates with champion/challenger variant diagnostics for manual action.
+
+## Strategy Reoptimize Endpoint
+
+```bash
+POST /v1/strategy/pairs/reoptimize
+```
+
+Runs rolling recent-performance evaluation and persists selected signal variants by pair/timeframe.
+
 ## Bootstrap Historical Backfill
 
 ```bash
@@ -157,7 +174,7 @@ python3 tools/scripts/kraken_history_depth_probe.py \
 The generated report captures earliest returned candles, page continuity checks, and pagination flags for each timeframe.
 
 ## Monorepo Layout
-- `services/` Rust services (`kraken-adapter`, `data-service`, `execution-service`)
+- `services/` Rust services (`kraken-adapter`, `data-service`, `strategy-service`, `execution-service`, `account-service`)
 - `crates/` shared Rust types and contracts
 - `research/` Python strategy research scaffolding
 - `apps/` UI applications

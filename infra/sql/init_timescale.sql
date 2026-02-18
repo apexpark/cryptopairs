@@ -104,3 +104,28 @@ ADD COLUMN IF NOT EXISTS operator_confirmed BOOLEAN NOT NULL DEFAULT FALSE;
 
 ALTER TABLE execution_order_intents
 ADD COLUMN IF NOT EXISTS operator_id TEXT;
+
+CREATE TABLE IF NOT EXISTS strategy_signal_performance (
+  pair_id TEXT NOT NULL,
+  timeframe TEXT NOT NULL,
+  signal_variant TEXT NOT NULL,
+  window_end TIMESTAMPTZ NOT NULL,
+  sample_count INTEGER NOT NULL,
+  win_rate DOUBLE PRECISION NOT NULL,
+  edge_bps DOUBLE PRECISION NOT NULL,
+  reliability DOUBLE PRECISION NOT NULL,
+  regime TEXT NOT NULL,
+  opportunity_score DOUBLE PRECISION NOT NULL,
+  rationale TEXT NOT NULL DEFAULT '',
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  PRIMARY KEY (pair_id, timeframe, signal_variant, window_end)
+);
+
+CREATE TABLE IF NOT EXISTS strategy_selected_signal (
+  pair_id TEXT NOT NULL,
+  timeframe TEXT NOT NULL,
+  signal_variant TEXT NOT NULL,
+  opportunity_score DOUBLE PRECISION NOT NULL,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  PRIMARY KEY (pair_id, timeframe)
+);

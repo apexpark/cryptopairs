@@ -92,6 +92,29 @@ services:
     volumes:
       - ./:/workspace
 
+  strategy-service:
+    image: rust:1.93
+    container_name: cryptopairs-strategy-service
+    profiles: ["app"]
+    working_dir: /workspace
+    command: ["bash", "-lc", "cargo run -p strategy-service --bin strategy-service"]
+    environment:
+      POSTGRES_URL: postgres://${POSTGRES_USER:-cryptopairs}:${POSTGRES_PASSWORD:-cryptopairs}@timescaledb:5432/${POSTGRES_DB:-cryptopairs}
+      STRATEGY_SERVICE_PORT: 8083
+      STRATEGY_PAIRS: ${STRATEGY_PAIRS:-PI_XBTUSD:PI_ETHUSD}
+      STRATEGY_TIMEFRAMES: ${STRATEGY_TIMEFRAMES:-1m,15m,1h}
+      STRATEGY_ENTRY_BAND: ${STRATEGY_ENTRY_BAND:-1.8}
+      STRATEGY_EXIT_BAND: ${STRATEGY_EXIT_BAND:-0.6}
+      STRATEGY_STOP_BAND: ${STRATEGY_STOP_BAND:-3.2}
+      STRATEGY_REOPT_INTERVAL_SECS: ${STRATEGY_REOPT_INTERVAL_SECS:-3600}
+    ports:
+      - "8083:8083"
+    depends_on:
+      timescaledb:
+        condition: service_healthy
+    volumes:
+      - ./:/workspace
+
 volumes:
   timescaledb-data:
   redis-data:

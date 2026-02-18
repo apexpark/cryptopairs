@@ -1,0 +1,129 @@
+{
+  "$id": "https://cryptopairs/specs/contracts/strategy_pairs_cues_response.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "StrategyPairsCuesResponse",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["timeframe", "generated_at", "cues", "skipped"],
+  "properties": {
+    "timeframe": {
+      "type": "string",
+      "enum": ["1m", "15m", "1h"]
+    },
+    "generated_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "cues": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["cue", "variants", "half_life_bars", "hedge_ratio", "hedge_ratio_stability"],
+        "properties": {
+          "cue": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "pair_id",
+              "left_instrument",
+              "right_instrument",
+              "timeframe",
+              "regime",
+              "selected_variant",
+              "direction_hint",
+              "spread_z",
+              "opportunity_score",
+              "confidence_band",
+              "entry_band",
+              "exit_band",
+              "stop_band",
+              "expected_hold_bars",
+              "cost_estimate_bps",
+              "actionable",
+              "rationale_codes",
+              "evaluated_at"
+            ],
+            "properties": {
+              "pair_id": { "type": "string" },
+              "left_instrument": { "type": "string" },
+              "right_instrument": { "type": "string" },
+              "timeframe": { "type": "string", "enum": ["1m", "15m", "1h"] },
+              "regime": { "type": "string", "enum": ["CALM", "TRENDING", "SHOCK"] },
+              "selected_variant": {
+                "type": "string",
+                "enum": ["COINTEGRATION_Z", "ROBUST_Z", "VOL_NORMALIZED", "FUNDING_ADJUSTED"]
+              },
+              "direction_hint": { "type": "string", "enum": ["LONG_SPREAD", "SHORT_SPREAD", "NONE"] },
+              "spread_z": { "type": "number" },
+              "opportunity_score": { "type": "number" },
+              "confidence_band": { "type": "string", "enum": ["LOW", "MEDIUM", "HIGH"] },
+              "entry_band": { "type": "number" },
+              "exit_band": { "type": "number" },
+              "stop_band": { "type": "number" },
+              "expected_hold_bars": { "type": "integer", "minimum": 1 },
+              "cost_estimate_bps": { "type": "number" },
+              "actionable": { "type": "boolean" },
+              "rationale_codes": {
+                "type": "array",
+                "items": { "type": "string" }
+              },
+              "evaluated_at": { "type": "string", "format": "date-time" }
+            }
+          },
+          "variants": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "variant",
+                "score_last",
+                "sample_count",
+                "win_rate",
+                "edge_bps",
+                "reliability",
+                "regime_fit",
+                "opportunity_score",
+                "rationale_codes"
+              ],
+              "properties": {
+                "variant": {
+                  "type": "string",
+                  "enum": ["COINTEGRATION_Z", "ROBUST_Z", "VOL_NORMALIZED", "FUNDING_ADJUSTED"]
+                },
+                "score_last": { "type": "number" },
+                "sample_count": { "type": "integer", "minimum": 0 },
+                "win_rate": { "type": "number", "minimum": 0, "maximum": 1 },
+                "edge_bps": { "type": "number" },
+                "reliability": { "type": "number", "minimum": 0, "maximum": 1 },
+                "regime_fit": { "type": "number", "minimum": 0 },
+                "opportunity_score": { "type": "number" },
+                "rationale_codes": {
+                  "type": "array",
+                  "items": { "type": "string" }
+                }
+              }
+            }
+          },
+          "half_life_bars": { "type": "number", "minimum": 0 },
+          "hedge_ratio": { "type": "number" },
+          "hedge_ratio_stability": { "type": "number", "minimum": 0 }
+        }
+      }
+    },
+    "skipped": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["pair_id", "reason"],
+        "properties": {
+          "pair_id": { "type": "string" },
+          "reason": { "type": "string" }
+        }
+      }
+    }
+  },
+  "version": "0.1.0"
+}
