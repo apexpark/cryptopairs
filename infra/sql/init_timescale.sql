@@ -41,3 +41,27 @@ CREATE TABLE IF NOT EXISTS trades (
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   PRIMARY KEY (instrument, seq)
 );
+
+CREATE TABLE IF NOT EXISTS account_snapshots (
+  exchange TEXT NOT NULL,
+  account_id TEXT NOT NULL,
+  ts TIMESTAMPTZ NOT NULL,
+  equity DOUBLE PRECISION NOT NULL,
+  balance DOUBLE PRECISION NOT NULL,
+  margin_used DOUBLE PRECISION NOT NULL,
+  unrealized_pnl DOUBLE PRECISION NOT NULL,
+  realized_pnl DOUBLE PRECISION NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  PRIMARY KEY (exchange, account_id, ts)
+);
+
+CREATE TABLE IF NOT EXISTS reconciliation_events (
+  exchange TEXT NOT NULL,
+  account_id TEXT NOT NULL,
+  ts TIMESTAMPTZ NOT NULL,
+  status TEXT NOT NULL,
+  drift_notional DOUBLE PRECISION NOT NULL,
+  notes TEXT NOT NULL DEFAULT '',
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  PRIMARY KEY (exchange, account_id, ts)
+);
