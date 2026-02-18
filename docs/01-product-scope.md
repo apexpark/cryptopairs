@@ -10,7 +10,7 @@ Define what this system is intended to do in the first production-capable milest
 2. Local market data repository with multi-timeframe support.
 3. Data integrity status and gap reporting for every data request.
 4. Pairs trading strategy module (research + backtest + forward/paper).
-5. Execution module with order lifecycle tracking and risk checks.
+5. Manual-first execution module with order lifecycle tracking, risk checks, and operator-confirmed entry/exit controls.
 6. Account management (balances, positions, realized/unrealized PnL).
 7. Browser UI for data health, strategy runs, positions, and controls.
 8. Secure settings management for API credentials.
@@ -29,6 +29,7 @@ Define what this system is intended to do in the first production-capable milest
 3. Strategy runs blocked when integrity policy fails.
 4. End-to-end paper trading flow from signal to fill reconciliation.
 5. Full observability and incident traceability.
+6. Live entry/exit requires explicit operator confirmation; only emergency stop-close may run automatically.
 
 ## Non-Functional Requirements
 

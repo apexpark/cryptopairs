@@ -85,10 +85,22 @@ CREATE TABLE IF NOT EXISTS execution_order_intents (
   idempotency_key TEXT PRIMARY KEY,
   instrument TEXT NOT NULL,
   timeframe TEXT NOT NULL,
+  action TEXT NOT NULL,
   side TEXT NOT NULL,
   qty DOUBLE PRECISION NOT NULL,
+  operator_confirmed BOOLEAN NOT NULL,
+  operator_id TEXT,
   min_coverage_pct DOUBLE PRECISION NOT NULL,
   decision TEXT NOT NULL,
   reason TEXT NOT NULL DEFAULT '',
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+
+ALTER TABLE execution_order_intents
+ADD COLUMN IF NOT EXISTS action TEXT NOT NULL DEFAULT 'ENTRY';
+
+ALTER TABLE execution_order_intents
+ADD COLUMN IF NOT EXISTS operator_confirmed BOOLEAN NOT NULL DEFAULT FALSE;
+
+ALTER TABLE execution_order_intents
+ADD COLUMN IF NOT EXISTS operator_id TEXT;

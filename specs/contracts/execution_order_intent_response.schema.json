@@ -8,8 +8,10 @@
     "idempotency_key",
     "instrument",
     "timeframe",
+    "action",
     "side",
     "qty",
+    "operator_confirmed",
     "min_coverage_pct",
     "decision",
     "evaluated_at"
@@ -25,6 +27,10 @@
       "type": "string",
       "enum": ["1m", "15m", "1h"]
     },
+    "action": {
+      "type": "string",
+      "enum": ["ENTRY", "EXIT", "EMERGENCY_STOP_CLOSE"]
+    },
     "side": {
       "type": "string",
       "enum": ["BUY", "SELL"]
@@ -32,6 +38,12 @@
     "qty": {
       "type": "number",
       "exclusiveMinimum": 0
+    },
+    "operator_confirmed": {
+      "type": "boolean"
+    },
+    "operator_id": {
+      "type": ["string", "null"]
     },
     "min_coverage_pct": {
       "type": "number",

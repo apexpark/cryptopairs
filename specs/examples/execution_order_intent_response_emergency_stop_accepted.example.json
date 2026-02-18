@@ -1,0 +1,14 @@
+{
+  "idempotency_key": "ordint-PI_XBTUSD-20260218T150000Z-stop-001",
+  "instrument": "PI_XBTUSD",
+  "timeframe": "1m",
+  "action": "EMERGENCY_STOP_CLOSE",
+  "side": "SELL",
+  "qty": 1.25,
+  "operator_confirmed": false,
+  "operator_id": null,
+  "min_coverage_pct": 99.5,
+  "decision": "ACCEPTED",
+  "reason": null,
+  "evaluated_at": "2026-02-18T15:00:01Z"
+}

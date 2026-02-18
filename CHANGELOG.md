@@ -46,7 +46,15 @@ This project follows SemVer as defined in `docs/02-versioning-and-releases.md`.
   - `specs/examples/execution_kill_switch_state_active.example.json`
   - `specs/examples/execution_order_intent_request.example.json`
   - `specs/examples/execution_order_intent_response_blocked.example.json`
+- Manual-first execution guardrails:
+  - `ENTRY` and `EXIT` intents require operator confirmation and operator ID.
+  - `EMERGENCY_STOP_CLOSE` is the only automated action path.
+  - Order intent records now persist `action`, `operator_confirmed`, and `operator_id`.
+- New example for automated safety close:
+  - `specs/examples/execution_order_intent_response_emergency_stop_accepted.example.json`
 
 ### Changed
+- Product/risk/architecture docs now explicitly define manual-first live trading for MVP.
 
 ### Fixed
+- Removed accidental duplicate spec/example files with `* 2.json` suffix.
