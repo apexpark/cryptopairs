@@ -19,6 +19,7 @@ Define module boundaries, responsibilities, and key interfaces.
 - First strategy: pairs/stat-arb module.
 - Live cue scaffold: `strategy-service` (Rust) for adaptive signal ranking and manual action prompts.
 - Shadow ML diagnostics run in decision-support mode only (no autonomous order execution changes).
+- Strategy advisory layer adds fail-closed cost gating and portfolio sizing hints for operator review.
 
 4. `execution-service` (Rust)
 - Signal-to-order translation.

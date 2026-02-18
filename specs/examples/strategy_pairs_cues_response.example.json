@@ -21,6 +21,23 @@
         "cost_estimate_bps": 0.6,
         "actionable": true,
         "rationale_codes": [],
+        "cost_gate": {
+          "status": "AVAILABLE",
+          "expected_edge_bps": 7.42,
+          "fee_bps": 1.2,
+          "funding_bps": 0.6,
+          "slippage_bps": 1.84,
+          "net_edge_bps": 3.78,
+          "pass": true,
+          "rationale_codes": []
+        },
+        "portfolio_hint": {
+          "status": "AVAILABLE",
+          "target_weight": 0.31,
+          "risk_contribution": 0.52,
+          "cap_applied": false,
+          "rationale_codes": []
+        },
         "shadow_ml": {
           "status": "AVAILABLE",
           "model_name": "LOGISTIC_V1",
@@ -68,5 +85,35 @@
       "hedge_ratio_stability": 0.12
     }
   ],
+  "candidate_set": {
+    "total_pairs": 3,
+    "evaluated_pairs": 3,
+    "actionable_pairs": 1,
+    "cost_gate_pass_pairs": 1,
+    "shadow_disagreement_pairs": 0
+  },
+  "portfolio_plan": {
+    "status": "AVAILABLE",
+    "weights": [
+      {
+        "pair_id": "PI_XBTUSD__PI_ETHUSD",
+        "target_weight": 0.31,
+        "risk_contribution": 0.52,
+        "cap_applied": false
+      },
+      {
+        "pair_id": "PI_SOLUSD__PI_ETHUSD",
+        "target_weight": -0.29,
+        "risk_contribution": 0.48,
+        "cap_applied": false
+      }
+    ],
+    "constraints": {
+      "dollar_neutral": true,
+      "gross_cap": 1.0,
+      "per_pair_cap": 0.35
+    },
+    "rationale_codes": []
+  },
   "skipped": []
 }

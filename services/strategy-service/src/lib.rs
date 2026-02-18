@@ -99,6 +99,99 @@ pub struct VariantEvaluation {
 }
 
 #[derive(Debug, Clone, Serialize)]
+pub struct CostGateDiagnostics {
+    pub status: String,
+    pub expected_edge_bps: f64,
+    pub fee_bps: f64,
+    pub funding_bps: f64,
+    pub slippage_bps: f64,
+    pub net_edge_bps: f64,
+    pub pass: bool,
+    pub rationale_codes: Vec<String>,
+}
+
+impl CostGateDiagnostics {
+    pub fn unavailable(rationale_codes: Vec<String>) -> Self {
+        Self {
+            status: "UNAVAILABLE".to_string(),
+            expected_edge_bps: 0.0,
+            fee_bps: 0.0,
+            funding_bps: 0.0,
+            slippage_bps: 0.0,
+            net_edge_bps: 0.0,
+            pass: false,
+            rationale_codes,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct CostGateInput {
+    pub expected_edge_bps: f64,
+    pub fee_bps: f64,
+    pub funding_bps: f64,
+    pub spread_vol_bps: f64,
+    pub spread_z: f64,
+    pub slippage_base_bps: f64,
+    pub slippage_vol_multiplier: f64,
+    pub slippage_z_multiplier: f64,
+    pub min_net_edge_bps: f64,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct PortfolioHint {
+    pub status: String,
+    pub target_weight: f64,
+    pub risk_contribution: f64,
+    pub cap_applied: bool,
+    pub rationale_codes: Vec<String>,
+}
+
+impl PortfolioHint {
+    pub fn unavailable(rationale_codes: Vec<String>) -> Self {
+        Self {
+            status: "UNAVAILABLE".to_string(),
+            target_weight: 0.0,
+            risk_contribution: 0.0,
+            cap_applied: false,
+            rationale_codes,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct PortfolioPlanEntry {
+    pub pair_id: String,
+    pub target_weight: f64,
+    pub risk_contribution: f64,
+    pub cap_applied: bool,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct PortfolioPlanConstraints {
+    pub dollar_neutral: bool,
+    pub gross_cap: f64,
+    pub per_pair_cap: f64,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct PortfolioPlan {
+    pub status: String,
+    pub weights: Vec<PortfolioPlanEntry>,
+    pub constraints: PortfolioPlanConstraints,
+    pub rationale_codes: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct CandidateSetDiagnostics {
+    pub total_pairs: usize,
+    pub evaluated_pairs: usize,
+    pub actionable_pairs: usize,
+    pub cost_gate_pass_pairs: usize,
+    pub shadow_disagreement_pairs: usize,
+}
+
+#[derive(Debug, Clone, Serialize)]
 pub struct ShadowMlDiagnostics {
     pub status: String,
     pub model_name: String,
@@ -148,6 +241,8 @@ pub struct PairCue {
     pub cost_estimate_bps: f64,
     pub actionable: bool,
     pub rationale_codes: Vec<String>,
+    pub cost_gate: CostGateDiagnostics,
+    pub portfolio_hint: PortfolioHint,
     pub shadow_ml: ShadowMlDiagnostics,
     pub evaluated_at: DateTime<Utc>,
 }
@@ -177,6 +272,7 @@ pub struct PairEvaluationOutput {
     pub half_life_bars: f64,
     pub hedge_ratio: f64,
     pub hedge_ratio_stability: f64,
+    pub spread_vol_bps: f64,
 }
 
 #[derive(Debug, Clone)]
@@ -383,6 +479,211 @@ pub fn annotate_with_shadow_model(
     diagnostics
 }
 
+pub fn evaluate_cost_gate(input: CostGateInput) -> CostGateDiagnostics {
+    let mut rationale_codes = vec![];
+
+    let expected_edge_bps = input.expected_edge_bps;
+    if expected_edge_bps <= 0.0 {
+        rationale_codes.push("NEGATIVE_EXPECTED_EDGE".to_string());
+    }
+
+    let fee_bps = input.fee_bps.max(0.0);
+    let funding_bps = input.funding_bps.max(0.0);
+    let slippage_bps = (input.slippage_base_bps.max(0.0)
+        + input.slippage_vol_multiplier.max(0.0) * input.spread_vol_bps.max(0.0)
+        + input.slippage_z_multiplier.max(0.0) * input.spread_z.abs())
+    .max(0.0);
+
+    let net_edge_bps = expected_edge_bps - fee_bps - funding_bps - slippage_bps;
+    let pass = net_edge_bps > input.min_net_edge_bps.max(0.0);
+    if !pass {
+        rationale_codes.push("COST_GATE_BLOCKED".to_string());
+    }
+
+    CostGateDiagnostics {
+        status: "AVAILABLE".to_string(),
+        expected_edge_bps,
+        fee_bps,
+        funding_bps,
+        slippage_bps,
+        net_edge_bps,
+        pass,
+        rationale_codes,
+    }
+}
+
+pub fn build_portfolio_plan(cues: &[PairCue], gross_cap: f64, per_pair_cap: f64) -> PortfolioPlan {
+    let constraints = PortfolioPlanConstraints {
+        dollar_neutral: false,
+        gross_cap: gross_cap.max(0.0),
+        per_pair_cap: per_pair_cap.max(0.0),
+    };
+
+    let mut active = vec![];
+    for cue in cues {
+        if !cue.actionable || cue.cost_gate.status != "AVAILABLE" || !cue.cost_gate.pass {
+            continue;
+        }
+        let sign = match cue.direction_hint.as_str() {
+            "LONG_SPREAD" => 1.0,
+            "SHORT_SPREAD" => -1.0,
+            _ => 0.0,
+        };
+        if sign == 0.0 {
+            continue;
+        }
+
+        let score = cue.opportunity_score.max(0.0);
+        let net_edge = cue.cost_gate.net_edge_bps.max(0.0);
+        let raw = sign * score.max(0.01) * net_edge.max(0.01);
+        active.push((cue.pair_id.clone(), raw));
+    }
+
+    if active.len() < 2 {
+        return PortfolioPlan {
+            status: "UNAVAILABLE".to_string(),
+            weights: vec![],
+            constraints,
+            rationale_codes: vec!["INSUFFICIENT_ACTIONABLE_PAIRS".to_string()],
+        };
+    }
+
+    let mean_raw = active.iter().map(|(_, raw)| *raw).sum::<f64>() / active.len() as f64;
+    let mut scaled = active
+        .into_iter()
+        .map(|(pair_id, raw)| (pair_id, raw - mean_raw))
+        .collect::<Vec<_>>();
+
+    let gross_abs = scaled.iter().map(|(_, weight)| weight.abs()).sum::<f64>();
+    if gross_abs <= 1e-12 {
+        return PortfolioPlan {
+            status: "UNAVAILABLE".to_string(),
+            weights: vec![],
+            constraints,
+            rationale_codes: vec!["ZERO_SIGNAL_VECTOR".to_string()],
+        };
+    }
+    let target_gross = constraints.gross_cap.max(1e-9);
+    let scale = target_gross / gross_abs;
+    for (_, weight) in &mut scaled {
+        *weight *= scale;
+    }
+
+    let mut any_cap_applied = false;
+    if constraints.per_pair_cap > 0.0 {
+        for (_, weight) in &mut scaled {
+            if weight.abs() > constraints.per_pair_cap {
+                *weight = constraints.per_pair_cap.copysign(*weight);
+                any_cap_applied = true;
+            }
+        }
+    }
+
+    let demeaned = scaled.iter().map(|(_, weight)| *weight).sum::<f64>() / scaled.len() as f64;
+    for (_, weight) in &mut scaled {
+        *weight -= demeaned;
+    }
+
+    if constraints.per_pair_cap > 0.0 {
+        for (_, weight) in &mut scaled {
+            if weight.abs() > constraints.per_pair_cap {
+                *weight = constraints.per_pair_cap.copysign(*weight);
+                any_cap_applied = true;
+            }
+        }
+    }
+
+    let gross_abs = scaled.iter().map(|(_, weight)| weight.abs()).sum::<f64>();
+    if gross_abs > constraints.gross_cap && gross_abs > 0.0 {
+        let scale_down = constraints.gross_cap / gross_abs;
+        for (_, weight) in &mut scaled {
+            *weight *= scale_down;
+        }
+    }
+
+    if scaled.len() > 1 {
+        for _ in 0..3 {
+            let net = scaled.iter().map(|(_, weight)| *weight).sum::<f64>();
+            if net.abs() <= 1e-8 {
+                break;
+            }
+            let adjust = net / scaled.len() as f64;
+            for (_, weight) in &mut scaled {
+                *weight -= adjust;
+                if constraints.per_pair_cap > 0.0 && weight.abs() > constraints.per_pair_cap {
+                    *weight = constraints.per_pair_cap.copysign(*weight);
+                    any_cap_applied = true;
+                }
+            }
+        }
+    }
+
+    let neutral_sum = scaled.iter().map(|(_, weight)| *weight).sum::<f64>();
+    let dollar_neutral = neutral_sum.abs() <= 1e-6;
+    let risk_denom = scaled
+        .iter()
+        .map(|(_, weight)| weight.abs())
+        .sum::<f64>()
+        .max(1e-9);
+    let mut weights = scaled
+        .into_iter()
+        .map(|(pair_id, weight)| PortfolioPlanEntry {
+            pair_id,
+            target_weight: weight,
+            risk_contribution: weight.abs() / risk_denom,
+            cap_applied: constraints.per_pair_cap > 0.0 && weight.abs() >= constraints.per_pair_cap,
+        })
+        .collect::<Vec<_>>();
+    weights.sort_by(|left, right| {
+        right
+            .target_weight
+            .abs()
+            .partial_cmp(&left.target_weight.abs())
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
+
+    let mut rationale_codes = vec![];
+    if any_cap_applied {
+        rationale_codes.push("PER_PAIR_CAP_APPLIED".to_string());
+    }
+    if !dollar_neutral {
+        rationale_codes.push("NEUTRALITY_APPROXIMATED".to_string());
+    }
+
+    PortfolioPlan {
+        status: "AVAILABLE".to_string(),
+        weights,
+        constraints: PortfolioPlanConstraints {
+            dollar_neutral,
+            gross_cap: constraints.gross_cap,
+            per_pair_cap: constraints.per_pair_cap,
+        },
+        rationale_codes,
+    }
+}
+
+pub fn apply_portfolio_plan_to_cues(cues: &mut [PairCue], plan: &PortfolioPlan) {
+    let mut index = std::collections::HashMap::with_capacity(plan.weights.len());
+    for entry in &plan.weights {
+        index.insert(entry.pair_id.as_str(), entry);
+    }
+
+    for cue in cues {
+        if let Some(entry) = index.get(cue.pair_id.as_str()) {
+            cue.portfolio_hint = PortfolioHint {
+                status: "AVAILABLE".to_string(),
+                target_weight: entry.target_weight,
+                risk_contribution: entry.risk_contribution,
+                cap_applied: entry.cap_applied,
+                rationale_codes: vec![],
+            };
+        } else {
+            cue.portfolio_hint =
+                PortfolioHint::unavailable(vec!["PAIR_NOT_IN_PORTFOLIO_PLAN".to_string()]);
+        }
+    }
+}
+
 pub fn evaluate_pair(input: PairEvaluationInput) -> anyhow::Result<PairEvaluationOutput> {
     if input.left_closes.len() != input.right_closes.len()
         || input.timestamps.len() != input.left_closes.len()
@@ -419,6 +720,11 @@ pub fn evaluate_pair(input: PairEvaluationInput) -> anyhow::Result<PairEvaluatio
         .zip(right_log.iter())
         .map(|(left, right)| left - hedge_ratio * right)
         .collect::<Vec<_>>();
+    let spread_diffs = spread
+        .windows(2)
+        .map(|window| window[1] - window[0])
+        .collect::<Vec<_>>();
+    let spread_vol_bps = stddev(&spread_diffs) * 10_000.0;
 
     let half_life_bars = estimate_half_life(&spread);
     let hedge_ratio_stability = estimate_hedge_ratio_stability(&left_log, &right_log);
@@ -538,6 +844,8 @@ pub fn evaluate_pair(input: PairEvaluationInput) -> anyhow::Result<PairEvaluatio
         cost_estimate_bps: input.funding_drag_bps,
         actionable,
         rationale_codes: cue_rationale,
+        cost_gate: CostGateDiagnostics::unavailable(vec!["NOT_EVALUATED".to_string()]),
+        portfolio_hint: PortfolioHint::unavailable(vec!["NOT_EVALUATED".to_string()]),
         shadow_ml: ShadowMlDiagnostics::unavailable(vec!["NOT_EVALUATED".to_string()]),
         evaluated_at,
     };
@@ -548,6 +856,7 @@ pub fn evaluate_pair(input: PairEvaluationInput) -> anyhow::Result<PairEvaluatio
         half_life_bars,
         hedge_ratio,
         hedge_ratio_stability,
+        spread_vol_bps,
     })
 }
 
@@ -871,8 +1180,10 @@ fn median(values: &[f64]) -> f64 {
 #[cfg(test)]
 mod tests {
     use super::{
-        annotate_with_shadow_model, evaluate_pair, train_shadow_model, DirectionHint,
-        PairEvaluationInput, Regime, ShadowModelTrainingRow, SignalVariant,
+        annotate_with_shadow_model, build_portfolio_plan, evaluate_cost_gate, evaluate_pair,
+        train_shadow_model, CostGateDiagnostics, CostGateInput, DirectionHint, PairCue,
+        PairEvaluationInput, PortfolioHint, Regime, ShadowMlDiagnostics, ShadowModelTrainingRow,
+        SignalVariant,
     };
     use chrono::{Duration, Utc};
     use common_types::Timeframe;
@@ -976,6 +1287,61 @@ mod tests {
         assert!(model.is_none());
     }
 
+    #[test]
+    fn cost_gate_blocks_when_costs_exceed_edge() {
+        let diagnostics = evaluate_cost_gate(CostGateInput {
+            expected_edge_bps: 2.4,
+            fee_bps: 1.0,
+            funding_bps: 0.8,
+            spread_vol_bps: 2.0,
+            spread_z: 1.9,
+            slippage_base_bps: 0.6,
+            slippage_vol_multiplier: 0.5,
+            slippage_z_multiplier: 0.2,
+            min_net_edge_bps: 0.0,
+        });
+        assert_eq!(diagnostics.status, "AVAILABLE");
+        assert!(!diagnostics.pass);
+        assert!(diagnostics
+            .rationale_codes
+            .iter()
+            .any(|code| code == "COST_GATE_BLOCKED"));
+    }
+
+    #[test]
+    fn portfolio_plan_respects_caps_and_neutrality() {
+        let cues = vec![
+            synthetic_cue("PI_XBTUSD__PI_ETHUSD", "LONG_SPREAD", 8.0, 3.0),
+            synthetic_cue("PI_SOLUSD__PI_ETHUSD", "SHORT_SPREAD", 7.5, 2.9),
+            synthetic_cue("PI_AVAXUSD__PI_ETHUSD", "LONG_SPREAD", 4.2, 2.1),
+        ];
+        let plan = build_portfolio_plan(&cues, 1.0, 0.4);
+        assert_eq!(plan.status, "AVAILABLE");
+        assert!(!plan.weights.is_empty());
+        let gross = plan
+            .weights
+            .iter()
+            .map(|entry| entry.target_weight.abs())
+            .sum::<f64>();
+        assert!(gross <= 1.0 + 1e-6);
+        assert!(plan
+            .weights
+            .iter()
+            .all(|entry| entry.target_weight.abs() <= 0.4 + 1e-6));
+        let net = plan
+            .weights
+            .iter()
+            .map(|entry| entry.target_weight)
+            .sum::<f64>();
+        assert!(
+            net.abs() <= 1e-4
+                || plan
+                    .rationale_codes
+                    .iter()
+                    .any(|code| code == "NEUTRALITY_APPROXIMATED")
+        );
+    }
+
     fn synthetic_pair_series(n: usize) -> (Vec<chrono::DateTime<Utc>>, Vec<f64>, Vec<f64>) {
         let start = Utc::now() - Duration::minutes(n as i64);
         let mut timestamps = Vec::with_capacity(n);
@@ -1042,5 +1408,45 @@ mod tests {
             });
         }
         rows
+    }
+
+    fn synthetic_cue(
+        pair_id: &str,
+        direction: &str,
+        opportunity_score: f64,
+        net_edge_bps: f64,
+    ) -> PairCue {
+        PairCue {
+            pair_id: pair_id.to_string(),
+            left_instrument: "LEFT".to_string(),
+            right_instrument: "RIGHT".to_string(),
+            timeframe: "1m".to_string(),
+            regime: "CALM".to_string(),
+            selected_variant: "ROBUST_Z".to_string(),
+            direction_hint: direction.to_string(),
+            spread_z: 1.9,
+            opportunity_score,
+            confidence_band: "MEDIUM".to_string(),
+            entry_band: 1.8,
+            exit_band: 0.6,
+            stop_band: 3.2,
+            expected_hold_bars: 12,
+            cost_estimate_bps: 0.6,
+            actionable: true,
+            rationale_codes: vec![],
+            cost_gate: CostGateDiagnostics {
+                status: "AVAILABLE".to_string(),
+                expected_edge_bps: opportunity_score,
+                fee_bps: 0.8,
+                funding_bps: 0.6,
+                slippage_bps: 0.5,
+                net_edge_bps,
+                pass: true,
+                rationale_codes: vec![],
+            },
+            portfolio_hint: PortfolioHint::unavailable(vec!["NOT_EVALUATED".to_string()]),
+            shadow_ml: ShadowMlDiagnostics::unavailable(vec!["NOT_EVALUATED".to_string()]),
+            evaluated_at: Utc::now(),
+        }
     }
 }

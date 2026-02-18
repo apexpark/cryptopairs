@@ -1,0 +1,28 @@
+{
+  "timeframe": "1m",
+  "generated_at": "2026-02-19T02:12:00Z",
+  "plan": {
+    "status": "AVAILABLE",
+    "weights": [
+      {
+        "pair_id": "PI_XBTUSD__PI_ETHUSD",
+        "target_weight": 0.31,
+        "risk_contribution": 0.52,
+        "cap_applied": false
+      },
+      {
+        "pair_id": "PI_SOLUSD__PI_ETHUSD",
+        "target_weight": -0.29,
+        "risk_contribution": 0.48,
+        "cap_applied": false
+      }
+    ],
+    "constraints": {
+      "dollar_neutral": true,
+      "gross_cap": 1.0,
+      "per_pair_cap": 0.35
+    },
+    "rationale_codes": []
+  },
+  "skipped": []
+}

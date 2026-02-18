@@ -11,8 +11,10 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
 use strategy_service::{
-    annotate_with_shadow_model, evaluate_pair, train_shadow_model, PairCue, PairEvaluationInput,
-    PairEvaluationOutput, Regime, ShadowModelTrainingRow, SignalVariant,
+    annotate_with_shadow_model, apply_portfolio_plan_to_cues, build_portfolio_plan,
+    evaluate_cost_gate, evaluate_pair, train_shadow_model, CandidateSetDiagnostics, CostGateInput,
+    PairCue, PairEvaluationInput, PairEvaluationOutput, PortfolioPlan, Regime,
+    ShadowModelTrainingRow, SignalVariant,
 };
 use tokio::net::TcpListener;
 use tokio_postgres::{types::ToSql, Client, NoTls};
@@ -59,6 +61,14 @@ struct StrategySettings {
     reopt_interval_secs: u64,
     shadow_ml_min_rows: usize,
     shadow_ml_training_limit: usize,
+    trading_fee_bps: f64,
+    slippage_base_bps: f64,
+    slippage_vol_multiplier: f64,
+    slippage_z_multiplier: f64,
+    min_net_edge_bps: f64,
+    advisory_gross_cap: f64,
+    advisory_per_pair_cap: f64,
+    advisory_enabled: bool,
 }
 
 impl StrategySettings {
@@ -83,6 +93,14 @@ impl StrategySettings {
         let reopt_interval_secs = parse_env_u64("STRATEGY_REOPT_INTERVAL_SECS", 3600);
         let shadow_ml_min_rows = parse_env_usize("STRATEGY_SHADOW_ML_MIN_ROWS", 64);
         let shadow_ml_training_limit = parse_env_usize("STRATEGY_SHADOW_ML_TRAINING_LIMIT", 1200);
+        let trading_fee_bps = parse_env_f64("STRATEGY_TRADING_FEE_BPS", 1.2);
+        let slippage_base_bps = parse_env_f64("STRATEGY_SLIPPAGE_BASE_BPS", 0.8);
+        let slippage_vol_multiplier = parse_env_f64("STRATEGY_SLIPPAGE_VOL_MULTIPLIER", 0.45);
+        let slippage_z_multiplier = parse_env_f64("STRATEGY_SLIPPAGE_Z_MULTIPLIER", 0.20);
+        let min_net_edge_bps = parse_env_f64("STRATEGY_MIN_NET_EDGE_BPS", 0.0);
+        let advisory_gross_cap = parse_env_f64("STRATEGY_ADVISORY_GROSS_CAP", 1.0);
+        let advisory_per_pair_cap = parse_env_f64("STRATEGY_ADVISORY_PER_PAIR_CAP", 0.35);
+        let advisory_enabled = parse_env_bool("STRATEGY_ADVISORY_ENABLED", true);
 
         Self {
             bind_addr: format!("0.0.0.0:{port}"),
@@ -106,6 +124,14 @@ impl StrategySettings {
             reopt_interval_secs,
             shadow_ml_min_rows,
             shadow_ml_training_limit,
+            trading_fee_bps,
+            slippage_base_bps,
+            slippage_vol_multiplier,
+            slippage_z_multiplier,
+            min_net_edge_bps,
+            advisory_gross_cap,
+            advisory_per_pair_cap,
+            advisory_enabled,
         }
     }
 
@@ -428,6 +454,7 @@ impl StrategyRepository {
 struct CuesQuery {
     timeframe: String,
     limit: Option<usize>,
+    include_advisory: Option<bool>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -459,6 +486,8 @@ struct CuesResponse {
     timeframe: String,
     generated_at: DateTime<Utc>,
     cues: Vec<CueWithDiagnostics>,
+    candidate_set: CandidateSetDiagnostics,
+    portfolio_plan: PortfolioPlan,
     skipped: Vec<SkippedPair>,
 }
 
@@ -466,6 +495,37 @@ struct CuesResponse {
 struct SkippedPair {
     pair_id: String,
     reason: String,
+}
+
+#[derive(Debug, Serialize)]
+struct CostGatePair {
+    pair_id: String,
+    left_instrument: String,
+    right_instrument: String,
+    timeframe: String,
+    expected_edge_bps: f64,
+    fee_bps: f64,
+    funding_bps: f64,
+    slippage_bps: f64,
+    net_edge_bps: f64,
+    pass: bool,
+    rationale_codes: Vec<String>,
+}
+
+#[derive(Debug, Serialize)]
+struct CostGateResponse {
+    timeframe: String,
+    generated_at: DateTime<Utc>,
+    gates: Vec<CostGatePair>,
+    skipped: Vec<SkippedPair>,
+}
+
+#[derive(Debug, Serialize)]
+struct PortfolioPlanResponse {
+    timeframe: String,
+    generated_at: DateTime<Utc>,
+    plan: PortfolioPlan,
+    skipped: Vec<SkippedPair>,
 }
 
 #[derive(Debug, Serialize)]
@@ -479,6 +539,10 @@ struct ReoptimizeResponse {
     shadow_model_runs_written: usize,
     shadow_model_available: usize,
     shadow_model_unavailable: usize,
+    cost_gate_pass: usize,
+    cost_gate_fail: usize,
+    portfolio_advice_available: usize,
+    portfolio_advice_unavailable: usize,
     errors: Vec<ReoptError>,
 }
 
@@ -528,6 +592,11 @@ async fn main() -> anyhow::Result<()> {
     let app = Router::new()
         .route("/health", get(health))
         .route("/v1/strategy/pairs/cues", get(pairs_cues))
+        .route("/v1/strategy/pairs/cost-gate", get(pairs_cost_gate))
+        .route(
+            "/v1/strategy/pairs/portfolio-plan",
+            get(pairs_portfolio_plan),
+        )
         .route("/v1/strategy/pairs/reoptimize", post(reoptimize))
         .with_state(state);
 
@@ -542,6 +611,11 @@ async fn main() -> anyhow::Result<()> {
         reopt_interval_secs = settings.reopt_interval_secs,
         shadow_ml_min_rows = settings.shadow_ml_min_rows,
         shadow_ml_training_limit = settings.shadow_ml_training_limit,
+        trading_fee_bps = settings.trading_fee_bps,
+        min_net_edge_bps = settings.min_net_edge_bps,
+        advisory_enabled = settings.advisory_enabled,
+        advisory_gross_cap = settings.advisory_gross_cap,
+        advisory_per_pair_cap = settings.advisory_per_pair_cap,
         "strategy-service started"
     );
 
@@ -562,57 +636,74 @@ fn spawn_reoptimize_worker(state: AppState) -> tokio::task::JoinHandle<()> {
             let mut shadow_model_runs_written = 0usize;
             let mut shadow_model_available = 0usize;
             let mut shadow_model_unavailable = 0usize;
+            let mut cost_gate_pass = 0usize;
+            let mut cost_gate_fail = 0usize;
+            let mut portfolio_advice_available = 0usize;
+            let mut portfolio_advice_unavailable = 0usize;
 
             for timeframe in &state.settings.timeframes {
-                for pair in &state.settings.pairs {
-                    pairs_processed += 1;
-                    match evaluate_pair_for_timeframe(&state, pair, *timeframe).await {
-                        Ok(output) => {
-                            cues_generated += usize::from(output.cue.actionable);
-                            match output.cue.shadow_ml.status.as_str() {
-                                "AVAILABLE" => shadow_model_available += 1,
-                                _ => shadow_model_unavailable += 1,
-                            }
-                            match state
-                                .repository
-                                .record_evaluation(*timeframe, &output)
-                                .await
-                            {
-                                Ok(summary) => {
-                                    performance_rows_written += summary.performance_rows_written;
-                                    selected_rows_written += summary.selected_rows_written;
-                                }
-                                Err(error) => {
-                                    tracing::warn!(
-                                        pair_id = %pair.pair_id(),
-                                        timeframe = %timeframe.as_str(),
-                                        error = %error,
-                                        "failed to persist strategy evaluation"
-                                    );
-                                }
-                            }
-                            match state
-                                .repository
-                                .record_shadow_model_run(*timeframe, &output)
-                                .await
-                            {
-                                Ok(written) => shadow_model_runs_written += written,
-                                Err(error) => {
-                                    tracing::warn!(
-                                        pair_id = %pair.pair_id(),
-                                        timeframe = %timeframe.as_str(),
-                                        error = %error,
-                                        "failed to persist shadow model run"
-                                    );
-                                }
-                            }
+                let (outputs, skipped, plan) =
+                    evaluate_timeframe_outputs(&state, *timeframe, state.settings.advisory_enabled)
+                        .await;
+                pairs_processed += state.settings.pairs.len();
+                if plan.status == "AVAILABLE" {
+                    portfolio_advice_available += 1;
+                } else {
+                    portfolio_advice_unavailable += 1;
+                }
+                for skipped_pair in skipped {
+                    tracing::warn!(
+                        pair_id = %skipped_pair.pair_id,
+                        timeframe = %timeframe.as_str(),
+                        reason = %skipped_pair.reason,
+                        "strategy evaluation skipped"
+                    );
+                }
+
+                for output in outputs {
+                    cues_generated += usize::from(output.cue.actionable);
+                    match output.cue.shadow_ml.status.as_str() {
+                        "AVAILABLE" => shadow_model_available += 1,
+                        _ => shadow_model_unavailable += 1,
+                    }
+                    if output.cue.cost_gate.status == "AVAILABLE" {
+                        if output.cue.cost_gate.pass {
+                            cost_gate_pass += 1;
+                        } else {
+                            cost_gate_fail += 1;
+                        }
+                    }
+
+                    match state
+                        .repository
+                        .record_evaluation(*timeframe, &output)
+                        .await
+                    {
+                        Ok(summary) => {
+                            performance_rows_written += summary.performance_rows_written;
+                            selected_rows_written += summary.selected_rows_written;
                         }
                         Err(error) => {
                             tracing::warn!(
-                                pair_id = %pair.pair_id(),
+                                pair_id = %output.cue.pair_id,
                                 timeframe = %timeframe.as_str(),
                                 error = %error,
-                                "strategy evaluation skipped"
+                                "failed to persist strategy evaluation"
+                            );
+                        }
+                    }
+                    match state
+                        .repository
+                        .record_shadow_model_run(*timeframe, &output)
+                        .await
+                    {
+                        Ok(written) => shadow_model_runs_written += written,
+                        Err(error) => {
+                            tracing::warn!(
+                                pair_id = %output.cue.pair_id,
+                                timeframe = %timeframe.as_str(),
+                                error = %error,
+                                "failed to persist shadow model run"
                             );
                         }
                     }
@@ -627,6 +718,10 @@ fn spawn_reoptimize_worker(state: AppState) -> tokio::task::JoinHandle<()> {
                 shadow_model_runs_written,
                 shadow_model_available,
                 shadow_model_unavailable,
+                cost_gate_pass,
+                cost_gate_fail,
+                portfolio_advice_available,
+                portfolio_advice_unavailable,
                 "strategy reoptimize tick complete"
             );
         }
@@ -645,43 +740,54 @@ async fn pairs_cues(
         ApiError::BadRequest("invalid timeframe; expected 1m, 15m, 1h".to_string())
     })?;
     let limit = query.limit.unwrap_or(20).clamp(1, 100);
+    let include_advisory = query
+        .include_advisory
+        .unwrap_or(state.settings.advisory_enabled);
+    let (mut outputs, skipped, portfolio_plan) =
+        evaluate_timeframe_outputs(&state, timeframe, include_advisory).await;
 
     let mut cues = vec![];
-    let mut skipped = vec![];
+    for output in outputs.drain(..) {
+        let preferred_variant = state
+            .repository
+            .fetch_selected_variant(&output.cue.pair_id, timeframe)
+            .await
+            .map_err(|error| ApiError::Upstream(error.to_string()))?;
 
-    for pair in &state.settings.pairs {
-        match evaluate_pair_for_timeframe(&state, pair, timeframe).await {
-            Ok(output) => {
-                let preferred_variant = state
-                    .repository
-                    .fetch_selected_variant(&pair.pair_id(), timeframe)
-                    .await
-                    .map_err(|error| ApiError::Upstream(error.to_string()))?;
+        let selected_matches = preferred_variant
+            .as_deref()
+            .map(|preferred| preferred == output.cue.selected_variant)
+            .unwrap_or(true);
 
-                let selected_matches = preferred_variant
-                    .as_deref()
-                    .map(|preferred| preferred == output.cue.selected_variant)
-                    .unwrap_or(true);
-
-                let mut cue = output.cue.clone();
-                if !selected_matches {
-                    cue.rationale_codes.push("CHAMPION_DRIFT".to_string());
-                }
-
-                cues.push(CueWithDiagnostics {
-                    cue,
-                    variants: output.variants,
-                    half_life_bars: output.half_life_bars,
-                    hedge_ratio: output.hedge_ratio,
-                    hedge_ratio_stability: output.hedge_ratio_stability,
-                });
-            }
-            Err(error) => skipped.push(SkippedPair {
-                pair_id: pair.pair_id(),
-                reason: error.to_string(),
-            }),
+        let mut cue = output.cue.clone();
+        if !selected_matches {
+            cue.rationale_codes.push("CHAMPION_DRIFT".to_string());
         }
+
+        cues.push(CueWithDiagnostics {
+            cue,
+            variants: output.variants,
+            half_life_bars: output.half_life_bars,
+            hedge_ratio: output.hedge_ratio,
+            hedge_ratio_stability: output.hedge_ratio_stability,
+        });
     }
+
+    let candidate_set = CandidateSetDiagnostics {
+        total_pairs: state.settings.pairs.len(),
+        evaluated_pairs: cues.len(),
+        actionable_pairs: cues.iter().filter(|item| item.cue.actionable).count(),
+        cost_gate_pass_pairs: cues
+            .iter()
+            .filter(|item| item.cue.cost_gate.status == "AVAILABLE" && item.cue.cost_gate.pass)
+            .count(),
+        shadow_disagreement_pairs: cues
+            .iter()
+            .filter(|item| {
+                item.cue.shadow_ml.status == "AVAILABLE" && !item.cue.shadow_ml.agrees_with_selected
+            })
+            .count(),
+    };
 
     cues.sort_by(|left, right| {
         right
@@ -696,6 +802,64 @@ async fn pairs_cues(
         timeframe: timeframe.as_str().to_string(),
         generated_at: Utc::now(),
         cues,
+        candidate_set,
+        portfolio_plan,
+        skipped,
+    }))
+}
+
+async fn pairs_cost_gate(
+    State(state): State<AppState>,
+    Query(query): Query<CuesQuery>,
+) -> Result<Json<CostGateResponse>, ApiError> {
+    let timeframe = Timeframe::parse(&query.timeframe).ok_or_else(|| {
+        ApiError::BadRequest("invalid timeframe; expected 1m, 15m, 1h".to_string())
+    })?;
+    let (outputs, skipped, _plan) =
+        evaluate_timeframe_outputs(&state, timeframe, state.settings.advisory_enabled).await;
+
+    let gates = outputs
+        .into_iter()
+        .map(|output| CostGatePair {
+            pair_id: output.cue.pair_id,
+            left_instrument: output.cue.left_instrument,
+            right_instrument: output.cue.right_instrument,
+            timeframe: output.cue.timeframe,
+            expected_edge_bps: output.cue.cost_gate.expected_edge_bps,
+            fee_bps: output.cue.cost_gate.fee_bps,
+            funding_bps: output.cue.cost_gate.funding_bps,
+            slippage_bps: output.cue.cost_gate.slippage_bps,
+            net_edge_bps: output.cue.cost_gate.net_edge_bps,
+            pass: output.cue.cost_gate.pass,
+            rationale_codes: output.cue.cost_gate.rationale_codes,
+        })
+        .collect::<Vec<_>>();
+
+    Ok(Json(CostGateResponse {
+        timeframe: timeframe.as_str().to_string(),
+        generated_at: Utc::now(),
+        gates,
+        skipped,
+    }))
+}
+
+async fn pairs_portfolio_plan(
+    State(state): State<AppState>,
+    Query(query): Query<CuesQuery>,
+) -> Result<Json<PortfolioPlanResponse>, ApiError> {
+    let timeframe = Timeframe::parse(&query.timeframe).ok_or_else(|| {
+        ApiError::BadRequest("invalid timeframe; expected 1m, 15m, 1h".to_string())
+    })?;
+    let include_advisory = query
+        .include_advisory
+        .unwrap_or(state.settings.advisory_enabled);
+    let (_outputs, skipped, plan) =
+        evaluate_timeframe_outputs(&state, timeframe, include_advisory).await;
+
+    Ok(Json(PortfolioPlanResponse {
+        timeframe: timeframe.as_str().to_string(),
+        generated_at: Utc::now(),
+        plan,
         skipped,
     }))
 }
@@ -732,51 +896,69 @@ async fn reoptimize(
     let mut shadow_model_runs_written = 0usize;
     let mut shadow_model_available = 0usize;
     let mut shadow_model_unavailable = 0usize;
+    let mut cost_gate_pass = 0usize;
+    let mut cost_gate_fail = 0usize;
+    let mut portfolio_advice_available = 0usize;
+    let mut portfolio_advice_unavailable = 0usize;
     let mut errors = vec![];
 
     for timeframe in &requested_timeframes {
-        for pair in &state.settings.pairs {
-            pairs_processed += 1;
-            match evaluate_pair_for_timeframe(&state, pair, *timeframe).await {
-                Ok(output) => {
-                    cues_generated += usize::from(output.cue.actionable);
-                    match output.cue.shadow_ml.status.as_str() {
-                        "AVAILABLE" => shadow_model_available += 1,
-                        _ => shadow_model_unavailable += 1,
-                    }
-                    match state
-                        .repository
-                        .record_evaluation(*timeframe, &output)
-                        .await
-                    {
-                        Ok(summary) => {
-                            performance_rows_written += summary.performance_rows_written;
-                            selected_rows_written += summary.selected_rows_written;
-                        }
-                        Err(error) => errors.push(ReoptError {
-                            pair_id: pair.pair_id(),
-                            timeframe: timeframe.as_str().to_string(),
-                            error: error.to_string(),
-                        }),
-                    }
-                    if let Err(error) = state
-                        .repository
-                        .record_shadow_model_run(*timeframe, &output)
-                        .await
-                        .map(|written| shadow_model_runs_written += written)
-                    {
-                        errors.push(ReoptError {
-                            pair_id: pair.pair_id(),
-                            timeframe: timeframe.as_str().to_string(),
-                            error: format!("shadow model run persist failed: {error}"),
-                        });
-                    }
+        let (outputs, skipped, plan) =
+            evaluate_timeframe_outputs(&state, *timeframe, state.settings.advisory_enabled).await;
+        pairs_processed += state.settings.pairs.len();
+        if plan.status == "AVAILABLE" {
+            portfolio_advice_available += 1;
+        } else {
+            portfolio_advice_unavailable += 1;
+        }
+
+        for skipped_pair in skipped {
+            errors.push(ReoptError {
+                pair_id: skipped_pair.pair_id,
+                timeframe: timeframe.as_str().to_string(),
+                error: skipped_pair.reason,
+            });
+        }
+
+        for output in outputs {
+            cues_generated += usize::from(output.cue.actionable);
+            match output.cue.shadow_ml.status.as_str() {
+                "AVAILABLE" => shadow_model_available += 1,
+                _ => shadow_model_unavailable += 1,
+            }
+            if output.cue.cost_gate.status == "AVAILABLE" {
+                if output.cue.cost_gate.pass {
+                    cost_gate_pass += 1;
+                } else {
+                    cost_gate_fail += 1;
+                }
+            }
+            match state
+                .repository
+                .record_evaluation(*timeframe, &output)
+                .await
+            {
+                Ok(summary) => {
+                    performance_rows_written += summary.performance_rows_written;
+                    selected_rows_written += summary.selected_rows_written;
                 }
                 Err(error) => errors.push(ReoptError {
-                    pair_id: pair.pair_id(),
+                    pair_id: output.cue.pair_id.clone(),
                     timeframe: timeframe.as_str().to_string(),
                     error: error.to_string(),
                 }),
+            }
+            if let Err(error) = state
+                .repository
+                .record_shadow_model_run(*timeframe, &output)
+                .await
+                .map(|written| shadow_model_runs_written += written)
+            {
+                errors.push(ReoptError {
+                    pair_id: output.cue.pair_id,
+                    timeframe: timeframe.as_str().to_string(),
+                    error: format!("shadow model run persist failed: {error}"),
+                });
             }
         }
     }
@@ -794,6 +976,10 @@ async fn reoptimize(
         shadow_model_runs_written,
         shadow_model_available,
         shadow_model_unavailable,
+        cost_gate_pass,
+        cost_gate_fail,
+        portfolio_advice_available,
+        portfolio_advice_unavailable,
         errors,
     }))
 }
@@ -802,6 +988,7 @@ async fn evaluate_pair_for_timeframe(
     state: &AppState,
     pair: &PairSpec,
     timeframe: Timeframe,
+    advisory_enabled: bool,
 ) -> anyhow::Result<PairEvaluationOutput> {
     let lookback = state.settings.lookback_bars(timeframe) as i64;
     let left = state
@@ -878,7 +1065,95 @@ async fn evaluate_pair_for_timeframe(
         );
     }
 
+    if advisory_enabled {
+        let cost_gate = evaluate_cost_gate(CostGateInput {
+            expected_edge_bps: output.cue.opportunity_score.max(0.0),
+            fee_bps: state.settings.trading_fee_bps,
+            funding_bps: output.cue.cost_estimate_bps.max(0.0),
+            spread_vol_bps: output.spread_vol_bps.max(0.0),
+            spread_z: output.cue.spread_z,
+            slippage_base_bps: state.settings.slippage_base_bps,
+            slippage_vol_multiplier: state.settings.slippage_vol_multiplier,
+            slippage_z_multiplier: state.settings.slippage_z_multiplier,
+            min_net_edge_bps: state.settings.min_net_edge_bps,
+        });
+
+        if !cost_gate.pass {
+            output.cue.actionable = false;
+            if !output
+                .cue
+                .rationale_codes
+                .iter()
+                .any(|code| code == "COST_GATE_BLOCKED")
+            {
+                output
+                    .cue
+                    .rationale_codes
+                    .push("COST_GATE_BLOCKED".to_string());
+            }
+        }
+        output.cue.cost_gate = cost_gate;
+    } else {
+        output.cue.cost_gate = strategy_service::CostGateDiagnostics::unavailable(vec![
+            "ADVISORY_DISABLED".to_string(),
+        ]);
+    }
+
     Ok(output)
+}
+
+async fn evaluate_timeframe_outputs(
+    state: &AppState,
+    timeframe: Timeframe,
+    advisory_enabled: bool,
+) -> (Vec<PairEvaluationOutput>, Vec<SkippedPair>, PortfolioPlan) {
+    let mut outputs = vec![];
+    let mut skipped = vec![];
+
+    for pair in &state.settings.pairs {
+        match evaluate_pair_for_timeframe(state, pair, timeframe, advisory_enabled).await {
+            Ok(output) => outputs.push(output),
+            Err(error) => skipped.push(SkippedPair {
+                pair_id: pair.pair_id(),
+                reason: error.to_string(),
+            }),
+        }
+    }
+
+    let portfolio_plan = if advisory_enabled {
+        let mut cue_snapshot = outputs
+            .iter()
+            .map(|output| output.cue.clone())
+            .collect::<Vec<_>>();
+        let plan = build_portfolio_plan(
+            &cue_snapshot,
+            state.settings.advisory_gross_cap,
+            state.settings.advisory_per_pair_cap,
+        );
+        apply_portfolio_plan_to_cues(&mut cue_snapshot, &plan);
+        for (output, cue) in outputs.iter_mut().zip(cue_snapshot.into_iter()) {
+            output.cue = cue;
+        }
+        plan
+    } else {
+        let plan = PortfolioPlan {
+            status: "UNAVAILABLE".to_string(),
+            weights: vec![],
+            constraints: strategy_service::PortfolioPlanConstraints {
+                dollar_neutral: false,
+                gross_cap: state.settings.advisory_gross_cap.max(0.0),
+                per_pair_cap: state.settings.advisory_per_pair_cap.max(0.0),
+            },
+            rationale_codes: vec!["ADVISORY_DISABLED".to_string()],
+        };
+        for output in &mut outputs {
+            output.cue.portfolio_hint =
+                strategy_service::PortfolioHint::unavailable(vec!["ADVISORY_DISABLED".to_string()]);
+        }
+        plan
+    };
+
+    (outputs, skipped, portfolio_plan)
 }
 
 fn align_closes(
@@ -965,5 +1240,15 @@ fn parse_env_u64(key: &str, default: u64) -> u64 {
     std::env::var(key)
         .ok()
         .and_then(|value| value.parse::<u64>().ok())
+        .unwrap_or(default)
+}
+
+fn parse_env_bool(key: &str, default: bool) -> bool {
+    std::env::var(key)
+        .ok()
+        .map(|value| {
+            let normalized = value.trim().to_ascii_lowercase();
+            matches!(normalized.as_str(), "1" | "true" | "yes" | "on")
+        })
         .unwrap_or(default)
 }

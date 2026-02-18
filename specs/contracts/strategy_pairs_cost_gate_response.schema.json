@@ -1,0 +1,67 @@
+{
+  "$id": "https://cryptopairs/specs/contracts/strategy_pairs_cost_gate_response.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "StrategyPairsCostGateResponse",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["timeframe", "generated_at", "gates", "skipped"],
+  "properties": {
+    "timeframe": {
+      "type": "string",
+      "enum": ["1m", "15m", "1h"]
+    },
+    "generated_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "gates": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "pair_id",
+          "left_instrument",
+          "right_instrument",
+          "timeframe",
+          "expected_edge_bps",
+          "fee_bps",
+          "funding_bps",
+          "slippage_bps",
+          "net_edge_bps",
+          "pass",
+          "rationale_codes"
+        ],
+        "properties": {
+          "pair_id": { "type": "string" },
+          "left_instrument": { "type": "string" },
+          "right_instrument": { "type": "string" },
+          "timeframe": { "type": "string", "enum": ["1m", "15m", "1h"] },
+          "expected_edge_bps": { "type": "number" },
+          "fee_bps": { "type": "number", "minimum": 0 },
+          "funding_bps": { "type": "number", "minimum": 0 },
+          "slippage_bps": { "type": "number", "minimum": 0 },
+          "net_edge_bps": { "type": "number" },
+          "pass": { "type": "boolean" },
+          "rationale_codes": {
+            "type": "array",
+            "items": { "type": "string" }
+          }
+        }
+      }
+    },
+    "skipped": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["pair_id", "reason"],
+        "properties": {
+          "pair_id": { "type": "string" },
+          "reason": { "type": "string" }
+        }
+      }
+    }
+  },
+  "version": "0.1.0"
+}

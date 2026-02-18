@@ -1,0 +1,67 @@
+{
+  "$id": "https://cryptopairs/specs/contracts/strategy_pairs_portfolio_plan_response.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "StrategyPairsPortfolioPlanResponse",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["timeframe", "generated_at", "plan", "skipped"],
+  "properties": {
+    "timeframe": {
+      "type": "string",
+      "enum": ["1m", "15m", "1h"]
+    },
+    "generated_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "plan": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status", "weights", "constraints", "rationale_codes"],
+      "properties": {
+        "status": { "type": "string", "enum": ["AVAILABLE", "UNAVAILABLE"] },
+        "weights": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["pair_id", "target_weight", "risk_contribution", "cap_applied"],
+            "properties": {
+              "pair_id": { "type": "string" },
+              "target_weight": { "type": "number" },
+              "risk_contribution": { "type": "number", "minimum": 0, "maximum": 1 },
+              "cap_applied": { "type": "boolean" }
+            }
+          }
+        },
+        "constraints": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["dollar_neutral", "gross_cap", "per_pair_cap"],
+          "properties": {
+            "dollar_neutral": { "type": "boolean" },
+            "gross_cap": { "type": "number", "minimum": 0 },
+            "per_pair_cap": { "type": "number", "minimum": 0 }
+          }
+        },
+        "rationale_codes": {
+          "type": "array",
+          "items": { "type": "string" }
+        }
+      }
+    },
+    "skipped": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["pair_id", "reason"],
+        "properties": {
+          "pair_id": { "type": "string" },
+          "reason": { "type": "string" }
+        }
+      }
+    }
+  },
+  "version": "0.1.0"
+}

@@ -11,6 +11,13 @@
     "cues_generated",
     "performance_rows_written",
     "selected_rows_written",
+    "shadow_model_runs_written",
+    "shadow_model_available",
+    "shadow_model_unavailable",
+    "cost_gate_pass",
+    "cost_gate_fail",
+    "portfolio_advice_available",
+    "portfolio_advice_unavailable",
     "errors"
   ],
   "properties": {
@@ -50,6 +57,22 @@
       "minimum": 0
     },
     "shadow_model_unavailable": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "cost_gate_pass": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "cost_gate_fail": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "portfolio_advice_available": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "portfolio_advice_unavailable": {
       "type": "integer",
       "minimum": 0
     },
