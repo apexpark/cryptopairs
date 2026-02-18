@@ -5,3 +5,9 @@ Contracts are the canonical, machine-readable definitions of system interfaces.
 - JSON Schema is recommended for events/messages.
 - Each schema SHOULD include a version identifier.
 - Update `specs/examples/` whenever schemas change.
+
+Current baseline contracts:
+- `specs/contracts/data_query_request.schema.json`
+- `specs/contracts/data_query_response.schema.json`
+- `specs/contracts/candle.schema.json`
+- `specs/contracts/integrity_status.schema.json`

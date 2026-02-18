@@ -1,0 +1,15 @@
+{
+  "$id": "https://cryptopairs/specs/contracts/integrity_status.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "IntegrityStatus",
+  "type": "string",
+  "enum": [
+    "COMPLETE",
+    "PARTIAL_BACKFILLED",
+    "INCOMPLETE",
+    "STALE",
+    "FAILED"
+  ],
+  "description": "Integrity state returned on every data query.",
+  "version": "0.1.0"
+}

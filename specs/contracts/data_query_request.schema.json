@@ -1,0 +1,27 @@
+{
+  "$id": "https://cryptopairs/specs/contracts/data_query_request.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "DataQueryRequest",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["instrument", "timeframe", "start_ts", "end_ts"],
+  "properties": {
+    "instrument": {
+      "type": "string",
+      "minLength": 1
+    },
+    "timeframe": {
+      "type": "string",
+      "enum": ["1m", "15m", "1h"]
+    },
+    "start_ts": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "end_ts": {
+      "type": "string",
+      "format": "date-time"
+    }
+  },
+  "version": "0.1.0"
+}

@@ -1,0 +1,40 @@
+{
+  "generated_at": "2026-02-17T22:03:10.592065+00:00",
+  "source": "https://futures.kraken.com/api/charts/v1/trade/:symbol/:timeframe?from=<sec>&to=<sec>",
+  "symbol": "PI_XBTUSD",
+  "results": [
+    {
+      "timeframe": "1m",
+      "symbol": "PI_XBTUSD",
+      "candles_returned": 2000,
+      "more_candles": true,
+      "earliest_candle_ms": 1582719360000,
+      "earliest_candle_iso": "2020-02-26T12:16:00+00:00",
+      "latest_candle_ms": 1582839300000,
+      "latest_candle_iso": "2020-02-27T21:35:00+00:00",
+      "continuity_issues_in_page": 0
+    },
+    {
+      "timeframe": "15m",
+      "symbol": "PI_XBTUSD",
+      "candles_returned": 2000,
+      "more_candles": true,
+      "earliest_candle_ms": 1582719300000,
+      "earliest_candle_iso": "2020-02-26T12:15:00+00:00",
+      "latest_candle_ms": 1584518400000,
+      "latest_candle_iso": "2020-03-18T08:00:00+00:00",
+      "continuity_issues_in_page": 0
+    },
+    {
+      "timeframe": "1h",
+      "symbol": "PI_XBTUSD",
+      "candles_returned": 2000,
+      "more_candles": true,
+      "earliest_candle_ms": 1582718400000,
+      "earliest_candle_iso": "2020-02-26T12:00:00+00:00",
+      "latest_candle_ms": 1589914800000,
+      "latest_candle_iso": "2020-05-19T19:00:00+00:00",
+      "continuity_issues_in_page": 0
+    }
+  ]
+}

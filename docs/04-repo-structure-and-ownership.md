@@ -8,6 +8,12 @@ At minimum, this repo contains:
 - `specs/` machine-readable contracts + examples
 - `.github/` templates + ownership configuration
 - `AGENTS.md`, `CHANGELOG.md`, `README.md`
+- `services/` Rust service scaffolding
+- `crates/` shared Rust types
+- `research/` Python strategy scaffolding
+- `apps/` frontend app directory scaffold
+- `infra/` local stack and SQL bootstrap
+- `tools/` utility scripts directory scaffold
 
 ## Future Golden Layout (When Code Arrives)
 

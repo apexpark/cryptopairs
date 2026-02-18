@@ -1,6 +1,6 @@
 # Crypto Pairs Trader
 
-This repo is currently **docs-first**: policies, contracts, and operational playbooks come before implementation.
+This repo is **docs-governed and implementation-active**: policies/contracts define guardrails, and code is added in thin slices.
 
 ## Start Here
 - `AGENTS.md` (highest precedence; mandatory for agents)
@@ -33,6 +33,81 @@ Machine-readable contracts should live in:
 - `specs/contracts/`
 with examples in:
 - `specs/examples/`
+
+## Local Stack (Docker)
+Prerequisites:
+- Rust toolchain (`cargo`, `rustc`)
+- Docker Desktop (`docker`, `docker compose`)
+- Python 3.9+ for research tests
+
+Start local storage dependencies:
+
+```bash
+docker compose up -d
+```
+
+Services:
+- TimescaleDB (PostgreSQL) on `localhost:5432`
+- Redis on `localhost:6379`
+
+## Run Checks
+
+```bash
+cargo test --workspace
+cargo fmt --all -- --check
+cargo clippy --workspace --all-targets -- -D warnings
+```
+
+```bash
+python -m pip install ruff pytest
+PYTHONPATH=research/strategy-engine/src pytest research/strategy-engine/tests -q
+ruff check research
+```
+
+## Run Data Service
+
+```bash
+cargo run -p data-service
+```
+
+Current behavior:
+- Reads requested candles from local Timescale first.
+- Detects missing ranges for `1m`, `15m`, `1h`.
+- Performs targeted Kraken backfill only for missing ranges.
+- Re-queries local store and returns data + integrity report.
+- Background worker continuously backfills configured symbols (`KRAKEN_SYMBOLS`).
+
+## Bootstrap Historical Backfill
+
+```bash
+cargo run -p data-service --bin bootstrap_backfill
+```
+
+This command:
+- Pulls real Kraken candles in chunked windows from `BOOTSTRAP_START_TS`.
+- Upserts candles to local Timescale.
+- Writes integrity audit rows into `data_quality_intervals` for each chunk.
+
+## Kraken History Depth Probe (Live Data)
+
+Run:
+
+```bash
+python3 tools/scripts/kraken_history_depth_probe.py \
+  --symbol PI_XBTUSD \
+  --timeframes 1m 15m 1h \
+  --output-json specs/examples/kraken_history_depth_probe_PI_XBTUSD.json
+```
+
+The generated report captures earliest returned candles, page continuity checks, and pagination flags for each timeframe.
+
+## Monorepo Layout
+- `services/` Rust services (`kraken-adapter`, `data-service`, `execution-service`)
+- `crates/` shared Rust types and contracts
+- `research/` Python strategy research scaffolding
+- `apps/` UI applications
+- `infra/` local infra and SQL bootstrap
+- `specs/` schema contracts and examples
 
 ## Versioning
 See `docs/02-versioning-and-releases.md` and `CHANGELOG.md`.

@@ -1,0 +1,18 @@
+[package]
+name = "data-service"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+async-trait.workspace = true
+axum.workspace = true
+chrono.workspace = true
+common-types = { path = "../../crates/common-types" }
+kraken-adapter = { path = "../kraken-adapter" }
+serde.workspace = true
+tokio.workspace = true
+tokio-postgres.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
