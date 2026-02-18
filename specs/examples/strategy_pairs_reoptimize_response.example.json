@@ -8,6 +8,10 @@
   "shadow_model_runs_written": 3,
   "shadow_model_available": 2,
   "shadow_model_unavailable": 1,
+  "cost_gate_pass": 2,
+  "cost_gate_fail": 1,
+  "portfolio_advice_available": 2,
+  "portfolio_advice_unavailable": 1,
   "errors": [
     {
       "pair_id": "PI_XBTUSD__PI_ETHUSD",

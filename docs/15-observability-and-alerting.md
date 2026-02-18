@@ -32,6 +32,8 @@ Define required telemetry, health signals, and alert policies.
 - Champion variant selection drift
 - Reoptimize success/failure counts
 - Shadow model availability/unavailability counts by timeframe
+- Cost gate pass/fail counts by timeframe and reason
+- Portfolio advisory availability/unavailability by timeframe
 
 4. Execution and risk:
 - Order ack latency

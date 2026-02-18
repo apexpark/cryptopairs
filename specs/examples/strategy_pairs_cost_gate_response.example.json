@@ -1,0 +1,33 @@
+{
+  "timeframe": "1m",
+  "generated_at": "2026-02-19T02:11:00Z",
+  "gates": [
+    {
+      "pair_id": "PI_XBTUSD__PI_ETHUSD",
+      "left_instrument": "PI_XBTUSD",
+      "right_instrument": "PI_ETHUSD",
+      "timeframe": "1m",
+      "expected_edge_bps": 7.42,
+      "fee_bps": 1.2,
+      "funding_bps": 0.6,
+      "slippage_bps": 1.84,
+      "net_edge_bps": 3.78,
+      "pass": true,
+      "rationale_codes": []
+    },
+    {
+      "pair_id": "PI_SOLUSD__PI_ETHUSD",
+      "left_instrument": "PI_SOLUSD",
+      "right_instrument": "PI_ETHUSD",
+      "timeframe": "1m",
+      "expected_edge_bps": 1.41,
+      "fee_bps": 1.2,
+      "funding_bps": 0.6,
+      "slippage_bps": 1.55,
+      "net_edge_bps": -1.94,
+      "pass": false,
+      "rationale_codes": ["COST_GATE_BLOCKED"]
+    }
+  ],
+  "skipped": []
+}

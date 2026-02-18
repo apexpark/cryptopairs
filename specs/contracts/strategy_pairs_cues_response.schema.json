@@ -4,7 +4,7 @@
   "title": "StrategyPairsCuesResponse",
   "type": "object",
   "additionalProperties": false,
-  "required": ["timeframe", "generated_at", "cues", "skipped"],
+  "required": ["timeframe", "generated_at", "cues", "candidate_set", "portfolio_plan", "skipped"],
   "properties": {
     "timeframe": {
       "type": "string",
@@ -42,6 +42,9 @@
               "cost_estimate_bps",
               "actionable",
               "rationale_codes",
+              "cost_gate",
+              "portfolio_hint",
+              "shadow_ml",
               "evaluated_at"
             ],
             "properties": {
@@ -67,6 +70,54 @@
               "rationale_codes": {
                 "type": "array",
                 "items": { "type": "string" }
+              },
+              "cost_gate": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "status",
+                  "expected_edge_bps",
+                  "fee_bps",
+                  "funding_bps",
+                  "slippage_bps",
+                  "net_edge_bps",
+                  "pass",
+                  "rationale_codes"
+                ],
+                "properties": {
+                  "status": { "type": "string", "enum": ["AVAILABLE", "UNAVAILABLE"] },
+                  "expected_edge_bps": { "type": "number" },
+                  "fee_bps": { "type": "number", "minimum": 0 },
+                  "funding_bps": { "type": "number", "minimum": 0 },
+                  "slippage_bps": { "type": "number", "minimum": 0 },
+                  "net_edge_bps": { "type": "number" },
+                  "pass": { "type": "boolean" },
+                  "rationale_codes": {
+                    "type": "array",
+                    "items": { "type": "string" }
+                  }
+                }
+              },
+              "portfolio_hint": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "status",
+                  "target_weight",
+                  "risk_contribution",
+                  "cap_applied",
+                  "rationale_codes"
+                ],
+                "properties": {
+                  "status": { "type": "string", "enum": ["AVAILABLE", "UNAVAILABLE"] },
+                  "target_weight": { "type": "number" },
+                  "risk_contribution": { "type": "number", "minimum": 0, "maximum": 1 },
+                  "cap_applied": { "type": "boolean" },
+                  "rationale_codes": {
+                    "type": "array",
+                    "items": { "type": "string" }
+                  }
+                }
               },
               "shadow_ml": {
                 "type": "object",
@@ -151,6 +202,60 @@
           "half_life_bars": { "type": "number", "minimum": 0 },
           "hedge_ratio": { "type": "number" },
           "hedge_ratio_stability": { "type": "number", "minimum": 0 }
+        }
+      }
+    },
+    "candidate_set": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "total_pairs",
+        "evaluated_pairs",
+        "actionable_pairs",
+        "cost_gate_pass_pairs",
+        "shadow_disagreement_pairs"
+      ],
+      "properties": {
+        "total_pairs": { "type": "integer", "minimum": 0 },
+        "evaluated_pairs": { "type": "integer", "minimum": 0 },
+        "actionable_pairs": { "type": "integer", "minimum": 0 },
+        "cost_gate_pass_pairs": { "type": "integer", "minimum": 0 },
+        "shadow_disagreement_pairs": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "portfolio_plan": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status", "weights", "constraints", "rationale_codes"],
+      "properties": {
+        "status": { "type": "string", "enum": ["AVAILABLE", "UNAVAILABLE"] },
+        "weights": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["pair_id", "target_weight", "risk_contribution", "cap_applied"],
+            "properties": {
+              "pair_id": { "type": "string" },
+              "target_weight": { "type": "number" },
+              "risk_contribution": { "type": "number", "minimum": 0, "maximum": 1 },
+              "cap_applied": { "type": "boolean" }
+            }
+          }
+        },
+        "constraints": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["dollar_neutral", "gross_cap", "per_pair_cap"],
+          "properties": {
+            "dollar_neutral": { "type": "boolean" },
+            "gross_cap": { "type": "number", "minimum": 0 },
+            "per_pair_cap": { "type": "number", "minimum": 0 }
+          }
+        },
+        "rationale_codes": {
+          "type": "array",
+          "items": { "type": "string" }
         }
       }
     },

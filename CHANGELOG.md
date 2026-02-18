@@ -69,6 +69,22 @@ This project follows SemVer as defined in `docs/02-versioning-and-releases.md`.
   - Cue-level `shadow_ml` diagnostics plus per-variant shadow probability/rank fields.
   - New audit table `strategy_shadow_model_runs`.
   - Reoptimize response counters for model availability and persisted shadow runs.
+- Strategy module slices A-D implemented for advisory controls:
+  - New strategy endpoints:
+    - `GET /v1/strategy/pairs/cost-gate`
+    - `GET /v1/strategy/pairs/portfolio-plan`
+  - Extended cues response with:
+    - `cost_gate` and `portfolio_hint` on each cue
+    - `candidate_set` and `portfolio_plan` response-level diagnostics
+  - Reoptimize counters expanded:
+    - `cost_gate_pass`, `cost_gate_fail`
+    - `portfolio_advice_available`, `portfolio_advice_unavailable`
+  - New contracts/examples:
+    - `specs/contracts/strategy_pairs_cost_gate_response.schema.json`
+    - `specs/contracts/strategy_pairs_portfolio_plan_response.schema.json`
+    - `specs/examples/strategy_pairs_cost_gate_response.example.json`
+    - `specs/examples/strategy_pairs_portfolio_plan_response.example.json`
+  - New strategy advisory configuration keys for fee/slippage/net-edge/exposure caps.
 
 ### Changed
 - Product/risk/architecture docs now explicitly define manual-first live trading for MVP.

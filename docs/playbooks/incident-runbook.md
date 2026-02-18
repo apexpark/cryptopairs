@@ -24,6 +24,8 @@ Provide a standard response for production-impacting failures in data, execution
 3. Execution queue and order lifecycle anomalies.
 4. Account drift and reconciliation mismatches.
 5. Recent configuration or deployment changes.
+6. Strategy cost gate behavior (`pass/fail` spikes, negative net-edge drift).
+7. Portfolio advisory status (`AVAILABLE`/`UNAVAILABLE`) and rationale codes.
 
 ## Containment
 
@@ -37,6 +39,7 @@ Provide a standard response for production-impacting failures in data, execution
 2. Verify health checks and critical metrics normalization.
 3. Reconcile account and position state against exchange.
 4. Resume paper/live mode only after explicit checks pass.
+5. Confirm strategy cues are fail-closed when advisory or cost model inputs are degraded.
 
 ## Post-Incident
 

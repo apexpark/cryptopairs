@@ -142,6 +142,24 @@ GET /v1/strategy/pairs/cues?timeframe=1m&limit=20
 Returns adaptive pairs cue candidates with champion/challenger variant diagnostics for manual action.
 Each cue now includes `shadow_ml` diagnostics (availability, model quality, recommended variant)
 and per-variant `shadow_success_probability`/`shadow_rank_score` fields for decision support.
+Each cue also includes a fail-closed `cost_gate` block and a `portfolio_hint` advisory block.
+Response-level `candidate_set` and `portfolio_plan` objects summarize scan quality and suggested sizing.
+
+## Strategy Cost Gate Endpoint
+
+```bash
+GET /v1/strategy/pairs/cost-gate?timeframe=1m
+```
+
+Returns edge-versus-cost diagnostics (`expected_edge_bps`, fee/funding/slippage, pass/fail) for each pair.
+
+## Strategy Portfolio Plan Endpoint
+
+```bash
+GET /v1/strategy/pairs/portfolio-plan?timeframe=1m
+```
+
+Returns advisory pair weights with dollar-neutrality and exposure cap constraints for manual execution support.
 
 ## Strategy Reoptimize Endpoint
 
@@ -150,7 +168,7 @@ POST /v1/strategy/pairs/reoptimize
 ```
 
 Runs rolling recent-performance evaluation and persists selected signal variants by pair/timeframe.
-Response includes shadow model availability counters and audit write count.
+Response includes shadow model counters, cost-gate pass/fail counters, and portfolio advisory availability counters.
 
 ## Bootstrap Historical Backfill
 
