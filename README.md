@@ -140,6 +140,8 @@ GET /v1/strategy/pairs/cues?timeframe=1m&limit=20
 ```
 
 Returns adaptive pairs cue candidates with champion/challenger variant diagnostics for manual action.
+Each cue now includes `shadow_ml` diagnostics (availability, model quality, recommended variant)
+and per-variant `shadow_success_probability`/`shadow_rank_score` fields for decision support.
 
 ## Strategy Reoptimize Endpoint
 
@@ -148,6 +150,7 @@ POST /v1/strategy/pairs/reoptimize
 ```
 
 Runs rolling recent-performance evaluation and persists selected signal variants by pair/timeframe.
+Response includes shadow model availability counters and audit write count.
 
 ## Bootstrap Historical Backfill
 

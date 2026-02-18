@@ -110,6 +110,7 @@ CREATE TABLE IF NOT EXISTS strategy_signal_performance (
   timeframe TEXT NOT NULL,
   signal_variant TEXT NOT NULL,
   window_end TIMESTAMPTZ NOT NULL,
+  score_last DOUBLE PRECISION NOT NULL,
   sample_count INTEGER NOT NULL,
   win_rate DOUBLE PRECISION NOT NULL,
   edge_bps DOUBLE PRECISION NOT NULL,
@@ -121,6 +122,9 @@ CREATE TABLE IF NOT EXISTS strategy_signal_performance (
   PRIMARY KEY (pair_id, timeframe, signal_variant, window_end)
 );
 
+ALTER TABLE strategy_signal_performance
+ADD COLUMN IF NOT EXISTS score_last DOUBLE PRECISION NOT NULL DEFAULT 0;
+
 CREATE TABLE IF NOT EXISTS strategy_selected_signal (
   pair_id TEXT NOT NULL,
   timeframe TEXT NOT NULL,
@@ -128,4 +132,22 @@ CREATE TABLE IF NOT EXISTS strategy_selected_signal (
   opportunity_score DOUBLE PRECISION NOT NULL,
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   PRIMARY KEY (pair_id, timeframe)
+);
+
+CREATE TABLE IF NOT EXISTS strategy_shadow_model_runs (
+  pair_id TEXT NOT NULL,
+  timeframe TEXT NOT NULL,
+  run_at TIMESTAMPTZ NOT NULL,
+  model_name TEXT NOT NULL,
+  status TEXT NOT NULL,
+  training_rows INTEGER NOT NULL,
+  positive_rate DOUBLE PRECISION NOT NULL,
+  precision DOUBLE PRECISION NOT NULL,
+  brier_score DOUBLE PRECISION NOT NULL,
+  recommended_variant TEXT NOT NULL,
+  recommended_probability DOUBLE PRECISION NOT NULL,
+  agrees_with_selected BOOLEAN NOT NULL,
+  rationale TEXT NOT NULL DEFAULT '',
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  PRIMARY KEY (pair_id, timeframe, run_at)
 );

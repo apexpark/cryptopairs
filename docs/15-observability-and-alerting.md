@@ -31,6 +31,7 @@ Define required telemetry, health signals, and alert policies.
 - Actionable cue count by pair
 - Champion variant selection drift
 - Reoptimize success/failure counts
+- Shadow model availability/unavailability counts by timeframe
 
 4. Execution and risk:
 - Order ack latency
