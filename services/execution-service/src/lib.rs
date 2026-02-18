@@ -13,6 +13,12 @@ pub enum GateDecision {
     Blocked(String),
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum OrderIntentDecision {
+    Accepted,
+    Blocked(String),
+}
+
 pub fn evaluate_integrity_gate(
     report: &DataIntegrityReport,
     config: ExecutionGateConfig,
@@ -26,6 +32,29 @@ pub fn evaluate_integrity_gate(
             report.coverage_pct,
             config.min_coverage_pct
         ))
+    }
+}
+
+pub fn evaluate_order_intent(
+    kill_switch_active: bool,
+    gate_decision: GateDecision,
+) -> OrderIntentDecision {
+    if kill_switch_active {
+        return OrderIntentDecision::Blocked(
+            "kill switch is active; order intent blocked".to_string(),
+        );
+    }
+    match gate_decision {
+        GateDecision::Allowed => OrderIntentDecision::Accepted,
+        GateDecision::Blocked(reason) => OrderIntentDecision::Blocked(reason),
+    }
+}
+
+pub fn normalize_side(value: &str) -> Option<&'static str> {
+    match value {
+        "BUY" | "buy" | "Buy" => Some("BUY"),
+        "SELL" | "sell" | "Sell" => Some("SELL"),
+        _ => None,
     }
 }
 
@@ -89,7 +118,8 @@ fn parse_integrity_status(value: &str) -> Option<IntegrityStatus> {
 #[cfg(test)]
 mod tests {
     use super::{
-        evaluate_integrity_gate, parse_integrity_status, ExecutionGateConfig, GateDecision,
+        evaluate_integrity_gate, evaluate_order_intent, normalize_side, parse_integrity_status,
+        ExecutionGateConfig, GateDecision, OrderIntentDecision,
     };
     use chrono::Utc;
     use common_types::{DataIntegrityReport, IntegrityStatus};
@@ -137,5 +167,24 @@ mod tests {
             Some(IntegrityStatus::Complete)
         );
         assert_eq!(parse_integrity_status("UNKNOWN"), None);
+    }
+
+    #[test]
+    fn order_intent_blocks_when_kill_switch_active() {
+        let decision = evaluate_order_intent(true, GateDecision::Allowed);
+        assert!(matches!(decision, OrderIntentDecision::Blocked(_)));
+    }
+
+    #[test]
+    fn order_intent_accepts_when_gate_allows_and_kill_switch_off() {
+        let decision = evaluate_order_intent(false, GateDecision::Allowed);
+        assert_eq!(decision, OrderIntentDecision::Accepted);
+    }
+
+    #[test]
+    fn normalize_side_accepts_buy_sell_variants() {
+        assert_eq!(normalize_side("BUY"), Some("BUY"));
+        assert_eq!(normalize_side("sell"), Some("SELL"));
+        assert_eq!(normalize_side("HOLD"), None);
     }
 }

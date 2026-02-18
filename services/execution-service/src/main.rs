@@ -2,20 +2,192 @@ use axum::{
     extract::{Query, State},
     http::StatusCode,
     response::{IntoResponse, Response},
-    routing::get,
+    routing::{get, post},
     Json, Router,
 };
+use chrono::{DateTime, Utc};
 use common_types::Timeframe;
-use execution_service::{evaluate_integrity_gate_from_store, GateDecision};
+use execution_service::{
+    evaluate_integrity_gate_from_store, evaluate_order_intent, normalize_side, GateDecision,
+    OrderIntentDecision,
+};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use tokio::net::TcpListener;
+use tokio_postgres::{types::ToSql, Client, NoTls};
 use tracing::info;
 
 #[derive(Clone)]
 struct AppState {
+    repository: Arc<ExecutionRepository>,
     postgres_url: Arc<String>,
     default_min_coverage_pct: f64,
+}
+
+#[derive(Clone)]
+struct ExecutionRepository {
+    client: Arc<Client>,
+}
+
+impl ExecutionRepository {
+    async fn connect(connection_string: &str) -> anyhow::Result<Self> {
+        let (client, connection) = tokio_postgres::connect(connection_string, NoTls).await?;
+        tokio::spawn(async move {
+            if let Err(error) = connection.await {
+                tracing::error!(error = %error, "execution-service postgres connection ended");
+            }
+        });
+
+        let repository = Self {
+            client: Arc::new(client),
+        };
+        repository.ensure_schema().await?;
+        Ok(repository)
+    }
+
+    async fn ensure_schema(&self) -> anyhow::Result<()> {
+        self.client
+            .batch_execute(
+                "CREATE TABLE IF NOT EXISTS execution_control (
+                    id SMALLINT PRIMARY KEY DEFAULT 1,
+                    kill_switch_active BOOLEAN NOT NULL,
+                    reason TEXT NOT NULL DEFAULT '',
+                    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                    CHECK (id = 1)
+                 );
+                 CREATE TABLE IF NOT EXISTS execution_control_events (
+                    ts TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                    kill_switch_active BOOLEAN NOT NULL,
+                    reason TEXT NOT NULL,
+                    actor TEXT NOT NULL DEFAULT 'system'
+                 );
+                 CREATE TABLE IF NOT EXISTS execution_order_intents (
+                    idempotency_key TEXT PRIMARY KEY,
+                    instrument TEXT NOT NULL,
+                    timeframe TEXT NOT NULL,
+                    side TEXT NOT NULL,
+                    qty DOUBLE PRECISION NOT NULL,
+                    min_coverage_pct DOUBLE PRECISION NOT NULL,
+                    decision TEXT NOT NULL,
+                    reason TEXT NOT NULL DEFAULT '',
+                    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                 );",
+            )
+            .await?;
+        Ok(())
+    }
+
+    async fn get_kill_switch_state(&self) -> anyhow::Result<KillSwitchState> {
+        let row = self
+            .client
+            .query_opt(
+                "SELECT kill_switch_active, reason, updated_at
+                 FROM execution_control
+                 WHERE id = 1",
+                &[],
+            )
+            .await?;
+
+        if let Some(row) = row {
+            Ok(KillSwitchState {
+                active: row.get(0),
+                reason: row.get(1),
+                updated_at: row.get(2),
+            })
+        } else {
+            Ok(KillSwitchState {
+                active: true,
+                reason: "unknown kill switch state; defaulting to blocked".to_string(),
+                updated_at: Utc::now(),
+            })
+        }
+    }
+
+    async fn set_kill_switch_state(
+        &self,
+        active: bool,
+        reason: &str,
+        actor: &str,
+    ) -> anyhow::Result<KillSwitchState> {
+        let now = Utc::now();
+        self.client
+            .execute(
+                "INSERT INTO execution_control (id, kill_switch_active, reason, updated_at)
+                 VALUES (1, $1, $2, $3)
+                 ON CONFLICT (id) DO UPDATE SET
+                   kill_switch_active = EXCLUDED.kill_switch_active,
+                   reason = EXCLUDED.reason,
+                   updated_at = EXCLUDED.updated_at",
+                &[&active, &reason, &now],
+            )
+            .await?;
+
+        self.client
+            .execute(
+                "INSERT INTO execution_control_events (ts, kill_switch_active, reason, actor)
+                 VALUES ($1, $2, $3, $4)",
+                &[&now as &(dyn ToSql + Sync), &active, &reason, &actor],
+            )
+            .await?;
+
+        Ok(KillSwitchState {
+            active,
+            reason: reason.to_string(),
+            updated_at: now,
+        })
+    }
+
+    async fn fetch_order_intent(
+        &self,
+        idempotency_key: &str,
+    ) -> anyhow::Result<Option<OrderIntentRecord>> {
+        let row = self
+            .client
+            .query_opt(
+                "SELECT idempotency_key, instrument, timeframe, side, qty,
+                        min_coverage_pct, decision, reason, created_at
+                 FROM execution_order_intents
+                 WHERE idempotency_key = $1",
+                &[&idempotency_key],
+            )
+            .await?;
+
+        Ok(row.map(|row| OrderIntentRecord {
+            idempotency_key: row.get(0),
+            instrument: row.get(1),
+            timeframe: row.get(2),
+            side: row.get(3),
+            qty: row.get(4),
+            min_coverage_pct: row.get(5),
+            decision: row.get(6),
+            reason: row.get(7),
+            created_at: row.get(8),
+        }))
+    }
+
+    async fn insert_order_intent(&self, record: &OrderIntentRecord) -> anyhow::Result<()> {
+        self.client
+            .execute(
+                "INSERT INTO execution_order_intents
+                 (idempotency_key, instrument, timeframe, side, qty,
+                  min_coverage_pct, decision, reason, created_at)
+                 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+                 ON CONFLICT (idempotency_key) DO NOTHING",
+                &[
+                    &record.idempotency_key as &(dyn ToSql + Sync),
+                    &record.instrument,
+                    &record.timeframe,
+                    &record.side,
+                    &record.qty,
+                    &record.min_coverage_pct,
+                    &record.decision,
+                    &record.reason,
+                    &record.created_at,
+                ],
+            )
+            .await?;
+        Ok(())
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -32,7 +204,57 @@ struct DecisionResponse {
     decision: &'static str,
     reason: Option<String>,
     min_coverage_pct: f64,
-    evaluated_at: chrono::DateTime<chrono::Utc>,
+    evaluated_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Deserialize)]
+struct UpdateKillSwitchRequest {
+    active: bool,
+    reason: String,
+    actor: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+struct KillSwitchState {
+    active: bool,
+    reason: String,
+    updated_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Deserialize)]
+struct OrderIntentRequest {
+    idempotency_key: String,
+    instrument: String,
+    timeframe: String,
+    side: String,
+    qty: f64,
+    min_coverage_pct: Option<f64>,
+}
+
+#[derive(Debug, Serialize)]
+struct OrderIntentResponse {
+    idempotency_key: String,
+    instrument: String,
+    timeframe: String,
+    side: String,
+    qty: f64,
+    min_coverage_pct: f64,
+    decision: String,
+    reason: Option<String>,
+    evaluated_at: DateTime<Utc>,
+}
+
+#[derive(Debug)]
+struct OrderIntentRecord {
+    idempotency_key: String,
+    instrument: String,
+    timeframe: String,
+    side: String,
+    qty: f64,
+    min_coverage_pct: f64,
+    decision: String,
+    reason: String,
+    created_at: DateTime<Utc>,
 }
 
 #[derive(Debug, Serialize)]
@@ -81,13 +303,20 @@ async fn main() -> anyhow::Result<()> {
         .unwrap_or(99.5);
     let bind_addr = format!("0.0.0.0:{port}");
 
+    let repository = Arc::new(ExecutionRepository::connect(&postgres_url).await?);
     let app_state = AppState {
+        repository,
         postgres_url: Arc::new(postgres_url.clone()),
         default_min_coverage_pct,
     };
     let app = Router::new()
         .route("/health", get(health))
         .route("/v1/execution/decision", get(decision))
+        .route(
+            "/v1/execution/kill-switch",
+            get(kill_switch).post(update_kill_switch),
+        )
+        .route("/v1/execution/order-intent", post(order_intent))
         .with_state(app_state);
 
     let listener = TcpListener::bind(&bind_addr).await?;
@@ -134,6 +363,150 @@ async fn decision(
         decision,
         reason,
         min_coverage_pct,
-        evaluated_at: chrono::Utc::now(),
+        evaluated_at: Utc::now(),
     }))
+}
+
+async fn kill_switch(State(state): State<AppState>) -> Result<Json<KillSwitchState>, ApiError> {
+    let current = state
+        .repository
+        .get_kill_switch_state()
+        .await
+        .map_err(|error| ApiError::Upstream(error.to_string()))?;
+    Ok(Json(current))
+}
+
+async fn update_kill_switch(
+    State(state): State<AppState>,
+    Json(payload): Json<UpdateKillSwitchRequest>,
+) -> Result<Json<KillSwitchState>, ApiError> {
+    if payload.active && payload.reason.trim().is_empty() {
+        return Err(ApiError::BadRequest(
+            "reason is required when enabling kill switch".to_string(),
+        ));
+    }
+    let actor = payload.actor.unwrap_or_else(|| "operator".to_string());
+    let reason = if payload.reason.trim().is_empty() {
+        "manual update".to_string()
+    } else {
+        payload.reason
+    };
+
+    let updated = state
+        .repository
+        .set_kill_switch_state(payload.active, &reason, &actor)
+        .await
+        .map_err(|error| ApiError::Upstream(error.to_string()))?;
+
+    info!(
+        active = updated.active,
+        reason = %updated.reason,
+        actor = %actor,
+        "execution kill switch updated"
+    );
+
+    Ok(Json(updated))
+}
+
+async fn order_intent(
+    State(state): State<AppState>,
+    Json(payload): Json<OrderIntentRequest>,
+) -> Result<Json<OrderIntentResponse>, ApiError> {
+    if payload.idempotency_key.trim().is_empty() {
+        return Err(ApiError::BadRequest(
+            "idempotency_key is required".to_string(),
+        ));
+    }
+    if payload.qty <= 0.0 {
+        return Err(ApiError::BadRequest("qty must be > 0".to_string()));
+    }
+    let timeframe = Timeframe::parse(&payload.timeframe).ok_or_else(|| {
+        ApiError::BadRequest("invalid timeframe; expected one of 1m, 15m, 1h".to_string())
+    })?;
+    let side = normalize_side(&payload.side)
+        .ok_or_else(|| ApiError::BadRequest("side must be BUY or SELL".to_string()))?;
+    let min_coverage_pct = payload
+        .min_coverage_pct
+        .unwrap_or(state.default_min_coverage_pct);
+
+    if let Some(existing) = state
+        .repository
+        .fetch_order_intent(&payload.idempotency_key)
+        .await
+        .map_err(|error| ApiError::Upstream(error.to_string()))?
+    {
+        return Ok(Json(map_order_intent(existing)));
+    }
+
+    let kill_switch = state
+        .repository
+        .get_kill_switch_state()
+        .await
+        .map_err(|error| ApiError::Upstream(error.to_string()))?;
+    let gate_decision = evaluate_integrity_gate_from_store(
+        &state.postgres_url,
+        &payload.instrument,
+        timeframe,
+        min_coverage_pct,
+    )
+    .await
+    .map_err(|error| ApiError::Upstream(error.to_string()))?;
+
+    let intent_decision = evaluate_order_intent(kill_switch.active, gate_decision);
+    let (decision, reason) = match intent_decision {
+        OrderIntentDecision::Accepted => ("ACCEPTED".to_string(), String::new()),
+        OrderIntentDecision::Blocked(reason) => ("BLOCKED".to_string(), reason),
+    };
+
+    let record = OrderIntentRecord {
+        idempotency_key: payload.idempotency_key,
+        instrument: payload.instrument,
+        timeframe: timeframe.as_str().to_string(),
+        side: side.to_string(),
+        qty: payload.qty,
+        min_coverage_pct,
+        decision,
+        reason,
+        created_at: Utc::now(),
+    };
+
+    state
+        .repository
+        .insert_order_intent(&record)
+        .await
+        .map_err(|error| ApiError::Upstream(error.to_string()))?;
+
+    let stored = state
+        .repository
+        .fetch_order_intent(&record.idempotency_key)
+        .await
+        .map_err(|error| ApiError::Upstream(error.to_string()))?
+        .ok_or_else(|| ApiError::Upstream("order intent persistence failed".to_string()))?;
+
+    info!(
+        idempotency_key = %stored.idempotency_key,
+        decision = %stored.decision,
+        reason = %stored.reason,
+        "execution order intent evaluated"
+    );
+
+    Ok(Json(map_order_intent(stored)))
+}
+
+fn map_order_intent(record: OrderIntentRecord) -> OrderIntentResponse {
+    OrderIntentResponse {
+        idempotency_key: record.idempotency_key,
+        instrument: record.instrument,
+        timeframe: record.timeframe,
+        side: record.side,
+        qty: record.qty,
+        min_coverage_pct: record.min_coverage_pct,
+        decision: record.decision,
+        reason: if record.reason.is_empty() {
+            None
+        } else {
+            Some(record.reason)
+        },
+        evaluated_at: record.created_at,
+    }
 }

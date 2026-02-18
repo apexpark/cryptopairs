@@ -1,0 +1,11 @@
+{
+  "idempotency_key": "ordint-PI_XBTUSD-20260218T141600Z-001",
+  "instrument": "PI_XBTUSD",
+  "timeframe": "1m",
+  "side": "BUY",
+  "qty": 1.25,
+  "min_coverage_pct": 99.5,
+  "decision": "BLOCKED",
+  "reason": "kill switch is active; order intent blocked",
+  "evaluated_at": "2026-02-18T14:16:00Z"
+}

@@ -14,3 +14,6 @@ Current baseline contracts:
 - `specs/contracts/integrity_history_response.schema.json`
 - `specs/contracts/execution_decision_response.schema.json`
 - `specs/contracts/reconcile_run_response.schema.json`
+- `specs/contracts/execution_kill_switch_state.schema.json`
+- `specs/contracts/execution_order_intent_request.schema.json`
+- `specs/contracts/execution_order_intent_response.schema.json`

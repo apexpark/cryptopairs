@@ -1,0 +1,54 @@
+{
+  "$id": "https://cryptopairs/specs/contracts/execution_order_intent_response.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "ExecutionOrderIntentResponse",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "idempotency_key",
+    "instrument",
+    "timeframe",
+    "side",
+    "qty",
+    "min_coverage_pct",
+    "decision",
+    "evaluated_at"
+  ],
+  "properties": {
+    "idempotency_key": {
+      "type": "string"
+    },
+    "instrument": {
+      "type": "string"
+    },
+    "timeframe": {
+      "type": "string",
+      "enum": ["1m", "15m", "1h"]
+    },
+    "side": {
+      "type": "string",
+      "enum": ["BUY", "SELL"]
+    },
+    "qty": {
+      "type": "number",
+      "exclusiveMinimum": 0
+    },
+    "min_coverage_pct": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 100
+    },
+    "decision": {
+      "type": "string",
+      "enum": ["ACCEPTED", "BLOCKED"]
+    },
+    "reason": {
+      "type": ["string", "null"]
+    },
+    "evaluated_at": {
+      "type": "string",
+      "format": "date-time"
+    }
+  },
+  "version": "0.1.0"
+}

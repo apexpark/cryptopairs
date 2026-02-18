@@ -12,3 +12,6 @@ Current baseline examples:
 - `specs/examples/integrity_history_response.example.json`
 - `specs/examples/execution_decision_response_blocked.example.json`
 - `specs/examples/reconcile_run_response.example.json`
+- `specs/examples/execution_kill_switch_state_active.example.json`
+- `specs/examples/execution_order_intent_request.example.json`
+- `specs/examples/execution_order_intent_response_blocked.example.json`
