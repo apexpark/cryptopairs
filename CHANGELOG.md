@@ -33,6 +33,19 @@ This project follows SemVer as defined in `docs/02-versioning-and-releases.md`.
   - `specs/contracts/reconcile_run_response.schema.json`
   - `specs/examples/execution_decision_response_blocked.example.json`
   - `specs/examples/reconcile_run_response.example.json`
+- Execution control persistence (`execution_control`, `execution_control_events`) and order intent audit table (`execution_order_intents`) in SQL bootstrap.
+- Execution kill switch API endpoints:
+  - `GET /v1/execution/kill-switch`
+  - `POST /v1/execution/kill-switch`
+- Execution order intent API endpoint:
+  - `POST /v1/execution/order-intent` (idempotent, fail-closed)
+- Additional execution contracts/examples:
+  - `specs/contracts/execution_kill_switch_state.schema.json`
+  - `specs/contracts/execution_order_intent_request.schema.json`
+  - `specs/contracts/execution_order_intent_response.schema.json`
+  - `specs/examples/execution_kill_switch_state_active.example.json`
+  - `specs/examples/execution_order_intent_request.example.json`
+  - `specs/examples/execution_order_intent_response_blocked.example.json`
 
 ### Changed
 

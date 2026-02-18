@@ -103,6 +103,23 @@ GET /v1/execution/decision?instrument=PI_XBTUSD&timeframe=1m
 
 Returns a fail-closed decision (`ALLOWED` or `BLOCKED`) using persisted integrity history.
 
+## Execution Kill Switch Endpoints
+
+```bash
+GET /v1/execution/kill-switch
+POST /v1/execution/kill-switch
+```
+
+The kill switch is fail-closed; when state is unknown, order intents are blocked.
+
+## Execution Order Intent Endpoint
+
+```bash
+POST /v1/execution/order-intent
+```
+
+Evaluates idempotent order intents against kill switch + integrity gate and persists the decision.
+
 ## Account Reconcile Run Endpoint
 
 ```bash

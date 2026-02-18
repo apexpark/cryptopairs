@@ -65,3 +65,30 @@ CREATE TABLE IF NOT EXISTS reconciliation_events (
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   PRIMARY KEY (exchange, account_id, ts)
 );
+
+CREATE TABLE IF NOT EXISTS execution_control (
+  id SMALLINT PRIMARY KEY DEFAULT 1,
+  kill_switch_active BOOLEAN NOT NULL,
+  reason TEXT NOT NULL DEFAULT '',
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  CHECK (id = 1)
+);
+
+CREATE TABLE IF NOT EXISTS execution_control_events (
+  ts TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  kill_switch_active BOOLEAN NOT NULL,
+  reason TEXT NOT NULL,
+  actor TEXT NOT NULL DEFAULT 'system'
+);
+
+CREATE TABLE IF NOT EXISTS execution_order_intents (
+  idempotency_key TEXT PRIMARY KEY,
+  instrument TEXT NOT NULL,
+  timeframe TEXT NOT NULL,
+  side TEXT NOT NULL,
+  qty DOUBLE PRECISION NOT NULL,
+  min_coverage_pct DOUBLE PRECISION NOT NULL,
+  decision TEXT NOT NULL,
+  reason TEXT NOT NULL DEFAULT '',
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);

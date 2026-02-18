@@ -1,0 +1,21 @@
+{
+  "$id": "https://cryptopairs/specs/contracts/execution_kill_switch_state.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "ExecutionKillSwitchState",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["active", "reason", "updated_at"],
+  "properties": {
+    "active": {
+      "type": "boolean"
+    },
+    "reason": {
+      "type": "string"
+    },
+    "updated_at": {
+      "type": "string",
+      "format": "date-time"
+    }
+  },
+  "version": "0.1.0"
+}
