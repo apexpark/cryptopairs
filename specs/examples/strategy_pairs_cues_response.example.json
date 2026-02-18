@@ -1,0 +1,56 @@
+{
+  "timeframe": "1m",
+  "generated_at": "2026-02-18T20:10:00Z",
+  "cues": [
+    {
+      "cue": {
+        "pair_id": "PI_XBTUSD__PI_ETHUSD",
+        "left_instrument": "PI_XBTUSD",
+        "right_instrument": "PI_ETHUSD",
+        "timeframe": "1m",
+        "regime": "CALM",
+        "selected_variant": "ROBUST_Z",
+        "direction_hint": "LONG_SPREAD",
+        "spread_z": -2.11,
+        "opportunity_score": 7.42,
+        "confidence_band": "MEDIUM",
+        "entry_band": 1.8,
+        "exit_band": 0.6,
+        "stop_band": 3.2,
+        "expected_hold_bars": 18,
+        "cost_estimate_bps": 0.6,
+        "actionable": true,
+        "rationale_codes": [],
+        "evaluated_at": "2026-02-18T20:09:00Z"
+      },
+      "variants": [
+        {
+          "variant": "COINTEGRATION_Z",
+          "score_last": -1.95,
+          "sample_count": 21,
+          "win_rate": 0.57,
+          "edge_bps": 6.13,
+          "reliability": 0.75,
+          "regime_fit": 1.0,
+          "opportunity_score": 6.63,
+          "rationale_codes": []
+        },
+        {
+          "variant": "ROBUST_Z",
+          "score_last": -2.08,
+          "sample_count": 24,
+          "win_rate": 0.62,
+          "edge_bps": 6.8,
+          "reliability": 0.82,
+          "regime_fit": 0.9,
+          "opportunity_score": 7.42,
+          "rationale_codes": []
+        }
+      ],
+      "half_life_bars": 15.4,
+      "hedge_ratio": 1.13,
+      "hedge_ratio_stability": 0.12
+    }
+  ],
+  "skipped": []
+}

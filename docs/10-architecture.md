@@ -17,6 +17,7 @@ Define module boundaries, responsibilities, and key interfaces.
 3. `strategy-engine` (Python first, Rust later for live-critical paths)
 - Backtesting and forward testing.
 - First strategy: pairs/stat-arb module.
+- Live cue scaffold: `strategy-service` (Rust) for adaptive signal ranking and manual action prompts.
 
 4. `execution-service` (Rust)
 - Signal-to-order translation.

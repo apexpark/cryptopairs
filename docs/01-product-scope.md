@@ -10,10 +10,11 @@ Define what this system is intended to do in the first production-capable milest
 2. Local market data repository with multi-timeframe support.
 3. Data integrity status and gap reporting for every data request.
 4. Pairs trading strategy module (research + backtest + forward/paper).
-5. Manual-first execution module with order lifecycle tracking, risk checks, and operator-confirmed entry/exit controls.
-6. Account management (balances, positions, realized/unrealized PnL).
-7. Browser UI for data health, strategy runs, positions, and controls.
-8. Secure settings management for API credentials.
+5. Adaptive strategy cue layer that continuously ranks signal variants by recent net performance.
+6. Manual-first execution module with order lifecycle tracking, risk checks, and operator-confirmed entry/exit controls.
+7. Account management (balances, positions, realized/unrealized PnL).
+8. Browser UI for data health, strategy runs, positions, and controls.
+9. Secure settings management for API credentials.
 
 ## Out Of Scope (MVP)
 

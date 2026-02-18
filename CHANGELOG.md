@@ -52,6 +52,17 @@ This project follows SemVer as defined in `docs/02-versioning-and-releases.md`.
   - Order intent records now persist `action`, `operator_confirmed`, and `operator_id`.
 - New example for automated safety close:
   - `specs/examples/execution_order_intent_response_emergency_stop_accepted.example.json`
+- `strategy-service` (Rust) added for adaptive pairs cue generation and rolling signal reoptimization:
+  - `GET /v1/strategy/pairs/cues`
+  - `POST /v1/strategy/pairs/reoptimize`
+- Strategy evaluation persistence tables:
+  - `strategy_signal_performance`
+  - `strategy_selected_signal`
+- Strategy cue contracts/examples:
+  - `specs/contracts/strategy_pairs_cues_response.schema.json`
+  - `specs/contracts/strategy_pairs_reoptimize_response.schema.json`
+  - `specs/examples/strategy_pairs_cues_response.example.json`
+  - `specs/examples/strategy_pairs_reoptimize_response.example.json`
 
 ### Changed
 - Product/risk/architecture docs now explicitly define manual-first live trading for MVP.

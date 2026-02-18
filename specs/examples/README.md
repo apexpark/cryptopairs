@@ -16,3 +16,5 @@ Current baseline examples:
 - `specs/examples/execution_order_intent_request.example.json`
 - `specs/examples/execution_order_intent_response_blocked.example.json`
 - `specs/examples/execution_order_intent_response_emergency_stop_accepted.example.json`
+- `specs/examples/strategy_pairs_cues_response.example.json`
+- `specs/examples/strategy_pairs_reoptimize_response.example.json`

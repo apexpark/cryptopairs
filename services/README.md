@@ -5,5 +5,6 @@ Rust service layer for exchange integration, data integrity, and execution contr
 Current scaffolds:
 - `services/kraken-adapter`
 - `services/data-service`
+- `services/strategy-service`
 - `services/execution-service`
 - `services/account-service`

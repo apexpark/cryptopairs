@@ -4,6 +4,7 @@ members = [
   "services/account-service",
   "services/kraken-adapter",
   "services/data-service",
+  "services/strategy-service",
   "services/execution-service",
 ]
 resolver = "2"

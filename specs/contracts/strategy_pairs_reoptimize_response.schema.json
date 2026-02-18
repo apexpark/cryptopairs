@@ -1,0 +1,59 @@
+{
+  "$id": "https://cryptopairs/specs/contracts/strategy_pairs_reoptimize_response.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "StrategyPairsReoptimizeResponse",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "generated_at",
+    "timeframes",
+    "pairs_processed",
+    "cues_generated",
+    "performance_rows_written",
+    "selected_rows_written",
+    "errors"
+  ],
+  "properties": {
+    "generated_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "timeframes": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "enum": ["1m", "15m", "1h"]
+      }
+    },
+    "pairs_processed": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "cues_generated": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "performance_rows_written": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "selected_rows_written": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "errors": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["pair_id", "timeframe", "error"],
+        "properties": {
+          "pair_id": { "type": "string" },
+          "timeframe": { "type": "string", "enum": ["1m", "15m", "1h"] },
+          "error": { "type": "string" }
+        }
+      }
+    }
+  },
+  "version": "0.1.0"
+}
