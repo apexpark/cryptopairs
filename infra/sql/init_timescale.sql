@@ -29,3 +29,15 @@ CREATE TABLE IF NOT EXISTS data_quality_intervals (
 );
 
 SELECT create_hypertable('data_quality_intervals', 'checked_at', if_not_exists => TRUE);
+
+CREATE TABLE IF NOT EXISTS trades (
+  instrument TEXT NOT NULL,
+  seq BIGINT NOT NULL,
+  ts TIMESTAMPTZ NOT NULL,
+  side TEXT NOT NULL,
+  price DOUBLE PRECISION NOT NULL,
+  qty DOUBLE PRECISION NOT NULL,
+  uid TEXT NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  PRIMARY KEY (instrument, seq)
+);

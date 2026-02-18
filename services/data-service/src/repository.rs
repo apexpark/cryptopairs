@@ -1,6 +1,7 @@
 use anyhow::{anyhow, Result};
 use async_trait::async_trait;
-use common_types::{Candle, DataIntegrityReport, DataQueryRequest, Timeframe};
+use common_types::{Candle, DataIntegrityReport, DataQueryRequest, Timeframe, TradeTick};
+use tokio_postgres::Row;
 use tokio_postgres::{types::ToSql, Client, NoTls};
 
 #[async_trait]
@@ -17,6 +18,25 @@ pub trait MarketDataRepository: Send + Sync {
         request: &DataQueryRequest,
         report: &DataIntegrityReport,
     ) -> Result<()>;
+    async fn insert_trades(&self, trades: &[TradeTick]) -> Result<usize>;
+    async fn fetch_integrity_history(
+        &self,
+        instrument: &str,
+        timeframe: Timeframe,
+        limit: i64,
+    ) -> Result<Vec<IntegrityHistoryEntry>>;
+}
+
+#[derive(Debug, Clone)]
+pub struct IntegrityHistoryEntry {
+    pub instrument: String,
+    pub timeframe: Timeframe,
+    pub start_ts: chrono::DateTime<chrono::Utc>,
+    pub end_ts: chrono::DateTime<chrono::Utc>,
+    pub status: String,
+    pub coverage_pct: f64,
+    pub reason: String,
+    pub checked_at: chrono::DateTime<chrono::Utc>,
 }
 
 #[derive(Debug, Default)]
@@ -53,6 +73,25 @@ impl MarketDataRepository for UnconfiguredRepository {
             "market data repository is not configured; quality interval recording unavailable"
         ))
     }
+
+    async fn insert_trades(&self, trades: &[TradeTick]) -> Result<usize> {
+        let _ = trades;
+        Err(anyhow!(
+            "market data repository is not configured; trade insert unavailable"
+        ))
+    }
+
+    async fn fetch_integrity_history(
+        &self,
+        instrument: &str,
+        timeframe: Timeframe,
+        limit: i64,
+    ) -> Result<Vec<IntegrityHistoryEntry>> {
+        let _ = (instrument, timeframe, limit);
+        Err(anyhow!(
+            "market data repository is not configured; integrity history unavailable"
+        ))
+    }
 }
 
 pub struct PostgresMarketDataRepository {
@@ -67,7 +106,28 @@ impl PostgresMarketDataRepository {
                 tracing::error!(error = %error, "postgres connection task ended");
             }
         });
-        Ok(Self { client })
+        let repo = Self { client };
+        repo.ensure_schema().await?;
+        Ok(repo)
+    }
+
+    async fn ensure_schema(&self) -> Result<()> {
+        self.client
+            .batch_execute(
+                "CREATE TABLE IF NOT EXISTS trades (
+                    instrument TEXT NOT NULL,
+                    seq BIGINT NOT NULL,
+                    ts TIMESTAMPTZ NOT NULL,
+                    side TEXT NOT NULL,
+                    price DOUBLE PRECISION NOT NULL,
+                    qty DOUBLE PRECISION NOT NULL,
+                    uid TEXT NOT NULL,
+                    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                    PRIMARY KEY (instrument, seq)
+                 );",
+            )
+            .await?;
+        Ok(())
     }
 }
 
@@ -168,12 +228,67 @@ impl MarketDataRepository for PostgresMarketDataRepository {
             .await?;
         Ok(())
     }
+
+    async fn insert_trades(&self, trades: &[TradeTick]) -> Result<usize> {
+        let mut inserted = 0usize;
+        for trade in trades {
+            let written = self
+                .client
+                .execute(
+                    "INSERT INTO trades (instrument, seq, ts, side, price, qty, uid)
+                     VALUES ($1, $2, $3, $4, $5, $6, $7)
+                     ON CONFLICT (instrument, seq) DO NOTHING",
+                    &[
+                        &trade.instrument as &(dyn ToSql + Sync),
+                        &trade.seq,
+                        &trade.ts,
+                        &trade.side,
+                        &trade.price,
+                        &trade.qty,
+                        &trade.uid,
+                    ],
+                )
+                .await?;
+            inserted += written as usize;
+        }
+        Ok(inserted)
+    }
+
+    async fn fetch_integrity_history(
+        &self,
+        instrument: &str,
+        timeframe: Timeframe,
+        limit: i64,
+    ) -> Result<Vec<IntegrityHistoryEntry>> {
+        let rows = self
+            .client
+            .query(
+                "SELECT instrument, timeframe, start_ts, end_ts, status, coverage_pct, reason, checked_at
+                 FROM data_quality_intervals
+                 WHERE instrument = $1 AND timeframe = $2
+                 ORDER BY checked_at DESC
+                 LIMIT $3",
+                &[&instrument, &timeframe_string(timeframe), &limit],
+            )
+            .await?;
+        Ok(rows.into_iter().map(map_integrity_history_row).collect())
+    }
 }
 
 fn timeframe_string(timeframe: Timeframe) -> &'static str {
-    match timeframe {
-        Timeframe::OneMinute => "1m",
-        Timeframe::FifteenMinutes => "15m",
-        Timeframe::OneHour => "1h",
+    timeframe.as_str()
+}
+
+fn map_integrity_history_row(row: Row) -> IntegrityHistoryEntry {
+    let timeframe_raw: String = row.get(1);
+    IntegrityHistoryEntry {
+        instrument: row.get(0),
+        timeframe: Timeframe::parse(&timeframe_raw).unwrap_or(Timeframe::OneMinute),
+        start_ts: row.get(2),
+        end_ts: row.get(3),
+        status: row.get(4),
+        coverage_pct: row.get(5),
+        reason: row.get(6),
+        checked_at: row.get(7),
     }
 }
