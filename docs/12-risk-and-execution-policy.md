@@ -13,6 +13,8 @@ Define mandatory controls for converting strategy signals into safe and auditabl
 5. `MUST` reconcile fills and positions against exchange state.
 6. `MUST` expose a kill switch that halts new order submissions.
 7. `MUST` fail closed on unknown risk state.
+8. `MUST` require explicit operator confirmation for live `ENTRY` and `EXIT` intents.
+9. `MUST` allow automated execution only for emergency stop-close actions.
 
 ## Order Lifecycle States
 
@@ -32,6 +34,7 @@ Define mandatory controls for converting strategy signals into safe and auditabl
 3. Symbol tradability and account permission valid.
 4. Exposure and leverage within configured limits.
 5. Kill switch not active.
+6. Operator confirmation present for `ENTRY` and `EXIT`.
 
 ## Post-Trade Checks
 
@@ -50,6 +53,7 @@ Define mandatory controls for converting strategy signals into safe and auditabl
 1. If reconciliation fails, freeze strategy-to-execution handoff.
 2. If exchange acknowledgments lag beyond threshold, trigger alert.
 3. If kill switch is activated, cancel open non-reduce-only orders per policy.
+4. Emergency stop-close remains allowed even when new entries are blocked.
 
 ## Out Of Scope
 

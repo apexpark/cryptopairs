@@ -8,8 +8,10 @@
     "idempotency_key",
     "instrument",
     "timeframe",
+    "action",
     "side",
-    "qty"
+    "qty",
+    "operator_confirmed"
   ],
   "properties": {
     "idempotency_key": {
@@ -24,6 +26,10 @@
       "type": "string",
       "enum": ["1m", "15m", "1h"]
     },
+    "action": {
+      "type": "string",
+      "enum": ["ENTRY", "EXIT", "EMERGENCY_STOP_CLOSE"]
+    },
     "side": {
       "type": "string",
       "enum": ["BUY", "SELL"]
@@ -32,11 +38,33 @@
       "type": "number",
       "exclusiveMinimum": 0
     },
+    "operator_confirmed": {
+      "type": "boolean"
+    },
+    "operator_id": {
+      "type": ["string", "null"],
+      "minLength": 1
+    },
     "min_coverage_pct": {
       "type": "number",
       "minimum": 0,
       "maximum": 100
     }
   },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "action": { "enum": ["ENTRY", "EXIT"] }
+        }
+      },
+      "then": {
+        "required": ["operator_id"],
+        "properties": {
+          "operator_confirmed": { "const": true }
+        }
+      }
+    }
+  ],
   "version": "0.1.0"
 }

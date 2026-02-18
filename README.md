@@ -120,6 +120,10 @@ POST /v1/execution/order-intent
 
 Evaluates idempotent order intents against kill switch + integrity gate and persists the decision.
 
+Manual-first behavior:
+- `ENTRY` and `EXIT` require `operator_confirmed=true` plus `operator_id`.
+- `EMERGENCY_STOP_CLOSE` is the only action allowed without operator confirmation.
+
 ## Account Reconcile Run Endpoint
 
 ```bash

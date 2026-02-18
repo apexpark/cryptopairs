@@ -15,3 +15,4 @@ Current baseline examples:
 - `specs/examples/execution_kill_switch_state_active.example.json`
 - `specs/examples/execution_order_intent_request.example.json`
 - `specs/examples/execution_order_intent_response_blocked.example.json`
+- `specs/examples/execution_order_intent_response_emergency_stop_accepted.example.json`

@@ -19,6 +19,32 @@ pub enum OrderIntentDecision {
     Blocked(String),
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum OrderIntentAction {
+    Entry,
+    Exit,
+    EmergencyStopClose,
+}
+
+impl OrderIntentAction {
+    pub fn parse(value: &str) -> Option<Self> {
+        match value {
+            "ENTRY" => Some(Self::Entry),
+            "EXIT" => Some(Self::Exit),
+            "EMERGENCY_STOP_CLOSE" => Some(Self::EmergencyStopClose),
+            _ => None,
+        }
+    }
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Entry => "ENTRY",
+            Self::Exit => "EXIT",
+            Self::EmergencyStopClose => "EMERGENCY_STOP_CLOSE",
+        }
+    }
+}
+
 pub fn evaluate_integrity_gate(
     report: &DataIntegrityReport,
     config: ExecutionGateConfig,
@@ -36,9 +62,14 @@ pub fn evaluate_integrity_gate(
 }
 
 pub fn evaluate_order_intent(
+    action: OrderIntentAction,
     kill_switch_active: bool,
     gate_decision: GateDecision,
 ) -> OrderIntentDecision {
+    if matches!(action, OrderIntentAction::EmergencyStopClose) {
+        return OrderIntentDecision::Accepted;
+    }
+
     if kill_switch_active {
         return OrderIntentDecision::Blocked(
             "kill switch is active; order intent blocked".to_string(),
@@ -119,7 +150,7 @@ fn parse_integrity_status(value: &str) -> Option<IntegrityStatus> {
 mod tests {
     use super::{
         evaluate_integrity_gate, evaluate_order_intent, normalize_side, parse_integrity_status,
-        ExecutionGateConfig, GateDecision, OrderIntentDecision,
+        ExecutionGateConfig, GateDecision, OrderIntentAction, OrderIntentDecision,
     };
     use chrono::Utc;
     use common_types::{DataIntegrityReport, IntegrityStatus};
@@ -171,13 +202,23 @@ mod tests {
 
     #[test]
     fn order_intent_blocks_when_kill_switch_active() {
-        let decision = evaluate_order_intent(true, GateDecision::Allowed);
+        let decision = evaluate_order_intent(OrderIntentAction::Entry, true, GateDecision::Allowed);
         assert!(matches!(decision, OrderIntentDecision::Blocked(_)));
     }
 
     #[test]
     fn order_intent_accepts_when_gate_allows_and_kill_switch_off() {
-        let decision = evaluate_order_intent(false, GateDecision::Allowed);
+        let decision = evaluate_order_intent(OrderIntentAction::Exit, false, GateDecision::Allowed);
+        assert_eq!(decision, OrderIntentDecision::Accepted);
+    }
+
+    #[test]
+    fn emergency_stop_close_is_allowed_even_when_gated() {
+        let decision = evaluate_order_intent(
+            OrderIntentAction::EmergencyStopClose,
+            true,
+            GateDecision::Blocked("integrity failed".to_string()),
+        );
         assert_eq!(decision, OrderIntentDecision::Accepted);
     }
 
