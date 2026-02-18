@@ -334,10 +334,15 @@ name = "execution-service"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "axum",
  "chrono",
  "common-types",
+ "serde",
+ "serde_json",
  "tokio",
  "tokio-postgres",
+ "tracing",
+ "tracing-subscriber",
 ]
 
 [[package]]

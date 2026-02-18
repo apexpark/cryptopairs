@@ -1,0 +1,27 @@
+{
+  "$id": "https://cryptopairs/specs/contracts/reconcile_run_response.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "ReconcileRunResponse",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["summary"],
+  "properties": {
+    "summary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "total_accounts",
+        "ok",
+        "stale_snapshot",
+        "drift_exceeded"
+      ],
+      "properties": {
+        "total_accounts": { "type": "integer", "minimum": 0 },
+        "ok": { "type": "integer", "minimum": 0 },
+        "stale_snapshot": { "type": "integer", "minimum": 0 },
+        "drift_exceeded": { "type": "integer", "minimum": 0 }
+      }
+    }
+  },
+  "version": "0.1.0"
+}

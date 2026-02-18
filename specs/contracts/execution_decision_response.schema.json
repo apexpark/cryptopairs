@@ -1,0 +1,40 @@
+{
+  "$id": "https://cryptopairs/specs/contracts/execution_decision_response.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "ExecutionDecisionResponse",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "instrument",
+    "timeframe",
+    "decision",
+    "min_coverage_pct",
+    "evaluated_at"
+  ],
+  "properties": {
+    "instrument": {
+      "type": "string"
+    },
+    "timeframe": {
+      "type": "string",
+      "enum": ["1m", "15m", "1h"]
+    },
+    "decision": {
+      "type": "string",
+      "enum": ["ALLOWED", "BLOCKED"]
+    },
+    "reason": {
+      "type": ["string", "null"]
+    },
+    "min_coverage_pct": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 100
+    },
+    "evaluated_at": {
+      "type": "string",
+      "format": "date-time"
+    }
+  },
+  "version": "0.1.0"
+}

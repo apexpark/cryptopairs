@@ -1,0 +1,8 @@
+{
+  "summary": {
+    "total_accounts": 2,
+    "ok": 1,
+    "stale_snapshot": 1,
+    "drift_exceeded": 0
+  }
+}
