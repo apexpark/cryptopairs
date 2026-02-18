@@ -2,17 +2,18 @@ pub mod config;
 pub mod gap_detector;
 pub mod repository;
 pub mod worker;
+pub mod ws_worker;
 
 use axum::{
-    extract::State,
+    extract::{Query, State},
     http::StatusCode,
     response::{IntoResponse, Response},
     routing::{get, post},
     Json, Router,
 };
-use common_types::{DataQueryRequest, DataQueryResponse};
+use common_types::{DataQueryRequest, DataQueryResponse, Timeframe};
 use kraken_adapter::MarketDataAdapter;
-use repository::MarketDataRepository;
+use repository::{IntegrityHistoryEntry, MarketDataRepository};
 use serde::Serialize;
 use std::sync::Arc;
 use tracing::{info, warn};
@@ -55,6 +56,7 @@ pub fn build_router(state: AppState) -> Router {
     Router::new()
         .route("/health", get(health))
         .route("/v1/data/query", post(query_data))
+        .route("/v1/integrity/history", get(integrity_history))
         .with_state(state)
 }
 
@@ -147,4 +149,60 @@ async fn query_data(
         candles,
         integrity,
     }))
+}
+
+#[derive(Debug, serde::Deserialize)]
+struct IntegrityHistoryQuery {
+    instrument: String,
+    timeframe: String,
+    limit: Option<i64>,
+}
+
+#[derive(Debug, Serialize)]
+struct IntegrityHistoryResponse {
+    instrument: String,
+    timeframe: String,
+    rows: Vec<IntegrityHistoryRow>,
+}
+
+#[derive(Debug, Serialize)]
+struct IntegrityHistoryRow {
+    start_ts: chrono::DateTime<chrono::Utc>,
+    end_ts: chrono::DateTime<chrono::Utc>,
+    status: String,
+    coverage_pct: f64,
+    reason: String,
+    checked_at: chrono::DateTime<chrono::Utc>,
+}
+
+async fn integrity_history(
+    State(state): State<AppState>,
+    Query(query): Query<IntegrityHistoryQuery>,
+) -> Result<Json<IntegrityHistoryResponse>, ApiError> {
+    let timeframe = Timeframe::parse(&query.timeframe).ok_or_else(|| {
+        ApiError::SourceUnavailable("invalid timeframe; expected one of 1m, 15m, 1h".to_string())
+    })?;
+    let limit = query.limit.unwrap_or(100).clamp(1, 500);
+    let rows = state
+        .repository
+        .fetch_integrity_history(&query.instrument, timeframe, limit)
+        .await
+        .map_err(|error| ApiError::SourceUnavailable(error.to_string()))?;
+
+    Ok(Json(IntegrityHistoryResponse {
+        instrument: query.instrument,
+        timeframe: timeframe.as_str().to_string(),
+        rows: rows.into_iter().map(map_history_row).collect(),
+    }))
+}
+
+fn map_history_row(value: IntegrityHistoryEntry) -> IntegrityHistoryRow {
+    IntegrityHistoryRow {
+        start_ts: value.start_ts,
+        end_ts: value.end_ts,
+        status: value.status,
+        coverage_pct: value.coverage_pct,
+        reason: value.reason,
+        checked_at: value.checked_at,
+    }
 }

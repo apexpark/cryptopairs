@@ -34,6 +34,23 @@ pub enum Timeframe {
 }
 
 impl Timeframe {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::OneMinute => "1m",
+            Self::FifteenMinutes => "15m",
+            Self::OneHour => "1h",
+        }
+    }
+
+    pub fn parse(value: &str) -> Option<Self> {
+        match value {
+            "1m" => Some(Self::OneMinute),
+            "15m" => Some(Self::FifteenMinutes),
+            "1h" => Some(Self::OneHour),
+            _ => None,
+        }
+    }
+
     pub fn step_seconds(self) -> i64 {
         match self {
             Self::OneMinute => 60,
@@ -95,6 +112,17 @@ pub struct DataQueryResponse {
     pub end_ts: DateTime<Utc>,
     pub candles: Vec<Candle>,
     pub integrity: DataIntegrityReport,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct TradeTick {
+    pub instrument: String,
+    pub seq: i64,
+    pub ts: DateTime<Utc>,
+    pub side: String,
+    pub price: f64,
+    pub qty: f64,
+    pub uid: String,
 }
 
 #[cfg(test)]

@@ -22,6 +22,9 @@ This project follows SemVer as defined in `docs/02-versioning-and-releases.md`.
 - Periodic backfill worker (`services/data-service/src/worker.rs`) for configured symbols and windows.
 - Integrity audit persistence to `data_quality_intervals` from API queries and worker backfills.
 - Bootstrap historical backfill CLI (`services/data-service/src/bin/bootstrap_backfill.rs`) for chunked full-history ingestion.
+- Integrity history API endpoint (`GET /v1/integrity/history`) backed by persisted quality intervals.
+- Kraken WebSocket trade ingest worker (`services/data-service/src/ws_worker.rs`) with reconnect + live trade persistence.
+- Trade storage table initialization (`trades`) and repository insert path.
 
 ### Changed
 
