@@ -42,6 +42,7 @@ If instructions conflict, use this order:
 - `docs/15-observability-and-alerting.md`
 - `docs/16-ui-styling-guide.md`
 - `docs/17-verification-protocol.md`
+- `docs/18-strategy-module-implementation-spec.md`
 - `docs/playbooks/backfill-runbook.md`
 - `docs/playbooks/incident-runbook.md`
 - `docs/adr/ADR-0001-hybrid-rust-python.md`
