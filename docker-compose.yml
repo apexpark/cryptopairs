@@ -1,0 +1,40 @@
+services:
+  timescaledb:
+    image: timescale/timescaledb:2.16.1-pg16
+    container_name: cryptopairs-timescaledb
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-cryptopairs}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-cryptopairs}
+      POSTGRES_DB: ${POSTGRES_DB:-cryptopairs}
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "pg_isready -U ${POSTGRES_USER:-cryptopairs} -d ${POSTGRES_DB:-cryptopairs}",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    volumes:
+      - timescaledb-data:/var/lib/postgresql/data
+      - ./infra/sql/init_timescale.sql:/docker-entrypoint-initdb.d/init_timescale.sql:ro
+
+  redis:
+    image: redis:7.4-alpine
+    container_name: cryptopairs-redis
+    command: ["redis-server", "--appendonly", "yes"]
+    ports:
+      - "${REDIS_PORT:-6379}:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    volumes:
+      - redis-data:/data
+
+volumes:
+  timescaledb-data:
+  redis-data:

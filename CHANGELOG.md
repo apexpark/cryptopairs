@@ -6,6 +6,22 @@ This project follows SemVer as defined in `docs/02-versioning-and-releases.md`.
 ## Unreleased
 ### Added
 - Initial documentation suite and agent governance scaffolding.
+- Rust workspace foundation with:
+  - `crates/common-types`
+  - `services/kraken-adapter`
+  - `services/data-service`
+  - `services/execution-service`
+- Data integrity contract schemas and example payloads in `specs/contracts/` and `specs/examples/`.
+- Local Docker stack (`docker-compose.yml`) for TimescaleDB and Redis.
+- SQL bootstrap for candles and data quality interval tables (`infra/sql/init_timescale.sql`).
+- Python strategy research scaffold with integrity gate tests (`research/strategy-engine`).
+- Strict CI workflow (`.github/workflows/ci.yml`) for Rust, Python, and contract JSON validation.
+- Real Kraken REST candle adapter implementation (`services/kraken-adapter/src/lib.rs`) for `1m`, `15m`, `1h`.
+- Timescale-backed repository implementation (`services/data-service/src/repository.rs`) for local-first reads and upserts.
+- Targeted backfill flow in data query API (`services/data-service/src/lib.rs`): local read -> gap detection -> missing-range backfill -> local re-read.
+- Periodic backfill worker (`services/data-service/src/worker.rs`) for configured symbols and windows.
+- Integrity audit persistence to `data_quality_intervals` from API queries and worker backfills.
+- Bootstrap historical backfill CLI (`services/data-service/src/bin/bootstrap_backfill.rs`) for chunked full-history ingestion.
 
 ### Changed
 
