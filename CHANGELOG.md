@@ -94,9 +94,19 @@ This project follows SemVer as defined in `docs/02-versioning-and-releases.md`.
     - `specs/examples/execution_order_lifecycle_state_machine.example.json`
 - Focused manual-operator UI workflow session doc:
   - `docs/19-manual-trading-operator-ui-session.md`
+- Browser-based operator console (`apps/web`) built with React/Vite for manual-first spread trading:
+  - Trade cockpit with stop-prerequisite entry controls, add/reduce exposure, and close-spread action.
+  - Live wiring to strategy, data, execution, and account services (no mock trading data path).
+  - Analytics page with hypothetical equity curve and historical z-score entry/exit/stop markers.
+  - Data Quality page backed by integrity history diagnostics and fail-closed execution gate context.
+  - Theme-aware PAIRS logos (dark/light) and global timeframe selector.
 
 ### Changed
 - Product/risk/architecture docs now explicitly define manual-first live trading for MVP.
+- Web operator console layout and controls:
+  - Analytics page now stacks Diagnostics under Strategy Metrics and splits remaining space between Equity and Historical Z-Score charts.
+  - Trade analysis chart now renders entry, mean (`z=0`), and stop thresholds with live polling refresh.
+  - Settings page now includes session-only Kraken API key/secret/passphrase fields (masked by default).
 
 ### Fixed
 - Removed accidental duplicate spec/example files with `* 2.json` suffix.

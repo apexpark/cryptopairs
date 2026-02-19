@@ -60,6 +60,24 @@ Services:
 - Execution service on `localhost:8082` (app profile)
 - Strategy service on `localhost:8083` (app profile)
 
+## Web Operator Console
+
+```bash
+cd apps/web
+npm install
+npm run dev -- --host 127.0.0.1 --port 5173
+```
+
+Open `http://127.0.0.1:5173/`.
+
+Run frontend checks:
+
+```bash
+cd apps/web
+npm run test -- --run
+npm run build
+```
+
 ## Run Checks
 
 ```bash
