@@ -184,6 +184,9 @@ Operator Settings (friendly name -> technical key):
 - Reconcile On Terminal State (`EXECUTION_TRIGGER_RECONCILE_ON_TERMINAL`): default `true`.
 
 Operator playbook: `docs/playbooks/execution-operations-runbook.md`
+Preset examples:
+- `infra/env/paper-mode.env.example`
+- `infra/env/live-mode.env.example`
 
 The execution service includes an automatic stale-ack watchdog:
 - any order stuck in `ACKNOWLEDGED` beyond the configured threshold is deterministically
@@ -198,6 +201,10 @@ or `-> FILLED` transitions when supported by open-order fields.
 
 If an order disappears from `openorders`, an optional order-status lookup can resolve terminal
 states (`FULLY_EXECUTED`, `CANCELLED`, `REJECTED`) when enabled.
+
+Replay fixtures for hardening live parser behavior:
+- `services/execution-service/tests/fixtures/kraken/openorders.success.json`
+- `services/execution-service/tests/fixtures/kraken/order_status.success.json`
 
 ## Execution Order Event Ingest Endpoint
 

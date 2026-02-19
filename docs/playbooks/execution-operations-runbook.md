@@ -86,6 +86,10 @@ This runbook uses friendly setting names first, with technical key names in pare
 - Order Status Lookup Enabled: `true` (only after validation)
 - Reconcile On Terminal State: `true`
 
+Preset files in repo:
+- `infra/env/paper-mode.env.example`
+- `infra/env/live-mode.env.example`
+
 ## Normal Lifecycle Expectations
 
 1. Manual intent accepted: `NEW -> APPROVED`
@@ -118,3 +122,16 @@ This runbook uses friendly setting names first, with technical key names in pare
 3. Dispatch path tested with small order size.
 4. Order lifecycle history endpoint checked for deterministic transitions.
 5. Reconcile trigger confirmed after terminal transition.
+
+## Live Canary And Fixture Capture
+
+1. Start with smallest allowed order size and one instrument.
+2. Confirm expected path in lifecycle history:
+- `APPROVED -> PENDING_SUBMIT -> ACKNOWLEDGED -> PARTIALLY_FILLED/FILLED`
+3. Capture and redact raw exchange payloads for:
+- open orders endpoint
+- order status endpoint
+4. Save payloads as fixtures under:
+- `services/execution-service/tests/fixtures/kraken/`
+5. Re-run tests before keeping live mode enabled:
+- `cargo test -p execution-service`

@@ -163,6 +163,12 @@ This project follows SemVer as defined in `docs/02-versioning-and-releases.md`.
 - Product/risk/architecture docs now explicitly define manual-first live trading for MVP.
 - Operator-facing execution settings docs now use friendly labels with technical key mapping,
   with a dedicated runbook: `docs/playbooks/execution-operations-runbook.md`.
+- Added operator preset templates for execution mode bring-up:
+  - `infra/env/paper-mode.env.example`
+  - `infra/env/live-mode.env.example`
+- Added replay fixtures for Kraken execution parser hardening:
+  - `services/execution-service/tests/fixtures/kraken/openorders.success.json`
+  - `services/execution-service/tests/fixtures/kraken/order_status.success.json`
 - Web operator console layout and controls:
   - Analytics page now stacks Diagnostics under Strategy Metrics and splits remaining space between Equity and Historical Z-Score charts.
   - Trade analysis chart now renders entry, mean (`z=0`), and stop thresholds with live polling refresh.
