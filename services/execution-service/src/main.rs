@@ -28,10 +28,13 @@ use tracing::info;
 struct AppState {
     repository: Arc<ExecutionRepository>,
     postgres_url: Arc<String>,
+    account_service_url: Arc<String>,
+    http_client: reqwest::Client,
     default_min_coverage_pct: f64,
     dispatch_mode: DispatchMode,
     kraken_live: Option<Arc<KrakenLiveClient>>,
     ack_watchdog: AckWatchdogConfig,
+    trigger_reconcile_on_terminal: bool,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -945,6 +948,8 @@ async fn main() -> anyhow::Result<()> {
     let postgres_url = std::env::var("POSTGRES_URL").unwrap_or_else(|_| {
         "postgres://cryptopairs:cryptopairs@127.0.0.1:5432/cryptopairs".to_string()
     });
+    let account_service_url = std::env::var("ACCOUNT_SERVICE_URL")
+        .unwrap_or_else(|_| "http://127.0.0.1:8081".to_string());
     let port = std::env::var("EXECUTION_SERVICE_PORT").unwrap_or_else(|_| "8082".to_string());
     let default_min_coverage_pct = std::env::var("INTEGRITY_MIN_COVERAGE_PCT")
         .ok()
@@ -967,6 +972,13 @@ async fn main() -> anyhow::Result<()> {
             .and_then(|value| value.parse::<i64>().ok())
             .unwrap_or(200),
     };
+    let trigger_reconcile_on_terminal = std::env::var("EXECUTION_TRIGGER_RECONCILE_ON_TERMINAL")
+        .ok()
+        .and_then(|value| value.parse::<bool>().ok())
+        .unwrap_or(true);
+    let http_client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(5))
+        .build()?;
     let kraken_live = if matches!(dispatch_mode, DispatchMode::LiveKraken) {
         match KrakenLiveClient::from_env() {
             Ok(client) => Some(Arc::new(client)),
@@ -987,10 +999,13 @@ async fn main() -> anyhow::Result<()> {
     let app_state = AppState {
         repository,
         postgres_url: Arc::new(postgres_url.clone()),
+        account_service_url: Arc::new(account_service_url.clone()),
+        http_client,
         default_min_coverage_pct,
         dispatch_mode,
         kraken_live,
         ack_watchdog,
+        trigger_reconcile_on_terminal,
     };
     tokio::spawn(spawn_ack_watchdog(app_state.clone()));
     let cors = CorsLayer::new()
@@ -1021,11 +1036,13 @@ async fn main() -> anyhow::Result<()> {
     info!(
         bind_addr = %bind_addr,
         postgres_url = %postgres_url,
+        account_service_url = %account_service_url,
         default_min_coverage_pct,
         dispatch_mode = ?dispatch_mode,
         ack_watchdog_poll_seconds = ack_watchdog.poll_interval_seconds,
         ack_expire_after_seconds = ack_watchdog.expire_after_seconds,
         ack_watchdog_batch_limit = ack_watchdog.batch_limit,
+        trigger_reconcile_on_terminal,
         "execution-service started"
     );
     axum::serve(listener, app).await?;
@@ -1071,10 +1088,91 @@ async fn run_ack_watchdog_once(state: &AppState) -> anyhow::Result<()> {
                 expire_after_seconds = state.ack_watchdog.expire_after_seconds,
                 "execution ack watchdog expired stale acknowledged order"
             );
+            let intent = state
+                .repository
+                .fetch_order_intent(&idempotency_key)
+                .await?;
+            if let Some(intent) = intent {
+                trigger_reconcile_after_terminal(
+                    state,
+                    &intent,
+                    OrderLifecycleState::Expired,
+                    "ack-watchdog",
+                )
+                .await;
+            }
         }
     }
 
     Ok(())
+}
+
+fn is_terminal_state(state: OrderLifecycleState) -> bool {
+    matches!(
+        state,
+        OrderLifecycleState::Filled
+            | OrderLifecycleState::Canceled
+            | OrderLifecycleState::Rejected
+            | OrderLifecycleState::Expired
+    )
+}
+
+async fn trigger_reconcile_after_terminal(
+    state: &AppState,
+    intent: &OrderIntentRecord,
+    terminal_state: OrderLifecycleState,
+    source: &str,
+) {
+    if !state.trigger_reconcile_on_terminal {
+        return;
+    }
+    if !is_terminal_state(terminal_state) {
+        return;
+    }
+
+    let endpoint = format!(
+        "{}/v1/account/reconcile/run",
+        state.account_service_url.trim_end_matches('/')
+    );
+    info!(
+        idempotency_key = %intent.idempotency_key,
+        exchange = %intent.exchange,
+        account_id = %intent.account_id,
+        terminal_state = %terminal_state.as_str(),
+        source = %source,
+        endpoint = %endpoint,
+        "execution triggering account reconciliation after terminal state"
+    );
+    let response = state.http_client.post(&endpoint).send().await;
+    match response {
+        Ok(resp) if resp.status().is_success() => {
+            info!(
+                idempotency_key = %intent.idempotency_key,
+                terminal_state = %terminal_state.as_str(),
+                source = %source,
+                status = %resp.status(),
+                "execution terminal-state reconcile trigger succeeded"
+            );
+        }
+        Ok(resp) => {
+            info!(
+                idempotency_key = %intent.idempotency_key,
+                terminal_state = %terminal_state.as_str(),
+                source = %source,
+                status = %resp.status(),
+                "execution terminal-state reconcile trigger failed"
+            );
+        }
+        Err(error) => {
+            info!(
+                idempotency_key = %intent.idempotency_key,
+                terminal_state = %terminal_state.as_str(),
+                source = %source,
+                error = %error,
+                "execution terminal-state reconcile trigger errored"
+            );
+        }
+    }
 }
 
 fn api_error_to_message(error: ApiError) -> String {
@@ -1506,6 +1604,10 @@ async fn dispatch_order_intent(
         .await
         .map_err(|error| ApiError::Upstream(error.to_string()))?;
 
+    if is_terminal_state(result_state) {
+        trigger_reconcile_after_terminal(&state, &intent, result_state, "dispatch").await;
+    }
+
     info!(
         idempotency_key = %intent.idempotency_key,
         dispatch_mode = ?state.dispatch_mode,
@@ -1686,6 +1788,11 @@ async fn ingest_order_event(
         "execution order event ingested"
     );
 
+    if is_terminal_state(target_state) {
+        trigger_reconcile_after_terminal(&state, &resolved_intent, target_state, "order-event")
+            .await;
+    }
+
     Ok(Json(OrderEventIngestResponse {
         idempotency_key: resolved_idempotency_key,
         exchange_order_id,
@@ -1814,8 +1921,8 @@ fn map_order_intent(record: OrderIntentRecord) -> OrderIntentResponse {
 #[cfg(test)]
 mod tests {
     use super::{
-        parse_ingest_target_state, parse_kraken_submit_response, sign_kraken_futures_payload,
-        validate_manual_controls, ApiError, DispatchMode,
+        is_terminal_state, parse_ingest_target_state, parse_kraken_submit_response,
+        sign_kraken_futures_payload, validate_manual_controls, ApiError, DispatchMode,
     };
     use execution_service::{OrderIntentAction, OrderLifecycleState};
 
@@ -1908,5 +2015,15 @@ mod tests {
     fn parse_ingest_target_state_rejects_non_event_state() {
         assert_eq!(parse_ingest_target_state("APPROVED"), None);
         assert_eq!(parse_ingest_target_state("NEW"), None);
+    }
+
+    #[test]
+    fn terminal_state_predicate_matches_policy() {
+        assert!(is_terminal_state(OrderLifecycleState::Filled));
+        assert!(is_terminal_state(OrderLifecycleState::Canceled));
+        assert!(is_terminal_state(OrderLifecycleState::Rejected));
+        assert!(is_terminal_state(OrderLifecycleState::Expired));
+        assert!(!is_terminal_state(OrderLifecycleState::Acknowledged));
+        assert!(!is_terminal_state(OrderLifecycleState::PartiallyFilled));
     }
 }
