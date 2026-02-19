@@ -181,6 +181,9 @@ Environment:
 - `ACCOUNT_SERVICE_URL` (optional, default `http://127.0.0.1:8081`)
 - `EXECUTION_TRIGGER_RECONCILE_ON_TERMINAL` (optional, default `true`)
 - `KRAKEN_FUTURES_OPENORDERS_PATH` (optional, default `/derivatives/api/v3/openorders`)
+- `EXECUTION_ORDER_STATUS_LOOKUP_ENABLED` (optional, default `false`)
+- `KRAKEN_FUTURES_ORDER_STATUS_PATH` (optional, default `/derivatives/api/v3/orders/status`)
+- `KRAKEN_FUTURES_ORDER_STATUS_QUERY_KEY` (optional, default `orderId`)
 
 The execution service includes an automatic stale-ack watchdog:
 - any order stuck in `ACKNOWLEDGED` beyond the configured threshold is deterministically
@@ -192,6 +195,9 @@ Terminal lifecycle transitions (`FILLED`, `CANCELED`, `REJECTED`, `EXPIRED`) now
 When `EXECUTION_DISPATCH_MODE=live_kraken`, an open-orders poller now reads
 `GET /derivatives/api/v3/openorders` and applies deterministic `ACKNOWLEDGED -> PARTIALLY_FILLED`
 or `-> FILLED` transitions when supported by open-order fields.
+
+If an order disappears from `openorders`, an optional order-status lookup can resolve terminal
+states (`FULLY_EXECUTED`, `CANCELLED`, `REJECTED`) when enabled.
 
 ## Execution Order Event Ingest Endpoint
 
