@@ -1,23 +1,44 @@
 # Web App
 
-Current MVP UI is a lightweight operator console for manual trading controls.
+Manual-first operator console for pairs spread trading.
+
+## Prerequisites
+- Node.js 20+
+- Running backend services (`data-service`, `account-service`, `execution-service`, `strategy-service`)
 
 ## Run
-Serve `apps/web/index.html` with any static file server, for example:
-
 ```bash
 cd apps/web
-python3 -m http.server 5173
+npm install
+npm run dev -- --host 127.0.0.1 --port 5173
 ```
 
-Then open `http://127.0.0.1:5173`.
+Open `http://127.0.0.1:5173/`.
 
-## Dependencies
-- `strategy-service` on `:8083` for cue context (future wiring)
-- `execution-service` on `:8082` for kill switch, decision, and order intent
-- `account-service` on `:8081` for reconcile status
+## Build and Test
+```bash
+npm run test -- --run
+npm run build
+```
 
-## Scope
-- Safety readiness checks (kill switch, integrity gate, reconcile gate)
-- Manual `ENTRY` / `EXIT` / `EMERGENCY_STOP_CLOSE` submissions
-- Immediate response rendering with explicit blocked reasons
+## Environment Variables
+- `VITE_DATA_SERVICE_BASE_URL` (default `http://127.0.0.1:8080`)
+- `VITE_ACCOUNT_SERVICE_BASE_URL` (default `http://127.0.0.1:8081`)
+- `VITE_EXECUTION_SERVICE_BASE_URL` (default `http://127.0.0.1:8082`)
+- `VITE_STRATEGY_SERVICE_BASE_URL` (default `http://127.0.0.1:8083`)
+
+## Current Scope
+- Trade page with manual spread controls:
+  - Stop prerequisite (method + value)
+  - Long/short spread entry
+  - Add/reduce exposure
+  - Close spread action
+- Data Quality page backed by live integrity history
+- Analytics page:
+  - Hypothetical equity curve
+  - Historical z-score with entry/exit/stop markers
+- Portfolio and Markets pages with live strategy context
+- Fail-closed gate handling:
+  - kill switch
+  - integrity gate decisions
+  - reconciliation status

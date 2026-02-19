@@ -18,6 +18,7 @@ venv/
 # Node/web
 node_modules/
 dist/
+*.tsbuildinfo
 
 # Rust/build
 target/
