@@ -19,6 +19,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256, Sha512};
 use std::sync::Arc;
 use tokio::net::TcpListener;
+use tokio::time::{sleep, Duration};
 use tokio_postgres::{types::ToSql, Client, NoTls};
 use tower_http::cors::{Any, CorsLayer};
 use tracing::info;
@@ -30,6 +31,7 @@ struct AppState {
     default_min_coverage_pct: f64,
     dispatch_mode: DispatchMode,
     kraken_live: Option<Arc<KrakenLiveClient>>,
+    ack_watchdog: AckWatchdogConfig,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -261,6 +263,13 @@ struct KrakenLiveClient {
 struct LiveDispatchSuccess {
     exchange_order_id: String,
     reason: String,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct AckWatchdogConfig {
+    poll_interval_seconds: u64,
+    expire_after_seconds: u64,
+    batch_limit: i64,
 }
 
 #[derive(Clone)]
@@ -719,6 +728,32 @@ impl ExecutionRepository {
             .await?;
         Ok(row.map(|row| row.get(0)))
     }
+
+    async fn fetch_stale_acknowledged_orders(
+        &self,
+        expire_after_seconds: i64,
+        limit: i64,
+    ) -> anyhow::Result<Vec<String>> {
+        let rows = self
+            .client
+            .query(
+                "SELECT latest.idempotency_key
+                 FROM (
+                   SELECT DISTINCT ON (idempotency_key)
+                     idempotency_key, state, created_at
+                   FROM execution_order_state_events
+                   ORDER BY idempotency_key, created_at DESC
+                 ) latest
+                 WHERE latest.state = 'ACKNOWLEDGED'
+                   AND latest.created_at <= NOW() - ($1::BIGINT * INTERVAL '1 second')
+                 ORDER BY latest.created_at ASC
+                 LIMIT $2",
+                &[&expire_after_seconds, &limit],
+            )
+            .await?;
+
+        Ok(rows.iter().map(|row| row.get(0)).collect())
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -918,6 +953,20 @@ async fn main() -> anyhow::Result<()> {
     let dispatch_mode = DispatchMode::parse(
         &std::env::var("EXECUTION_DISPATCH_MODE").unwrap_or_else(|_| "fail_closed".to_string()),
     );
+    let ack_watchdog = AckWatchdogConfig {
+        poll_interval_seconds: std::env::var("EXECUTION_ACK_WATCHDOG_POLL_SECONDS")
+            .ok()
+            .and_then(|value| value.parse::<u64>().ok())
+            .unwrap_or(15),
+        expire_after_seconds: std::env::var("EXECUTION_ACK_EXPIRE_AFTER_SECONDS")
+            .ok()
+            .and_then(|value| value.parse::<u64>().ok())
+            .unwrap_or(90),
+        batch_limit: std::env::var("EXECUTION_ACK_WATCHDOG_BATCH_LIMIT")
+            .ok()
+            .and_then(|value| value.parse::<i64>().ok())
+            .unwrap_or(200),
+    };
     let kraken_live = if matches!(dispatch_mode, DispatchMode::LiveKraken) {
         match KrakenLiveClient::from_env() {
             Ok(client) => Some(Arc::new(client)),
@@ -941,7 +990,9 @@ async fn main() -> anyhow::Result<()> {
         default_min_coverage_pct,
         dispatch_mode,
         kraken_live,
+        ack_watchdog,
     };
+    tokio::spawn(spawn_ack_watchdog(app_state.clone()));
     let cors = CorsLayer::new()
         .allow_origin(Any)
         .allow_methods(Any)
@@ -972,10 +1023,64 @@ async fn main() -> anyhow::Result<()> {
         postgres_url = %postgres_url,
         default_min_coverage_pct,
         dispatch_mode = ?dispatch_mode,
+        ack_watchdog_poll_seconds = ack_watchdog.poll_interval_seconds,
+        ack_expire_after_seconds = ack_watchdog.expire_after_seconds,
+        ack_watchdog_batch_limit = ack_watchdog.batch_limit,
         "execution-service started"
     );
     axum::serve(listener, app).await?;
     Ok(())
+}
+
+async fn spawn_ack_watchdog(state: AppState) {
+    let poll_every = Duration::from_secs(state.ack_watchdog.poll_interval_seconds.max(1));
+    loop {
+        if let Err(error) = run_ack_watchdog_once(&state).await {
+            info!(error = %error, "execution ack watchdog iteration failed");
+        }
+        sleep(poll_every).await;
+    }
+}
+
+async fn run_ack_watchdog_once(state: &AppState) -> anyhow::Result<()> {
+    let stale_orders = state
+        .repository
+        .fetch_stale_acknowledged_orders(
+            state.ack_watchdog.expire_after_seconds as i64,
+            state.ack_watchdog.batch_limit,
+        )
+        .await?;
+    if stale_orders.is_empty() {
+        return Ok(());
+    }
+
+    for idempotency_key in stale_orders {
+        let transitioned = transition_order_state_if_current(
+            state,
+            &idempotency_key,
+            OrderLifecycleState::Acknowledged,
+            OrderLifecycleState::Expired,
+            "ack watchdog expired order: no terminal update received within threshold",
+            "ack-watchdog",
+        )
+        .await
+        .map_err(|error| anyhow::anyhow!(api_error_to_message(error)))?;
+        if transitioned {
+            info!(
+                idempotency_key = %idempotency_key,
+                expire_after_seconds = state.ack_watchdog.expire_after_seconds,
+                "execution ack watchdog expired stale acknowledged order"
+            );
+        }
+    }
+
+    Ok(())
+}
+
+fn api_error_to_message(error: ApiError) -> String {
+    match error {
+        ApiError::BadRequest(message) | ApiError::Upstream(message) => message,
+    }
 }
 
 async fn health() -> Json<HealthResponse> {

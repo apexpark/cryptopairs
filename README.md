@@ -172,6 +172,13 @@ Environment:
 - `KRAKEN_FUTURES_API_SECRET` (required for `live_kraken`, base64-encoded secret)
 - `KRAKEN_FUTURES_API_BASE_URL` (optional, default `https://futures.kraken.com`)
 - `KRAKEN_FUTURES_SENDORDER_PATH` (optional, default `/derivatives/api/v3/sendorder`)
+- `EXECUTION_ACK_WATCHDOG_POLL_SECONDS` (optional, default `15`)
+- `EXECUTION_ACK_EXPIRE_AFTER_SECONDS` (optional, default `90`)
+- `EXECUTION_ACK_WATCHDOG_BATCH_LIMIT` (optional, default `200`)
+
+The execution service includes an automatic stale-ack watchdog:
+- any order stuck in `ACKNOWLEDGED` beyond the configured threshold is deterministically
+  transitioned to `EXPIRED` with an audit event.
 
 ## Execution Order Event Ingest Endpoint
 
