@@ -1,0 +1,55 @@
+{
+  "idempotency_key": "1708400123456-PI_XBTUSD__PI_ETHUSD-long-entry-0",
+  "intent": {
+    "idempotency_key": "1708400123456-PI_XBTUSD__PI_ETHUSD-long-entry-0",
+    "exchange": "kraken_futures",
+    "account_id": "primary",
+    "instrument": "PI_XBTUSD",
+    "timeframe": "1m",
+    "action": "ENTRY",
+    "side": "BUY",
+    "qty": 1.25,
+    "operator_confirmed": true,
+    "operator_id": "operator-kevin",
+    "min_coverage_pct": 99.5,
+    "decision": "ACCEPTED",
+    "reason": null,
+    "evaluated_at": "2026-02-20T00:30:00Z"
+  },
+  "state_events": [
+    {
+      "state": "NEW",
+      "reason": "intent persisted",
+      "actor": "execution-service",
+      "created_at": "2026-02-20T00:30:00Z"
+    },
+    {
+      "state": "APPROVED",
+      "reason": "",
+      "actor": "execution-service",
+      "created_at": "2026-02-20T00:30:00Z"
+    },
+    {
+      "state": "PENDING_SUBMIT",
+      "reason": "dispatch accepted; pending exchange submit",
+      "actor": "operator",
+      "created_at": "2026-02-20T00:30:04Z"
+    },
+    {
+      "state": "REJECTED",
+      "reason": "dispatch failed closed: live submit adapter not configured",
+      "actor": "execution-dispatch",
+      "created_at": "2026-02-20T00:30:04Z"
+    }
+  ],
+  "dispatch_attempts": [
+    {
+      "attempt_no": 1,
+      "result_state": "REJECTED",
+      "exchange_order_id": null,
+      "reason": "dispatch failed closed: live submit adapter not configured",
+      "actor": "operator",
+      "created_at": "2026-02-20T00:30:04Z"
+    }
+  ]
+}

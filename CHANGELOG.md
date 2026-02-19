@@ -100,6 +100,20 @@ This project follows SemVer as defined in `docs/02-versioning-and-releases.md`.
   - Analytics page with hypothetical equity curve and historical z-score entry/exit/stop markers.
   - Data Quality page backed by integrity history diagnostics and fail-closed execution gate context.
   - Theme-aware PAIRS logos (dark/light) and global timeframe selector.
+- Execution handoff lifecycle slice (fail-closed by default):
+  - New endpoint `GET /v1/execution/order-intent/history` for intent + lifecycle + dispatch audit retrieval.
+  - New endpoint `POST /v1/execution/order-intent/dispatch` to progress `APPROVED` intents into submit states.
+  - New persistence table `execution_dispatch_attempts` for dispatch attempt audit history.
+  - New dispatch mode config:
+    - `EXECUTION_DISPATCH_MODE=fail_closed` (default)
+    - `EXECUTION_DISPATCH_MODE=simulate_ack` (local testing)
+  - Lifecycle transition set extended to allow `PENDING_SUBMIT -> REJECTED` for submit failures.
+  - New contracts/examples:
+    - `specs/contracts/execution_order_state_history_response.schema.json`
+    - `specs/contracts/execution_dispatch_response.schema.json`
+    - `specs/examples/execution_order_state_history_response.example.json`
+    - `specs/examples/execution_dispatch_response_fail_closed.example.json`
+    - `specs/examples/execution_dispatch_response_acknowledged.example.json`
 
 ### Changed
 - Product/risk/architecture docs now explicitly define manual-first live trading for MVP.

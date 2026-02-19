@@ -1,0 +1,9 @@
+{
+  "idempotency_key": "1708400123456-PI_XBTUSD__PI_ETHUSD-long-entry-0",
+  "result": "ACKNOWLEDGED",
+  "from_state": "APPROVED",
+  "to_state": "ACKNOWLEDGED",
+  "exchange_order_id": "SIM-1708400123456-PI_XBTUSD__PI_ETHUSD-long-entry-0-1708400123000",
+  "reason": "dispatch acknowledged in simulate_ack mode",
+  "attempted_at": "2026-02-20T00:30:04Z"
+}

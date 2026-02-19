@@ -39,6 +39,21 @@ pub enum OrderLifecycleState {
 }
 
 impl OrderLifecycleState {
+    pub fn parse(value: &str) -> Option<Self> {
+        match value {
+            "NEW" => Some(Self::New),
+            "APPROVED" => Some(Self::Approved),
+            "PENDING_SUBMIT" => Some(Self::PendingSubmit),
+            "ACKNOWLEDGED" => Some(Self::Acknowledged),
+            "PARTIALLY_FILLED" => Some(Self::PartiallyFilled),
+            "FILLED" => Some(Self::Filled),
+            "CANCELED" => Some(Self::Canceled),
+            "REJECTED" => Some(Self::Rejected),
+            "EXPIRED" => Some(Self::Expired),
+            _ => None,
+        }
+    }
+
     pub fn as_str(self) -> &'static str {
         match self {
             Self::New => "NEW",
@@ -65,6 +80,10 @@ pub fn can_transition_state(from: OrderLifecycleState, to: OrderLifecycleState) 
             | (
                 OrderLifecycleState::PendingSubmit,
                 OrderLifecycleState::Acknowledged
+            )
+            | (
+                OrderLifecycleState::PendingSubmit,
+                OrderLifecycleState::Rejected
             )
             | (
                 OrderLifecycleState::Acknowledged,
@@ -346,6 +365,10 @@ mod tests {
             OrderLifecycleState::Approved
         ));
         assert!(can_transition_state(
+            OrderLifecycleState::PendingSubmit,
+            OrderLifecycleState::Rejected
+        ));
+        assert!(can_transition_state(
             OrderLifecycleState::Acknowledged,
             OrderLifecycleState::Filled
         ));
@@ -353,5 +376,26 @@ mod tests {
             OrderLifecycleState::Filled,
             OrderLifecycleState::Acknowledged
         ));
+    }
+
+    #[test]
+    fn lifecycle_state_parse_round_trip() {
+        let states = [
+            OrderLifecycleState::New,
+            OrderLifecycleState::Approved,
+            OrderLifecycleState::PendingSubmit,
+            OrderLifecycleState::Acknowledged,
+            OrderLifecycleState::PartiallyFilled,
+            OrderLifecycleState::Filled,
+            OrderLifecycleState::Canceled,
+            OrderLifecycleState::Rejected,
+            OrderLifecycleState::Expired,
+        ];
+
+        for state in states {
+            let raw = state.as_str();
+            assert_eq!(OrderLifecycleState::parse(raw), Some(state));
+        }
+        assert_eq!(OrderLifecycleState::parse("UNKNOWN"), None);
     }
 }

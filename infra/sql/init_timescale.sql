@@ -107,6 +107,17 @@ CREATE TABLE IF NOT EXISTS execution_order_state_events (
   PRIMARY KEY (idempotency_key, state, created_at)
 );
 
+CREATE TABLE IF NOT EXISTS execution_dispatch_attempts (
+  idempotency_key TEXT NOT NULL,
+  attempt_no INTEGER NOT NULL,
+  result_state TEXT NOT NULL,
+  exchange_order_id TEXT,
+  reason TEXT NOT NULL DEFAULT '',
+  actor TEXT NOT NULL DEFAULT 'execution-service',
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  PRIMARY KEY (idempotency_key, attempt_no)
+);
+
 ALTER TABLE execution_order_intents
 ADD COLUMN IF NOT EXISTS exchange TEXT NOT NULL DEFAULT 'kraken_futures';
 
