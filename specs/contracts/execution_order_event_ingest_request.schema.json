@@ -1,0 +1,40 @@
+{
+  "$id": "https://cryptopairs/specs/contracts/execution_order_event_ingest_request.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "ExecutionOrderEventIngestRequest",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["to_state"],
+  "properties": {
+    "idempotency_key": {
+      "type": ["string", "null"],
+      "minLength": 1
+    },
+    "exchange_order_id": {
+      "type": ["string", "null"],
+      "minLength": 1
+    },
+    "to_state": {
+      "type": "string",
+      "enum": [
+        "ACKNOWLEDGED",
+        "PARTIALLY_FILLED",
+        "FILLED",
+        "CANCELED",
+        "REJECTED",
+        "EXPIRED"
+      ]
+    },
+    "reason": {
+      "type": ["string", "null"]
+    },
+    "actor": {
+      "type": ["string", "null"]
+    }
+  },
+  "anyOf": [
+    { "required": ["idempotency_key"] },
+    { "required": ["exchange_order_id"] }
+  ],
+  "version": "0.1.0"
+}

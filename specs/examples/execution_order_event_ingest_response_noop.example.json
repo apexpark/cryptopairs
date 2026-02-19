@@ -1,0 +1,9 @@
+{
+  "idempotency_key": "spread-entry-20260219-0001-leg-a",
+  "exchange_order_id": "abc-order-1",
+  "result": "NOOP",
+  "from_state": "FILLED",
+  "to_state": null,
+  "reason": "order event ignored: invalid transition FILLED -> PARTIALLY_FILLED",
+  "event_at": "2026-02-19T21:41:00Z"
+}

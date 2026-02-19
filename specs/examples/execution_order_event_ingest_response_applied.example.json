@@ -1,0 +1,9 @@
+{
+  "idempotency_key": "spread-entry-20260219-0001-leg-a",
+  "exchange_order_id": "abc-order-1",
+  "result": "APPLIED",
+  "from_state": "ACKNOWLEDGED",
+  "to_state": "PARTIALLY_FILLED",
+  "reason": "partial fill from private execution feed",
+  "event_at": "2026-02-19T21:40:00Z"
+}

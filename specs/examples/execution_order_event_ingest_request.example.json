@@ -1,0 +1,6 @@
+{
+  "exchange_order_id": "abc-order-1",
+  "to_state": "PARTIALLY_FILLED",
+  "reason": "partial fill from private execution feed",
+  "actor": "kraken-private-stream"
+}
