@@ -5,6 +5,7 @@ use axum::{
     routing::{get, post},
     Json, Router,
 };
+use base64::{engine::general_purpose::STANDARD as BASE64_STANDARD, Engine as _};
 use chrono::{DateTime, Utc};
 use common_types::Timeframe;
 use execution_service::{
@@ -12,7 +13,10 @@ use execution_service::{
     normalize_side, GateDecision, OrderIntentAction, OrderIntentDecision, OrderLifecycleState,
     ReconcileDecision,
 };
+use hmac::{Hmac, Mac};
+use reqwest::header::{HeaderMap, HeaderValue, CONTENT_TYPE};
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256, Sha512};
 use std::sync::Arc;
 use tokio::net::TcpListener;
 use tokio_postgres::{types::ToSql, Client, NoTls};
@@ -25,21 +29,238 @@ struct AppState {
     postgres_url: Arc<String>,
     default_min_coverage_pct: f64,
     dispatch_mode: DispatchMode,
+    kraken_live: Option<Arc<KrakenLiveClient>>,
 }
 
 #[derive(Debug, Clone, Copy)]
 enum DispatchMode {
     FailClosed,
     SimulateAck,
+    LiveKraken,
 }
 
 impl DispatchMode {
     fn parse(value: &str) -> Self {
         match value {
             "simulate_ack" => Self::SimulateAck,
+            "live_kraken" => Self::LiveKraken,
             _ => Self::FailClosed,
         }
     }
+}
+
+impl KrakenLiveClient {
+    fn from_env() -> Result<Self, String> {
+        let api_key = std::env::var("KRAKEN_FUTURES_API_KEY")
+            .map_err(|_| "missing KRAKEN_FUTURES_API_KEY".to_string())?;
+        let api_secret_b64 = std::env::var("KRAKEN_FUTURES_API_SECRET")
+            .map_err(|_| "missing KRAKEN_FUTURES_API_SECRET".to_string())?;
+        let base_url = std::env::var("KRAKEN_FUTURES_API_BASE_URL")
+            .unwrap_or_else(|_| "https://futures.kraken.com".to_string());
+        let endpoint_path = std::env::var("KRAKEN_FUTURES_SENDORDER_PATH")
+            .unwrap_or_else(|_| "/derivatives/api/v3/sendorder".to_string());
+        if !endpoint_path.starts_with('/') {
+            return Err("KRAKEN_FUTURES_SENDORDER_PATH must start with '/'".to_string());
+        }
+        Ok(Self {
+            http_client: reqwest::Client::new(),
+            base_url,
+            endpoint_path,
+            api_key,
+            api_secret_b64,
+        })
+    }
+
+    async fn submit_order(
+        &self,
+        intent: &OrderIntentRecord,
+    ) -> Result<LiveDispatchSuccess, String> {
+        if intent.exchange != "kraken_futures" {
+            return Err(format!(
+                "live_kraken mode only supports exchange=kraken_futures, got {}",
+                intent.exchange
+            ));
+        }
+
+        let side = if intent.side == "BUY" { "buy" } else { "sell" };
+        let nonce = Utc::now().timestamp_millis().to_string();
+        let post_data = format!(
+            "orderType=mkt&symbol={}&side={}&size={}&cliOrdId={}",
+            urlencoding::encode(&intent.instrument),
+            side,
+            intent.qty,
+            urlencoding::encode(&intent.idempotency_key)
+        );
+        let authent = sign_kraken_futures_payload(
+            &post_data,
+            &nonce,
+            &self.endpoint_path,
+            &self.api_secret_b64,
+        )?;
+        let url = format!("{}{}", self.base_url, self.endpoint_path);
+
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            CONTENT_TYPE,
+            HeaderValue::from_static("application/x-www-form-urlencoded"),
+        );
+        headers.insert(
+            "APIKey",
+            HeaderValue::from_str(&self.api_key)
+                .map_err(|_| "invalid API key header".to_string())?,
+        );
+        headers.insert(
+            "Nonce",
+            HeaderValue::from_str(&nonce).map_err(|_| "invalid nonce header".to_string())?,
+        );
+        headers.insert(
+            "Authent",
+            HeaderValue::from_str(&authent).map_err(|_| "invalid authent header".to_string())?,
+        );
+
+        let response = self
+            .http_client
+            .post(url)
+            .headers(headers)
+            .body(post_data)
+            .send()
+            .await
+            .map_err(|error| format!("kraken live submit request failed: {error}"))?;
+
+        let status = response.status().as_u16();
+        let body = response
+            .text()
+            .await
+            .map_err(|error| format!("kraken live submit response read failed: {error}"))?;
+
+        if status != 200 {
+            return Err(format!(
+                "kraken live submit http status {status}: {}",
+                summarize_response(&body)
+            ));
+        }
+
+        parse_kraken_submit_response(&body)
+    }
+}
+
+fn sign_kraken_futures_payload(
+    post_data: &str,
+    nonce: &str,
+    endpoint_path: &str,
+    api_secret_b64: &str,
+) -> Result<String, String> {
+    let sha_input = format!("{post_data}{nonce}{endpoint_path}");
+    let sha_digest = Sha256::digest(sha_input.as_bytes());
+    let encoded_post_data = urlencoding::encode(post_data).into_owned();
+
+    let mut signing_input = Vec::with_capacity(encoded_post_data.len() + sha_digest.len());
+    signing_input.extend_from_slice(encoded_post_data.as_bytes());
+    signing_input.extend_from_slice(&sha_digest);
+
+    let secret = BASE64_STANDARD
+        .decode(api_secret_b64)
+        .map_err(|_| "KRAKEN_FUTURES_API_SECRET is not valid base64".to_string())?;
+    let mut mac =
+        Hmac::<Sha512>::new_from_slice(&secret).map_err(|_| "invalid hmac secret".to_string())?;
+    mac.update(&signing_input);
+    let signature = mac.finalize().into_bytes();
+    Ok(BASE64_STANDARD.encode(signature))
+}
+
+fn parse_kraken_submit_response(body: &str) -> Result<LiveDispatchSuccess, String> {
+    let payload: serde_json::Value = serde_json::from_str(body)
+        .map_err(|error| format!("kraken response decode failed: {error}"))?;
+
+    let mut status_text = None;
+    if let Some(status) = payload
+        .get("sendStatus")
+        .and_then(|value| value.get("status"))
+        .and_then(serde_json::Value::as_str)
+    {
+        status_text = Some(status.to_string());
+    }
+
+    let order_id = extract_order_id(&payload);
+    let is_success = matches!(
+        status_text.as_deref(),
+        Some("placed") | Some("attempted") | Some("received")
+    );
+    if !is_success {
+        let reason = payload
+            .get("error")
+            .and_then(serde_json::Value::as_str)
+            .map(ToString::to_string)
+            .or_else(|| status_text.clone())
+            .unwrap_or_else(|| {
+                format!(
+                    "unexpected kraken sendorder payload: {}",
+                    summarize_response(body)
+                )
+            });
+        return Err(reason);
+    }
+    let Some(exchange_order_id) = order_id else {
+        return Err("kraken sendorder response missing order id".to_string());
+    };
+    Ok(LiveDispatchSuccess {
+        exchange_order_id,
+        reason: "dispatch acknowledged by kraken live adapter".to_string(),
+    })
+}
+
+fn extract_order_id(payload: &serde_json::Value) -> Option<String> {
+    if let Some(id) = payload
+        .get("sendStatus")
+        .and_then(|value| value.get("order_id"))
+        .and_then(serde_json::Value::as_str)
+    {
+        return Some(id.to_string());
+    }
+    if let Some(id) = payload
+        .get("sendStatus")
+        .and_then(|value| value.get("orderId"))
+        .and_then(serde_json::Value::as_str)
+    {
+        return Some(id.to_string());
+    }
+    payload
+        .get("sendStatus")
+        .and_then(|value| value.get("orderEvents"))
+        .and_then(serde_json::Value::as_array)
+        .and_then(|events| {
+            events.iter().find_map(|event| {
+                event
+                    .get("order")
+                    .and_then(|order| order.get("orderId"))
+                    .and_then(serde_json::Value::as_str)
+                    .map(ToString::to_string)
+            })
+        })
+}
+
+fn summarize_response(body: &str) -> String {
+    const MAX_LEN: usize = 220;
+    if body.len() <= MAX_LEN {
+        body.to_string()
+    } else {
+        format!("{}...", &body[..MAX_LEN])
+    }
+}
+
+#[derive(Clone)]
+struct KrakenLiveClient {
+    http_client: reqwest::Client,
+    base_url: String,
+    endpoint_path: String,
+    api_key: String,
+    api_secret_b64: String,
+}
+
+#[derive(Debug)]
+struct LiveDispatchSuccess {
+    exchange_order_id: String,
+    reason: String,
 }
 
 #[derive(Clone)]
@@ -620,6 +841,20 @@ async fn main() -> anyhow::Result<()> {
     let dispatch_mode = DispatchMode::parse(
         &std::env::var("EXECUTION_DISPATCH_MODE").unwrap_or_else(|_| "fail_closed".to_string()),
     );
+    let kraken_live = if matches!(dispatch_mode, DispatchMode::LiveKraken) {
+        match KrakenLiveClient::from_env() {
+            Ok(client) => Some(Arc::new(client)),
+            Err(reason) => {
+                info!(
+                    reason = %reason,
+                    "live_kraken dispatch mode configured but client initialization failed; dispatch will fail closed"
+                );
+                None
+            }
+        }
+    } else {
+        None
+    };
     let bind_addr = format!("0.0.0.0:{port}");
 
     let repository = Arc::new(ExecutionRepository::connect(&postgres_url).await?);
@@ -628,6 +863,7 @@ async fn main() -> anyhow::Result<()> {
         postgres_url: Arc::new(postgres_url.clone()),
         default_min_coverage_pct,
         dispatch_mode,
+        kraken_live,
     };
     let cors = CorsLayer::new()
         .allow_origin(Any)
@@ -1029,6 +1265,29 @@ async fn dispatch_order_intent(
                 Some(synthetic_id),
             )
         }
+        DispatchMode::LiveKraken => {
+            if let Some(client) = &state.kraken_live {
+                match client.submit_order(&intent).await {
+                    Ok(success) => (
+                        OrderLifecycleState::Acknowledged,
+                        success.reason,
+                        Some(success.exchange_order_id),
+                    ),
+                    Err(reason) => (
+                        OrderLifecycleState::Rejected,
+                        format!("kraken live submit failed closed: {reason}"),
+                        None,
+                    ),
+                }
+            } else {
+                (
+                    OrderLifecycleState::Rejected,
+                    "kraken live submit failed closed: missing or invalid live credentials/config"
+                        .to_string(),
+                    None,
+                )
+            }
+        }
     };
 
     let transitioned = transition_order_state_if_current(
@@ -1191,7 +1450,10 @@ fn map_order_intent(record: OrderIntentRecord) -> OrderIntentResponse {
 
 #[cfg(test)]
 mod tests {
-    use super::{validate_manual_controls, ApiError, DispatchMode};
+    use super::{
+        parse_kraken_submit_response, sign_kraken_futures_payload, validate_manual_controls,
+        ApiError, DispatchMode,
+    };
     use execution_service::OrderIntentAction;
 
     #[test]
@@ -1222,5 +1484,44 @@ mod tests {
             DispatchMode::parse("simulate_ack"),
             DispatchMode::SimulateAck
         ));
+        assert!(matches!(
+            DispatchMode::parse("live_kraken"),
+            DispatchMode::LiveKraken
+        ));
+    }
+
+    #[test]
+    fn kraken_signing_produces_non_empty_signature() {
+        let signature = sign_kraken_futures_payload(
+            "orderType=mkt&symbol=PI_XBTUSD&side=buy&size=1&cliOrdId=abc123",
+            "1739938400000",
+            "/derivatives/api/v3/sendorder",
+            "dGVzdF9zZWNyZXQ=",
+        )
+        .expect("signature should be generated");
+        assert!(!signature.is_empty());
+    }
+
+    #[test]
+    fn parse_kraken_submit_response_extracts_order_id() {
+        let body = r#"{
+          "result":"success",
+          "sendStatus":{
+            "status":"placed",
+            "orderEvents":[{"type":"PLACE","order":{"orderId":"abc-order-1"}}]
+          }
+        }"#;
+        let parsed = parse_kraken_submit_response(body).expect("expected success payload");
+        assert_eq!(parsed.exchange_order_id, "abc-order-1");
+    }
+
+    #[test]
+    fn parse_kraken_submit_response_rejects_non_success() {
+        let body = r#"{
+          "result":"success",
+          "sendStatus":{"status":"insufficientAvailableFunds"}
+        }"#;
+        let parsed = parse_kraken_submit_response(body);
+        assert!(parsed.is_err());
     }
 }
