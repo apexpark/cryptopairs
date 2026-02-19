@@ -146,6 +146,28 @@ Manual-first behavior:
 - `EMERGENCY_STOP_CLOSE` is the only action allowed without operator confirmation.
 - Lifecycle events are persisted in `execution_order_state_events` (`NEW`, `APPROVED`, `REJECTED`, etc.).
 
+## Execution Lifecycle History Endpoint
+
+```bash
+GET /v1/execution/order-intent/history?idempotency_key=<key>
+```
+
+Returns the persisted intent record, lifecycle state events, and dispatch attempt audit rows.
+
+## Execution Dispatch Endpoint
+
+```bash
+POST /v1/execution/order-intent/dispatch
+```
+
+Dispatches an `ACCEPTED` + `APPROVED` intent into the submit lifecycle:
+- `APPROVED` -> `PENDING_SUBMIT` -> `ACKNOWLEDGED` (simulate mode)
+- `APPROVED` -> `PENDING_SUBMIT` -> `REJECTED` (default fail-closed mode)
+
+Environment:
+- `EXECUTION_DISPATCH_MODE=fail_closed` (default)
+- `EXECUTION_DISPATCH_MODE=simulate_ack` (local testing)
+
 ## Account Reconcile Run Endpoint
 
 ```bash

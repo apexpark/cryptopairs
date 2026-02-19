@@ -8,8 +8,9 @@ use axum::{
 use chrono::{DateTime, Utc};
 use common_types::Timeframe;
 use execution_service::{
-    evaluate_integrity_gate_from_store, evaluate_order_intent, normalize_side, GateDecision,
-    OrderIntentAction, OrderIntentDecision, OrderLifecycleState, ReconcileDecision,
+    can_transition_state, evaluate_integrity_gate_from_store, evaluate_order_intent,
+    normalize_side, GateDecision, OrderIntentAction, OrderIntentDecision, OrderLifecycleState,
+    ReconcileDecision,
 };
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
@@ -23,6 +24,22 @@ struct AppState {
     repository: Arc<ExecutionRepository>,
     postgres_url: Arc<String>,
     default_min_coverage_pct: f64,
+    dispatch_mode: DispatchMode,
+}
+
+#[derive(Debug, Clone, Copy)]
+enum DispatchMode {
+    FailClosed,
+    SimulateAck,
+}
+
+impl DispatchMode {
+    fn parse(value: &str) -> Self {
+        match value {
+            "simulate_ack" => Self::SimulateAck,
+            _ => Self::FailClosed,
+        }
+    }
 }
 
 #[derive(Clone)]
@@ -85,6 +102,16 @@ impl ExecutionRepository {
                     actor TEXT NOT NULL DEFAULT 'system',
                     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
                     PRIMARY KEY (idempotency_key, state, created_at)
+                 );
+                 CREATE TABLE IF NOT EXISTS execution_dispatch_attempts (
+                    idempotency_key TEXT NOT NULL,
+                    attempt_no INTEGER NOT NULL,
+                    result_state TEXT NOT NULL,
+                    exchange_order_id TEXT,
+                    reason TEXT NOT NULL DEFAULT '',
+                    actor TEXT NOT NULL DEFAULT 'execution-service',
+                    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                    PRIMARY KEY (idempotency_key, attempt_no)
                  );
                  ALTER TABLE execution_order_intents
                  ADD COLUMN IF NOT EXISTS exchange TEXT NOT NULL DEFAULT 'kraken_futures';
@@ -295,6 +322,125 @@ impl ExecutionRepository {
             .await?;
         Ok(())
     }
+
+    async fn fetch_order_state_history(
+        &self,
+        idempotency_key: &str,
+    ) -> anyhow::Result<Vec<OrderStateEvent>> {
+        let rows = self
+            .client
+            .query(
+                "SELECT state, reason, actor, created_at
+                 FROM execution_order_state_events
+                 WHERE idempotency_key = $1
+                 ORDER BY created_at ASC",
+                &[&idempotency_key],
+            )
+            .await?;
+        Ok(rows
+            .iter()
+            .map(|row| OrderStateEvent {
+                state: row.get(0),
+                reason: row.get(1),
+                actor: row.get(2),
+                created_at: row.get(3),
+            })
+            .collect())
+    }
+
+    async fn fetch_latest_order_state(
+        &self,
+        idempotency_key: &str,
+    ) -> anyhow::Result<Option<OrderLifecycleState>> {
+        let row = self
+            .client
+            .query_opt(
+                "SELECT state
+                 FROM execution_order_state_events
+                 WHERE idempotency_key = $1
+                 ORDER BY created_at DESC
+                 LIMIT 1",
+                &[&idempotency_key],
+            )
+            .await?;
+        let Some(row) = row else {
+            return Ok(None);
+        };
+        let state_raw: String = row.get(0);
+        Ok(OrderLifecycleState::parse(&state_raw))
+    }
+
+    async fn insert_dispatch_attempt(
+        &self,
+        idempotency_key: &str,
+        result_state: OrderLifecycleState,
+        exchange_order_id: Option<&str>,
+        reason: &str,
+        actor: &str,
+    ) -> anyhow::Result<DispatchAttempt> {
+        let next_attempt_row = self
+            .client
+            .query_one(
+                "SELECT COALESCE(MAX(attempt_no), 0) + 1
+                 FROM execution_dispatch_attempts
+                 WHERE idempotency_key = $1",
+                &[&idempotency_key],
+            )
+            .await?;
+        let attempt_no: i32 = next_attempt_row.get(0);
+        let created_at = Utc::now();
+        self.client
+            .execute(
+                "INSERT INTO execution_dispatch_attempts
+                 (idempotency_key, attempt_no, result_state, exchange_order_id, reason, actor, created_at)
+                 VALUES ($1,$2,$3,$4,$5,$6,$7)",
+                &[
+                    &idempotency_key,
+                    &attempt_no,
+                    &result_state.as_str(),
+                    &exchange_order_id,
+                    &reason,
+                    &actor,
+                    &created_at as &(dyn ToSql + Sync),
+                ],
+            )
+            .await?;
+        Ok(DispatchAttempt {
+            attempt_no,
+            result_state: result_state.as_str().to_string(),
+            exchange_order_id: exchange_order_id.map(ToString::to_string),
+            reason: reason.to_string(),
+            actor: actor.to_string(),
+            created_at,
+        })
+    }
+
+    async fn fetch_dispatch_attempts(
+        &self,
+        idempotency_key: &str,
+    ) -> anyhow::Result<Vec<DispatchAttempt>> {
+        let rows = self
+            .client
+            .query(
+                "SELECT attempt_no, result_state, exchange_order_id, reason, actor, created_at
+                 FROM execution_dispatch_attempts
+                 WHERE idempotency_key = $1
+                 ORDER BY attempt_no ASC",
+                &[&idempotency_key],
+            )
+            .await?;
+        Ok(rows
+            .iter()
+            .map(|row| DispatchAttempt {
+                attempt_no: row.get(0),
+                result_state: row.get(1),
+                exchange_order_id: row.get(2),
+                reason: row.get(3),
+                actor: row.get(4),
+                created_at: row.get(5),
+            })
+            .collect())
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -379,6 +525,54 @@ struct OrderIntentRecord {
     created_at: DateTime<Utc>,
 }
 
+#[derive(Debug, Deserialize)]
+struct OrderStateHistoryQuery {
+    idempotency_key: String,
+}
+
+#[derive(Debug, Serialize)]
+struct OrderStateHistoryResponse {
+    idempotency_key: String,
+    intent: OrderIntentResponse,
+    state_events: Vec<OrderStateEvent>,
+    dispatch_attempts: Vec<DispatchAttempt>,
+}
+
+#[derive(Debug, Serialize)]
+struct OrderStateEvent {
+    state: String,
+    reason: String,
+    actor: String,
+    created_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Serialize)]
+struct DispatchAttempt {
+    attempt_no: i32,
+    result_state: String,
+    exchange_order_id: Option<String>,
+    reason: String,
+    actor: String,
+    created_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Deserialize)]
+struct DispatchIntentRequest {
+    idempotency_key: String,
+    actor: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+struct DispatchIntentResponse {
+    idempotency_key: String,
+    result: String,
+    from_state: Option<String>,
+    to_state: Option<String>,
+    exchange_order_id: Option<String>,
+    reason: Option<String>,
+    attempted_at: DateTime<Utc>,
+}
+
 #[derive(Debug, Serialize)]
 struct HealthResponse {
     status: &'static str,
@@ -423,6 +617,9 @@ async fn main() -> anyhow::Result<()> {
         .ok()
         .and_then(|value| value.parse::<f64>().ok())
         .unwrap_or(99.5);
+    let dispatch_mode = DispatchMode::parse(
+        &std::env::var("EXECUTION_DISPATCH_MODE").unwrap_or_else(|_| "fail_closed".to_string()),
+    );
     let bind_addr = format!("0.0.0.0:{port}");
 
     let repository = Arc::new(ExecutionRepository::connect(&postgres_url).await?);
@@ -430,6 +627,7 @@ async fn main() -> anyhow::Result<()> {
         repository,
         postgres_url: Arc::new(postgres_url.clone()),
         default_min_coverage_pct,
+        dispatch_mode,
     };
     let cors = CorsLayer::new()
         .allow_origin(Any)
@@ -443,6 +641,14 @@ async fn main() -> anyhow::Result<()> {
             get(kill_switch).post(update_kill_switch),
         )
         .route("/v1/execution/order-intent", post(order_intent))
+        .route(
+            "/v1/execution/order-intent/history",
+            get(order_intent_history),
+        )
+        .route(
+            "/v1/execution/order-intent/dispatch",
+            post(dispatch_order_intent),
+        )
         .layer(cors)
         .with_state(app_state);
 
@@ -451,6 +657,7 @@ async fn main() -> anyhow::Result<()> {
         bind_addr = %bind_addr,
         postgres_url = %postgres_url,
         default_min_coverage_pct,
+        dispatch_mode = ?dispatch_mode,
         "execution-service started"
     );
     axum::serve(listener, app).await?;
@@ -684,6 +891,235 @@ async fn order_intent(
     Ok(Json(map_order_intent(stored)))
 }
 
+async fn order_intent_history(
+    State(state): State<AppState>,
+    Query(query): Query<OrderStateHistoryQuery>,
+) -> Result<Json<OrderStateHistoryResponse>, ApiError> {
+    if query.idempotency_key.trim().is_empty() {
+        return Err(ApiError::BadRequest(
+            "idempotency_key is required".to_string(),
+        ));
+    }
+
+    let intent = state
+        .repository
+        .fetch_order_intent(&query.idempotency_key)
+        .await
+        .map_err(|error| ApiError::Upstream(error.to_string()))?
+        .ok_or_else(|| ApiError::BadRequest("idempotency_key not found".to_string()))?;
+
+    let state_events = state
+        .repository
+        .fetch_order_state_history(&query.idempotency_key)
+        .await
+        .map_err(|error| ApiError::Upstream(error.to_string()))?;
+
+    let dispatch_attempts = state
+        .repository
+        .fetch_dispatch_attempts(&query.idempotency_key)
+        .await
+        .map_err(|error| ApiError::Upstream(error.to_string()))?;
+
+    Ok(Json(OrderStateHistoryResponse {
+        idempotency_key: query.idempotency_key,
+        intent: map_order_intent(intent),
+        state_events,
+        dispatch_attempts,
+    }))
+}
+
+async fn dispatch_order_intent(
+    State(state): State<AppState>,
+    Json(payload): Json<DispatchIntentRequest>,
+) -> Result<Json<DispatchIntentResponse>, ApiError> {
+    if payload.idempotency_key.trim().is_empty() {
+        return Err(ApiError::BadRequest(
+            "idempotency_key is required".to_string(),
+        ));
+    }
+
+    let actor = payload.actor.unwrap_or_else(|| "operator".to_string());
+    let intent = state
+        .repository
+        .fetch_order_intent(&payload.idempotency_key)
+        .await
+        .map_err(|error| ApiError::Upstream(error.to_string()))?
+        .ok_or_else(|| ApiError::BadRequest("idempotency_key not found".to_string()))?;
+
+    if intent.decision != "ACCEPTED" {
+        return Ok(Json(DispatchIntentResponse {
+            idempotency_key: payload.idempotency_key,
+            result: "NOOP".to_string(),
+            from_state: state
+                .repository
+                .fetch_latest_order_state(&intent.idempotency_key)
+                .await
+                .map_err(|error| ApiError::Upstream(error.to_string()))?
+                .map(|state| state.as_str().to_string()),
+            to_state: None,
+            exchange_order_id: None,
+            reason: Some(format!(
+                "dispatch skipped: decision={} reason={}",
+                intent.decision, intent.reason
+            )),
+            attempted_at: Utc::now(),
+        }));
+    }
+
+    let current_state = state
+        .repository
+        .fetch_latest_order_state(&intent.idempotency_key)
+        .await
+        .map_err(|error| ApiError::Upstream(error.to_string()))?
+        .ok_or_else(|| {
+            ApiError::Upstream("order lifecycle missing current state for dispatch".to_string())
+        })?;
+
+    if current_state != OrderLifecycleState::Approved {
+        return Ok(Json(DispatchIntentResponse {
+            idempotency_key: payload.idempotency_key,
+            result: "NOOP".to_string(),
+            from_state: Some(current_state.as_str().to_string()),
+            to_state: None,
+            exchange_order_id: None,
+            reason: Some(format!(
+                "dispatch skipped: expected state=APPROVED current_state={}",
+                current_state.as_str()
+            )),
+            attempted_at: Utc::now(),
+        }));
+    }
+
+    let transitioned = transition_order_state_if_current(
+        &state,
+        &intent.idempotency_key,
+        OrderLifecycleState::Approved,
+        OrderLifecycleState::PendingSubmit,
+        "dispatch accepted; pending exchange submit",
+        &actor,
+    )
+    .await?;
+    if !transitioned {
+        return Ok(Json(DispatchIntentResponse {
+            idempotency_key: payload.idempotency_key,
+            result: "NOOP".to_string(),
+            from_state: Some(OrderLifecycleState::Approved.as_str().to_string()),
+            to_state: None,
+            exchange_order_id: None,
+            reason: Some("dispatch skipped: state changed concurrently".to_string()),
+            attempted_at: Utc::now(),
+        }));
+    }
+
+    let (result_state, result_reason, exchange_order_id) = match state.dispatch_mode {
+        DispatchMode::FailClosed => (
+            OrderLifecycleState::Rejected,
+            "dispatch failed closed: live submit adapter not configured".to_string(),
+            None,
+        ),
+        DispatchMode::SimulateAck => {
+            let synthetic_id = format!(
+                "SIM-{}-{}",
+                intent.idempotency_key,
+                Utc::now().timestamp_millis()
+            );
+            (
+                OrderLifecycleState::Acknowledged,
+                "dispatch acknowledged in simulate_ack mode".to_string(),
+                Some(synthetic_id),
+            )
+        }
+    };
+
+    let transitioned = transition_order_state_if_current(
+        &state,
+        &intent.idempotency_key,
+        OrderLifecycleState::PendingSubmit,
+        result_state,
+        &result_reason,
+        "execution-dispatch",
+    )
+    .await?;
+    if !transitioned {
+        return Ok(Json(DispatchIntentResponse {
+            idempotency_key: payload.idempotency_key,
+            result: "NOOP".to_string(),
+            from_state: Some(OrderLifecycleState::PendingSubmit.as_str().to_string()),
+            to_state: None,
+            exchange_order_id: None,
+            reason: Some("dispatch skipped: pending state changed concurrently".to_string()),
+            attempted_at: Utc::now(),
+        }));
+    }
+
+    state
+        .repository
+        .insert_dispatch_attempt(
+            &intent.idempotency_key,
+            result_state,
+            exchange_order_id.as_deref(),
+            &result_reason,
+            &actor,
+        )
+        .await
+        .map_err(|error| ApiError::Upstream(error.to_string()))?;
+
+    info!(
+        idempotency_key = %intent.idempotency_key,
+        dispatch_mode = ?state.dispatch_mode,
+        result_state = %result_state.as_str(),
+        reason = %result_reason,
+        "execution dispatch attempt completed"
+    );
+
+    Ok(Json(DispatchIntentResponse {
+        idempotency_key: payload.idempotency_key,
+        result: if result_state == OrderLifecycleState::Acknowledged {
+            "ACKNOWLEDGED".to_string()
+        } else {
+            "REJECTED".to_string()
+        },
+        from_state: Some(OrderLifecycleState::Approved.as_str().to_string()),
+        to_state: Some(result_state.as_str().to_string()),
+        exchange_order_id,
+        reason: Some(result_reason),
+        attempted_at: Utc::now(),
+    }))
+}
+
+async fn transition_order_state_if_current(
+    state: &AppState,
+    idempotency_key: &str,
+    from_state: OrderLifecycleState,
+    to_state: OrderLifecycleState,
+    reason: &str,
+    actor: &str,
+) -> Result<bool, ApiError> {
+    if !can_transition_state(from_state, to_state) {
+        return Err(ApiError::BadRequest(format!(
+            "invalid lifecycle transition: {} -> {}",
+            from_state.as_str(),
+            to_state.as_str()
+        )));
+    }
+
+    let latest = state
+        .repository
+        .fetch_latest_order_state(idempotency_key)
+        .await
+        .map_err(|error| ApiError::Upstream(error.to_string()))?;
+    if latest != Some(from_state) {
+        return Ok(false);
+    }
+
+    state
+        .repository
+        .record_state_event(idempotency_key, to_state, reason, actor)
+        .await
+        .map_err(|error| ApiError::Upstream(error.to_string()))?;
+    Ok(true)
+}
+
 fn validate_manual_controls(
     action: OrderIntentAction,
     operator_confirmed: bool,
@@ -755,7 +1191,7 @@ fn map_order_intent(record: OrderIntentRecord) -> OrderIntentResponse {
 
 #[cfg(test)]
 mod tests {
-    use super::{validate_manual_controls, ApiError};
+    use super::{validate_manual_controls, ApiError, DispatchMode};
     use execution_service::OrderIntentAction;
 
     #[test]
@@ -774,5 +1210,17 @@ mod tests {
     fn emergency_stop_can_run_without_operator_confirmation() {
         let result = validate_manual_controls(OrderIntentAction::EmergencyStopClose, false, None);
         assert!(result.is_ok());
+    }
+
+    #[test]
+    fn dispatch_mode_defaults_fail_closed() {
+        assert!(matches!(
+            DispatchMode::parse("unknown"),
+            DispatchMode::FailClosed
+        ));
+        assert!(matches!(
+            DispatchMode::parse("simulate_ack"),
+            DispatchMode::SimulateAck
+        ));
     }
 }

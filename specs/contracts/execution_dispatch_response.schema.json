@@ -1,0 +1,67 @@
+{
+  "$id": "https://cryptopairs/specs/contracts/execution_dispatch_response.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "ExecutionDispatchResponse",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "idempotency_key",
+    "result",
+    "from_state",
+    "to_state",
+    "exchange_order_id",
+    "reason",
+    "attempted_at"
+  ],
+  "properties": {
+    "idempotency_key": {
+      "type": "string",
+      "minLength": 1
+    },
+    "result": {
+      "type": "string",
+      "enum": ["ACKNOWLEDGED", "REJECTED", "NOOP"]
+    },
+    "from_state": {
+      "type": ["string", "null"],
+      "enum": [
+        "NEW",
+        "APPROVED",
+        "PENDING_SUBMIT",
+        "ACKNOWLEDGED",
+        "PARTIALLY_FILLED",
+        "FILLED",
+        "CANCELED",
+        "REJECTED",
+        "EXPIRED",
+        null
+      ]
+    },
+    "to_state": {
+      "type": ["string", "null"],
+      "enum": [
+        "NEW",
+        "APPROVED",
+        "PENDING_SUBMIT",
+        "ACKNOWLEDGED",
+        "PARTIALLY_FILLED",
+        "FILLED",
+        "CANCELED",
+        "REJECTED",
+        "EXPIRED",
+        null
+      ]
+    },
+    "exchange_order_id": {
+      "type": ["string", "null"]
+    },
+    "reason": {
+      "type": ["string", "null"]
+    },
+    "attempted_at": {
+      "type": "string",
+      "format": "date-time"
+    }
+  },
+  "version": "0.1.0"
+}

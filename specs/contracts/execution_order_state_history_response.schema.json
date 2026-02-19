@@ -1,0 +1,112 @@
+{
+  "$id": "https://cryptopairs/specs/contracts/execution_order_state_history_response.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "ExecutionOrderStateHistoryResponse",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "idempotency_key",
+    "intent",
+    "state_events",
+    "dispatch_attempts"
+  ],
+  "properties": {
+    "idempotency_key": {
+      "type": "string",
+      "minLength": 1
+    },
+    "intent": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "idempotency_key",
+        "exchange",
+        "account_id",
+        "instrument",
+        "timeframe",
+        "action",
+        "side",
+        "qty",
+        "operator_confirmed",
+        "operator_id",
+        "min_coverage_pct",
+        "decision",
+        "reason",
+        "evaluated_at"
+      ],
+      "properties": {
+        "idempotency_key": { "type": "string" },
+        "exchange": { "type": "string" },
+        "account_id": { "type": "string" },
+        "instrument": { "type": "string" },
+        "timeframe": { "type": "string", "enum": ["1m", "15m", "1h"] },
+        "action": {
+          "type": "string",
+          "enum": ["ENTRY", "EXIT", "EMERGENCY_STOP_CLOSE"]
+        },
+        "side": { "type": "string", "enum": ["BUY", "SELL"] },
+        "qty": { "type": "number", "exclusiveMinimum": 0 },
+        "operator_confirmed": { "type": "boolean" },
+        "operator_id": { "type": ["string", "null"] },
+        "min_coverage_pct": { "type": "number", "minimum": 0, "maximum": 100 },
+        "decision": { "type": "string", "enum": ["ACCEPTED", "BLOCKED"] },
+        "reason": { "type": ["string", "null"] },
+        "evaluated_at": { "type": "string", "format": "date-time" }
+      }
+    },
+    "state_events": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["state", "reason", "actor", "created_at"],
+        "properties": {
+          "state": {
+            "type": "string",
+            "enum": [
+              "NEW",
+              "APPROVED",
+              "PENDING_SUBMIT",
+              "ACKNOWLEDGED",
+              "PARTIALLY_FILLED",
+              "FILLED",
+              "CANCELED",
+              "REJECTED",
+              "EXPIRED"
+            ]
+          },
+          "reason": { "type": "string" },
+          "actor": { "type": "string" },
+          "created_at": { "type": "string", "format": "date-time" }
+        }
+      }
+    },
+    "dispatch_attempts": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "attempt_no",
+          "result_state",
+          "exchange_order_id",
+          "reason",
+          "actor",
+          "created_at"
+        ],
+        "properties": {
+          "attempt_no": { "type": "integer", "minimum": 1 },
+          "result_state": {
+            "type": "string",
+            "enum": ["ACKNOWLEDGED", "REJECTED"]
+          },
+          "exchange_order_id": { "type": ["string", "null"] },
+          "reason": { "type": "string" },
+          "actor": { "type": "string" },
+          "created_at": { "type": "string", "format": "date-time" }
+        }
+      }
+    }
+  },
+  "version": "0.1.0"
+}

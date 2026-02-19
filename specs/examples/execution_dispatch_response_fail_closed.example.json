@@ -1,0 +1,9 @@
+{
+  "idempotency_key": "1708400123456-PI_XBTUSD__PI_ETHUSD-long-entry-0",
+  "result": "REJECTED",
+  "from_state": "APPROVED",
+  "to_state": "REJECTED",
+  "exchange_order_id": null,
+  "reason": "dispatch failed closed: live submit adapter not configured",
+  "attempted_at": "2026-02-20T00:30:04Z"
+}
