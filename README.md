@@ -164,26 +164,26 @@ Dispatches an `ACCEPTED` + `APPROVED` intent into the submit lifecycle:
 - `APPROVED` -> `PENDING_SUBMIT` -> `ACKNOWLEDGED` (simulate mode)
 - `APPROVED` -> `PENDING_SUBMIT` -> `REJECTED` (default fail-closed mode)
 
-Environment:
-- `EXECUTION_DISPATCH_MODE=fail_closed` (default)
-- `EXECUTION_DISPATCH_MODE=simulate_ack` (local testing)
-- `EXECUTION_DISPATCH_MODE=live_kraken` (real exchange submit; fail-closed if not fully configured)
-- `KRAKEN_FUTURES_API_KEY` (required for `live_kraken`)
-- `KRAKEN_FUTURES_API_SECRET` (required for `live_kraken`, base64-encoded secret)
-- `KRAKEN_FUTURES_API_BASE_URL` (optional, default `https://futures.kraken.com`)
-- `KRAKEN_FUTURES_SENDORDER_PATH` (optional, default `/derivatives/api/v3/sendorder`)
-- `EXECUTION_ACK_WATCHDOG_POLL_SECONDS` (optional, default `15`)
-- `EXECUTION_ACK_EXPIRE_AFTER_SECONDS` (optional, default `90`)
-- `EXECUTION_ACK_WATCHDOG_BATCH_LIMIT` (optional, default `200`)
-- `EXECUTION_OPENORDERS_POLLER_ENABLED` (optional, default `true`)
-- `EXECUTION_OPENORDERS_POLL_SECONDS` (optional, default `5`)
-- `EXECUTION_OPENORDERS_POLL_BATCH_LIMIT` (optional, default `200`)
-- `ACCOUNT_SERVICE_URL` (optional, default `http://127.0.0.1:8081`)
-- `EXECUTION_TRIGGER_RECONCILE_ON_TERMINAL` (optional, default `true`)
-- `KRAKEN_FUTURES_OPENORDERS_PATH` (optional, default `/derivatives/api/v3/openorders`)
-- `EXECUTION_ORDER_STATUS_LOOKUP_ENABLED` (optional, default `false`)
-- `KRAKEN_FUTURES_ORDER_STATUS_PATH` (optional, default `/derivatives/api/v3/orders/status`)
-- `KRAKEN_FUTURES_ORDER_STATUS_QUERY_KEY` (optional, default `orderId`)
+Operator Settings (friendly name -> technical key):
+- Trading Mode (`EXECUTION_DISPATCH_MODE`): `fail_closed` (default), `simulate_ack`, `live_kraken`.
+- Kraken API Key (`KRAKEN_FUTURES_API_KEY`): required for `live_kraken`.
+- Kraken API Secret (Base64) (`KRAKEN_FUTURES_API_SECRET`): required for `live_kraken`.
+- Kraken API Base URL (`KRAKEN_FUTURES_API_BASE_URL`): default `https://futures.kraken.com`.
+- Send Order Endpoint (`KRAKEN_FUTURES_SENDORDER_PATH`): default `/derivatives/api/v3/sendorder`.
+- Open Orders Endpoint (`KRAKEN_FUTURES_OPENORDERS_PATH`): default `/derivatives/api/v3/openorders`.
+- Open Orders Poller Enabled (`EXECUTION_OPENORDERS_POLLER_ENABLED`): default `true`.
+- Open Orders Poll Interval Seconds (`EXECUTION_OPENORDERS_POLL_SECONDS`): default `5`.
+- Open Orders Poll Batch Limit (`EXECUTION_OPENORDERS_POLL_BATCH_LIMIT`): default `200`.
+- Order Status Lookup Enabled (`EXECUTION_ORDER_STATUS_LOOKUP_ENABLED`): default `false`.
+- Order Status Endpoint (`KRAKEN_FUTURES_ORDER_STATUS_PATH`): default `/derivatives/api/v3/orders/status`.
+- Order Status Query Key (`KRAKEN_FUTURES_ORDER_STATUS_QUERY_KEY`): default `orderId`.
+- Ack Timeout Poll Seconds (`EXECUTION_ACK_WATCHDOG_POLL_SECONDS`): default `15`.
+- Ack Expiry Threshold Seconds (`EXECUTION_ACK_EXPIRE_AFTER_SECONDS`): default `90`.
+- Ack Timeout Batch Limit (`EXECUTION_ACK_WATCHDOG_BATCH_LIMIT`): default `200`.
+- Account Service URL (`ACCOUNT_SERVICE_URL`): default `http://127.0.0.1:8081`.
+- Reconcile On Terminal State (`EXECUTION_TRIGGER_RECONCILE_ON_TERMINAL`): default `true`.
+
+Operator playbook: `docs/playbooks/execution-operations-runbook.md`
 
 The execution service includes an automatic stale-ack watchdog:
 - any order stuck in `ACKNOWLEDGED` beyond the configured threshold is deterministically

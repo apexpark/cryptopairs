@@ -46,6 +46,7 @@ If instructions conflict, use this order:
 - `docs/19-manual-trading-operator-ui-session.md`
 - `docs/playbooks/backfill-runbook.md`
 - `docs/playbooks/incident-runbook.md`
+- `docs/playbooks/execution-operations-runbook.md`
 - `docs/adr/ADR-0001-hybrid-rust-python.md`
 
 ## Definition Of Ready
