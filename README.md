@@ -175,8 +175,12 @@ Environment:
 - `EXECUTION_ACK_WATCHDOG_POLL_SECONDS` (optional, default `15`)
 - `EXECUTION_ACK_EXPIRE_AFTER_SECONDS` (optional, default `90`)
 - `EXECUTION_ACK_WATCHDOG_BATCH_LIMIT` (optional, default `200`)
+- `EXECUTION_OPENORDERS_POLLER_ENABLED` (optional, default `true`)
+- `EXECUTION_OPENORDERS_POLL_SECONDS` (optional, default `5`)
+- `EXECUTION_OPENORDERS_POLL_BATCH_LIMIT` (optional, default `200`)
 - `ACCOUNT_SERVICE_URL` (optional, default `http://127.0.0.1:8081`)
 - `EXECUTION_TRIGGER_RECONCILE_ON_TERMINAL` (optional, default `true`)
+- `KRAKEN_FUTURES_OPENORDERS_PATH` (optional, default `/derivatives/api/v3/openorders`)
 
 The execution service includes an automatic stale-ack watchdog:
 - any order stuck in `ACKNOWLEDGED` beyond the configured threshold is deterministically
@@ -184,6 +188,10 @@ The execution service includes an automatic stale-ack watchdog:
 
 Terminal lifecycle transitions (`FILLED`, `CANCELED`, `REJECTED`, `EXPIRED`) now trigger
 `POST /v1/account/reconcile/run` as a best-effort synchronization hook.
+
+When `EXECUTION_DISPATCH_MODE=live_kraken`, an open-orders poller now reads
+`GET /derivatives/api/v3/openorders` and applies deterministic `ACKNOWLEDGED -> PARTIALLY_FILLED`
+or `-> FILLED` transitions when supported by open-order fields.
 
 ## Execution Order Event Ingest Endpoint
 
