@@ -235,6 +235,73 @@ export interface OrderIntentResponse {
   evaluated_at: string;
 }
 
+export interface DispatchIntentRequest {
+  idempotency_key: string;
+  actor?: string;
+}
+
+export interface DispatchIntentResponse {
+  idempotency_key: string;
+  result: "ACKNOWLEDGED" | "REJECTED" | "NOOP";
+  from_state:
+    | "NEW"
+    | "APPROVED"
+    | "PENDING_SUBMIT"
+    | "ACKNOWLEDGED"
+    | "PARTIALLY_FILLED"
+    | "FILLED"
+    | "CANCELED"
+    | "REJECTED"
+    | "EXPIRED"
+    | null;
+  to_state:
+    | "NEW"
+    | "APPROVED"
+    | "PENDING_SUBMIT"
+    | "ACKNOWLEDGED"
+    | "PARTIALLY_FILLED"
+    | "FILLED"
+    | "CANCELED"
+    | "REJECTED"
+    | "EXPIRED"
+    | null;
+  exchange_order_id: string | null;
+  reason: string | null;
+  attempted_at: string;
+}
+
+export interface OrderStateEvent {
+  state:
+    | "NEW"
+    | "APPROVED"
+    | "PENDING_SUBMIT"
+    | "ACKNOWLEDGED"
+    | "PARTIALLY_FILLED"
+    | "FILLED"
+    | "CANCELED"
+    | "REJECTED"
+    | "EXPIRED";
+  reason: string;
+  actor: string;
+  created_at: string;
+}
+
+export interface DispatchAttempt {
+  attempt_no: number;
+  result_state: "ACKNOWLEDGED" | "REJECTED";
+  exchange_order_id: string | null;
+  reason: string;
+  actor: string;
+  created_at: string;
+}
+
+export interface OrderIntentHistoryResponse {
+  idempotency_key: string;
+  intent: OrderIntentResponse;
+  state_events: OrderStateEvent[];
+  dispatch_attempts: DispatchAttempt[];
+}
+
 export interface ReconcileResponse {
   reconcile: {
     exchange: string;

@@ -9,9 +9,15 @@ import {
   timeframeMinutes,
 } from "./lib/analytics";
 import {
+  allAcceptedDispatchAcknowledged,
+  latestLifecycleState,
+} from "./lib/orderLifecycle";
+import {
+  dispatchOrderIntent,
   fetchExecutionDecision,
   fetchIntegrityHistory,
   fetchKillSwitchState,
+  fetchOrderIntentHistory,
   fetchReconcile,
   fetchStrategyCostGates,
   fetchStrategyCues,
@@ -32,11 +38,12 @@ import {
 } from "./lib/tradeGuards";
 import type {
   ChartMarker,
+  DispatchIntentResponse,
   DirectionHint,
   ExecutionAction,
   IntegrityHistoryResponse,
   KillSwitchState,
-  OrderIntentResponse,
+  OrderIntentHistoryResponse,
   ReconcileResponse,
   SpreadPosition,
   StrategyPairsCostGateResponse,
@@ -63,6 +70,15 @@ type TradeCommand =
 interface SpreadLeg {
   instrument: string;
   side: TradeSide;
+}
+
+interface LegExecutionOutcome {
+  instrument: string;
+  intentDecision: "ACCEPTED" | "BLOCKED";
+  intentReason: string | null;
+  dispatch: DispatchIntentResponse | null;
+  dispatchError: string | null;
+  history: OrderIntentHistoryResponse | null;
 }
 
 const NAV_ITEMS: Array<{ id: PageId; label: string }> = [
@@ -211,6 +227,9 @@ function App(): JSX.Element {
     "cp.timeline",
     {}
   );
+  const [intentHistoryByPair, setIntentHistoryByPair] = useState<
+    Record<string, OrderIntentHistoryResponse[]>
+  >({});
 
   const selectedCueRow = useMemo(() => {
     if (!cuesResponse?.cues.length) {
@@ -231,6 +250,7 @@ function App(): JSX.Element {
   const currentPosition =
     (currentPairId ? positions[currentPairId] : undefined) ?? emptyPosition(nowIso());
   const currentTimeline = timelineByPair[currentPairId] ?? [];
+  const currentIntentHistory = intentHistoryByPair[currentPairId] ?? [];
 
   const stopValueNumber = Number.parseFloat(stopValue);
   const spreadSizeNumber = Number.parseFloat(spreadSize);
@@ -511,6 +531,34 @@ function App(): JSX.Element {
     });
   };
 
+  const upsertIntentHistories = (
+    pairId: string,
+    histories: OrderIntentHistoryResponse[]
+  ): void => {
+    if (!histories.length) {
+      return;
+    }
+    setIntentHistoryByPair((prev) => {
+      const existing = prev[pairId] ?? [];
+      const byKey = new Map<string, OrderIntentHistoryResponse>();
+      for (const item of existing) {
+        byKey.set(item.idempotency_key, item);
+      }
+      for (const item of histories) {
+        byKey.set(item.idempotency_key, item);
+      }
+      const merged = Array.from(byKey.values()).sort((a, b) => {
+        const left = Date.parse(a.intent.evaluated_at);
+        const right = Date.parse(b.intent.evaluated_at);
+        return right - left;
+      });
+      return {
+        ...prev,
+        [pairId]: merged.slice(0, 30),
+      };
+    });
+  };
+
   const executeTradeCommand = async (command: TradeCommand): Promise<void> => {
     if (!selectedCueRow) {
       setTradeMessage("No selected pair.");
@@ -589,22 +637,92 @@ function App(): JSX.Element {
         )
       );
 
-      const accepted = responses.every((response) => response.decision === "ACCEPTED");
-      const reason = responses
-        .map((response) => response.reason)
-        .filter((value): value is string => !!value)
-        .join(" | ");
+      const outcomes: LegExecutionOutcome[] = await Promise.all(
+        responses.map(async (response): Promise<LegExecutionOutcome> => {
+          if (response.decision !== "ACCEPTED") {
+            return {
+              instrument: response.instrument,
+              intentDecision: response.decision,
+              intentReason: response.reason,
+              dispatch: null,
+              dispatchError: null,
+              history: null,
+            };
+          }
 
-      const summaryTone: TimelineEvent["tone"] = accepted ? "ok" : "bad";
+          try {
+            const dispatch = await dispatchOrderIntent({
+              idempotency_key: response.idempotency_key,
+              actor: operatorId.trim().length ? operatorId : "operator-ui",
+            });
+            let history: OrderIntentHistoryResponse | null = null;
+            try {
+              history = await fetchOrderIntentHistory(response.idempotency_key);
+            } catch {
+              history = null;
+            }
+            return {
+              instrument: response.instrument,
+              intentDecision: response.decision,
+              intentReason: response.reason,
+              dispatch,
+              dispatchError: null,
+              history,
+            };
+          } catch (error) {
+            return {
+              instrument: response.instrument,
+              intentDecision: response.decision,
+              intentReason: response.reason,
+              dispatch: null,
+              dispatchError: error instanceof Error ? error.message : String(error),
+              history: null,
+            };
+          }
+        })
+      );
+
+      const acceptedCount = outcomes.filter((outcome) => outcome.intentDecision === "ACCEPTED").length;
+      const blockedCount = outcomes.length - acceptedCount;
+      const allDispatchAcknowledged = allAcceptedDispatchAcknowledged(outcomes);
+
+      const histories = outcomes
+        .map((outcome) => outcome.history)
+        .filter((value): value is OrderIntentHistoryResponse => !!value);
+      upsertIntentHistories(pairId, histories);
+
+      const summaryTone: TimelineEvent["tone"] = allDispatchAcknowledged
+        ? "ok"
+        : blockedCount > 0
+          ? "bad"
+          : "warn";
       addTimelineEvent(pairId, {
         ts: now,
-        text: `${command.toUpperCase()} ${accepted ? "approved" : "blocked"}${
-          reason ? ` (${reason})` : ""
+        text: `${command.toUpperCase()} accepted=${acceptedCount} blocked=${blockedCount} dispatch=${
+          allDispatchAcknowledged ? "ACKNOWLEDGED" : "NOT_FULLY_ACKED"
         }`,
         tone: summaryTone,
       });
 
-      if (accepted) {
+      for (const outcome of outcomes) {
+        const dispatchText = outcome.dispatch
+          ? `${outcome.dispatch.result}${outcome.dispatch.reason ? ` (${outcome.dispatch.reason})` : ""}`
+          : outcome.dispatchError
+            ? `DISPATCH_ERROR (${outcome.dispatchError})`
+            : "DISPATCH_SKIPPED";
+        addTimelineEvent(pairId, {
+          ts: nowIso(),
+          text: `${outcome.instrument}: ${outcome.intentDecision} -> ${dispatchText}`,
+          tone:
+            outcome.intentDecision === "ACCEPTED" && outcome.dispatch?.result === "ACKNOWLEDGED"
+              ? "ok"
+              : outcome.intentDecision === "BLOCKED" || outcome.dispatch?.result === "REJECTED"
+                ? "bad"
+                : "warn",
+        });
+      }
+
+      if (allDispatchAcknowledged) {
         updatePosition(pairId, (position) => {
           if (command === "long-entry") {
             return applyEntryLike(position, "LONG_SPREAD", qty, currentZ, now);
@@ -622,14 +740,21 @@ function App(): JSX.Element {
         });
       }
 
-      const legsText = responses
-        .map((response) => `${response.instrument}: ${response.decision}`)
+      const legsText = outcomes
+        .map((outcome) => {
+          const dispatchResult = outcome.dispatch?.result ?? "NO_DISPATCH";
+          return `${outcome.instrument}: ${outcome.intentDecision}/${dispatchResult}`;
+        })
         .join(" | ");
-      setTradeMessage(
-        `${accepted ? "Spread action accepted" : "Spread action blocked"}. ${legsText}${
-          reason ? ` | ${reason}` : ""
-        }`
-      );
+      if (allDispatchAcknowledged) {
+        setTradeMessage(`Spread dispatched and acknowledged. ${legsText}`);
+      } else if (acceptedCount > 0) {
+        setTradeMessage(
+          `Intents accepted but not fully acknowledged by dispatch. ${legsText}. Review timeline for reasons.`
+        );
+      } else {
+        setTradeMessage(`Spread action blocked. ${legsText}`);
+      }
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       addTimelineEvent(pairId, {
@@ -657,6 +782,7 @@ function App(): JSX.Element {
           zMarkers={zMarkers}
           analyticsError={analyticsError}
           currentPosition={currentPosition}
+          intentHistory={currentIntentHistory}
           timeline={currentTimeline}
           stopMethod={stopMethod}
           stopValue={stopValue}
@@ -880,6 +1006,7 @@ function TradePage(props: {
   zMarkers: ChartMarker[];
   analyticsError: string | null;
   currentPosition: SpreadPosition;
+  intentHistory: OrderIntentHistoryResponse[];
   timeline: TimelineEvent[];
   stopMethod: "Z-Score" | "Dollar" | "Percent";
   stopValue: string;
@@ -960,6 +1087,15 @@ function TradePage(props: {
           <p>Total size: {props.currentPosition.totalSize.toFixed(2)} spread units</p>
           <p>Avg entry z-score: {props.currentPosition.avgEntryZ.toFixed(2)}</p>
           <p>Updated: {new Date(props.currentPosition.updatedAt).toLocaleTimeString()}</p>
+          <p>Tracked intents: {props.intentHistory.length}</p>
+          {props.intentHistory.slice(0, 2).map((history) => {
+            const latestState = latestLifecycleState(history);
+            return (
+              <p key={history.idempotency_key} className="small-text">
+                {history.intent.instrument}: {latestState}
+              </p>
+            );
+          })}
         </div>
       </SectionCard>
 

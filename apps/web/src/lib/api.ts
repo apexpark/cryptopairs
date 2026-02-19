@@ -1,8 +1,11 @@
 import type {
   DataQueryResponse,
+  DispatchIntentRequest,
+  DispatchIntentResponse,
   ExecutionDecisionResponse,
   IntegrityHistoryResponse,
   KillSwitchState,
+  OrderIntentHistoryResponse,
   OrderIntentRequest,
   OrderIntentResponse,
   ReconcileResponse,
@@ -77,6 +80,28 @@ export async function submitOrderIntent(
       body: JSON.stringify(payload),
     })
   );
+}
+
+export async function dispatchOrderIntent(
+  payload: DispatchIntentRequest
+): Promise<DispatchIntentResponse> {
+  const url = `${EXECUTION_SERVICE_BASE_URL}/v1/execution/order-intent/dispatch`;
+  return parseJson<DispatchIntentResponse>(
+    await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    })
+  );
+}
+
+export async function fetchOrderIntentHistory(
+  idempotencyKey: string
+): Promise<OrderIntentHistoryResponse> {
+  const url = `${EXECUTION_SERVICE_BASE_URL}/v1/execution/order-intent/history?idempotency_key=${encodeURIComponent(
+    idempotencyKey
+  )}`;
+  return parseJson<OrderIntentHistoryResponse>(await fetch(url));
 }
 
 export async function fetchReconcile(
