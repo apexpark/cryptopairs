@@ -36,6 +36,7 @@ struct AppState {
     kraken_live: Option<Arc<KrakenLiveClient>>,
     ack_watchdog: AckWatchdogConfig,
     open_orders_poller: OpenOrdersPollerConfig,
+    order_status_lookup: OrderStatusLookupConfig,
     trigger_reconcile_on_terminal: bool,
 }
 
@@ -68,17 +69,23 @@ impl KrakenLiveClient {
             .unwrap_or_else(|_| "/derivatives/api/v3/sendorder".to_string());
         let open_orders_path = std::env::var("KRAKEN_FUTURES_OPENORDERS_PATH")
             .unwrap_or_else(|_| "/derivatives/api/v3/openorders".to_string());
+        let order_status_path = std::env::var("KRAKEN_FUTURES_ORDER_STATUS_PATH")
+            .unwrap_or_else(|_| "/derivatives/api/v3/orders/status".to_string());
         if !endpoint_path.starts_with('/') {
             return Err("KRAKEN_FUTURES_SENDORDER_PATH must start with '/'".to_string());
         }
         if !open_orders_path.starts_with('/') {
             return Err("KRAKEN_FUTURES_OPENORDERS_PATH must start with '/'".to_string());
         }
+        if !order_status_path.starts_with('/') {
+            return Err("KRAKEN_FUTURES_ORDER_STATUS_PATH must start with '/'".to_string());
+        }
         Ok(Self {
             http_client: reqwest::Client::new(),
             base_url,
             endpoint_path,
             open_orders_path,
+            order_status_path,
             api_key,
             api_secret_b64,
         })
@@ -206,6 +213,63 @@ impl KrakenLiveClient {
         }
         parse_kraken_open_orders_response(&body)
     }
+
+    async fn fetch_order_status_by_query(
+        &self,
+        order_id: &str,
+        query_key: &str,
+    ) -> Result<Option<KrakenStatusOrder>, String> {
+        let nonce = Utc::now().timestamp_millis().to_string();
+        let post_data = String::new();
+        let authent = sign_kraken_futures_payload(
+            &post_data,
+            &nonce,
+            &self.order_status_path,
+            &self.api_secret_b64,
+        )?;
+        let url = format!("{}{}", self.base_url, self.order_status_path);
+
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            CONTENT_TYPE,
+            HeaderValue::from_static("application/x-www-form-urlencoded"),
+        );
+        headers.insert(
+            "APIKey",
+            HeaderValue::from_str(&self.api_key)
+                .map_err(|_| "invalid API key header".to_string())?,
+        );
+        headers.insert(
+            "Nonce",
+            HeaderValue::from_str(&nonce).map_err(|_| "invalid nonce header".to_string())?,
+        );
+        headers.insert(
+            "Authent",
+            HeaderValue::from_str(&authent).map_err(|_| "invalid authent header".to_string())?,
+        );
+
+        let response = self
+            .http_client
+            .get(url)
+            .headers(headers)
+            .query(&[(query_key, order_id)])
+            .send()
+            .await
+            .map_err(|error| format!("kraken order status request failed: {error}"))?;
+        let status = response.status().as_u16();
+        let body = response
+            .text()
+            .await
+            .map_err(|error| format!("kraken order status response read failed: {error}"))?;
+        if status != 200 {
+            return Err(format!(
+                "kraken order status http status {status}: {}",
+                summarize_response(&body)
+            ));
+        }
+        let parsed = parse_kraken_order_status_response(&body)?;
+        Ok(parsed.into_iter().find(|order| order.order_id == order_id))
+    }
 }
 
 fn sign_kraken_futures_payload(
@@ -294,6 +358,22 @@ fn parse_kraken_open_orders_response(
     Ok(by_id)
 }
 
+fn parse_kraken_order_status_response(body: &str) -> Result<Vec<KrakenStatusOrder>, String> {
+    let payload: KrakenOrderStatusResponse = serde_json::from_str(body)
+        .map_err(|error| format!("kraken order status decode failed: {error}"))?;
+    if payload.result != "success" {
+        return Err(format!(
+            "kraken order status returned non-success result={}",
+            payload.result
+        ));
+    }
+    Ok(payload
+        .orders
+        .into_iter()
+        .filter(|order| !order.order_id.trim().is_empty())
+        .collect())
+}
+
 fn extract_order_id(payload: &serde_json::Value) -> Option<String> {
     if let Some(id) = payload
         .get("sendStatus")
@@ -339,6 +419,7 @@ struct KrakenLiveClient {
     base_url: String,
     endpoint_path: String,
     open_orders_path: String,
+    order_status_path: String,
     api_key: String,
     api_secret_b64: String,
 }
@@ -364,6 +445,12 @@ struct OpenOrdersPollerConfig {
 }
 
 #[derive(Debug, Clone)]
+struct OrderStatusLookupConfig {
+    enabled: bool,
+    query_key: String,
+}
+
+#[derive(Debug, Clone)]
 struct LiveTrackedOrder {
     idempotency_key: String,
     exchange_order_id: String,
@@ -386,6 +473,24 @@ struct KrakenOpenOrder {
     status: Option<String>,
     filled_size: Option<f64>,
     unfilled_size: Option<f64>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct KrakenOrderStatusResponse {
+    result: String,
+    #[serde(default)]
+    orders: Vec<KrakenStatusOrder>,
+}
+
+#[derive(Debug, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+struct KrakenStatusOrder {
+    #[serde(alias = "order_id")]
+    order_id: String,
+    status: String,
+    filled: Option<f64>,
+    quantity: Option<f64>,
 }
 
 #[derive(Clone)]
@@ -1144,6 +1249,14 @@ async fn main() -> anyhow::Result<()> {
             .and_then(|value| value.parse::<i64>().ok())
             .unwrap_or(200),
     };
+    let order_status_lookup = OrderStatusLookupConfig {
+        enabled: std::env::var("EXECUTION_ORDER_STATUS_LOOKUP_ENABLED")
+            .ok()
+            .and_then(|value| value.parse::<bool>().ok())
+            .unwrap_or(false),
+        query_key: std::env::var("KRAKEN_FUTURES_ORDER_STATUS_QUERY_KEY")
+            .unwrap_or_else(|_| "orderId".to_string()),
+    };
     let trigger_reconcile_on_terminal = std::env::var("EXECUTION_TRIGGER_RECONCILE_ON_TERMINAL")
         .ok()
         .and_then(|value| value.parse::<bool>().ok())
@@ -1178,6 +1291,7 @@ async fn main() -> anyhow::Result<()> {
         kraken_live,
         ack_watchdog,
         open_orders_poller,
+        order_status_lookup: order_status_lookup.clone(),
         trigger_reconcile_on_terminal,
     };
     tokio::spawn(spawn_ack_watchdog(app_state.clone()));
@@ -1219,6 +1333,8 @@ async fn main() -> anyhow::Result<()> {
         openorders_poller_enabled = open_orders_poller.enabled,
         openorders_poll_seconds = open_orders_poller.poll_interval_seconds,
         openorders_poll_batch_limit = open_orders_poller.batch_limit,
+        order_status_lookup_enabled = order_status_lookup.enabled,
+        order_status_query_key = %order_status_lookup.query_key,
         trigger_reconcile_on_terminal,
         "execution-service started"
     );
@@ -1268,12 +1384,22 @@ async fn run_open_orders_poll_once(state: &AppState) -> anyhow::Result<()> {
         .await
         .map_err(anyhow::Error::msg)?;
     for tracked in tracked_orders {
-        let Some(open_order) = open_orders.get(&tracked.exchange_order_id) else {
-            continue;
-        };
-        let Some((target_state, reason)) =
+        let transition = if let Some(open_order) = open_orders.get(&tracked.exchange_order_id) {
             derive_open_order_transition(tracked.current_state, open_order)
-        else {
+        } else if state.order_status_lookup.enabled {
+            let status_order = client
+                .fetch_order_status_by_query(
+                    &tracked.exchange_order_id,
+                    &state.order_status_lookup.query_key,
+                )
+                .await
+                .map_err(anyhow::Error::msg)?;
+            status_order
+                .and_then(|order| derive_order_status_transition(tracked.current_state, &order))
+        } else {
+            None
+        };
+        let Some((target_state, reason)) = transition else {
             continue;
         };
 
@@ -1357,6 +1483,48 @@ fn derive_open_order_transition(
         ));
     }
     None
+}
+
+fn derive_order_status_transition(
+    current_state: OrderLifecycleState,
+    order: &KrakenStatusOrder,
+) -> Option<(OrderLifecycleState, String)> {
+    let status = order.status.to_ascii_uppercase();
+    match status.as_str() {
+        "FULLY_EXECUTED" => Some((
+            OrderLifecycleState::Filled,
+            format!(
+                "order status lookup: status=FULLY_EXECUTED filled={:.8} quantity={:.8}",
+                order.filled.unwrap_or(0.0),
+                order.quantity.unwrap_or(0.0)
+            ),
+        )),
+        "CANCELLED" => Some((
+            OrderLifecycleState::Canceled,
+            "order status lookup: status=CANCELLED".to_string(),
+        )),
+        "REJECTED" | "TRIGGER_ACTIVATION_FAILURE" => Some((
+            OrderLifecycleState::Rejected,
+            format!("order status lookup: status={status}"),
+        )),
+        "ENTERED_BOOK" => {
+            if let (Some(filled), Some(quantity)) = (order.filled, order.quantity) {
+                if filled > 0.0
+                    && filled < quantity
+                    && current_state == OrderLifecycleState::Acknowledged
+                {
+                    return Some((
+                        OrderLifecycleState::PartiallyFilled,
+                        format!(
+                            "order status lookup: status=ENTERED_BOOK filled={filled:.8} quantity={quantity:.8}"
+                        ),
+                    ));
+                }
+            }
+            None
+        }
+        _ => None,
+    }
 }
 
 async fn run_ack_watchdog_once(state: &AppState) -> anyhow::Result<()> {
@@ -2221,10 +2389,11 @@ fn map_order_intent(record: OrderIntentRecord) -> OrderIntentResponse {
 #[cfg(test)]
 mod tests {
     use super::{
-        derive_open_order_transition, is_terminal_state, parse_ingest_target_state,
-        parse_kraken_open_orders_response, parse_kraken_submit_response,
+        derive_open_order_transition, derive_order_status_transition, is_terminal_state,
+        parse_ingest_target_state, parse_kraken_open_orders_response,
+        parse_kraken_order_status_response, parse_kraken_submit_response,
         sign_kraken_futures_payload, validate_manual_controls, ApiError, DispatchMode,
-        KrakenOpenOrder,
+        KrakenOpenOrder, KrakenStatusOrder,
     };
     use execution_service::{OrderIntentAction, OrderLifecycleState};
 
@@ -2368,5 +2537,70 @@ mod tests {
         };
         let transition = derive_open_order_transition(OrderLifecycleState::Acknowledged, &open);
         assert!(transition.is_none());
+    }
+
+    #[test]
+    fn parse_kraken_order_status_response_reads_orders() {
+        let body = r#"{
+          "result":"success",
+          "orders":[
+            {"type":"ORDER","orderId":"o1","status":"ENTERED_BOOK","filled":1.0,"quantity":10.0},
+            {"type":"ORDER","orderId":"o2","status":"FULLY_EXECUTED","filled":10.0,"quantity":10.0}
+          ],
+          "serverTime":"2020-08-27T17:03:33.196Z"
+        }"#;
+        let parsed = parse_kraken_order_status_response(body).expect("valid order status response");
+        assert_eq!(parsed.len(), 2);
+        assert_eq!(parsed[0].order_id, "o1");
+        assert_eq!(parsed[1].order_id, "o2");
+    }
+
+    #[test]
+    fn derive_order_status_transition_maps_terminal_states() {
+        let fully = KrakenStatusOrder {
+            order_id: "o1".to_string(),
+            status: "FULLY_EXECUTED".to_string(),
+            filled: Some(10.0),
+            quantity: Some(10.0),
+        };
+        let cancelled = KrakenStatusOrder {
+            order_id: "o2".to_string(),
+            status: "CANCELLED".to_string(),
+            filled: Some(0.0),
+            quantity: Some(10.0),
+        };
+        let rejected = KrakenStatusOrder {
+            order_id: "o3".to_string(),
+            status: "REJECTED".to_string(),
+            filled: Some(0.0),
+            quantity: Some(10.0),
+        };
+
+        assert!(matches!(
+            derive_order_status_transition(OrderLifecycleState::Acknowledged, &fully),
+            Some((OrderLifecycleState::Filled, _))
+        ));
+        assert!(matches!(
+            derive_order_status_transition(OrderLifecycleState::Acknowledged, &cancelled),
+            Some((OrderLifecycleState::Canceled, _))
+        ));
+        assert!(matches!(
+            derive_order_status_transition(OrderLifecycleState::Acknowledged, &rejected),
+            Some((OrderLifecycleState::Rejected, _))
+        ));
+    }
+
+    #[test]
+    fn derive_order_status_transition_maps_entered_book_partial() {
+        let partial = KrakenStatusOrder {
+            order_id: "o1".to_string(),
+            status: "ENTERED_BOOK".to_string(),
+            filled: Some(2.0),
+            quantity: Some(10.0),
+        };
+        assert!(matches!(
+            derive_order_status_transition(OrderLifecycleState::Acknowledged, &partial),
+            Some((OrderLifecycleState::PartiallyFilled, _))
+        ));
     }
 }

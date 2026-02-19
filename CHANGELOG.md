@@ -147,11 +147,17 @@ This project follows SemVer as defined in `docs/02-versioning-and-releases.md`.
     `ACKNOWLEDGED` / `PARTIALLY_FILLED` orders by `exchange_order_id`.
   - Applies deterministic `ACKNOWLEDGED -> PARTIALLY_FILLED` and fill inference transitions
     from open-order payload fields (`filledSize`, `unfilledSize`, `status`).
+  - Optional `GET /derivatives/api/v3/orders/status` lookup for orders absent from open orders,
+    mapping exchange status values (`FULLY_EXECUTED`, `CANCELLED`, `REJECTED`, etc.) to
+    deterministic lifecycle transitions.
   - New config:
     - `EXECUTION_OPENORDERS_POLLER_ENABLED` (default `true`)
     - `EXECUTION_OPENORDERS_POLL_SECONDS` (default `5`)
     - `EXECUTION_OPENORDERS_POLL_BATCH_LIMIT` (default `200`)
     - `KRAKEN_FUTURES_OPENORDERS_PATH` (default `/derivatives/api/v3/openorders`)
+    - `EXECUTION_ORDER_STATUS_LOOKUP_ENABLED` (default `false`)
+    - `KRAKEN_FUTURES_ORDER_STATUS_PATH` (default `/derivatives/api/v3/orders/status`)
+    - `KRAKEN_FUTURES_ORDER_STATUS_QUERY_KEY` (default `orderId`)
 
 ### Changed
 - Product/risk/architecture docs now explicitly define manual-first live trading for MVP.
