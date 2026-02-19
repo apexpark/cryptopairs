@@ -2603,4 +2603,56 @@ mod tests {
             Some((OrderLifecycleState::PartiallyFilled, _))
         ));
     }
+
+    fn read_fixture(name: &str) -> String {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests")
+            .join("fixtures")
+            .join("kraken")
+            .join(name);
+        std::fs::read_to_string(&path)
+            .unwrap_or_else(|error| panic!("failed to read fixture {}: {error}", path.display()))
+    }
+
+    #[test]
+    fn replay_openorders_fixture_maps_partial_fill_transition() {
+        let fixture = read_fixture("openorders.success.json");
+        let open_orders =
+            parse_kraken_open_orders_response(&fixture).expect("fixture should parse");
+        let tracked = open_orders
+            .get("022774bc-2c4a-4f26-9317-436c8d85746d")
+            .expect("expected order from fixture");
+        let transition = derive_open_order_transition(OrderLifecycleState::Acknowledged, tracked);
+        assert!(matches!(
+            transition,
+            Some((OrderLifecycleState::PartiallyFilled, _))
+        ));
+    }
+
+    #[test]
+    fn replay_order_status_fixture_maps_terminal_transitions() {
+        let fixture = read_fixture("order_status.success.json");
+        let orders = parse_kraken_order_status_response(&fixture).expect("fixture should parse");
+        let by_id: std::collections::HashMap<_, _> = orders
+            .into_iter()
+            .map(|order| (order.order_id.clone(), order))
+            .collect();
+
+        let fully = by_id.get("f1111111-1111-1111-1111-111111111111").unwrap();
+        let cancelled = by_id.get("c2222222-2222-2222-2222-222222222222").unwrap();
+        let rejected = by_id.get("r3333333-3333-3333-3333-333333333333").unwrap();
+
+        assert!(matches!(
+            derive_order_status_transition(OrderLifecycleState::Acknowledged, fully),
+            Some((OrderLifecycleState::Filled, _))
+        ));
+        assert!(matches!(
+            derive_order_status_transition(OrderLifecycleState::Acknowledged, cancelled),
+            Some((OrderLifecycleState::Canceled, _))
+        ));
+        assert!(matches!(
+            derive_order_status_transition(OrderLifecycleState::Acknowledged, rejected),
+            Some((OrderLifecycleState::Rejected, _))
+        ));
+    }
 }
