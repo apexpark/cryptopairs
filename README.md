@@ -175,10 +175,15 @@ Environment:
 - `EXECUTION_ACK_WATCHDOG_POLL_SECONDS` (optional, default `15`)
 - `EXECUTION_ACK_EXPIRE_AFTER_SECONDS` (optional, default `90`)
 - `EXECUTION_ACK_WATCHDOG_BATCH_LIMIT` (optional, default `200`)
+- `ACCOUNT_SERVICE_URL` (optional, default `http://127.0.0.1:8081`)
+- `EXECUTION_TRIGGER_RECONCILE_ON_TERMINAL` (optional, default `true`)
 
 The execution service includes an automatic stale-ack watchdog:
 - any order stuck in `ACKNOWLEDGED` beyond the configured threshold is deterministically
   transitioned to `EXPIRED` with an audit event.
+
+Terminal lifecycle transitions (`FILLED`, `CANCELED`, `REJECTED`, `EXPIRED`) now trigger
+`POST /v1/account/reconcile/run` as a best-effort synchronization hook.
 
 ## Execution Order Event Ingest Endpoint
 

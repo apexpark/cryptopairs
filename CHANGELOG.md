@@ -134,6 +134,14 @@ This project follows SemVer as defined in `docs/02-versioning-and-releases.md`.
     - `EXECUTION_ACK_WATCHDOG_POLL_SECONDS` (default `15`)
     - `EXECUTION_ACK_EXPIRE_AFTER_SECONDS` (default `90`)
     - `EXECUTION_ACK_WATCHDOG_BATCH_LIMIT` (default `200`)
+- Terminal-state reconcile hook in `execution-service`:
+  - Best-effort trigger to `POST /v1/account/reconcile/run` after terminal transitions:
+    `FILLED`, `CANCELED`, `REJECTED`, `EXPIRED`.
+  - Applied for dispatch terminal outcomes, explicit order-event ingest terminal updates,
+    and ack-watchdog expiries.
+  - New config:
+    - `ACCOUNT_SERVICE_URL` (default `http://127.0.0.1:8081`)
+    - `EXECUTION_TRIGGER_RECONCILE_ON_TERMINAL` (default `true`)
 
 ### Changed
 - Product/risk/architecture docs now explicitly define manual-first live trading for MVP.
