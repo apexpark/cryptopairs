@@ -1,0 +1,26 @@
+{
+  "states": [
+    "NEW",
+    "APPROVED",
+    "PENDING_SUBMIT",
+    "ACKNOWLEDGED",
+    "PARTIALLY_FILLED",
+    "FILLED",
+    "CANCELED",
+    "REJECTED",
+    "EXPIRED"
+  ],
+  "allowed_transitions": [
+    { "from": "NEW", "to": "APPROVED" },
+    { "from": "APPROVED", "to": "PENDING_SUBMIT" },
+    { "from": "PENDING_SUBMIT", "to": "ACKNOWLEDGED" },
+    { "from": "PENDING_SUBMIT", "to": "EXPIRED" },
+    { "from": "ACKNOWLEDGED", "to": "PARTIALLY_FILLED" },
+    { "from": "ACKNOWLEDGED", "to": "FILLED" },
+    { "from": "ACKNOWLEDGED", "to": "CANCELED" },
+    { "from": "ACKNOWLEDGED", "to": "REJECTED" },
+    { "from": "PARTIALLY_FILLED", "to": "FILLED" },
+    { "from": "PARTIALLY_FILLED", "to": "CANCELED" },
+    { "from": "PARTIALLY_FILLED", "to": "REJECTED" }
+  ]
+}

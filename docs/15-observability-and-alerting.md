@@ -40,6 +40,8 @@ Define required telemetry, health signals, and alert policies.
 - Reject/cancel rates
 - Risk check fail counts
 - Kill switch activation count
+- Reconcile gate fail counts on order intents
+- Order lifecycle transition counts by state
 
 5. Account:
 - Reconciliation drift

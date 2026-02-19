@@ -10,6 +10,7 @@ use chrono::{DateTime, Duration, Utc};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use tokio_postgres::{types::ToSql, Client, NoTls};
+use tower_http::cors::{Any, CorsLayer};
 
 #[derive(Clone)]
 pub struct AppState {
@@ -334,6 +335,10 @@ struct AccountQuery {
 }
 
 pub fn build_router(state: AppState) -> Router {
+    let cors = CorsLayer::new()
+        .allow_origin(Any)
+        .allow_methods(Any)
+        .allow_headers(Any);
     Router::new()
         .route("/health", get(health))
         .route(
@@ -345,6 +350,7 @@ pub fn build_router(state: AppState) -> Router {
             post(write_reconcile).get(read_reconcile),
         )
         .route("/v1/account/reconcile/run", post(run_reconcile_now))
+        .layer(cors)
         .with_state(state)
 }
 

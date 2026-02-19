@@ -6,6 +6,8 @@
   "additionalProperties": false,
   "required": [
     "idempotency_key",
+    "exchange",
+    "account_id",
     "instrument",
     "timeframe",
     "action",
@@ -15,6 +17,14 @@
   ],
   "properties": {
     "idempotency_key": {
+      "type": "string",
+      "minLength": 1
+    },
+    "exchange": {
+      "type": "string",
+      "minLength": 1
+    },
+    "account_id": {
       "type": "string",
       "minLength": 1
     },

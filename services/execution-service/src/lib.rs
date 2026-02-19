@@ -19,6 +19,88 @@ pub enum OrderIntentDecision {
     Blocked(String),
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ReconcileDecision {
+    Allowed,
+    Blocked(String),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum OrderLifecycleState {
+    New,
+    Approved,
+    PendingSubmit,
+    Acknowledged,
+    PartiallyFilled,
+    Filled,
+    Canceled,
+    Rejected,
+    Expired,
+}
+
+impl OrderLifecycleState {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::New => "NEW",
+            Self::Approved => "APPROVED",
+            Self::PendingSubmit => "PENDING_SUBMIT",
+            Self::Acknowledged => "ACKNOWLEDGED",
+            Self::PartiallyFilled => "PARTIALLY_FILLED",
+            Self::Filled => "FILLED",
+            Self::Canceled => "CANCELED",
+            Self::Rejected => "REJECTED",
+            Self::Expired => "EXPIRED",
+        }
+    }
+}
+
+pub fn can_transition_state(from: OrderLifecycleState, to: OrderLifecycleState) -> bool {
+    matches!(
+        (from, to),
+        (OrderLifecycleState::New, OrderLifecycleState::Approved)
+            | (
+                OrderLifecycleState::Approved,
+                OrderLifecycleState::PendingSubmit
+            )
+            | (
+                OrderLifecycleState::PendingSubmit,
+                OrderLifecycleState::Acknowledged
+            )
+            | (
+                OrderLifecycleState::Acknowledged,
+                OrderLifecycleState::PartiallyFilled
+            )
+            | (
+                OrderLifecycleState::Acknowledged,
+                OrderLifecycleState::Filled
+            )
+            | (
+                OrderLifecycleState::Acknowledged,
+                OrderLifecycleState::Canceled
+            )
+            | (
+                OrderLifecycleState::Acknowledged,
+                OrderLifecycleState::Rejected
+            )
+            | (
+                OrderLifecycleState::PartiallyFilled,
+                OrderLifecycleState::Filled
+            )
+            | (
+                OrderLifecycleState::PartiallyFilled,
+                OrderLifecycleState::Canceled
+            )
+            | (
+                OrderLifecycleState::PartiallyFilled,
+                OrderLifecycleState::Rejected
+            )
+            | (
+                OrderLifecycleState::PendingSubmit,
+                OrderLifecycleState::Expired
+            )
+    )
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum OrderIntentAction {
     Entry,
@@ -65,6 +147,7 @@ pub fn evaluate_order_intent(
     action: OrderIntentAction,
     kill_switch_active: bool,
     gate_decision: GateDecision,
+    reconcile_decision: ReconcileDecision,
 ) -> OrderIntentDecision {
     if matches!(action, OrderIntentAction::EmergencyStopClose) {
         return OrderIntentDecision::Accepted;
@@ -76,8 +159,12 @@ pub fn evaluate_order_intent(
         );
     }
     match gate_decision {
-        GateDecision::Allowed => OrderIntentDecision::Accepted,
-        GateDecision::Blocked(reason) => OrderIntentDecision::Blocked(reason),
+        GateDecision::Allowed => {}
+        GateDecision::Blocked(reason) => return OrderIntentDecision::Blocked(reason),
+    }
+    match reconcile_decision {
+        ReconcileDecision::Allowed => OrderIntentDecision::Accepted,
+        ReconcileDecision::Blocked(reason) => OrderIntentDecision::Blocked(reason),
     }
 }
 
@@ -149,8 +236,9 @@ fn parse_integrity_status(value: &str) -> Option<IntegrityStatus> {
 #[cfg(test)]
 mod tests {
     use super::{
-        evaluate_integrity_gate, evaluate_order_intent, normalize_side, parse_integrity_status,
-        ExecutionGateConfig, GateDecision, OrderIntentAction, OrderIntentDecision,
+        can_transition_state, evaluate_integrity_gate, evaluate_order_intent, normalize_side,
+        parse_integrity_status, ExecutionGateConfig, GateDecision, OrderIntentAction,
+        OrderIntentDecision, OrderLifecycleState, ReconcileDecision,
     };
     use chrono::Utc;
     use common_types::{DataIntegrityReport, IntegrityStatus};
@@ -202,13 +290,23 @@ mod tests {
 
     #[test]
     fn order_intent_blocks_when_kill_switch_active() {
-        let decision = evaluate_order_intent(OrderIntentAction::Entry, true, GateDecision::Allowed);
+        let decision = evaluate_order_intent(
+            OrderIntentAction::Entry,
+            true,
+            GateDecision::Allowed,
+            ReconcileDecision::Allowed,
+        );
         assert!(matches!(decision, OrderIntentDecision::Blocked(_)));
     }
 
     #[test]
     fn order_intent_accepts_when_gate_allows_and_kill_switch_off() {
-        let decision = evaluate_order_intent(OrderIntentAction::Exit, false, GateDecision::Allowed);
+        let decision = evaluate_order_intent(
+            OrderIntentAction::Exit,
+            false,
+            GateDecision::Allowed,
+            ReconcileDecision::Allowed,
+        );
         assert_eq!(decision, OrderIntentDecision::Accepted);
     }
 
@@ -218,8 +316,20 @@ mod tests {
             OrderIntentAction::EmergencyStopClose,
             true,
             GateDecision::Blocked("integrity failed".to_string()),
+            ReconcileDecision::Blocked("reconcile failed".to_string()),
         );
         assert_eq!(decision, OrderIntentDecision::Accepted);
+    }
+
+    #[test]
+    fn order_intent_blocks_when_reconcile_blocked() {
+        let decision = evaluate_order_intent(
+            OrderIntentAction::Entry,
+            false,
+            GateDecision::Allowed,
+            ReconcileDecision::Blocked("drift exceeded".to_string()),
+        );
+        assert!(matches!(decision, OrderIntentDecision::Blocked(_)));
     }
 
     #[test]
@@ -227,5 +337,21 @@ mod tests {
         assert_eq!(normalize_side("BUY"), Some("BUY"));
         assert_eq!(normalize_side("sell"), Some("SELL"));
         assert_eq!(normalize_side("HOLD"), None);
+    }
+
+    #[test]
+    fn lifecycle_transition_rules_are_deterministic() {
+        assert!(can_transition_state(
+            OrderLifecycleState::New,
+            OrderLifecycleState::Approved
+        ));
+        assert!(can_transition_state(
+            OrderLifecycleState::Acknowledged,
+            OrderLifecycleState::Filled
+        ));
+        assert!(!can_transition_state(
+            OrderLifecycleState::Filled,
+            OrderLifecycleState::Acknowledged
+        ));
     }
 }

@@ -85,6 +85,15 @@ This project follows SemVer as defined in `docs/02-versioning-and-releases.md`.
     - `specs/examples/strategy_pairs_cost_gate_response.example.json`
     - `specs/examples/strategy_pairs_portfolio_plan_response.example.json`
   - New strategy advisory configuration keys for fee/slippage/net-edge/exposure caps.
+- Execution manual-trading hardening:
+  - `execution_order_intents` now records `exchange` and `account_id`.
+  - `ENTRY` and `EXIT` intents are additionally gated by latest reconciliation status (`reconciliation_events`), fail-closed on missing/non-OK status.
+  - New deterministic lifecycle event table `execution_order_state_events` with initial transitions (`NEW` -> `APPROVED`/`REJECTED`).
+  - New lifecycle contract/example:
+    - `specs/contracts/execution_order_lifecycle_state_machine.schema.json`
+    - `specs/examples/execution_order_lifecycle_state_machine.example.json`
+- Focused manual-operator UI workflow session doc:
+  - `docs/19-manual-trading-operator-ui-session.md`
 
 ### Changed
 - Product/risk/architecture docs now explicitly define manual-first live trading for MVP.
