@@ -9,12 +9,13 @@ use chrono::{DateTime, Utc};
 use common_types::Timeframe;
 use execution_service::{
     evaluate_integrity_gate_from_store, evaluate_order_intent, normalize_side, GateDecision,
-    OrderIntentAction, OrderIntentDecision,
+    OrderIntentAction, OrderIntentDecision, OrderLifecycleState, ReconcileDecision,
 };
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use tokio::net::TcpListener;
 use tokio_postgres::{types::ToSql, Client, NoTls};
+use tower_http::cors::{Any, CorsLayer};
 use tracing::info;
 
 #[derive(Clone)]
@@ -63,6 +64,8 @@ impl ExecutionRepository {
                  );
                  CREATE TABLE IF NOT EXISTS execution_order_intents (
                     idempotency_key TEXT PRIMARY KEY,
+                    exchange TEXT NOT NULL DEFAULT 'kraken_futures',
+                    account_id TEXT NOT NULL DEFAULT 'default',
                     instrument TEXT NOT NULL,
                     timeframe TEXT NOT NULL,
                     action TEXT NOT NULL,
@@ -75,6 +78,18 @@ impl ExecutionRepository {
                     reason TEXT NOT NULL DEFAULT '',
                     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
                  );
+                 CREATE TABLE IF NOT EXISTS execution_order_state_events (
+                    idempotency_key TEXT NOT NULL,
+                    state TEXT NOT NULL,
+                    reason TEXT NOT NULL DEFAULT '',
+                    actor TEXT NOT NULL DEFAULT 'system',
+                    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                    PRIMARY KEY (idempotency_key, state, created_at)
+                 );
+                 ALTER TABLE execution_order_intents
+                 ADD COLUMN IF NOT EXISTS exchange TEXT NOT NULL DEFAULT 'kraken_futures';
+                 ALTER TABLE execution_order_intents
+                 ADD COLUMN IF NOT EXISTS account_id TEXT NOT NULL DEFAULT 'default';
                  ALTER TABLE execution_order_intents
                  ADD COLUMN IF NOT EXISTS action TEXT NOT NULL DEFAULT 'ENTRY';
                  ALTER TABLE execution_order_intents
@@ -154,7 +169,7 @@ impl ExecutionRepository {
             .client
             .query_opt(
                 "SELECT idempotency_key, instrument, timeframe, action, side, qty,
-                        operator_confirmed, operator_id, min_coverage_pct,
+                        operator_confirmed, operator_id, min_coverage_pct, exchange, account_id,
                         decision, reason, created_at
                  FROM execution_order_intents
                  WHERE idempotency_key = $1",
@@ -172,9 +187,11 @@ impl ExecutionRepository {
             operator_confirmed: row.get(6),
             operator_id: row.get(7),
             min_coverage_pct: row.get(8),
-            decision: row.get(9),
-            reason: row.get(10),
-            created_at: row.get(11),
+            exchange: row.get(9),
+            account_id: row.get(10),
+            decision: row.get(11),
+            reason: row.get(12),
+            created_at: row.get(13),
         }))
     }
 
@@ -183,9 +200,9 @@ impl ExecutionRepository {
             .execute(
                 "INSERT INTO execution_order_intents
                  (idempotency_key, instrument, timeframe, action, side, qty,
-                  operator_confirmed, operator_id, min_coverage_pct,
+                  operator_confirmed, operator_id, min_coverage_pct, exchange, account_id,
                   decision, reason, created_at)
-                 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
+                 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
                  ON CONFLICT (idempotency_key) DO NOTHING",
                 &[
                     &record.idempotency_key as &(dyn ToSql + Sync),
@@ -197,10 +214,83 @@ impl ExecutionRepository {
                     &record.operator_confirmed,
                     &record.operator_id,
                     &record.min_coverage_pct,
+                    &record.exchange,
+                    &record.account_id,
                     &record.decision,
                     &record.reason,
                     &record.created_at,
                 ],
+            )
+            .await?;
+        self.record_state_event(
+            &record.idempotency_key,
+            OrderLifecycleState::New,
+            "intent persisted",
+            "execution-service",
+        )
+        .await?;
+
+        let follow_up_state = if record.decision == "ACCEPTED" {
+            OrderLifecycleState::Approved
+        } else {
+            OrderLifecycleState::Rejected
+        };
+        self.record_state_event(
+            &record.idempotency_key,
+            follow_up_state,
+            &record.reason,
+            "execution-service",
+        )
+        .await?;
+        Ok(())
+    }
+
+    async fn fetch_latest_reconcile_decision(
+        &self,
+        exchange: &str,
+        account_id: &str,
+    ) -> anyhow::Result<ReconcileDecision> {
+        let row = self
+            .client
+            .query_opt(
+                "SELECT status, drift_notional, notes
+                 FROM reconciliation_events
+                 WHERE exchange=$1 AND account_id=$2
+                 ORDER BY ts DESC
+                 LIMIT 1",
+                &[&exchange, &account_id],
+            )
+            .await?;
+        let Some(row) = row else {
+            return Ok(ReconcileDecision::Blocked(format!(
+                "reconcile gate blocked signal: no reconcile history for exchange={exchange} account_id={account_id}"
+            )));
+        };
+        let status: String = row.get(0);
+        let drift_notional: f64 = row.get(1);
+        let notes: String = row.get(2);
+        if status == "OK" {
+            Ok(ReconcileDecision::Allowed)
+        } else {
+            Ok(ReconcileDecision::Blocked(format!(
+                "reconcile gate blocked signal: status={status} drift_notional={drift_notional:.4} notes={notes}"
+            )))
+        }
+    }
+
+    async fn record_state_event(
+        &self,
+        idempotency_key: &str,
+        state: OrderLifecycleState,
+        reason: &str,
+        actor: &str,
+    ) -> anyhow::Result<()> {
+        self.client
+            .execute(
+                "INSERT INTO execution_order_state_events
+                 (idempotency_key, state, reason, actor, created_at)
+                 VALUES ($1,$2,$3,$4,NOW())",
+                &[&idempotency_key, &state.as_str(), &reason, &actor],
             )
             .await?;
         Ok(())
@@ -241,6 +331,8 @@ struct KillSwitchState {
 #[derive(Debug, Deserialize)]
 struct OrderIntentRequest {
     idempotency_key: String,
+    exchange: String,
+    account_id: String,
     instrument: String,
     timeframe: String,
     action: String,
@@ -254,6 +346,8 @@ struct OrderIntentRequest {
 #[derive(Debug, Serialize)]
 struct OrderIntentResponse {
     idempotency_key: String,
+    exchange: String,
+    account_id: String,
     instrument: String,
     timeframe: String,
     action: String,
@@ -270,6 +364,8 @@ struct OrderIntentResponse {
 #[derive(Debug)]
 struct OrderIntentRecord {
     idempotency_key: String,
+    exchange: String,
+    account_id: String,
     instrument: String,
     timeframe: String,
     action: String,
@@ -335,6 +431,10 @@ async fn main() -> anyhow::Result<()> {
         postgres_url: Arc::new(postgres_url.clone()),
         default_min_coverage_pct,
     };
+    let cors = CorsLayer::new()
+        .allow_origin(Any)
+        .allow_methods(Any)
+        .allow_headers(Any);
     let app = Router::new()
         .route("/health", get(health))
         .route("/v1/execution/decision", get(decision))
@@ -343,6 +443,7 @@ async fn main() -> anyhow::Result<()> {
             get(kill_switch).post(update_kill_switch),
         )
         .route("/v1/execution/order-intent", post(order_intent))
+        .layer(cors)
         .with_state(app_state);
 
     let listener = TcpListener::bind(&bind_addr).await?;
@@ -443,6 +544,11 @@ async fn order_intent(
             "idempotency_key is required".to_string(),
         ));
     }
+    if payload.exchange.trim().is_empty() || payload.account_id.trim().is_empty() {
+        return Err(ApiError::BadRequest(
+            "exchange and account_id are required".to_string(),
+        ));
+    }
     if payload.qty <= 0.0 {
         return Err(ApiError::BadRequest("qty must be > 0".to_string()));
     }
@@ -478,6 +584,8 @@ async fn order_intent(
     {
         if !is_same_intent(
             &existing,
+            &payload.exchange,
+            &payload.account_id,
             &payload.instrument,
             timeframe,
             action,
@@ -513,7 +621,22 @@ async fn order_intent(
         .map_err(|error| ApiError::Upstream(error.to_string()))?
     };
 
-    let intent_decision = evaluate_order_intent(action, kill_switch.active, gate_decision);
+    let reconcile_decision = if matches!(action, OrderIntentAction::EmergencyStopClose) {
+        ReconcileDecision::Allowed
+    } else {
+        state
+            .repository
+            .fetch_latest_reconcile_decision(&payload.exchange, &payload.account_id)
+            .await
+            .map_err(|error| ApiError::Upstream(error.to_string()))?
+    };
+
+    let intent_decision = evaluate_order_intent(
+        action,
+        kill_switch.active,
+        gate_decision,
+        reconcile_decision,
+    );
     let (decision, reason) = match intent_decision {
         OrderIntentDecision::Accepted => ("ACCEPTED".to_string(), String::new()),
         OrderIntentDecision::Blocked(reason) => ("BLOCKED".to_string(), reason),
@@ -521,6 +644,8 @@ async fn order_intent(
 
     let record = OrderIntentRecord {
         idempotency_key: payload.idempotency_key,
+        exchange: payload.exchange,
+        account_id: payload.account_id,
         instrument: payload.instrument,
         timeframe: timeframe.as_str().to_string(),
         action: action.as_str().to_string(),
@@ -582,6 +707,8 @@ fn validate_manual_controls(
 #[allow(clippy::too_many_arguments)]
 fn is_same_intent(
     existing: &OrderIntentRecord,
+    exchange: &str,
+    account_id: &str,
     instrument: &str,
     timeframe: Timeframe,
     action: OrderIntentAction,
@@ -591,7 +718,9 @@ fn is_same_intent(
     operator_id: Option<&str>,
     min_coverage_pct: f64,
 ) -> bool {
-    existing.instrument == instrument
+    existing.exchange == exchange
+        && existing.account_id == account_id
+        && existing.instrument == instrument
         && existing.timeframe == timeframe.as_str()
         && existing.action == action.as_str()
         && existing.side == side
@@ -604,6 +733,8 @@ fn is_same_intent(
 fn map_order_intent(record: OrderIntentRecord) -> OrderIntentResponse {
     OrderIntentResponse {
         idempotency_key: record.idempotency_key,
+        exchange: record.exchange,
+        account_id: record.account_id,
         instrument: record.instrument,
         timeframe: record.timeframe,
         action: record.action,

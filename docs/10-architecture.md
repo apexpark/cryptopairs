@@ -24,7 +24,7 @@ Define module boundaries, responsibilities, and key interfaces.
 4. `execution-service` (Rust)
 - Signal-to-order translation.
 - Manual-first control path in MVP: strategy cues -> operator action -> order intent.
-- Pre-trade risk checks, idempotent order submission, order state machine.
+- Pre-trade risk checks (kill switch + integrity + reconcile), idempotent order submission, deterministic order state machine.
 
 5. `account-service` (Rust)
 - Positions, PnL, balance, margin, and reconciliation.

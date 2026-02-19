@@ -1,5 +1,7 @@
 {
   "idempotency_key": "ordint-PI_XBTUSD-20260218T150000Z-stop-001",
+  "exchange": "kraken_futures",
+  "account_id": "primary",
   "instrument": "PI_XBTUSD",
   "timeframe": "1m",
   "action": "EMERGENCY_STOP_CLOSE",

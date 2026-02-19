@@ -120,10 +120,13 @@ POST /v1/execution/order-intent
 ```
 
 Evaluates idempotent order intents against kill switch + integrity gate and persists the decision.
+`ENTRY` and `EXIT` are now also gated by latest account reconciliation status (fail-closed).
 
 Manual-first behavior:
 - `ENTRY` and `EXIT` require `operator_confirmed=true` plus `operator_id`.
+- `ENTRY` and `EXIT` require `exchange` and `account_id` for reconciliation gate checks.
 - `EMERGENCY_STOP_CLOSE` is the only action allowed without operator confirmation.
+- Lifecycle events are persisted in `execution_order_state_events` (`NEW`, `APPROVED`, `REJECTED`, etc.).
 
 ## Account Reconcile Run Endpoint
 

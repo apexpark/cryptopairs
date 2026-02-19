@@ -83,6 +83,8 @@ CREATE TABLE IF NOT EXISTS execution_control_events (
 
 CREATE TABLE IF NOT EXISTS execution_order_intents (
   idempotency_key TEXT PRIMARY KEY,
+  exchange TEXT NOT NULL DEFAULT 'kraken_futures',
+  account_id TEXT NOT NULL DEFAULT 'default',
   instrument TEXT NOT NULL,
   timeframe TEXT NOT NULL,
   action TEXT NOT NULL,
@@ -95,6 +97,21 @@ CREATE TABLE IF NOT EXISTS execution_order_intents (
   reason TEXT NOT NULL DEFAULT '',
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+
+CREATE TABLE IF NOT EXISTS execution_order_state_events (
+  idempotency_key TEXT NOT NULL,
+  state TEXT NOT NULL,
+  reason TEXT NOT NULL DEFAULT '',
+  actor TEXT NOT NULL DEFAULT 'system',
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  PRIMARY KEY (idempotency_key, state, created_at)
+);
+
+ALTER TABLE execution_order_intents
+ADD COLUMN IF NOT EXISTS exchange TEXT NOT NULL DEFAULT 'kraken_futures';
+
+ALTER TABLE execution_order_intents
+ADD COLUMN IF NOT EXISTS account_id TEXT NOT NULL DEFAULT 'default';
 
 ALTER TABLE execution_order_intents
 ADD COLUMN IF NOT EXISTS action TEXT NOT NULL DEFAULT 'ENTRY';

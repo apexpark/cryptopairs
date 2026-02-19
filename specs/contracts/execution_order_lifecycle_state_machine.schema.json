@@ -1,0 +1,41 @@
+{
+  "$id": "https://cryptopairs/specs/contracts/execution_order_lifecycle_state_machine.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "ExecutionOrderLifecycleStateMachine",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["states", "allowed_transitions"],
+  "properties": {
+    "states": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "string",
+        "enum": [
+          "NEW",
+          "APPROVED",
+          "PENDING_SUBMIT",
+          "ACKNOWLEDGED",
+          "PARTIALLY_FILLED",
+          "FILLED",
+          "CANCELED",
+          "REJECTED",
+          "EXPIRED"
+        ]
+      }
+    },
+    "allowed_transitions": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["from", "to"],
+        "properties": {
+          "from": { "type": "string" },
+          "to": { "type": "string" }
+        }
+      }
+    }
+  },
+  "version": "0.1.0"
+}
