@@ -33,6 +33,10 @@ npm run build
   - Long/short spread entry
   - Add/reduce exposure
   - Close spread action
+  - Execution lifecycle-aware dispatch flow:
+    - intent submit
+    - dispatch attempt
+    - per-leg lifecycle/history status
 - Data Quality page backed by live integrity history
 - Analytics page:
   - Hypothetical equity curve
@@ -42,3 +46,4 @@ npm run build
   - kill switch
   - integrity gate decisions
   - reconciliation status
+  - dispatch fails closed by default unless execution-service is in simulate-ack mode

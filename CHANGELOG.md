@@ -121,6 +121,10 @@ This project follows SemVer as defined in `docs/02-versioning-and-releases.md`.
   - Analytics page now stacks Diagnostics under Strategy Metrics and splits remaining space between Equity and Historical Z-Score charts.
   - Trade analysis chart now renders entry, mean (`z=0`), and stop thresholds with live polling refresh.
   - Settings page now includes session-only Kraken API key/secret/passphrase fields (masked by default).
+- Web trade execution flow now consumes execution lifecycle endpoints:
+  - after intent acceptance, UI dispatches each leg through `POST /v1/execution/order-intent/dispatch`
+  - UI stores and displays lifecycle snapshots from `GET /v1/execution/order-intent/history`
+  - local spread position ledger updates only when accepted legs are acknowledged by dispatch
 
 ### Fixed
 - Removed accidental duplicate spec/example files with `* 2.json` suffix.
