@@ -173,6 +173,17 @@ Environment:
 - `KRAKEN_FUTURES_API_BASE_URL` (optional, default `https://futures.kraken.com`)
 - `KRAKEN_FUTURES_SENDORDER_PATH` (optional, default `/derivatives/api/v3/sendorder`)
 
+## Execution Order Event Ingest Endpoint
+
+```bash
+POST /v1/execution/order-event
+```
+
+Applies post-dispatch exchange lifecycle truth (`ACKNOWLEDGED`, `PARTIALLY_FILLED`, `FILLED`, `CANCELED`, `REJECTED`, `EXPIRED`)
+to existing order intents using strict deterministic transition checks.
+Identity can be supplied by `idempotency_key` or `exchange_order_id`.
+Invalid transitions are fail-closed as `NOOP` (no state mutation).
+
 ## Account Reconcile Run Endpoint
 
 ```bash

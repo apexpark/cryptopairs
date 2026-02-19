@@ -118,6 +118,15 @@ This project follows SemVer as defined in `docs/02-versioning-and-releases.md`.
   - Signed private submit requests to Kraken Futures send-order endpoint.
   - Fail-closed rejection when credentials/config are missing, invalid, or exchange submit fails.
   - Dispatch audit trail retains deterministic lifecycle transitions and exchange order IDs on ack.
+- Post-dispatch lifecycle truth sync endpoint in `execution-service`:
+  - New endpoint `POST /v1/execution/order-event` for ingesting exchange lifecycle updates by `idempotency_key` or `exchange_order_id`.
+  - Deterministic transition enforcement for `ACKNOWLEDGED`, `PARTIALLY_FILLED`, `FILLED`, `CANCELED`, `REJECTED`, and `EXPIRED`.
+  - New contracts/examples:
+    - `specs/contracts/execution_order_event_ingest_request.schema.json`
+    - `specs/contracts/execution_order_event_ingest_response.schema.json`
+    - `specs/examples/execution_order_event_ingest_request.example.json`
+    - `specs/examples/execution_order_event_ingest_response_applied.example.json`
+    - `specs/examples/execution_order_event_ingest_response_noop.example.json`
 
 ### Changed
 - Product/risk/architecture docs now explicitly define manual-first live trading for MVP.

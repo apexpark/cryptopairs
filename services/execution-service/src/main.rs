@@ -443,6 +443,44 @@ impl ExecutionRepository {
         }))
     }
 
+    async fn fetch_order_intent_by_exchange_order_id(
+        &self,
+        exchange_order_id: &str,
+    ) -> anyhow::Result<Option<OrderIntentRecord>> {
+        let row = self
+            .client
+            .query_opt(
+                "SELECT i.idempotency_key, i.instrument, i.timeframe, i.action, i.side, i.qty,
+                        i.operator_confirmed, i.operator_id, i.min_coverage_pct, i.exchange, i.account_id,
+                        i.decision, i.reason, i.created_at
+                 FROM execution_order_intents i
+                 JOIN execution_dispatch_attempts d
+                   ON d.idempotency_key = i.idempotency_key
+                 WHERE d.exchange_order_id = $1
+                 ORDER BY d.created_at DESC
+                 LIMIT 1",
+                &[&exchange_order_id],
+            )
+            .await?;
+
+        Ok(row.map(|row| OrderIntentRecord {
+            idempotency_key: row.get(0),
+            instrument: row.get(1),
+            timeframe: row.get(2),
+            action: row.get(3),
+            side: row.get(4),
+            qty: row.get(5),
+            operator_confirmed: row.get(6),
+            operator_id: row.get(7),
+            min_coverage_pct: row.get(8),
+            exchange: row.get(9),
+            account_id: row.get(10),
+            decision: row.get(11),
+            reason: row.get(12),
+            created_at: row.get(13),
+        }))
+    }
+
     async fn insert_order_intent(&self, record: &OrderIntentRecord) -> anyhow::Result<()> {
         self.client
             .execute(
@@ -662,6 +700,25 @@ impl ExecutionRepository {
             })
             .collect())
     }
+
+    async fn fetch_latest_exchange_order_id(
+        &self,
+        idempotency_key: &str,
+    ) -> anyhow::Result<Option<String>> {
+        let row = self
+            .client
+            .query_opt(
+                "SELECT exchange_order_id
+                 FROM execution_dispatch_attempts
+                 WHERE idempotency_key = $1
+                   AND exchange_order_id IS NOT NULL
+                 ORDER BY attempt_no DESC
+                 LIMIT 1",
+                &[&idempotency_key],
+            )
+            .await?;
+        Ok(row.map(|row| row.get(0)))
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -783,6 +840,15 @@ struct DispatchIntentRequest {
     actor: Option<String>,
 }
 
+#[derive(Debug, Deserialize)]
+struct OrderEventIngestRequest {
+    idempotency_key: Option<String>,
+    exchange_order_id: Option<String>,
+    to_state: String,
+    reason: Option<String>,
+    actor: Option<String>,
+}
+
 #[derive(Debug, Serialize)]
 struct DispatchIntentResponse {
     idempotency_key: String,
@@ -792,6 +858,17 @@ struct DispatchIntentResponse {
     exchange_order_id: Option<String>,
     reason: Option<String>,
     attempted_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Serialize)]
+struct OrderEventIngestResponse {
+    idempotency_key: String,
+    exchange_order_id: Option<String>,
+    result: String,
+    from_state: Option<String>,
+    to_state: Option<String>,
+    reason: Option<String>,
+    event_at: DateTime<Utc>,
 }
 
 #[derive(Debug, Serialize)]
@@ -885,6 +962,7 @@ async fn main() -> anyhow::Result<()> {
             "/v1/execution/order-intent/dispatch",
             post(dispatch_order_intent),
         )
+        .route("/v1/execution/order-event", post(ingest_order_event))
         .layer(cors)
         .with_state(app_state);
 
@@ -1346,6 +1424,174 @@ async fn dispatch_order_intent(
     }))
 }
 
+async fn ingest_order_event(
+    State(state): State<AppState>,
+    Json(payload): Json<OrderEventIngestRequest>,
+) -> Result<Json<OrderEventIngestResponse>, ApiError> {
+    let normalized_idempotency_key = payload
+        .idempotency_key
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToString::to_string);
+    let normalized_exchange_order_id = payload
+        .exchange_order_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToString::to_string);
+    if normalized_idempotency_key.is_none() && normalized_exchange_order_id.is_none() {
+        return Err(ApiError::BadRequest(
+            "idempotency_key or exchange_order_id is required".to_string(),
+        ));
+    }
+
+    let target_state = parse_ingest_target_state(&payload.to_state).ok_or_else(|| {
+        ApiError::BadRequest(
+            "to_state must be one of ACKNOWLEDGED, PARTIALLY_FILLED, FILLED, CANCELED, REJECTED, EXPIRED"
+                .to_string(),
+        )
+    })?;
+    let actor = payload
+        .actor
+        .unwrap_or_else(|| "execution-event-ingest".to_string());
+    let reason = payload
+        .reason
+        .unwrap_or_else(|| "exchange lifecycle update".to_string());
+
+    let resolved_intent = if let Some(idempotency_key) = &normalized_idempotency_key {
+        state
+            .repository
+            .fetch_order_intent(idempotency_key)
+            .await
+            .map_err(|error| ApiError::Upstream(error.to_string()))?
+            .ok_or_else(|| ApiError::BadRequest("idempotency_key not found".to_string()))?
+    } else if let Some(exchange_order_id) = &normalized_exchange_order_id {
+        state
+            .repository
+            .fetch_order_intent_by_exchange_order_id(exchange_order_id)
+            .await
+            .map_err(|error| ApiError::Upstream(error.to_string()))?
+            .ok_or_else(|| ApiError::BadRequest("exchange_order_id not found".to_string()))?
+    } else {
+        return Err(ApiError::BadRequest("missing order identity".to_string()));
+    };
+    let resolved_idempotency_key = resolved_intent.idempotency_key.clone();
+
+    if let Some(exchange_order_id) = &normalized_exchange_order_id {
+        let from_exchange_lookup = state
+            .repository
+            .fetch_order_intent_by_exchange_order_id(exchange_order_id)
+            .await
+            .map_err(|error| ApiError::Upstream(error.to_string()))?;
+        if let Some(intent_by_exchange) = from_exchange_lookup {
+            if intent_by_exchange.idempotency_key != resolved_intent.idempotency_key {
+                return Err(ApiError::BadRequest(
+                    "idempotency_key and exchange_order_id do not reference the same order"
+                        .to_string(),
+                ));
+            }
+        }
+    }
+
+    let current_state = state
+        .repository
+        .fetch_latest_order_state(&resolved_idempotency_key)
+        .await
+        .map_err(|error| ApiError::Upstream(error.to_string()))?
+        .ok_or_else(|| ApiError::Upstream("order lifecycle missing current state".to_string()))?;
+
+    if current_state == target_state {
+        let exchange_order_id = normalized_exchange_order_id.or(state
+            .repository
+            .fetch_latest_exchange_order_id(&resolved_idempotency_key)
+            .await
+            .map_err(|error| ApiError::Upstream(error.to_string()))?);
+        return Ok(Json(OrderEventIngestResponse {
+            idempotency_key: resolved_idempotency_key.clone(),
+            exchange_order_id,
+            result: "NOOP".to_string(),
+            from_state: Some(current_state.as_str().to_string()),
+            to_state: None,
+            reason: Some("order event ignored: already in requested state".to_string()),
+            event_at: Utc::now(),
+        }));
+    }
+
+    if !can_transition_state(current_state, target_state) {
+        let exchange_order_id = normalized_exchange_order_id.or(state
+            .repository
+            .fetch_latest_exchange_order_id(&resolved_idempotency_key)
+            .await
+            .map_err(|error| ApiError::Upstream(error.to_string()))?);
+        return Ok(Json(OrderEventIngestResponse {
+            idempotency_key: resolved_idempotency_key.clone(),
+            exchange_order_id,
+            result: "NOOP".to_string(),
+            from_state: Some(current_state.as_str().to_string()),
+            to_state: None,
+            reason: Some(format!(
+                "order event ignored: invalid transition {} -> {}",
+                current_state.as_str(),
+                target_state.as_str()
+            )),
+            event_at: Utc::now(),
+        }));
+    }
+
+    let transitioned = transition_order_state_if_current(
+        &state,
+        &resolved_idempotency_key,
+        current_state,
+        target_state,
+        &reason,
+        &actor,
+    )
+    .await?;
+    if !transitioned {
+        let exchange_order_id = normalized_exchange_order_id.or(state
+            .repository
+            .fetch_latest_exchange_order_id(&resolved_idempotency_key)
+            .await
+            .map_err(|error| ApiError::Upstream(error.to_string()))?);
+        return Ok(Json(OrderEventIngestResponse {
+            idempotency_key: resolved_idempotency_key.clone(),
+            exchange_order_id,
+            result: "NOOP".to_string(),
+            from_state: Some(current_state.as_str().to_string()),
+            to_state: None,
+            reason: Some("order event ignored: state changed concurrently".to_string()),
+            event_at: Utc::now(),
+        }));
+    }
+
+    let exchange_order_id = normalized_exchange_order_id.or(state
+        .repository
+        .fetch_latest_exchange_order_id(&resolved_idempotency_key)
+        .await
+        .map_err(|error| ApiError::Upstream(error.to_string()))?);
+
+    info!(
+        idempotency_key = %resolved_idempotency_key,
+        exchange_order_id = ?exchange_order_id,
+        from_state = %current_state.as_str(),
+        to_state = %target_state.as_str(),
+        actor = %actor,
+        reason = %reason,
+        "execution order event ingested"
+    );
+
+    Ok(Json(OrderEventIngestResponse {
+        idempotency_key: resolved_idempotency_key,
+        exchange_order_id,
+        result: "APPLIED".to_string(),
+        from_state: Some(current_state.as_str().to_string()),
+        to_state: Some(target_state.as_str().to_string()),
+        reason: Some(reason),
+        event_at: Utc::now(),
+    }))
+}
+
 async fn transition_order_state_if_current(
     state: &AppState,
     idempotency_key: &str,
@@ -1397,6 +1643,18 @@ fn validate_manual_controls(
         }
     }
     Ok(())
+}
+
+fn parse_ingest_target_state(value: &str) -> Option<OrderLifecycleState> {
+    match value {
+        "ACKNOWLEDGED" => Some(OrderLifecycleState::Acknowledged),
+        "PARTIALLY_FILLED" => Some(OrderLifecycleState::PartiallyFilled),
+        "FILLED" => Some(OrderLifecycleState::Filled),
+        "CANCELED" => Some(OrderLifecycleState::Canceled),
+        "REJECTED" => Some(OrderLifecycleState::Rejected),
+        "EXPIRED" => Some(OrderLifecycleState::Expired),
+        _ => None,
+    }
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1451,10 +1709,10 @@ fn map_order_intent(record: OrderIntentRecord) -> OrderIntentResponse {
 #[cfg(test)]
 mod tests {
     use super::{
-        parse_kraken_submit_response, sign_kraken_futures_payload, validate_manual_controls,
-        ApiError, DispatchMode,
+        parse_ingest_target_state, parse_kraken_submit_response, sign_kraken_futures_payload,
+        validate_manual_controls, ApiError, DispatchMode,
     };
-    use execution_service::OrderIntentAction;
+    use execution_service::{OrderIntentAction, OrderLifecycleState};
 
     #[test]
     fn manual_entry_requires_operator_confirmation() {
@@ -1523,5 +1781,27 @@ mod tests {
         }"#;
         let parsed = parse_kraken_submit_response(body);
         assert!(parsed.is_err());
+    }
+
+    #[test]
+    fn parse_ingest_target_state_accepts_expected_states() {
+        assert_eq!(
+            parse_ingest_target_state("PARTIALLY_FILLED"),
+            Some(OrderLifecycleState::PartiallyFilled)
+        );
+        assert_eq!(
+            parse_ingest_target_state("FILLED"),
+            Some(OrderLifecycleState::Filled)
+        );
+        assert_eq!(
+            parse_ingest_target_state("CANCELED"),
+            Some(OrderLifecycleState::Canceled)
+        );
+    }
+
+    #[test]
+    fn parse_ingest_target_state_rejects_non_event_state() {
+        assert_eq!(parse_ingest_target_state("APPROVED"), None);
+        assert_eq!(parse_ingest_target_state("NEW"), None);
     }
 }
