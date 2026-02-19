@@ -127,6 +127,13 @@ This project follows SemVer as defined in `docs/02-versioning-and-releases.md`.
     - `specs/examples/execution_order_event_ingest_request.example.json`
     - `specs/examples/execution_order_event_ingest_response_applied.example.json`
     - `specs/examples/execution_order_event_ingest_response_noop.example.json`
+- Automatic execution stale-ack watchdog in `execution-service`:
+  - Periodic scan for orders whose latest state is `ACKNOWLEDGED` beyond threshold.
+  - Deterministic `ACKNOWLEDGED -> EXPIRED` transition with audited state event (`actor=ack-watchdog`).
+  - New config:
+    - `EXECUTION_ACK_WATCHDOG_POLL_SECONDS` (default `15`)
+    - `EXECUTION_ACK_EXPIRE_AFTER_SECONDS` (default `90`)
+    - `EXECUTION_ACK_WATCHDOG_BATCH_LIMIT` (default `200`)
 
 ### Changed
 - Product/risk/architecture docs now explicitly define manual-first live trading for MVP.
