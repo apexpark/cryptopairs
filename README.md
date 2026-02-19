@@ -167,6 +167,11 @@ Dispatches an `ACCEPTED` + `APPROVED` intent into the submit lifecycle:
 Environment:
 - `EXECUTION_DISPATCH_MODE=fail_closed` (default)
 - `EXECUTION_DISPATCH_MODE=simulate_ack` (local testing)
+- `EXECUTION_DISPATCH_MODE=live_kraken` (real exchange submit; fail-closed if not fully configured)
+- `KRAKEN_FUTURES_API_KEY` (required for `live_kraken`)
+- `KRAKEN_FUTURES_API_SECRET` (required for `live_kraken`, base64-encoded secret)
+- `KRAKEN_FUTURES_API_BASE_URL` (optional, default `https://futures.kraken.com`)
+- `KRAKEN_FUTURES_SENDORDER_PATH` (optional, default `/derivatives/api/v3/sendorder`)
 
 ## Account Reconcile Run Endpoint
 

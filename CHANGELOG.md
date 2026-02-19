@@ -114,6 +114,10 @@ This project follows SemVer as defined in `docs/02-versioning-and-releases.md`.
     - `specs/examples/execution_order_state_history_response.example.json`
     - `specs/examples/execution_dispatch_response_fail_closed.example.json`
     - `specs/examples/execution_dispatch_response_acknowledged.example.json`
+- `execution-service` live Kraken dispatch adapter mode (`EXECUTION_DISPATCH_MODE=live_kraken`) behind explicit env configuration:
+  - Signed private submit requests to Kraken Futures send-order endpoint.
+  - Fail-closed rejection when credentials/config are missing, invalid, or exchange submit fails.
+  - Dispatch audit trail retains deterministic lifecycle transitions and exchange order IDs on ack.
 
 ### Changed
 - Product/risk/architecture docs now explicitly define manual-first live trading for MVP.
