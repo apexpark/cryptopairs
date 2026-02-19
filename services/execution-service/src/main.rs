@@ -17,6 +17,7 @@ use hmac::{Hmac, Mac};
 use reqwest::header::{HeaderMap, HeaderValue, CONTENT_TYPE};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256, Sha512};
+use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::net::TcpListener;
 use tokio::time::{sleep, Duration};
@@ -34,6 +35,7 @@ struct AppState {
     dispatch_mode: DispatchMode,
     kraken_live: Option<Arc<KrakenLiveClient>>,
     ack_watchdog: AckWatchdogConfig,
+    open_orders_poller: OpenOrdersPollerConfig,
     trigger_reconcile_on_terminal: bool,
 }
 
@@ -64,13 +66,19 @@ impl KrakenLiveClient {
             .unwrap_or_else(|_| "https://futures.kraken.com".to_string());
         let endpoint_path = std::env::var("KRAKEN_FUTURES_SENDORDER_PATH")
             .unwrap_or_else(|_| "/derivatives/api/v3/sendorder".to_string());
+        let open_orders_path = std::env::var("KRAKEN_FUTURES_OPENORDERS_PATH")
+            .unwrap_or_else(|_| "/derivatives/api/v3/openorders".to_string());
         if !endpoint_path.starts_with('/') {
             return Err("KRAKEN_FUTURES_SENDORDER_PATH must start with '/'".to_string());
+        }
+        if !open_orders_path.starts_with('/') {
+            return Err("KRAKEN_FUTURES_OPENORDERS_PATH must start with '/'".to_string());
         }
         Ok(Self {
             http_client: reqwest::Client::new(),
             base_url,
             endpoint_path,
+            open_orders_path,
             api_key,
             api_secret_b64,
         })
@@ -147,6 +155,57 @@ impl KrakenLiveClient {
 
         parse_kraken_submit_response(&body)
     }
+
+    async fn fetch_open_orders(&self) -> Result<HashMap<String, KrakenOpenOrder>, String> {
+        let nonce = Utc::now().timestamp_millis().to_string();
+        let post_data = String::new();
+        let authent = sign_kraken_futures_payload(
+            &post_data,
+            &nonce,
+            &self.open_orders_path,
+            &self.api_secret_b64,
+        )?;
+        let url = format!("{}{}", self.base_url, self.open_orders_path);
+
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            CONTENT_TYPE,
+            HeaderValue::from_static("application/x-www-form-urlencoded"),
+        );
+        headers.insert(
+            "APIKey",
+            HeaderValue::from_str(&self.api_key)
+                .map_err(|_| "invalid API key header".to_string())?,
+        );
+        headers.insert(
+            "Nonce",
+            HeaderValue::from_str(&nonce).map_err(|_| "invalid nonce header".to_string())?,
+        );
+        headers.insert(
+            "Authent",
+            HeaderValue::from_str(&authent).map_err(|_| "invalid authent header".to_string())?,
+        );
+
+        let response = self
+            .http_client
+            .get(url)
+            .headers(headers)
+            .send()
+            .await
+            .map_err(|error| format!("kraken openorders request failed: {error}"))?;
+        let status = response.status().as_u16();
+        let body = response
+            .text()
+            .await
+            .map_err(|error| format!("kraken openorders response read failed: {error}"))?;
+        if status != 200 {
+            return Err(format!(
+                "kraken openorders http status {status}: {}",
+                summarize_response(&body)
+            ));
+        }
+        parse_kraken_open_orders_response(&body)
+    }
 }
 
 fn sign_kraken_futures_payload(
@@ -214,6 +273,27 @@ fn parse_kraken_submit_response(body: &str) -> Result<LiveDispatchSuccess, Strin
     })
 }
 
+fn parse_kraken_open_orders_response(
+    body: &str,
+) -> Result<HashMap<String, KrakenOpenOrder>, String> {
+    let payload: KrakenOpenOrdersResponse = serde_json::from_str(body)
+        .map_err(|error| format!("kraken openorders decode failed: {error}"))?;
+    if payload.result != "success" {
+        return Err(format!(
+            "kraken openorders returned non-success result={}",
+            payload.result
+        ));
+    }
+    let mut by_id = HashMap::new();
+    for order in payload.open_orders {
+        if order.order_id.trim().is_empty() {
+            continue;
+        }
+        by_id.insert(order.order_id.clone(), order);
+    }
+    Ok(by_id)
+}
+
 fn extract_order_id(payload: &serde_json::Value) -> Option<String> {
     if let Some(id) = payload
         .get("sendStatus")
@@ -258,6 +338,7 @@ struct KrakenLiveClient {
     http_client: reqwest::Client,
     base_url: String,
     endpoint_path: String,
+    open_orders_path: String,
     api_key: String,
     api_secret_b64: String,
 }
@@ -273,6 +354,38 @@ struct AckWatchdogConfig {
     poll_interval_seconds: u64,
     expire_after_seconds: u64,
     batch_limit: i64,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct OpenOrdersPollerConfig {
+    enabled: bool,
+    poll_interval_seconds: u64,
+    batch_limit: i64,
+}
+
+#[derive(Debug, Clone)]
+struct LiveTrackedOrder {
+    idempotency_key: String,
+    exchange_order_id: String,
+    current_state: OrderLifecycleState,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct KrakenOpenOrdersResponse {
+    result: String,
+    #[serde(default)]
+    open_orders: Vec<KrakenOpenOrder>,
+}
+
+#[derive(Debug, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+struct KrakenOpenOrder {
+    #[serde(alias = "order_id")]
+    order_id: String,
+    status: Option<String>,
+    filled_size: Option<f64>,
+    unfilled_size: Option<f64>,
 }
 
 #[derive(Clone)]
@@ -757,6 +870,51 @@ impl ExecutionRepository {
 
         Ok(rows.iter().map(|row| row.get(0)).collect())
     }
+
+    async fn fetch_live_tracked_orders(&self, limit: i64) -> anyhow::Result<Vec<LiveTrackedOrder>> {
+        let rows = self
+            .client
+            .query(
+                "SELECT i.idempotency_key, latest.state, d.exchange_order_id
+                 FROM execution_order_intents i
+                 JOIN (
+                   SELECT DISTINCT ON (idempotency_key)
+                     idempotency_key, state, created_at
+                   FROM execution_order_state_events
+                   ORDER BY idempotency_key, created_at DESC
+                 ) latest
+                   ON latest.idempotency_key = i.idempotency_key
+                 JOIN (
+                   SELECT DISTINCT ON (idempotency_key)
+                     idempotency_key, exchange_order_id, attempt_no
+                   FROM execution_dispatch_attempts
+                   WHERE exchange_order_id IS NOT NULL
+                   ORDER BY idempotency_key, attempt_no DESC
+                 ) d
+                   ON d.idempotency_key = i.idempotency_key
+                 WHERE i.exchange = 'kraken_futures'
+                   AND latest.state IN ('ACKNOWLEDGED', 'PARTIALLY_FILLED')
+                 ORDER BY i.created_at ASC
+                 LIMIT $1",
+                &[&limit],
+            )
+            .await?;
+
+        Ok(rows
+            .iter()
+            .filter_map(|row| {
+                let idempotency_key: String = row.get(0);
+                let state_raw: String = row.get(1);
+                let exchange_order_id: String = row.get(2);
+                let current_state = OrderLifecycleState::parse(&state_raw)?;
+                Some(LiveTrackedOrder {
+                    idempotency_key,
+                    exchange_order_id,
+                    current_state,
+                })
+            })
+            .collect())
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -972,6 +1130,20 @@ async fn main() -> anyhow::Result<()> {
             .and_then(|value| value.parse::<i64>().ok())
             .unwrap_or(200),
     };
+    let open_orders_poller = OpenOrdersPollerConfig {
+        enabled: std::env::var("EXECUTION_OPENORDERS_POLLER_ENABLED")
+            .ok()
+            .and_then(|value| value.parse::<bool>().ok())
+            .unwrap_or(true),
+        poll_interval_seconds: std::env::var("EXECUTION_OPENORDERS_POLL_SECONDS")
+            .ok()
+            .and_then(|value| value.parse::<u64>().ok())
+            .unwrap_or(5),
+        batch_limit: std::env::var("EXECUTION_OPENORDERS_POLL_BATCH_LIMIT")
+            .ok()
+            .and_then(|value| value.parse::<i64>().ok())
+            .unwrap_or(200),
+    };
     let trigger_reconcile_on_terminal = std::env::var("EXECUTION_TRIGGER_RECONCILE_ON_TERMINAL")
         .ok()
         .and_then(|value| value.parse::<bool>().ok())
@@ -1005,9 +1177,11 @@ async fn main() -> anyhow::Result<()> {
         dispatch_mode,
         kraken_live,
         ack_watchdog,
+        open_orders_poller,
         trigger_reconcile_on_terminal,
     };
     tokio::spawn(spawn_ack_watchdog(app_state.clone()));
+    tokio::spawn(spawn_open_orders_poller(app_state.clone()));
     let cors = CorsLayer::new()
         .allow_origin(Any)
         .allow_methods(Any)
@@ -1042,6 +1216,9 @@ async fn main() -> anyhow::Result<()> {
         ack_watchdog_poll_seconds = ack_watchdog.poll_interval_seconds,
         ack_expire_after_seconds = ack_watchdog.expire_after_seconds,
         ack_watchdog_batch_limit = ack_watchdog.batch_limit,
+        openorders_poller_enabled = open_orders_poller.enabled,
+        openorders_poll_seconds = open_orders_poller.poll_interval_seconds,
+        openorders_poll_batch_limit = open_orders_poller.batch_limit,
         trigger_reconcile_on_terminal,
         "execution-service started"
     );
@@ -1057,6 +1234,129 @@ async fn spawn_ack_watchdog(state: AppState) {
         }
         sleep(poll_every).await;
     }
+}
+
+async fn spawn_open_orders_poller(state: AppState) {
+    if !state.open_orders_poller.enabled {
+        info!("execution openorders poller disabled");
+        return;
+    }
+    let poll_every = Duration::from_secs(state.open_orders_poller.poll_interval_seconds.max(1));
+    loop {
+        if let Err(error) = run_open_orders_poll_once(&state).await {
+            info!(error = %error, "execution openorders poller iteration failed");
+        }
+        sleep(poll_every).await;
+    }
+}
+
+async fn run_open_orders_poll_once(state: &AppState) -> anyhow::Result<()> {
+    let Some(client) = &state.kraken_live else {
+        return Ok(());
+    };
+
+    let tracked_orders = state
+        .repository
+        .fetch_live_tracked_orders(state.open_orders_poller.batch_limit)
+        .await?;
+    if tracked_orders.is_empty() {
+        return Ok(());
+    }
+
+    let open_orders = client
+        .fetch_open_orders()
+        .await
+        .map_err(anyhow::Error::msg)?;
+    for tracked in tracked_orders {
+        let Some(open_order) = open_orders.get(&tracked.exchange_order_id) else {
+            continue;
+        };
+        let Some((target_state, reason)) =
+            derive_open_order_transition(tracked.current_state, open_order)
+        else {
+            continue;
+        };
+
+        let transitioned = transition_order_state_if_current(
+            state,
+            &tracked.idempotency_key,
+            tracked.current_state,
+            target_state,
+            &reason,
+            "openorders-poller",
+        )
+        .await
+        .map_err(|error| anyhow::anyhow!(api_error_to_message(error)))?;
+        if !transitioned {
+            continue;
+        }
+
+        info!(
+            idempotency_key = %tracked.idempotency_key,
+            exchange_order_id = %tracked.exchange_order_id,
+            from_state = %tracked.current_state.as_str(),
+            to_state = %target_state.as_str(),
+            reason = %reason,
+            "execution openorders poller applied lifecycle transition"
+        );
+        if is_terminal_state(target_state) {
+            let intent = state
+                .repository
+                .fetch_order_intent(&tracked.idempotency_key)
+                .await?;
+            if let Some(intent) = intent {
+                trigger_reconcile_after_terminal(state, &intent, target_state, "openorders-poller")
+                    .await;
+            }
+        }
+    }
+
+    Ok(())
+}
+
+fn derive_open_order_transition(
+    current_state: OrderLifecycleState,
+    open_order: &KrakenOpenOrder,
+) -> Option<(OrderLifecycleState, String)> {
+    if let (Some(filled), Some(unfilled)) = (open_order.filled_size, open_order.unfilled_size) {
+        if filled > 0.0 && unfilled > 0.0 && current_state == OrderLifecycleState::Acknowledged {
+            return Some((
+                OrderLifecycleState::PartiallyFilled,
+                format!(
+                    "openorders poller: status={} filled_size={filled:.8} unfilled_size={unfilled:.8}",
+                    open_order.status.as_deref().unwrap_or("unknown")
+                ),
+            ));
+        }
+        if filled > 0.0 && unfilled <= 0.0 {
+            return Some((
+                OrderLifecycleState::Filled,
+                format!(
+                    "openorders poller inferred filled: status={} filled_size={filled:.8} unfilled_size={unfilled:.8}",
+                    open_order.status.as_deref().unwrap_or("unknown")
+                ),
+            ));
+        }
+    }
+
+    let status = open_order
+        .status
+        .as_deref()
+        .unwrap_or("unknown")
+        .to_ascii_lowercase();
+    if status.contains("partial") && current_state == OrderLifecycleState::Acknowledged {
+        return Some((
+            OrderLifecycleState::PartiallyFilled,
+            format!("openorders poller: status={status}"),
+        ));
+    }
+    if status == "filled" {
+        return Some((
+            OrderLifecycleState::Filled,
+            "openorders poller: status=filled".to_string(),
+        ));
+    }
+    None
 }
 
 async fn run_ack_watchdog_once(state: &AppState) -> anyhow::Result<()> {
@@ -1921,8 +2221,10 @@ fn map_order_intent(record: OrderIntentRecord) -> OrderIntentResponse {
 #[cfg(test)]
 mod tests {
     use super::{
-        is_terminal_state, parse_ingest_target_state, parse_kraken_submit_response,
+        derive_open_order_transition, is_terminal_state, parse_ingest_target_state,
+        parse_kraken_open_orders_response, parse_kraken_submit_response,
         sign_kraken_futures_payload, validate_manual_controls, ApiError, DispatchMode,
+        KrakenOpenOrder,
     };
     use execution_service::{OrderIntentAction, OrderLifecycleState};
 
@@ -2025,5 +2327,46 @@ mod tests {
         assert!(is_terminal_state(OrderLifecycleState::Expired));
         assert!(!is_terminal_state(OrderLifecycleState::Acknowledged));
         assert!(!is_terminal_state(OrderLifecycleState::PartiallyFilled));
+    }
+
+    #[test]
+    fn parse_kraken_open_orders_response_reads_order_ids() {
+        let body = r#"{
+          "result":"success",
+          "openOrders":[
+            {"order_id":"o1","status":"untouched","filledSize":0,"unfilledSize":10},
+            {"order_id":"o2","status":"partially_filled","filledSize":2,"unfilledSize":8}
+          ]
+        }"#;
+        let parsed = parse_kraken_open_orders_response(body).expect("valid open orders response");
+        assert!(parsed.contains_key("o1"));
+        assert!(parsed.contains_key("o2"));
+    }
+
+    #[test]
+    fn derive_open_order_transition_promotes_partial_fill() {
+        let open = KrakenOpenOrder {
+            order_id: "o1".to_string(),
+            status: Some("untouched".to_string()),
+            filled_size: Some(1.0),
+            unfilled_size: Some(9.0),
+        };
+        let transition = derive_open_order_transition(OrderLifecycleState::Acknowledged, &open);
+        assert!(matches!(
+            transition,
+            Some((OrderLifecycleState::PartiallyFilled, _))
+        ));
+    }
+
+    #[test]
+    fn derive_open_order_transition_noop_for_untouched_zero_fill() {
+        let open = KrakenOpenOrder {
+            order_id: "o1".to_string(),
+            status: Some("untouched".to_string()),
+            filled_size: Some(0.0),
+            unfilled_size: Some(10.0),
+        };
+        let transition = derive_open_order_transition(OrderLifecycleState::Acknowledged, &open);
+        assert!(transition.is_none());
     }
 }

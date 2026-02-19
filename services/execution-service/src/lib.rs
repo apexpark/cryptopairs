@@ -102,6 +102,10 @@ pub fn can_transition_state(from: OrderLifecycleState, to: OrderLifecycleState) 
                 OrderLifecycleState::Rejected
             )
             | (
+                OrderLifecycleState::Acknowledged,
+                OrderLifecycleState::Expired
+            )
+            | (
                 OrderLifecycleState::PartiallyFilled,
                 OrderLifecycleState::Filled
             )
@@ -112,6 +116,10 @@ pub fn can_transition_state(from: OrderLifecycleState, to: OrderLifecycleState) 
             | (
                 OrderLifecycleState::PartiallyFilled,
                 OrderLifecycleState::Rejected
+            )
+            | (
+                OrderLifecycleState::PartiallyFilled,
+                OrderLifecycleState::Expired
             )
             | (
                 OrderLifecycleState::PendingSubmit,
@@ -371,6 +379,14 @@ mod tests {
         assert!(can_transition_state(
             OrderLifecycleState::Acknowledged,
             OrderLifecycleState::Filled
+        ));
+        assert!(can_transition_state(
+            OrderLifecycleState::Acknowledged,
+            OrderLifecycleState::Expired
+        ));
+        assert!(can_transition_state(
+            OrderLifecycleState::PartiallyFilled,
+            OrderLifecycleState::Expired
         ));
         assert!(!can_transition_state(
             OrderLifecycleState::Filled,

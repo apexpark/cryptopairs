@@ -142,6 +142,16 @@ This project follows SemVer as defined in `docs/02-versioning-and-releases.md`.
   - New config:
     - `ACCOUNT_SERVICE_URL` (default `http://127.0.0.1:8081`)
     - `EXECUTION_TRIGGER_RECONCILE_ON_TERMINAL` (default `true`)
+- Live open-orders reconciliation poller in `execution-service` (Kraken futures):
+  - Background poller calls `GET /derivatives/api/v3/openorders` and reconciles tracked
+    `ACKNOWLEDGED` / `PARTIALLY_FILLED` orders by `exchange_order_id`.
+  - Applies deterministic `ACKNOWLEDGED -> PARTIALLY_FILLED` and fill inference transitions
+    from open-order payload fields (`filledSize`, `unfilledSize`, `status`).
+  - New config:
+    - `EXECUTION_OPENORDERS_POLLER_ENABLED` (default `true`)
+    - `EXECUTION_OPENORDERS_POLL_SECONDS` (default `5`)
+    - `EXECUTION_OPENORDERS_POLL_BATCH_LIMIT` (default `200`)
+    - `KRAKEN_FUTURES_OPENORDERS_PATH` (default `/derivatives/api/v3/openorders`)
 
 ### Changed
 - Product/risk/architecture docs now explicitly define manual-first live trading for MVP.
@@ -156,3 +166,5 @@ This project follows SemVer as defined in `docs/02-versioning-and-releases.md`.
 
 ### Fixed
 - Removed accidental duplicate spec/example files with `* 2.json` suffix.
+- Execution lifecycle transition matrix now permits watchdog-driven expiration from
+  `ACKNOWLEDGED` and `PARTIALLY_FILLED` (`-> EXPIRED`).
