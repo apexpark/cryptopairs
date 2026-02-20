@@ -246,6 +246,17 @@ and per-variant `shadow_success_probability`/`shadow_rank_score` fields for deci
 Each cue also includes a fail-closed `cost_gate` block and a `portfolio_hint` advisory block.
 Response-level `candidate_set` and `portfolio_plan` objects summarize scan quality and suggested sizing.
 
+## Strategy Backtest Endpoint
+
+```bash
+GET /v1/strategy/pairs/backtest?timeframe=1m&pair_id=PI_XBTUSD__PI_ETHUSD&bars=300
+```
+
+Returns deterministic, backend-generated analytics series for the selected pair:
+- `points[]` with `ts`, `z`, and simulated `equity`
+- `markers[]` for `entry`, `exit`, and `stop`
+- selected variant + active trading bands used for the simulation
+
 ## Strategy Cost Gate Endpoint
 
 ```bash

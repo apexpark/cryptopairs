@@ -2,13 +2,6 @@ import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
 import { useEffect, useMemo, useState } from "react";
 import LineChart from "./components/LineChart";
 import {
-  alignCandles,
-  computeSpreadSeries,
-  deriveMarkers,
-  simulateHypotheticalEquity,
-  timeframeMinutes,
-} from "./lib/analytics";
-import {
   allAcceptedDispatchAcknowledged,
   latestLifecycleState,
 } from "./lib/orderLifecycle";
@@ -19,10 +12,10 @@ import {
   fetchKillSwitchState,
   fetchOrderIntentHistory,
   fetchReconcile,
+  fetchStrategyBacktest,
   fetchStrategyCostGates,
   fetchStrategyCues,
   fetchStrategyPortfolioPlan,
-  queryCandles,
   submitOrderIntent,
 } from "./lib/api";
 import {
@@ -425,55 +418,27 @@ function App(): JSX.Element {
         setAnalyticsLoading(true);
       }
 
-      const minutes = timeframeMinutes(timeframe);
       const bars = timeframe === "1m" ? 300 : timeframe === "15m" ? 280 : 220;
-      const end = new Date();
-      const start = new Date(end.getTime() - bars * minutes * 60_000);
 
       try {
-        const [left, right] = await Promise.all([
-          queryCandles(
-            selectedCueRow.cue.left_instrument,
-            timeframe,
-            start.toISOString(),
-            end.toISOString()
-          ),
-          queryCandles(
-            selectedCueRow.cue.right_instrument,
-            timeframe,
-            start.toISOString(),
-            end.toISOString()
-          ),
-        ]);
+        const backtest = await fetchStrategyBacktest(timeframe, selectedCueRow.cue.pair_id, bars);
 
         if (cancelled) {
           return;
         }
 
-        const aligned = alignCandles(left.candles, right.candles);
-        const spreadSeries = computeSpreadSeries(aligned, selectedCueRow.hedge_ratio);
-
-        if (spreadSeries.length < 20) {
-          setAnalyticsError("Insufficient live candle overlap for analytics charts.");
+        if (backtest.points.length < 20) {
+          setAnalyticsError("Insufficient aligned data for analytics charts.");
           setZSeries([]);
           setEquitySeries([]);
           setZMarkers([]);
           return;
         }
 
-        const zValues = spreadSeries.map((point) => point.z);
-        const markers = deriveMarkers(
-          spreadSeries,
-          selectedCueRow.cue.entry_band,
-          selectedCueRow.cue.exit_band,
-          selectedCueRow.cue.stop_band
-        );
-        const equity = simulateHypotheticalEquity(
-          spreadSeries,
-          selectedCueRow.cue.entry_band,
-          selectedCueRow.cue.exit_band,
-          selectedCueRow.cue.stop_band,
-          selectedCueRow.cue.cost_estimate_bps
+        const zValues = backtest.points.map((point) => point.z);
+        const equity = backtest.points.map((point) => point.equity);
+        const markers = backtest.markers.filter((marker) =>
+          marker.kind === "entry" || marker.kind === "exit" || marker.kind === "stop"
         );
 
         setZSeries(zValues);
@@ -485,7 +450,7 @@ function App(): JSX.Element {
           return;
         }
         setAnalyticsError(
-          `Analytics unavailable from live data query: ${
+          `Analytics unavailable from strategy backtest: ${
             error instanceof Error ? error.message : String(error)
           }`
         );

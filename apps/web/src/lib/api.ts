@@ -10,6 +10,7 @@ import type {
   OrderIntentResponse,
   ReconcileResponse,
   StrategyPairsCostGateResponse,
+  StrategyPairsBacktestResponse,
   StrategyPairsCuesResponse,
   StrategyPairsPortfolioPlanResponse,
   Timeframe,
@@ -52,6 +53,17 @@ export async function fetchStrategyPortfolioPlan(
 ): Promise<StrategyPairsPortfolioPlanResponse> {
   const url = `${STRATEGY_SERVICE_BASE_URL}/v1/strategy/pairs/portfolio-plan?timeframe=${timeframe}`;
   return parseJson<StrategyPairsPortfolioPlanResponse>(await fetch(url));
+}
+
+export async function fetchStrategyBacktest(
+  timeframe: Timeframe,
+  pairId: string,
+  bars = 300
+): Promise<StrategyPairsBacktestResponse> {
+  const url = `${STRATEGY_SERVICE_BASE_URL}/v1/strategy/pairs/backtest?timeframe=${timeframe}&pair_id=${encodeURIComponent(
+    pairId
+  )}&bars=${bars}`;
+  return parseJson<StrategyPairsBacktestResponse>(await fetch(url));
 }
 
 export async function fetchKillSwitchState(): Promise<KillSwitchState> {

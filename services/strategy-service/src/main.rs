@@ -12,9 +12,9 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use strategy_service::{
     annotate_with_shadow_model, apply_portfolio_plan_to_cues, build_portfolio_plan,
-    evaluate_cost_gate, evaluate_pair, train_shadow_model, CandidateSetDiagnostics, CostGateInput,
-    PairCue, PairEvaluationInput, PairEvaluationOutput, PortfolioPlan, Regime,
-    ShadowModelTrainingRow, SignalVariant,
+    compute_backtest_series, evaluate_cost_gate, evaluate_pair, train_shadow_model, BacktestConfig,
+    CandidateSetDiagnostics, CostGateInput, PairCue, PairEvaluationInput, PairEvaluationOutput,
+    PortfolioPlan, Regime, ShadowModelTrainingRow, SignalVariant,
 };
 use tokio::net::TcpListener;
 use tokio_postgres::{types::ToSql, Client, NoTls};
@@ -458,6 +458,13 @@ struct CuesQuery {
 }
 
 #[derive(Debug, Deserialize)]
+struct BacktestQuery {
+    timeframe: String,
+    pair_id: String,
+    bars: Option<usize>,
+}
+
+#[derive(Debug, Deserialize)]
 struct ReoptimizeRequest {
     timeframes: Option<Vec<String>>,
 }
@@ -489,6 +496,37 @@ struct CuesResponse {
     candidate_set: CandidateSetDiagnostics,
     portfolio_plan: PortfolioPlan,
     skipped: Vec<SkippedPair>,
+}
+
+#[derive(Debug, Serialize)]
+struct BacktestPointResponse {
+    ts: DateTime<Utc>,
+    z: f64,
+    equity: f64,
+}
+
+#[derive(Debug, Serialize)]
+struct BacktestMarkerResponse {
+    index: usize,
+    kind: String,
+}
+
+#[derive(Debug, Serialize)]
+struct BacktestResponse {
+    timeframe: String,
+    pair_id: String,
+    generated_at: DateTime<Utc>,
+    left_instrument: String,
+    right_instrument: String,
+    selected_variant: String,
+    hedge_ratio: f64,
+    entry_band: f64,
+    exit_band: f64,
+    stop_band: f64,
+    round_trip_cost_bps: f64,
+    points: Vec<BacktestPointResponse>,
+    markers: Vec<BacktestMarkerResponse>,
+    rationale_codes: Vec<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -592,6 +630,7 @@ async fn main() -> anyhow::Result<()> {
     let app = Router::new()
         .route("/health", get(health))
         .route("/v1/strategy/pairs/cues", get(pairs_cues))
+        .route("/v1/strategy/pairs/backtest", get(pairs_backtest))
         .route("/v1/strategy/pairs/cost-gate", get(pairs_cost_gate))
         .route(
             "/v1/strategy/pairs/portfolio-plan",
@@ -840,6 +879,121 @@ async fn pairs_cost_gate(
         generated_at: Utc::now(),
         gates,
         skipped,
+    }))
+}
+
+async fn pairs_backtest(
+    State(state): State<AppState>,
+    Query(query): Query<BacktestQuery>,
+) -> Result<Json<BacktestResponse>, ApiError> {
+    let timeframe = Timeframe::parse(&query.timeframe).ok_or_else(|| {
+        ApiError::BadRequest("invalid timeframe; expected 1m, 15m, 1h".to_string())
+    })?;
+    let bars = query.bars.unwrap_or(300).clamp(120, 2_000);
+    let Some(pair) = state
+        .settings
+        .pairs
+        .iter()
+        .find(|candidate| candidate.pair_id() == query.pair_id)
+    else {
+        return Err(ApiError::BadRequest(format!(
+            "pair_id '{}' is not configured",
+            query.pair_id
+        )));
+    };
+
+    let lookback = std::cmp::max(state.settings.lookback_bars(timeframe), bars + 32) as i64;
+    let left = state
+        .repository
+        .fetch_recent_closes(&pair.left, timeframe, lookback)
+        .await
+        .map_err(|error| ApiError::Upstream(error.to_string()))?;
+    let right = state
+        .repository
+        .fetch_recent_closes(&pair.right, timeframe, lookback)
+        .await
+        .map_err(|error| ApiError::Upstream(error.to_string()))?;
+
+    let (timestamps, left_closes, right_closes) = align_closes(left, right);
+    if timestamps.len() < 120 {
+        return Err(ApiError::Upstream(format!(
+            "insufficient aligned candles for pair={} timeframe={} bars={}",
+            query.pair_id,
+            timeframe.as_str(),
+            timestamps.len()
+        )));
+    }
+
+    let start_idx = timestamps.len().saturating_sub(bars + 1);
+    let timestamps = &timestamps[start_idx..];
+    let left_closes = &left_closes[start_idx..];
+    let right_closes = &right_closes[start_idx..];
+
+    let output =
+        evaluate_pair_for_timeframe(&state, pair, timeframe, state.settings.advisory_enabled)
+            .await
+            .map_err(|error| ApiError::Upstream(error.to_string()))?;
+
+    let series = compute_backtest_series(
+        timestamps,
+        left_closes,
+        right_closes,
+        BacktestConfig {
+            hedge_ratio: output.hedge_ratio,
+            entry_band: output.cue.entry_band,
+            exit_band: output.cue.exit_band,
+            stop_band: output.cue.stop_band,
+            round_trip_cost_bps: output.cue.cost_estimate_bps,
+        },
+    );
+
+    if series.points.is_empty() {
+        return Err(ApiError::Upstream(format!(
+            "unable to compute backtest points for pair={} timeframe={}",
+            query.pair_id,
+            timeframe.as_str()
+        )));
+    }
+
+    tracing::info!(
+        pair_id = %query.pair_id,
+        timeframe = %timeframe.as_str(),
+        bars,
+        points = series.points.len(),
+        markers = series.markers.len(),
+        "strategy backtest response generated"
+    );
+
+    Ok(Json(BacktestResponse {
+        timeframe: timeframe.as_str().to_string(),
+        pair_id: query.pair_id,
+        generated_at: Utc::now(),
+        left_instrument: output.cue.left_instrument,
+        right_instrument: output.cue.right_instrument,
+        selected_variant: output.cue.selected_variant,
+        hedge_ratio: output.hedge_ratio,
+        entry_band: output.cue.entry_band,
+        exit_band: output.cue.exit_band,
+        stop_band: output.cue.stop_band,
+        round_trip_cost_bps: output.cue.cost_estimate_bps,
+        points: series
+            .points
+            .into_iter()
+            .map(|point| BacktestPointResponse {
+                ts: point.ts,
+                z: point.z,
+                equity: point.equity,
+            })
+            .collect(),
+        markers: series
+            .markers
+            .into_iter()
+            .map(|marker| BacktestMarkerResponse {
+                index: marker.index,
+                kind: marker.kind,
+            })
+            .collect(),
+        rationale_codes: output.cue.rationale_codes,
     }))
 }
 
