@@ -170,6 +170,22 @@ export interface StrategyPairsBacktestResponse {
   rationale_codes: string[];
 }
 
+export interface StrategyPairsLiveZResponse {
+  timeframe: Timeframe;
+  pair_id: string;
+  generated_at: string;
+  entry_band: number;
+  exit_band: number;
+  stop_band: number;
+  selected_variant: string;
+  points: Array<{
+    ts: string;
+    z: number;
+  }>;
+  markers: ChartMarker[];
+  rationale_codes: string[];
+}
+
 export interface IntegrityHistoryResponse {
   instrument: string;
   timeframe: Timeframe;

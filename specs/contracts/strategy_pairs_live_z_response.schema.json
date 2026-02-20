@@ -1,0 +1,86 @@
+{
+  "$id": "https://cryptopairs/specs/contracts/strategy_pairs_live_z_response.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "StrategyPairsLiveZResponse",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "timeframe",
+    "pair_id",
+    "generated_at",
+    "entry_band",
+    "exit_band",
+    "stop_band",
+    "selected_variant",
+    "points",
+    "markers",
+    "rationale_codes"
+  ],
+  "properties": {
+    "timeframe": {
+      "type": "string",
+      "enum": ["1m", "15m", "1h"]
+    },
+    "pair_id": {
+      "type": "string"
+    },
+    "generated_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "entry_band": {
+      "type": "number"
+    },
+    "exit_band": {
+      "type": "number"
+    },
+    "stop_band": {
+      "type": "number"
+    },
+    "selected_variant": {
+      "type": "string",
+      "enum": ["COINTEGRATION_Z", "ROBUST_Z", "VOL_NORMALIZED", "FUNDING_ADJUSTED"]
+    },
+    "points": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["ts", "z"],
+        "properties": {
+          "ts": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "z": {
+            "type": "number"
+          }
+        }
+      }
+    },
+    "markers": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["index", "kind"],
+        "properties": {
+          "index": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "kind": {
+            "type": "string",
+            "enum": ["entry", "exit", "stop"]
+          }
+        }
+      }
+    },
+    "rationale_codes": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    }
+  }
+}

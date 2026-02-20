@@ -9,9 +9,10 @@ import type {
   OrderIntentRequest,
   OrderIntentResponse,
   ReconcileResponse,
-  StrategyPairsCostGateResponse,
   StrategyPairsBacktestResponse,
+  StrategyPairsCostGateResponse,
   StrategyPairsCuesResponse,
+  StrategyPairsLiveZResponse,
   StrategyPairsPortfolioPlanResponse,
   Timeframe,
 } from "../types";
@@ -64,6 +65,17 @@ export async function fetchStrategyBacktest(
     pairId
   )}&bars=${bars}`;
   return parseJson<StrategyPairsBacktestResponse>(await fetch(url));
+}
+
+export async function fetchStrategyLiveZ(
+  timeframe: Timeframe,
+  pairId: string,
+  points = 300
+): Promise<StrategyPairsLiveZResponse> {
+  const url = `${STRATEGY_SERVICE_BASE_URL}/v1/strategy/pairs/live-z?timeframe=${timeframe}&pair_id=${encodeURIComponent(
+    pairId
+  )}&points=${points}`;
+  return parseJson<StrategyPairsLiveZResponse>(await fetch(url));
 }
 
 export async function fetchKillSwitchState(): Promise<KillSwitchState> {

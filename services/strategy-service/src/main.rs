@@ -465,6 +465,13 @@ struct BacktestQuery {
 }
 
 #[derive(Debug, Deserialize)]
+struct LiveZQuery {
+    timeframe: String,
+    pair_id: String,
+    points: Option<usize>,
+}
+
+#[derive(Debug, Deserialize)]
 struct ReoptimizeRequest {
     timeframes: Option<Vec<String>>,
 }
@@ -525,6 +532,26 @@ struct BacktestResponse {
     stop_band: f64,
     round_trip_cost_bps: f64,
     points: Vec<BacktestPointResponse>,
+    markers: Vec<BacktestMarkerResponse>,
+    rationale_codes: Vec<String>,
+}
+
+#[derive(Debug, Serialize)]
+struct LiveZPointResponse {
+    ts: DateTime<Utc>,
+    z: f64,
+}
+
+#[derive(Debug, Serialize)]
+struct LiveZResponse {
+    timeframe: String,
+    pair_id: String,
+    generated_at: DateTime<Utc>,
+    entry_band: f64,
+    exit_band: f64,
+    stop_band: f64,
+    selected_variant: String,
+    points: Vec<LiveZPointResponse>,
     markers: Vec<BacktestMarkerResponse>,
     rationale_codes: Vec<String>,
 }
@@ -631,6 +658,7 @@ async fn main() -> anyhow::Result<()> {
         .route("/health", get(health))
         .route("/v1/strategy/pairs/cues", get(pairs_cues))
         .route("/v1/strategy/pairs/backtest", get(pairs_backtest))
+        .route("/v1/strategy/pairs/live-z", get(pairs_live_z))
         .route("/v1/strategy/pairs/cost-gate", get(pairs_cost_gate))
         .route(
             "/v1/strategy/pairs/portfolio-plan",
@@ -983,6 +1011,113 @@ async fn pairs_backtest(
                 ts: point.ts,
                 z: point.z,
                 equity: point.equity,
+            })
+            .collect(),
+        markers: series
+            .markers
+            .into_iter()
+            .map(|marker| BacktestMarkerResponse {
+                index: marker.index,
+                kind: marker.kind,
+            })
+            .collect(),
+        rationale_codes: output.cue.rationale_codes,
+    }))
+}
+
+async fn pairs_live_z(
+    State(state): State<AppState>,
+    Query(query): Query<LiveZQuery>,
+) -> Result<Json<LiveZResponse>, ApiError> {
+    let timeframe = Timeframe::parse(&query.timeframe).ok_or_else(|| {
+        ApiError::BadRequest("invalid timeframe; expected 1m, 15m, 1h".to_string())
+    })?;
+    let points = query.points.unwrap_or(300).clamp(120, 2_000);
+    let Some(pair) = state
+        .settings
+        .pairs
+        .iter()
+        .find(|candidate| candidate.pair_id() == query.pair_id)
+    else {
+        return Err(ApiError::BadRequest(format!(
+            "pair_id '{}' is not configured",
+            query.pair_id
+        )));
+    };
+
+    let lookback = std::cmp::max(state.settings.lookback_bars(timeframe), points + 32) as i64;
+    let left = state
+        .repository
+        .fetch_recent_closes(&pair.left, timeframe, lookback)
+        .await
+        .map_err(|error| ApiError::Upstream(error.to_string()))?;
+    let right = state
+        .repository
+        .fetch_recent_closes(&pair.right, timeframe, lookback)
+        .await
+        .map_err(|error| ApiError::Upstream(error.to_string()))?;
+
+    let (timestamps, left_closes, right_closes) = align_closes(left, right);
+    if timestamps.len() < 120 {
+        return Err(ApiError::Upstream(format!(
+            "insufficient aligned candles for pair={} timeframe={} bars={}",
+            query.pair_id,
+            timeframe.as_str(),
+            timestamps.len()
+        )));
+    }
+
+    let start_idx = timestamps.len().saturating_sub(points + 1);
+    let timestamps = &timestamps[start_idx..];
+    let left_closes = &left_closes[start_idx..];
+    let right_closes = &right_closes[start_idx..];
+
+    let output =
+        evaluate_pair_for_timeframe(&state, pair, timeframe, state.settings.advisory_enabled)
+            .await
+            .map_err(|error| ApiError::Upstream(error.to_string()))?;
+    let series = compute_backtest_series(
+        timestamps,
+        left_closes,
+        right_closes,
+        BacktestConfig {
+            hedge_ratio: output.hedge_ratio,
+            entry_band: output.cue.entry_band,
+            exit_band: output.cue.exit_band,
+            stop_band: output.cue.stop_band,
+            round_trip_cost_bps: output.cue.cost_estimate_bps,
+        },
+    );
+    if series.points.is_empty() {
+        return Err(ApiError::Upstream(format!(
+            "unable to compute live z-series for pair={} timeframe={}",
+            query.pair_id,
+            timeframe.as_str()
+        )));
+    }
+
+    tracing::info!(
+        pair_id = %query.pair_id,
+        timeframe = %timeframe.as_str(),
+        points = series.points.len(),
+        markers = series.markers.len(),
+        "strategy live z-series generated"
+    );
+
+    Ok(Json(LiveZResponse {
+        timeframe: timeframe.as_str().to_string(),
+        pair_id: query.pair_id,
+        generated_at: Utc::now(),
+        entry_band: output.cue.entry_band,
+        exit_band: output.cue.exit_band,
+        stop_band: output.cue.stop_band,
+        selected_variant: output.cue.selected_variant,
+        points: series
+            .points
+            .into_iter()
+            .map(|point| LiveZPointResponse {
+                ts: point.ts,
+                z: point.z,
             })
             .collect(),
         markers: series

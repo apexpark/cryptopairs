@@ -26,3 +26,4 @@ target/
 # Tooling
 .vscode/
 coverage/
+artifacts/
