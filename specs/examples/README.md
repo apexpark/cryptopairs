@@ -23,6 +23,7 @@ Current baseline examples:
 - `specs/examples/execution_order_state_history_response.example.json`
 - `specs/examples/execution_dispatch_response_fail_closed.example.json`
 - `specs/examples/execution_dispatch_response_acknowledged.example.json`
+- `specs/examples/execution_kraken_normalization_matrix.example.json`
 - `specs/examples/strategy_pairs_cues_response.example.json`
 - `specs/examples/strategy_pairs_backtest_response.example.json`
 - `specs/examples/strategy_pairs_live_z_response.example.json`
