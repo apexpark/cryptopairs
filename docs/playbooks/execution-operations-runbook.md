@@ -198,6 +198,21 @@ Spread metadata for best portfolio fidelity:
 - `P1` triggered: keep/activate kill switch and investigate before new entries.
 - `P2` triggered: continue manual controls cautiously and remediate before scaling size.
 
+4. Pre-session readiness gate:
+
+```bash
+python3 tools/scripts/fail_closed_readiness_check.py \
+  --exchange kraken_futures \
+  --account-id primary \
+  --window-minutes 60 \
+  --output-json artifacts/fail_closed_readiness_report.json
+```
+
+Use `recommended_action` from report as entry enable/disable decision.
+
+5. Cross-runbook recovery reference:
+- `docs/playbooks/fail-closed-recovery-runbook.md`
+
 ## Validation Checklist Before Live
 
 1. Kill switch behavior verified.

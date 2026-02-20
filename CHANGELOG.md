@@ -254,6 +254,12 @@ This project follows SemVer as defined in `docs/02-versioning-and-releases.md`.
   - Added contract/example:
     - `specs/contracts/hosted_secrets_rotation_policy.schema.json`
     - `specs/examples/hosted_secrets_rotation_policy.example.json`
+- Fail-closed operator recovery package:
+  - Added readiness checker:
+    - `tools/scripts/fail_closed_readiness_check.py`
+  - Added fail-closed recovery runbook:
+    - `docs/playbooks/fail-closed-recovery-runbook.md`
+  - Expanded incident and execution runbooks with deterministic recovery command gates.
 
 ### Changed
 - Product/risk/architecture docs now explicitly define manual-first live trading for MVP.

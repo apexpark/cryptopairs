@@ -50,6 +50,7 @@ If instructions conflict, use this order:
 - `docs/playbooks/execution-operations-runbook.md`
 - `docs/playbooks/observability-slo-runbook.md`
 - `docs/playbooks/secrets-lifecycle-runbook.md`
+- `docs/playbooks/fail-closed-recovery-runbook.md`
 - `plans/alpha_plan.json`
 - `infra/env/paper-mode.env.example`
 - `infra/env/live-mode.env.example`

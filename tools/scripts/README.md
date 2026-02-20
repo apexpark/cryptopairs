@@ -66,3 +66,15 @@ python3 tools/scripts/secrets_lifecycle_audit.py \
   --env-file infra/env/hosted-mode.env.example \
   --output-json artifacts/secrets_lifecycle_audit_report.json
 ```
+
+## Fail-Closed Readiness Check
+
+Run a pre-session go/no-go check for manual entries:
+
+```bash
+python3 tools/scripts/fail_closed_readiness_check.py \
+  --exchange kraken_futures \
+  --account-id primary \
+  --window-minutes 60 \
+  --output-json artifacts/fail_closed_readiness_report.json
+```

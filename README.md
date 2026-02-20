@@ -406,6 +406,20 @@ python3 tools/scripts/secrets_lifecycle_audit.py \
 Use this audit before hosted/live operation to verify secret references, mounted-file wiring,
 and optional rotation-age checks.
 
+## Fail-Closed Readiness Check
+
+```bash
+python3 tools/scripts/fail_closed_readiness_check.py \
+  --exchange kraken_futures \
+  --account-id primary \
+  --window-minutes 60 \
+  --output-json artifacts/fail_closed_readiness_report.json
+```
+
+Use this pre-session gate before enabling manual entries. If report recommends
+`KEEP_FAIL_CLOSED`, keep entry actions blocked and follow:
+- `docs/playbooks/fail-closed-recovery-runbook.md`
+
 ## Kraken History Depth Probe (Live Data)
 
 Run:

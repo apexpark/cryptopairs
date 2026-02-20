@@ -1,7 +1,7 @@
 {
   "version": 1,
-  "updated_at": "2026-02-20T03:36:35Z",
-  "active_focus_id": 16,
+  "updated_at": "2026-02-20T03:39:45Z",
+  "active_focus_id": 17,
   "milestone": "Alpha Trial Readiness",
   "items": [
     {
@@ -250,16 +250,19 @@
     {
       "id": 16,
       "title": "Complete fail-closed operator runbooks for recovery and incidents",
-      "status": "IN_PROGRESS",
+      "status": "DONE",
       "priority": "LATER",
       "depends_on": [
         13,
         14
       ],
       "owner": "codex",
-      "evidence": [],
+      "evidence": [
+        "tools/scripts/fail_closed_readiness_check.py"
+      ],
       "notes": [
-        "2026-02-20T03:36:35Z Started fail-closed operator runbook finalization"
+        "2026-02-20T03:36:35Z Started fail-closed operator runbook finalization",
+        "2026-02-20T03:39:45Z Completed fail-closed operator recovery runbooks and deterministic readiness gate"
       ]
     },
     {
@@ -368,6 +371,13 @@
       "focus_id": 16,
       "delta": "Completed item 15 hosted secrets lifecycle package",
       "next_action": "Finalize fail-closed operator runbooks and recovery procedures across execution/account/observability/secrets",
+      "blockers": []
+    },
+    {
+      "ts": "2026-02-20T03:39:45Z",
+      "focus_id": 17,
+      "delta": "Completed item 16 runbook hardening and fail-closed readiness automation",
+      "next_action": "User-managed item 17: run 48-72h alpha dry-run and go/no-go signoff",
       "blockers": []
     }
   ]
