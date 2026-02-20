@@ -169,5 +169,10 @@ Spread metadata for best portfolio fidelity:
 - order status endpoint
 4. Save payloads as fixtures under:
 - `services/execution-service/tests/fixtures/kraken/`
-5. Re-run tests before keeping live mode enabled:
+5. Keep the normalization matrix fixture current:
+- `services/execution-service/tests/fixtures/kraken/normalization_matrix.json`
+6. Keep normalization contract/example in sync:
+- `specs/contracts/execution_kraken_normalization_matrix.schema.json`
+- `specs/examples/execution_kraken_normalization_matrix.example.json`
+7. Re-run tests before keeping live mode enabled:
 - `cargo test -p execution-service`

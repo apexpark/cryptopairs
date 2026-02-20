@@ -1,0 +1,46 @@
+{
+  "open_orders": [
+    {
+      "current_state": "ACKNOWLEDGED",
+      "order": {
+        "order_id": "oo-partial",
+        "status": "partially_filled",
+        "filledSize": 1.0,
+        "unfilledSize": 2.0
+      },
+      "expected_to_state": "PARTIALLY_FILLED"
+    },
+    {
+      "current_state": "ACKNOWLEDGED",
+      "order": {
+        "order_id": "oo-cancel",
+        "status": "cancelled",
+        "filledSize": 0.0,
+        "unfilledSize": 3.0
+      },
+      "expected_to_state": "CANCELED"
+    }
+  ],
+  "order_status": [
+    {
+      "current_state": "ACKNOWLEDGED",
+      "order": {
+        "order_id": "os-filled",
+        "status": "FULLY_EXECUTED",
+        "filled": 5.0,
+        "quantity": 5.0
+      },
+      "expected_to_state": "FILLED"
+    },
+    {
+      "current_state": "ACKNOWLEDGED",
+      "order": {
+        "order_id": "os-noop",
+        "status": "TRIGGER_PLACED",
+        "filled": 0.0,
+        "quantity": 5.0
+      },
+      "expected_to_state": null
+    }
+  ]
+}

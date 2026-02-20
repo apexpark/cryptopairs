@@ -1737,6 +1737,24 @@ fn derive_open_order_transition(
             format!("openorders poller: status={status}"),
         ));
     }
+    if status.contains("cancel") {
+        return Some((
+            OrderLifecycleState::Canceled,
+            format!("openorders poller: status={status}"),
+        ));
+    }
+    if status.contains("reject") {
+        return Some((
+            OrderLifecycleState::Rejected,
+            format!("openorders poller: status={status}"),
+        ));
+    }
+    if status.contains("expire") {
+        return Some((
+            OrderLifecycleState::Expired,
+            format!("openorders poller: status={status}"),
+        ));
+    }
     if status == "filled" {
         return Some((
             OrderLifecycleState::Filled,
@@ -1770,6 +1788,14 @@ fn derive_order_status_transition(
         )),
         "ENTERED_BOOK" => {
             if let (Some(filled), Some(quantity)) = (order.filled, order.quantity) {
+                if filled >= quantity && quantity > 0.0 {
+                    return Some((
+                        OrderLifecycleState::Filled,
+                        format!(
+                            "order status lookup: status=ENTERED_BOOK filled={filled:.8} quantity={quantity:.8}"
+                        ),
+                    ));
+                }
                 if filled > 0.0
                     && filled < quantity
                     && current_state == OrderLifecycleState::Acknowledged
@@ -1784,6 +1810,10 @@ fn derive_order_status_transition(
             }
             None
         }
+        "EXPIRED" => Some((
+            OrderLifecycleState::Expired,
+            "order status lookup: status=EXPIRED".to_string(),
+        )),
         _ => None,
     }
 }
@@ -3018,6 +3048,27 @@ mod tests {
     };
     use chrono::{DateTime, Duration, Utc};
     use execution_service::{OrderIntentAction, OrderLifecycleState};
+    use serde::Deserialize;
+
+    #[derive(Debug, Deserialize)]
+    struct NormalizationMatrixFixture {
+        open_orders: Vec<OpenOrderCase>,
+        order_status: Vec<OrderStatusCase>,
+    }
+
+    #[derive(Debug, Deserialize)]
+    struct OpenOrderCase {
+        current_state: String,
+        order: KrakenOpenOrder,
+        expected_to_state: Option<String>,
+    }
+
+    #[derive(Debug, Deserialize)]
+    struct OrderStatusCase {
+        current_state: String,
+        order: KrakenStatusOrder,
+        expected_to_state: Option<String>,
+    }
 
     #[test]
     fn manual_entry_requires_operator_confirmation() {
@@ -3276,6 +3327,29 @@ mod tests {
             derive_order_status_transition(OrderLifecycleState::Acknowledged, rejected),
             Some((OrderLifecycleState::Rejected, _))
         ));
+    }
+
+    #[test]
+    fn replay_normalization_matrix_fixture() {
+        let fixture = read_fixture("normalization_matrix.json");
+        let matrix: NormalizationMatrixFixture =
+            serde_json::from_str(&fixture).expect("normalization matrix fixture should parse");
+
+        for case in matrix.open_orders {
+            let current = OrderLifecycleState::parse(&case.current_state)
+                .expect("current_state should be valid lifecycle state");
+            let got = derive_open_order_transition(current, &case.order)
+                .map(|(state, _)| state.as_str().to_string());
+            assert_eq!(got, case.expected_to_state, "open-order case failed");
+        }
+
+        for case in matrix.order_status {
+            let current = OrderLifecycleState::parse(&case.current_state)
+                .expect("current_state should be valid lifecycle state");
+            let got = derive_order_status_transition(current, &case.order)
+                .map(|(state, _)| state.as_str().to_string());
+            assert_eq!(got, case.expected_to_state, "order-status case failed");
+        }
     }
 
     #[test]

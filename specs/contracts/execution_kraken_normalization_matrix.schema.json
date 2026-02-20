@@ -1,0 +1,84 @@
+{
+  "$id": "https://cryptopairs/specs/contracts/execution_kraken_normalization_matrix.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "ExecutionKrakenNormalizationMatrix",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["open_orders", "order_status"],
+  "properties": {
+    "open_orders": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/open_order_case"
+      }
+    },
+    "order_status": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/order_status_case"
+      }
+    }
+  },
+  "$defs": {
+    "expected_state": {
+      "anyOf": [
+        { "type": "null" },
+        {
+          "type": "string",
+          "enum": ["PARTIALLY_FILLED", "FILLED", "CANCELED", "REJECTED", "EXPIRED"]
+        }
+      ]
+    },
+    "open_order_case": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["current_state", "order", "expected_to_state"],
+      "properties": {
+        "current_state": {
+          "type": "string",
+          "enum": ["ACKNOWLEDGED", "PARTIALLY_FILLED"]
+        },
+        "order": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["order_id"],
+          "properties": {
+            "order_id": { "type": "string" },
+            "status": { "type": ["string", "null"] },
+            "filledSize": { "type": ["number", "null"] },
+            "unfilledSize": { "type": ["number", "null"] }
+          }
+        },
+        "expected_to_state": {
+          "$ref": "#/$defs/expected_state"
+        }
+      }
+    },
+    "order_status_case": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["current_state", "order", "expected_to_state"],
+      "properties": {
+        "current_state": {
+          "type": "string",
+          "enum": ["ACKNOWLEDGED", "PARTIALLY_FILLED"]
+        },
+        "order": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["order_id", "status"],
+          "properties": {
+            "order_id": { "type": "string" },
+            "status": { "type": "string" },
+            "filled": { "type": ["number", "null"] },
+            "quantity": { "type": ["number", "null"] }
+          }
+        },
+        "expected_to_state": {
+          "$ref": "#/$defs/expected_state"
+        }
+      }
+    }
+  },
+  "version": "0.1.0"
+}

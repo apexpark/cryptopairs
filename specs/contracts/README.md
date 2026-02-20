@@ -23,6 +23,7 @@ Current baseline contracts:
 - `specs/contracts/execution_order_lifecycle_state_machine.schema.json`
 - `specs/contracts/execution_order_state_history_response.schema.json`
 - `specs/contracts/execution_dispatch_response.schema.json`
+- `specs/contracts/execution_kraken_normalization_matrix.schema.json`
 - `specs/contracts/execution_order_event_ingest_request.schema.json`
 - `specs/contracts/execution_order_event_ingest_response.schema.json`
 - `specs/contracts/strategy_pairs_cues_response.schema.json`

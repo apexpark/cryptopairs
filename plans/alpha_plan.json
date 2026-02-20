@@ -1,7 +1,7 @@
 {
   "version": 1,
-  "updated_at": "2026-02-20T03:50:00Z",
-  "active_focus_id": 12,
+  "updated_at": "2026-02-20T04:12:00Z",
+  "active_focus_id": 13,
   "milestone": "Alpha Trial Readiness",
   "items": [
     {
@@ -181,12 +181,18 @@
     {
       "id": 12,
       "title": "Finalize Kraken open-orders/order-status normalization contract and fixtures",
-      "status": "PENDING",
+      "status": "DONE",
       "priority": "NEXT",
       "depends_on": [],
       "owner": "codex",
-      "evidence": [],
-      "notes": []
+      "evidence": [
+        "services/execution-service/src/main.rs",
+        "services/execution-service/tests/fixtures/kraken/normalization_matrix.json",
+        "specs/contracts/execution_kraken_normalization_matrix.schema.json"
+      ],
+      "notes": [
+        "2026-02-20T04:12:00Z Finalized Kraken open-orders/order-status normalization matrix with contracts, fixtures, and replay tests for terminal/noop transitions"
+      ]
     },
     {
       "id": 13,
@@ -318,6 +324,13 @@
       "focus_id": 12,
       "delta": "Completed item 11 with execution ledger portfolio endpoint and UI migration off client-local position authority",
       "next_action": "Implement item 12 by finalizing Kraken open-orders/order-status normalization contracts and fixture matrix",
+      "blockers": []
+    },
+    {
+      "ts": "2026-02-20T04:12:00Z",
+      "focus_id": 13,
+      "delta": "Completed item 12 with normalization contract + fixture matrix and deterministic replay coverage for openorders/order-status transitions",
+      "next_action": "Implement item 13 end-to-end manual trade flow harness across intent, dispatch, lifecycle, reconcile, and UI",
       "blockers": []
     }
   ]

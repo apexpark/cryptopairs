@@ -1,0 +1,146 @@
+{
+  "open_orders": [
+    {
+      "current_state": "ACKNOWLEDGED",
+      "order": {
+        "order_id": "oo-partial",
+        "status": "partially_filled",
+        "filledSize": 1.0,
+        "unfilledSize": 2.0
+      },
+      "expected_to_state": "PARTIALLY_FILLED"
+    },
+    {
+      "current_state": "ACKNOWLEDGED",
+      "order": {
+        "order_id": "oo-filled",
+        "status": "filled",
+        "filledSize": 3.0,
+        "unfilledSize": 0.0
+      },
+      "expected_to_state": "FILLED"
+    },
+    {
+      "current_state": "ACKNOWLEDGED",
+      "order": {
+        "order_id": "oo-cancel",
+        "status": "cancelled",
+        "filledSize": 0.0,
+        "unfilledSize": 3.0
+      },
+      "expected_to_state": "CANCELED"
+    },
+    {
+      "current_state": "ACKNOWLEDGED",
+      "order": {
+        "order_id": "oo-reject",
+        "status": "rejected",
+        "filledSize": 0.0,
+        "unfilledSize": 3.0
+      },
+      "expected_to_state": "REJECTED"
+    },
+    {
+      "current_state": "ACKNOWLEDGED",
+      "order": {
+        "order_id": "oo-expire",
+        "status": "expired",
+        "filledSize": 0.0,
+        "unfilledSize": 3.0
+      },
+      "expected_to_state": "EXPIRED"
+    },
+    {
+      "current_state": "ACKNOWLEDGED",
+      "order": {
+        "order_id": "oo-noop",
+        "status": "untouched",
+        "filledSize": 0.0,
+        "unfilledSize": 3.0
+      },
+      "expected_to_state": null
+    }
+  ],
+  "order_status": [
+    {
+      "current_state": "ACKNOWLEDGED",
+      "order": {
+        "order_id": "os-filled",
+        "status": "FULLY_EXECUTED",
+        "filled": 5.0,
+        "quantity": 5.0
+      },
+      "expected_to_state": "FILLED"
+    },
+    {
+      "current_state": "ACKNOWLEDGED",
+      "order": {
+        "order_id": "os-cancel",
+        "status": "CANCELLED",
+        "filled": 1.0,
+        "quantity": 5.0
+      },
+      "expected_to_state": "CANCELED"
+    },
+    {
+      "current_state": "ACKNOWLEDGED",
+      "order": {
+        "order_id": "os-reject",
+        "status": "REJECTED",
+        "filled": 0.0,
+        "quantity": 5.0
+      },
+      "expected_to_state": "REJECTED"
+    },
+    {
+      "current_state": "ACKNOWLEDGED",
+      "order": {
+        "order_id": "os-trigger-fail",
+        "status": "TRIGGER_ACTIVATION_FAILURE",
+        "filled": 0.0,
+        "quantity": 5.0
+      },
+      "expected_to_state": "REJECTED"
+    },
+    {
+      "current_state": "ACKNOWLEDGED",
+      "order": {
+        "order_id": "os-partial",
+        "status": "ENTERED_BOOK",
+        "filled": 2.0,
+        "quantity": 5.0
+      },
+      "expected_to_state": "PARTIALLY_FILLED"
+    },
+    {
+      "current_state": "ACKNOWLEDGED",
+      "order": {
+        "order_id": "os-entered-book-filled",
+        "status": "ENTERED_BOOK",
+        "filled": 5.0,
+        "quantity": 5.0
+      },
+      "expected_to_state": "FILLED"
+    },
+    {
+      "current_state": "ACKNOWLEDGED",
+      "order": {
+        "order_id": "os-expired",
+        "status": "EXPIRED",
+        "filled": 0.0,
+        "quantity": 5.0
+      },
+      "expected_to_state": "EXPIRED"
+    },
+    {
+      "current_state": "ACKNOWLEDGED",
+      "order": {
+        "order_id": "os-noop",
+        "status": "TRIGGER_PLACED",
+        "filled": 0.0,
+        "quantity": 5.0
+      },
+      "expected_to_state": null
+    }
+  ]
+}

@@ -237,6 +237,7 @@ states (`FULLY_EXECUTED`, `CANCELLED`, `REJECTED`) when enabled.
 Replay fixtures for hardening live parser behavior:
 - `services/execution-service/tests/fixtures/kraken/openorders.success.json`
 - `services/execution-service/tests/fixtures/kraken/order_status.success.json`
+- `services/execution-service/tests/fixtures/kraken/normalization_matrix.json`
 
 ## Execution Order Event Ingest Endpoint
 

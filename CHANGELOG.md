@@ -210,6 +210,16 @@ This project follows SemVer as defined in `docs/02-versioning-and-releases.md`.
   - New contract/example:
     - `specs/contracts/execution_portfolio_positions_response.schema.json`
     - `specs/examples/execution_portfolio_positions_response.example.json`
+- Kraken normalization hardening for open-orders/order-status:
+  - Added normalization matrix fixture:
+    - `services/execution-service/tests/fixtures/kraken/normalization_matrix.json`
+  - Added normalization contract/example:
+    - `specs/contracts/execution_kraken_normalization_matrix.schema.json`
+    - `specs/examples/execution_kraken_normalization_matrix.example.json`
+  - Expanded transition handling for exchange statuses:
+    - open-orders: cancel/reject/expire status mapping
+    - order-status: `ENTERED_BOOK` full-fill mapping and explicit `EXPIRED` mapping
+  - Added replay test coverage against normalization matrix fixture.
 
 ### Changed
 - Product/risk/architecture docs now explicitly define manual-first live trading for MVP.
