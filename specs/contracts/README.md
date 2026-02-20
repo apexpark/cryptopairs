@@ -10,6 +10,7 @@ Current baseline contracts:
 - `specs/contracts/account_snapshot_response.schema.json`
 - `specs/contracts/account_reconcile_response.schema.json`
 - `specs/contracts/account_observability_summary_response.schema.json`
+- `specs/contracts/hosted_secrets_rotation_policy.schema.json`
 - `specs/contracts/data_query_request.schema.json`
 - `specs/contracts/data_query_response.schema.json`
 - `specs/contracts/candle.schema.json`

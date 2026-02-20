@@ -55,3 +55,14 @@ python3 tools/scripts/kraken_history_depth_probe.py \
   --timeframes 1m 15m 1h \
   --output-json artifacts/kraken_history_depth_probe_PI_XBTUSD.json
 ```
+
+## Secrets Lifecycle Audit
+
+Audit hosted credential references, mounted-file wiring, and optional file-age checks:
+
+```bash
+python3 tools/scripts/secrets_lifecycle_audit.py \
+  --policy-json infra/config/hosted_secrets_rotation_policy.json \
+  --env-file infra/env/hosted-mode.env.example \
+  --output-json artifacts/secrets_lifecycle_audit_report.json
+```

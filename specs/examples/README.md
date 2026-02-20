@@ -8,6 +8,7 @@ Current baseline examples:
 - `specs/examples/account_snapshot_response.example.json`
 - `specs/examples/account_reconcile_response.example.json`
 - `specs/examples/account_observability_summary_response.example.json`
+- `specs/examples/hosted_secrets_rotation_policy.example.json`
 - `specs/examples/data_query_request.example.json`
 - `specs/examples/data_query_response_complete.example.json`
 - `specs/examples/data_query_response_incomplete.example.json`

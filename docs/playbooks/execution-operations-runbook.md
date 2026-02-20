@@ -29,86 +29,98 @@ This runbook uses friendly setting names first, with technical key names in pare
 3. Kraken API Secret (Base64) (`KRAKEN_FUTURES_API_SECRET`)
 - Required for live mode.
 
-4. Kraken API Base URL (`KRAKEN_FUTURES_API_BASE_URL`)
+4. Kraken API Key Mounted File (`KRAKEN_FUTURES_API_KEY_FILE`)
+- Optional. When set, execution-service reads key from file if inline value is empty.
+
+5. Kraken API Secret Mounted File (`KRAKEN_FUTURES_API_SECRET_FILE`)
+- Optional. When set, execution-service reads secret from file if inline value is empty.
+
+6. Kraken API Key Secret Reference (`KRAKEN_FUTURES_API_KEY_REF`)
+- Optional operator metadata pointer (vault/KMS path).
+
+7. Kraken API Secret Reference (`KRAKEN_FUTURES_API_SECRET_REF`)
+- Optional operator metadata pointer (vault/KMS path).
+
+8. Kraken API Base URL (`KRAKEN_FUTURES_API_BASE_URL`)
 - Default: `https://futures.kraken.com`
 
-5. Send Order Endpoint (`KRAKEN_FUTURES_SENDORDER_PATH`)
+9. Send Order Endpoint (`KRAKEN_FUTURES_SENDORDER_PATH`)
 - Default: `/derivatives/api/v3/sendorder`
 
-6. Open Orders Endpoint (`KRAKEN_FUTURES_OPENORDERS_PATH`)
+10. Open Orders Endpoint (`KRAKEN_FUTURES_OPENORDERS_PATH`)
 - Default: `/derivatives/api/v3/openorders`
 
-7. Open Orders Poller Enabled (`EXECUTION_OPENORDERS_POLLER_ENABLED`)
+11. Open Orders Poller Enabled (`EXECUTION_OPENORDERS_POLLER_ENABLED`)
 - Default: `true`
 
-8. Open Orders Poll Interval Seconds (`EXECUTION_OPENORDERS_POLL_SECONDS`)
+12. Open Orders Poll Interval Seconds (`EXECUTION_OPENORDERS_POLL_SECONDS`)
 - Default: `5`
 
-9. Open Orders Poll Batch Limit (`EXECUTION_OPENORDERS_POLL_BATCH_LIMIT`)
+13. Open Orders Poll Batch Limit (`EXECUTION_OPENORDERS_POLL_BATCH_LIMIT`)
 - Default: `200`
 
-10. Order Status Lookup Enabled (`EXECUTION_ORDER_STATUS_LOOKUP_ENABLED`)
+14. Order Status Lookup Enabled (`EXECUTION_ORDER_STATUS_LOOKUP_ENABLED`)
 - Default: `false`
 - Use only when endpoint query parameter behavior is verified.
 
-11. Order Status Endpoint (`KRAKEN_FUTURES_ORDER_STATUS_PATH`)
+15. Order Status Endpoint (`KRAKEN_FUTURES_ORDER_STATUS_PATH`)
 - Default: `/derivatives/api/v3/orders/status`
 
-12. Order Status Query Key (`KRAKEN_FUTURES_ORDER_STATUS_QUERY_KEY`)
+16. Order Status Query Key (`KRAKEN_FUTURES_ORDER_STATUS_QUERY_KEY`)
 - Default: `orderId`
 
-13. Ack Timeout Poll Seconds (`EXECUTION_ACK_WATCHDOG_POLL_SECONDS`)
+17. Ack Timeout Poll Seconds (`EXECUTION_ACK_WATCHDOG_POLL_SECONDS`)
 - Default: `15`
 
-14. Ack Expiry Threshold Seconds (`EXECUTION_ACK_EXPIRE_AFTER_SECONDS`)
+18. Ack Expiry Threshold Seconds (`EXECUTION_ACK_EXPIRE_AFTER_SECONDS`)
 - Default: `90`
 
-15. Ack Timeout Batch Limit (`EXECUTION_ACK_WATCHDOG_BATCH_LIMIT`)
+19. Ack Timeout Batch Limit (`EXECUTION_ACK_WATCHDOG_BATCH_LIMIT`)
 - Default: `200`
 
-16. Account Service URL (`ACCOUNT_SERVICE_URL`)
+20. Account Service URL (`ACCOUNT_SERVICE_URL`)
 - Default: `http://127.0.0.1:8081`
 
-17. Reconcile On Terminal State (`EXECUTION_TRIGGER_RECONCILE_ON_TERMINAL`)
+21. Reconcile On Terminal State (`EXECUTION_TRIGGER_RECONCILE_ON_TERMINAL`)
 - Default: `true`
 
-18. Per-Pair Qty Cap (`EXECUTION_RISK_PER_PAIR_MAX_QTY`)
+22. Per-Pair Qty Cap (`EXECUTION_RISK_PER_PAIR_MAX_QTY`)
 - Maximum projected open quantity per instrument/pair leg for new `ENTRY` intents.
 - Default: `12`
 
-19. Gross Qty Cap (`EXECUTION_RISK_GROSS_MAX_QTY`)
+23. Gross Qty Cap (`EXECUTION_RISK_GROSS_MAX_QTY`)
 - Maximum projected gross open quantity across all active instruments.
 - Default: `40`
 
-20. Max Leverage (`EXECUTION_RISK_MAX_LEVERAGE`)
+24. Max Leverage (`EXECUTION_RISK_MAX_LEVERAGE`)
 - Risk gate blocks `ENTRY` intents above this ratio (`margin_used / equity`).
 - Default: `3.0`
 
-21. Daily Loss Cap USD (`EXECUTION_RISK_DAILY_LOSS_LIMIT_USD`)
+25. Daily Loss Cap USD (`EXECUTION_RISK_DAILY_LOSS_LIMIT_USD`)
 - Risk gate blocks `ENTRY` intents after this UTC-day drawdown.
 - Default: `500`
 
-22. Entry Cooldown Seconds (`EXECUTION_RISK_ENTRY_COOLDOWN_SECONDS`)
+26. Entry Cooldown Seconds (`EXECUTION_RISK_ENTRY_COOLDOWN_SECONDS`)
 - Minimum delay between accepted `ENTRY` intents for the same instrument.
 - Default: `30`
 
-23. Max Account Snapshot Age Seconds (`EXECUTION_RISK_MAX_SNAPSHOT_AGE_SECONDS`)
+27. Max Account Snapshot Age Seconds (`EXECUTION_RISK_MAX_SNAPSHOT_AGE_SECONDS`)
 - Blocks `ENTRY` intents when account-service snapshot freshness exceeds this threshold.
 - Default: `120`
 
-24. Execution Risk-Block Ratio Alert Threshold (`EXECUTION_ALERT_RISK_BLOCK_RATIO_P2`)
+28. Execution Risk-Block Ratio Alert Threshold (`EXECUTION_ALERT_RISK_BLOCK_RATIO_P2`)
 - Triggers P2 when risk-blocked intents / total intents in window exceeds threshold.
 - Default: `0.25`
 
-25. Execution Dispatch-Reject Ratio Alert Threshold (`EXECUTION_ALERT_DISPATCH_REJECT_RATIO_P2`)
+29. Execution Dispatch-Reject Ratio Alert Threshold (`EXECUTION_ALERT_DISPATCH_REJECT_RATIO_P2`)
 - Triggers P2 when dispatch rejected / dispatch total in window exceeds threshold.
 - Default: `0.15`
 
-26. Execution Stale-ACK Count Alert Threshold (`EXECUTION_ALERT_STALE_ACK_COUNT_P1`)
+30. Execution Stale-ACK Count Alert Threshold (`EXECUTION_ALERT_STALE_ACK_COUNT_P1`)
 - Triggers P1 when stale acknowledged orders count meets/exceeds threshold.
 - Default: `1`
 
-27. Execution Reconcile-Block Count Alert Threshold (`EXECUTION_ALERT_RECONCILE_BLOCK_COUNT_P1`)
+31. Execution Reconcile-Block Count Alert Threshold (`EXECUTION_ALERT_RECONCILE_BLOCK_COUNT_P1`)
 - Triggers P1 when reconcile-blocked intents count meets/exceeds threshold.
 - Default: `1`
 
@@ -125,6 +137,13 @@ This runbook uses friendly setting names first, with technical key names in pare
 - Open Orders Poller Enabled: `true`
 - Order Status Lookup Enabled: `true` (only after validation)
 - Reconcile On Terminal State: `true`
+
+3. Hosted Preset
+- Trading Mode: `live_kraken`
+- Inline API key/secret: empty
+- API key/secret file paths configured
+- API key/secret reference paths configured
+- Run secrets lifecycle audit before enabling live entries.
 
 Preset files in repo:
 - `infra/env/paper-mode.env.example`

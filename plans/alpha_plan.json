@@ -1,7 +1,7 @@
 {
   "version": 1,
-  "updated_at": "2026-02-20T03:30:22Z",
-  "active_focus_id": 15,
+  "updated_at": "2026-02-20T03:36:35Z",
+  "active_focus_id": 16,
   "milestone": "Alpha Trial Readiness",
   "items": [
     {
@@ -233,21 +233,24 @@
     {
       "id": 15,
       "title": "Finalize hosted secrets/credential lifecycle (vault/KMS, rotation, audit)",
-      "status": "IN_PROGRESS",
+      "status": "DONE",
       "priority": "LATER",
       "depends_on": [
         13
       ],
       "owner": "codex",
-      "evidence": [],
+      "evidence": [
+        "docs/playbooks/secrets-lifecycle-runbook.md"
+      ],
       "notes": [
-        "2026-02-20T03:30:22Z Started hosted secrets lifecycle hardening"
+        "2026-02-20T03:30:22Z Started hosted secrets lifecycle hardening",
+        "2026-02-20T03:36:35Z Added hosted secrets lifecycle with file-based secret loading, rotation policy, and audit tooling"
       ]
     },
     {
       "id": 16,
       "title": "Complete fail-closed operator runbooks for recovery and incidents",
-      "status": "PENDING",
+      "status": "IN_PROGRESS",
       "priority": "LATER",
       "depends_on": [
         13,
@@ -255,7 +258,9 @@
       ],
       "owner": "codex",
       "evidence": [],
-      "notes": []
+      "notes": [
+        "2026-02-20T03:36:35Z Started fail-closed operator runbook finalization"
+      ]
     },
     {
       "id": 17,
@@ -356,6 +361,13 @@
       "focus_id": 15,
       "delta": "Completed item 14 observability package with summary endpoints and SLO alerts",
       "next_action": "Implement hosted secrets lifecycle: env/file secret sources, rotation audit tooling, and runbook",
+      "blockers": []
+    },
+    {
+      "ts": "2026-02-20T03:36:35Z",
+      "focus_id": 16,
+      "delta": "Completed item 15 hosted secrets lifecycle package",
+      "next_action": "Finalize fail-closed operator runbooks and recovery procedures across execution/account/observability/secrets",
       "blockers": []
     }
   ]

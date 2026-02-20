@@ -239,6 +239,21 @@ This project follows SemVer as defined in `docs/02-versioning-and-releases.md`.
     - `specs/examples/account_observability_summary_response.example.json`
   - New observability SLO runbook:
     - `docs/playbooks/observability-slo-runbook.md`
+- Hosted secrets lifecycle package:
+  - `execution-service` live credential loading now supports file sources:
+    - `KRAKEN_FUTURES_API_KEY_FILE`
+    - `KRAKEN_FUTURES_API_SECRET_FILE`
+  - Added hosted-mode env template:
+    - `infra/env/hosted-mode.env.example`
+  - Added secrets rotation policy config:
+    - `infra/config/hosted_secrets_rotation_policy.json`
+  - Added secrets lifecycle audit script:
+    - `tools/scripts/secrets_lifecycle_audit.py`
+  - Added runbook:
+    - `docs/playbooks/secrets-lifecycle-runbook.md`
+  - Added contract/example:
+    - `specs/contracts/hosted_secrets_rotation_policy.schema.json`
+    - `specs/examples/hosted_secrets_rotation_policy.example.json`
 
 ### Changed
 - Product/risk/architecture docs now explicitly define manual-first live trading for MVP.

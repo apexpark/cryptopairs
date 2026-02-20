@@ -18,6 +18,7 @@ use reqwest::header::{HeaderMap, HeaderValue, CONTENT_TYPE};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256, Sha512};
 use std::collections::HashMap;
+use std::fs;
 use std::sync::Arc;
 use tokio::net::TcpListener;
 use tokio::time::{sleep, Duration};
@@ -60,12 +61,46 @@ impl DispatchMode {
     }
 }
 
+fn normalize_secret_value(raw: String) -> Option<String> {
+    let trimmed = raw.trim().to_string();
+    if trimmed.is_empty() {
+        None
+    } else {
+        Some(trimmed)
+    }
+}
+
+fn resolve_secret_value(
+    base_key: &str,
+    direct_value: Option<String>,
+    file_path: Option<String>,
+) -> Result<String, String> {
+    if let Some(normalized) = direct_value.and_then(normalize_secret_value) {
+        return Ok(normalized);
+    }
+    if let Some(path) = file_path.and_then(normalize_secret_value) {
+        let content =
+            fs::read_to_string(&path).map_err(|error| format!("failed to read {base_key}_FILE: {error}"))?;
+        if let Some(normalized) = normalize_secret_value(content) {
+            return Ok(normalized);
+        }
+        return Err(format!("{base_key}_FILE file is empty"));
+    }
+    Err(format!("missing {base_key} or {base_key}_FILE"))
+}
+
+fn read_secret_env_or_file(base_key: &str) -> Result<String, String> {
+    resolve_secret_value(
+        base_key,
+        std::env::var(base_key).ok(),
+        std::env::var(format!("{base_key}_FILE")).ok(),
+    )
+}
+
 impl KrakenLiveClient {
     fn from_env() -> Result<Self, String> {
-        let api_key = std::env::var("KRAKEN_FUTURES_API_KEY")
-            .map_err(|_| "missing KRAKEN_FUTURES_API_KEY".to_string())?;
-        let api_secret_b64 = std::env::var("KRAKEN_FUTURES_API_SECRET")
-            .map_err(|_| "missing KRAKEN_FUTURES_API_SECRET".to_string())?;
+        let api_key = read_secret_env_or_file("KRAKEN_FUTURES_API_KEY")?;
+        let api_secret_b64 = read_secret_env_or_file("KRAKEN_FUTURES_API_SECRET")?;
         let base_url = std::env::var("KRAKEN_FUTURES_API_BASE_URL")
             .unwrap_or_else(|_| "https://futures.kraken.com".to_string());
         let endpoint_path = std::env::var("KRAKEN_FUTURES_SENDORDER_PATH")
@@ -3315,9 +3350,10 @@ mod tests {
         build_execution_alerts, derive_open_order_transition, derive_order_status_transition,
         fold_spread_positions, is_snapshot_stale, is_terminal_state, parse_ingest_target_state,
         parse_kraken_open_orders_response, parse_kraken_order_status_response,
-        parse_kraken_submit_response, safe_ratio, sign_kraken_futures_payload,
-        validate_manual_controls, ApiError, DispatchMode, ExecutionObservabilityMetricsRaw,
-        ExecutionObservabilityThresholds, KrakenOpenOrder, KrakenStatusOrder, SpreadLedgerEvent,
+        parse_kraken_submit_response, resolve_secret_value, safe_ratio,
+        sign_kraken_futures_payload, validate_manual_controls, ApiError, DispatchMode,
+        ExecutionObservabilityMetricsRaw, ExecutionObservabilityThresholds, KrakenOpenOrder,
+        KrakenStatusOrder, SpreadLedgerEvent,
     };
     use chrono::{DateTime, Duration, Utc};
     use execution_service::{OrderIntentAction, OrderLifecycleState};
@@ -3735,5 +3771,33 @@ mod tests {
         let alerts = build_execution_alerts(metrics, thresholds);
         assert_eq!(alerts.len(), 4);
         assert!(alerts.iter().all(|alert| alert.triggered));
+    }
+
+    #[test]
+    fn resolve_secret_value_prefers_direct_value() {
+        let value = resolve_secret_value(
+            "KRAKEN_FUTURES_API_KEY",
+            Some(" direct-value ".to_string()),
+            None,
+        )
+        .expect("direct value should resolve");
+        assert_eq!(value, "direct-value");
+    }
+
+    #[test]
+    fn resolve_secret_value_reads_file_when_direct_missing() {
+        let path = std::env::temp_dir().join(format!(
+            "cryptopairs-secret-{}.txt",
+            Utc::now().timestamp_nanos_opt().unwrap_or_default()
+        ));
+        std::fs::write(&path, " file-secret ").expect("secret file should be writable");
+        let value = resolve_secret_value(
+            "KRAKEN_FUTURES_API_KEY",
+            None,
+            Some(path.to_string_lossy().to_string()),
+        )
+        .expect("file value should resolve");
+        assert_eq!(value, "file-secret");
+        let _ = std::fs::remove_file(path);
     }
 }

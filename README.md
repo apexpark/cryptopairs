@@ -189,6 +189,10 @@ Operator Settings (friendly name -> technical key):
 - Trading Mode (`EXECUTION_DISPATCH_MODE`): `fail_closed` (default), `simulate_ack`, `live_kraken`.
 - Kraken API Key (`KRAKEN_FUTURES_API_KEY`): required for `live_kraken`.
 - Kraken API Secret (Base64) (`KRAKEN_FUTURES_API_SECRET`): required for `live_kraken`.
+- Kraken API Key Mounted File (`KRAKEN_FUTURES_API_KEY_FILE`): optional file source, preferred for hosted mode.
+- Kraken API Secret Mounted File (`KRAKEN_FUTURES_API_SECRET_FILE`): optional file source, preferred for hosted mode.
+- Kraken API Key Secret Reference (`KRAKEN_FUTURES_API_KEY_REF`): operator metadata for vault/KMS source.
+- Kraken API Secret Reference (`KRAKEN_FUTURES_API_SECRET_REF`): operator metadata for vault/KMS source.
 - Kraken API Base URL (`KRAKEN_FUTURES_API_BASE_URL`): default `https://futures.kraken.com`.
 - Send Order Endpoint (`KRAKEN_FUTURES_SENDORDER_PATH`): default `/derivatives/api/v3/sendorder`.
 - Open Orders Endpoint (`KRAKEN_FUTURES_OPENORDERS_PATH`): default `/derivatives/api/v3/openorders`.
@@ -220,6 +224,10 @@ Operator playbook: `docs/playbooks/execution-operations-runbook.md`
 Preset examples:
 - `infra/env/paper-mode.env.example`
 - `infra/env/live-mode.env.example`
+- `infra/env/hosted-mode.env.example`
+
+Hosted secrets lifecycle policy:
+- `infra/config/hosted_secrets_rotation_policy.json`
 
 The execution service includes an automatic stale-ack watchdog:
 - any order stuck in `ACKNOWLEDGED` beyond the configured threshold is deterministically
@@ -385,6 +393,18 @@ The script validates a full manual-first trading slice:
 - portfolio spread position update
 - optional emergency-stop-close and flat-position check
 - reconcile run and final status check
+
+## Secrets Lifecycle Audit
+
+```bash
+python3 tools/scripts/secrets_lifecycle_audit.py \
+  --policy-json infra/config/hosted_secrets_rotation_policy.json \
+  --env-file infra/env/hosted-mode.env.example \
+  --output-json artifacts/secrets_lifecycle_audit_report.json
+```
+
+Use this audit before hosted/live operation to verify secret references, mounted-file wiring,
+and optional rotation-age checks.
 
 ## Kraken History Depth Probe (Live Data)
 
