@@ -18,15 +18,22 @@ Operational procedure for diagnosing and repairing missing market data.
 4. `requested_end`
 5. `missing_ranges`
 
+## Operator Settings (Friendly Name -> Technical Key)
+
+1. Historical Bounds File (`KRAKEN_HISTORY_BOUNDS_PATH`)
+2. Exchange API Base URL (`KRAKEN_BASE_URL`)
+3. Integrity Coverage Threshold (%) (`DATA_INTEGRITY_THRESHOLD_PCT`)
+
 ## Procedure
 
 1. Confirm active exchange connectivity and auth health.
-2. Verify local data range currently present.
-3. Execute targeted backfill for each missing range.
-4. Re-run gap detection and integrity calculation.
-5. If still incomplete, retry per policy limits.
-6. If unresolved after max retries, mark interval unresolved with reason code.
-7. Raise incident when unresolved ranges affect strategy-required windows.
+2. Confirm historical bounds file exists and contains the requested symbol/timeframe.
+3. Verify local data range currently present.
+4. Execute targeted backfill for each missing range.
+5. Re-run gap detection and integrity calculation.
+6. If still incomplete, retry per policy limits.
+7. If unresolved after max retries, mark interval unresolved with reason code.
+8. Raise incident when unresolved ranges affect strategy-required windows.
 
 ## Validation
 

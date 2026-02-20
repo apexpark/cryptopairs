@@ -1,0 +1,12 @@
+{
+  "snapshot": {
+    "exchange": "kraken_futures",
+    "account_id": "primary",
+    "ts": "2026-02-20T02:10:00Z",
+    "equity": 10432.15,
+    "balance": 9985.42,
+    "margin_used": 1560.0,
+    "unrealized_pnl": 312.21,
+    "realized_pnl": 134.52
+  }
+}

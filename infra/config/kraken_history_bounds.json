@@ -1,0 +1,41 @@
+{
+  "version": 1,
+  "generated_at": "2026-02-20T02:00:13Z",
+  "source": "tools/scripts/kraken_history_depth_probe.py (live Kraken Futures probe)",
+  "symbols": [
+    {
+      "symbol": "PI_XBTUSD",
+      "timeframes": {
+        "1m": {
+          "earliest_start_sec": 1582719360,
+          "max_candles_per_request": 2000
+        },
+        "15m": {
+          "earliest_start_sec": 1582719300,
+          "max_candles_per_request": 2000
+        },
+        "1h": {
+          "earliest_start_sec": 1582718400,
+          "max_candles_per_request": 2000
+        }
+      }
+    },
+    {
+      "symbol": "PI_ETHUSD",
+      "timeframes": {
+        "1m": {
+          "earliest_start_sec": 1582719360,
+          "max_candles_per_request": 2000
+        },
+        "15m": {
+          "earliest_start_sec": 1582719300,
+          "max_candles_per_request": 2000
+        },
+        "1h": {
+          "earliest_start_sec": 1582718400,
+          "max_candles_per_request": 2000
+        }
+      }
+    }
+  ]
+}

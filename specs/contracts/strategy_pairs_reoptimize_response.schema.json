@@ -11,6 +11,9 @@
     "cues_generated",
     "performance_rows_written",
     "selected_rows_written",
+    "drift_rows_written",
+    "champion_promotions",
+    "champion_locks",
     "shadow_model_runs_written",
     "shadow_model_available",
     "shadow_model_unavailable",
@@ -45,6 +48,18 @@
       "minimum": 0
     },
     "selected_rows_written": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "drift_rows_written": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "champion_promotions": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "champion_locks": {
       "type": "integer",
       "minimum": 0
     },

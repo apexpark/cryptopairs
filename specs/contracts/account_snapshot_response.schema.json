@@ -1,0 +1,40 @@
+{
+  "$id": "https://cryptopairs/specs/contracts/account_snapshot_response.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "AccountSnapshotResponse",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["snapshot"],
+  "properties": {
+    "snapshot": {
+      "anyOf": [
+        { "type": "null" },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "exchange",
+            "account_id",
+            "ts",
+            "equity",
+            "balance",
+            "margin_used",
+            "unrealized_pnl",
+            "realized_pnl"
+          ],
+          "properties": {
+            "exchange": { "type": "string" },
+            "account_id": { "type": "string" },
+            "ts": { "type": "string", "format": "date-time" },
+            "equity": { "type": "number" },
+            "balance": { "type": "number" },
+            "margin_used": { "type": "number" },
+            "unrealized_pnl": { "type": "number" },
+            "realized_pnl": { "type": "number" }
+          }
+        }
+      ]
+    }
+  },
+  "version": "0.1.0"
+}

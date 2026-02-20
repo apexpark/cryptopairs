@@ -69,6 +69,8 @@ struct StrategySettings {
     advisory_gross_cap: f64,
     advisory_per_pair_cap: f64,
     advisory_enabled: bool,
+    champion_switch_min_delta: f64,
+    block_on_champion_drift: bool,
 }
 
 impl StrategySettings {
@@ -101,6 +103,8 @@ impl StrategySettings {
         let advisory_gross_cap = parse_env_f64("STRATEGY_ADVISORY_GROSS_CAP", 1.0);
         let advisory_per_pair_cap = parse_env_f64("STRATEGY_ADVISORY_PER_PAIR_CAP", 0.35);
         let advisory_enabled = parse_env_bool("STRATEGY_ADVISORY_ENABLED", true);
+        let champion_switch_min_delta = parse_env_f64("STRATEGY_CHAMPION_SWITCH_MIN_DELTA", 0.25);
+        let block_on_champion_drift = parse_env_bool("STRATEGY_BLOCK_ON_CHAMPION_DRIFT", true);
 
         Self {
             bind_addr: format!("0.0.0.0:{port}"),
@@ -132,6 +136,8 @@ impl StrategySettings {
             advisory_gross_cap,
             advisory_per_pair_cap,
             advisory_enabled,
+            champion_switch_min_delta,
+            block_on_champion_drift,
         }
     }
 
@@ -171,10 +177,50 @@ struct ClosePoint {
     close: f64,
 }
 
+#[derive(Debug, Clone)]
+struct SelectedSignalRow {
+    signal_variant: String,
+    opportunity_score: f64,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ChampionDecision {
+    Initialize,
+    Unchanged,
+    PromoteChallenger,
+    KeepChampion,
+}
+
+impl ChampionDecision {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Initialize => "INITIALIZE",
+            Self::Unchanged => "UNCHANGED",
+            Self::PromoteChallenger => "PROMOTE_CHALLENGER",
+            Self::KeepChampion => "KEEP_CHAMPION",
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+struct ChampionTransition {
+    selected_variant: String,
+    selected_score: f64,
+    champion_variant: String,
+    challenger_variant: String,
+    champion_score: f64,
+    challenger_score: f64,
+    score_delta: f64,
+    decision: ChampionDecision,
+}
+
 #[derive(Debug)]
 struct PersistSummary {
     performance_rows_written: usize,
     selected_rows_written: usize,
+    drift_rows_written: usize,
+    champion_promotions: usize,
+    champion_locks: usize,
 }
 
 impl StrategyRepository {
@@ -238,6 +284,19 @@ impl StrategyRepository {
                     rationale TEXT NOT NULL DEFAULT '',
                     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
                     PRIMARY KEY (pair_id, timeframe, run_at)
+                 );
+                 CREATE TABLE IF NOT EXISTS strategy_champion_drift_events (
+                    pair_id TEXT NOT NULL,
+                    timeframe TEXT NOT NULL,
+                    event_at TIMESTAMPTZ NOT NULL,
+                    champion_variant TEXT NOT NULL,
+                    challenger_variant TEXT NOT NULL,
+                    champion_score DOUBLE PRECISION NOT NULL,
+                    challenger_score DOUBLE PRECISION NOT NULL,
+                    score_delta DOUBLE PRECISION NOT NULL,
+                    decision TEXT NOT NULL,
+                    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                    PRIMARY KEY (pair_id, timeframe, event_at)
                  );",
             )
             .await?;
@@ -275,10 +334,14 @@ impl StrategyRepository {
         &self,
         timeframe: Timeframe,
         evaluation: &PairEvaluationOutput,
+        champion_switch_min_delta: f64,
     ) -> anyhow::Result<PersistSummary> {
         let mut summary = PersistSummary {
             performance_rows_written: 0,
             selected_rows_written: 0,
+            drift_rows_written: 0,
+            champion_promotions: 0,
+            champion_locks: 0,
         };
 
         for variant in &evaluation.variants {
@@ -319,7 +382,57 @@ impl StrategyRepository {
             summary.performance_rows_written += written as usize;
         }
 
+        let existing = self
+            .fetch_selected_signal(&evaluation.cue.pair_id, timeframe)
+            .await?;
+        let transition = decide_champion_transition(
+            existing.as_ref(),
+            evaluation,
+            champion_switch_min_delta.max(0.0),
+        );
         let selected_written = self
+            .upsert_selected_signal(
+                &evaluation.cue.pair_id,
+                timeframe,
+                &transition.selected_variant,
+                transition.selected_score,
+                evaluation.cue.evaluated_at,
+            )
+            .await?;
+        summary.selected_rows_written += selected_written as usize;
+        if transition.decision == ChampionDecision::PromoteChallenger {
+            summary.champion_promotions += 1;
+        }
+        if transition.decision == ChampionDecision::KeepChampion {
+            summary.champion_locks += 1;
+        }
+        if matches!(
+            transition.decision,
+            ChampionDecision::PromoteChallenger | ChampionDecision::KeepChampion
+        ) {
+            let drift_written = self
+                .record_champion_drift_event(
+                    &evaluation.cue.pair_id,
+                    timeframe,
+                    &transition,
+                    evaluation.cue.evaluated_at,
+                )
+                .await?;
+            summary.drift_rows_written += drift_written as usize;
+        }
+
+        Ok(summary)
+    }
+
+    async fn upsert_selected_signal(
+        &self,
+        pair_id: &str,
+        timeframe: Timeframe,
+        selected_variant: &str,
+        selected_score: f64,
+        evaluated_at: DateTime<Utc>,
+    ) -> anyhow::Result<u64> {
+        let written = self
             .client
             .execute(
                 "INSERT INTO strategy_selected_signal
@@ -331,17 +444,53 @@ impl StrategyRepository {
                    opportunity_score = EXCLUDED.opportunity_score,
                    updated_at = EXCLUDED.updated_at",
                 &[
-                    &evaluation.cue.pair_id as &(dyn ToSql + Sync),
+                    &pair_id as &(dyn ToSql + Sync),
                     &timeframe.as_str(),
-                    &evaluation.cue.selected_variant,
-                    &evaluation.cue.opportunity_score,
-                    &evaluation.cue.evaluated_at,
+                    &selected_variant,
+                    &selected_score,
+                    &evaluated_at,
                 ],
             )
             .await?;
-        summary.selected_rows_written += selected_written as usize;
+        Ok(written)
+    }
 
-        Ok(summary)
+    async fn record_champion_drift_event(
+        &self,
+        pair_id: &str,
+        timeframe: Timeframe,
+        transition: &ChampionTransition,
+        event_at: DateTime<Utc>,
+    ) -> anyhow::Result<u64> {
+        let written = self
+            .client
+            .execute(
+                "INSERT INTO strategy_champion_drift_events
+                 (pair_id, timeframe, event_at, champion_variant, challenger_variant, champion_score,
+                  challenger_score, score_delta, decision)
+                 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+                 ON CONFLICT (pair_id, timeframe, event_at)
+                 DO UPDATE SET
+                    champion_variant = EXCLUDED.champion_variant,
+                    challenger_variant = EXCLUDED.challenger_variant,
+                    champion_score = EXCLUDED.champion_score,
+                    challenger_score = EXCLUDED.challenger_score,
+                    score_delta = EXCLUDED.score_delta,
+                    decision = EXCLUDED.decision",
+                &[
+                    &pair_id as &(dyn ToSql + Sync),
+                    &timeframe.as_str(),
+                    &event_at,
+                    &transition.champion_variant,
+                    &transition.challenger_variant,
+                    &transition.champion_score,
+                    &transition.challenger_score,
+                    &transition.score_delta,
+                    &transition.decision.as_str(),
+                ],
+            )
+            .await?;
+        Ok(written)
     }
 
     async fn fetch_shadow_training_rows(
@@ -432,21 +581,96 @@ impl StrategyRepository {
         Ok(written as usize)
     }
 
-    async fn fetch_selected_variant(
+    async fn fetch_selected_signal(
         &self,
         pair_id: &str,
         timeframe: Timeframe,
-    ) -> anyhow::Result<Option<String>> {
+    ) -> anyhow::Result<Option<SelectedSignalRow>> {
         let row = self
             .client
             .query_opt(
-                "SELECT signal_variant
+                "SELECT signal_variant, opportunity_score
                  FROM strategy_selected_signal
                  WHERE pair_id=$1 AND timeframe=$2",
                 &[&pair_id, &timeframe.as_str()],
             )
             .await?;
-        Ok(row.map(|row| row.get(0)))
+        Ok(row.map(|row| SelectedSignalRow {
+            signal_variant: row.get(0),
+            opportunity_score: row.get(1),
+        }))
+    }
+}
+
+fn resolve_variant_score(evaluation: &PairEvaluationOutput, variant: &str, fallback: f64) -> f64 {
+    evaluation
+        .variants
+        .iter()
+        .find(|item| item.variant == variant)
+        .map(|item| item.opportunity_score)
+        .unwrap_or(fallback)
+}
+
+fn decide_champion_transition(
+    existing: Option<&SelectedSignalRow>,
+    evaluation: &PairEvaluationOutput,
+    champion_switch_min_delta: f64,
+) -> ChampionTransition {
+    let challenger_variant = evaluation.cue.selected_variant.clone();
+    let challenger_score = evaluation.cue.opportunity_score;
+
+    match existing {
+        None => ChampionTransition {
+            selected_variant: challenger_variant.clone(),
+            selected_score: challenger_score,
+            champion_variant: challenger_variant.clone(),
+            challenger_variant,
+            champion_score: challenger_score,
+            challenger_score,
+            score_delta: 0.0,
+            decision: ChampionDecision::Initialize,
+        },
+        Some(current) if current.signal_variant == challenger_variant => ChampionTransition {
+            selected_variant: challenger_variant.clone(),
+            selected_score: challenger_score,
+            champion_variant: current.signal_variant.clone(),
+            challenger_variant,
+            champion_score: challenger_score,
+            challenger_score,
+            score_delta: 0.0,
+            decision: ChampionDecision::Unchanged,
+        },
+        Some(current) => {
+            let champion_score = resolve_variant_score(
+                evaluation,
+                &current.signal_variant,
+                current.opportunity_score,
+            );
+            let score_delta = challenger_score - champion_score;
+            if score_delta >= champion_switch_min_delta {
+                ChampionTransition {
+                    selected_variant: challenger_variant.clone(),
+                    selected_score: challenger_score,
+                    champion_variant: current.signal_variant.clone(),
+                    challenger_variant,
+                    champion_score,
+                    challenger_score,
+                    score_delta,
+                    decision: ChampionDecision::PromoteChallenger,
+                }
+            } else {
+                ChampionTransition {
+                    selected_variant: current.signal_variant.clone(),
+                    selected_score: champion_score,
+                    champion_variant: current.signal_variant.clone(),
+                    challenger_variant,
+                    champion_score,
+                    challenger_score,
+                    score_delta,
+                    decision: ChampionDecision::KeepChampion,
+                }
+            }
+        }
     }
 }
 
@@ -601,6 +825,9 @@ struct ReoptimizeResponse {
     cues_generated: usize,
     performance_rows_written: usize,
     selected_rows_written: usize,
+    drift_rows_written: usize,
+    champion_promotions: usize,
+    champion_locks: usize,
     shadow_model_runs_written: usize,
     shadow_model_available: usize,
     shadow_model_unavailable: usize,
@@ -683,6 +910,8 @@ async fn main() -> anyhow::Result<()> {
         advisory_enabled = settings.advisory_enabled,
         advisory_gross_cap = settings.advisory_gross_cap,
         advisory_per_pair_cap = settings.advisory_per_pair_cap,
+        champion_switch_min_delta = settings.champion_switch_min_delta,
+        block_on_champion_drift = settings.block_on_champion_drift,
         "strategy-service started"
     );
 
@@ -700,6 +929,9 @@ fn spawn_reoptimize_worker(state: AppState) -> tokio::task::JoinHandle<()> {
             let mut cues_generated = 0usize;
             let mut performance_rows_written = 0usize;
             let mut selected_rows_written = 0usize;
+            let mut drift_rows_written = 0usize;
+            let mut champion_promotions = 0usize;
+            let mut champion_locks = 0usize;
             let mut shadow_model_runs_written = 0usize;
             let mut shadow_model_available = 0usize;
             let mut shadow_model_unavailable = 0usize;
@@ -743,12 +975,19 @@ fn spawn_reoptimize_worker(state: AppState) -> tokio::task::JoinHandle<()> {
 
                     match state
                         .repository
-                        .record_evaluation(*timeframe, &output)
+                        .record_evaluation(
+                            *timeframe,
+                            &output,
+                            state.settings.champion_switch_min_delta,
+                        )
                         .await
                     {
                         Ok(summary) => {
                             performance_rows_written += summary.performance_rows_written;
                             selected_rows_written += summary.selected_rows_written;
+                            drift_rows_written += summary.drift_rows_written;
+                            champion_promotions += summary.champion_promotions;
+                            champion_locks += summary.champion_locks;
                         }
                         Err(error) => {
                             tracing::warn!(
@@ -782,6 +1021,9 @@ fn spawn_reoptimize_worker(state: AppState) -> tokio::task::JoinHandle<()> {
                 cues_generated,
                 performance_rows_written,
                 selected_rows_written,
+                drift_rows_written,
+                champion_promotions,
+                champion_locks,
                 shadow_model_runs_written,
                 shadow_model_available,
                 shadow_model_unavailable,
@@ -815,20 +1057,31 @@ async fn pairs_cues(
 
     let mut cues = vec![];
     for output in outputs.drain(..) {
-        let preferred_variant = state
+        let preferred_signal = state
             .repository
-            .fetch_selected_variant(&output.cue.pair_id, timeframe)
+            .fetch_selected_signal(&output.cue.pair_id, timeframe)
             .await
             .map_err(|error| ApiError::Upstream(error.to_string()))?;
 
-        let selected_matches = preferred_variant
-            .as_deref()
-            .map(|preferred| preferred == output.cue.selected_variant)
-            .unwrap_or(true);
-
         let mut cue = output.cue.clone();
-        if !selected_matches {
-            cue.rationale_codes.push("CHAMPION_DRIFT".to_string());
+        if let Some(preferred) = preferred_signal {
+            if preferred.signal_variant != output.cue.selected_variant {
+                cue.rationale_codes.push("CHAMPION_DRIFT".to_string());
+                cue.rationale_codes
+                    .push(format!("CHAMPION_SELECTED:{}", preferred.signal_variant));
+                cue.rationale_codes.push(format!(
+                    "CHALLENGER_SELECTED:{}",
+                    output.cue.selected_variant
+                ));
+                cue.selected_variant = preferred.signal_variant;
+                cue.opportunity_score = preferred.opportunity_score;
+                if state.settings.block_on_champion_drift {
+                    cue.actionable = false;
+                    cue.direction_hint = "NONE".to_string();
+                    cue.rationale_codes
+                        .push("CHAMPION_DRIFT_BLOCKED".to_string());
+                }
+            }
         }
 
         cues.push(CueWithDiagnostics {
@@ -1182,6 +1435,9 @@ async fn reoptimize(
     let mut cues_generated = 0usize;
     let mut performance_rows_written = 0usize;
     let mut selected_rows_written = 0usize;
+    let mut drift_rows_written = 0usize;
+    let mut champion_promotions = 0usize;
+    let mut champion_locks = 0usize;
     let mut shadow_model_runs_written = 0usize;
     let mut shadow_model_available = 0usize;
     let mut shadow_model_unavailable = 0usize;
@@ -1224,12 +1480,19 @@ async fn reoptimize(
             }
             match state
                 .repository
-                .record_evaluation(*timeframe, &output)
+                .record_evaluation(
+                    *timeframe,
+                    &output,
+                    state.settings.champion_switch_min_delta,
+                )
                 .await
             {
                 Ok(summary) => {
                     performance_rows_written += summary.performance_rows_written;
                     selected_rows_written += summary.selected_rows_written;
+                    drift_rows_written += summary.drift_rows_written;
+                    champion_promotions += summary.champion_promotions;
+                    champion_locks += summary.champion_locks;
                 }
                 Err(error) => errors.push(ReoptError {
                     pair_id: output.cue.pair_id.clone(),
@@ -1262,6 +1525,9 @@ async fn reoptimize(
         cues_generated,
         performance_rows_written,
         selected_rows_written,
+        drift_rows_written,
+        champion_promotions,
+        champion_locks,
         shadow_model_runs_written,
         shadow_model_available,
         shadow_model_unavailable,
@@ -1540,4 +1806,113 @@ fn parse_env_bool(key: &str, default: bool) -> bool {
             matches!(normalized.as_str(), "1" | "true" | "yes" | "on")
         })
         .unwrap_or(default)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{decide_champion_transition, ChampionDecision, SelectedSignalRow};
+    use chrono::Utc;
+    use strategy_service::{
+        CostGateDiagnostics, PairCue, PairEvaluationOutput, PortfolioHint, ShadowMlDiagnostics,
+        VariantEvaluation,
+    };
+
+    fn output(
+        selected_variant: &str,
+        selected_score: f64,
+        champion_score: f64,
+        challenger_score: f64,
+    ) -> PairEvaluationOutput {
+        PairEvaluationOutput {
+            cue: PairCue {
+                pair_id: "PI_XBTUSD__PI_ETHUSD".to_string(),
+                left_instrument: "PI_XBTUSD".to_string(),
+                right_instrument: "PI_ETHUSD".to_string(),
+                timeframe: "1m".to_string(),
+                regime: "CALM".to_string(),
+                selected_variant: selected_variant.to_string(),
+                direction_hint: "NONE".to_string(),
+                spread_z: 0.0,
+                opportunity_score: selected_score,
+                confidence_band: "MEDIUM".to_string(),
+                entry_band: 1.8,
+                exit_band: 0.6,
+                stop_band: 3.2,
+                expected_hold_bars: 12,
+                cost_estimate_bps: 1.0,
+                actionable: false,
+                rationale_codes: vec![],
+                cost_gate: CostGateDiagnostics::unavailable(vec![]),
+                portfolio_hint: PortfolioHint::unavailable(vec![]),
+                shadow_ml: ShadowMlDiagnostics::unavailable(vec![]),
+                evaluated_at: Utc::now(),
+            },
+            variants: vec![
+                VariantEvaluation {
+                    variant: "ROBUST_Z".to_string(),
+                    score_last: 0.0,
+                    sample_count: 100,
+                    win_rate: 0.56,
+                    edge_bps: champion_score,
+                    reliability: 0.7,
+                    regime_fit: 0.8,
+                    opportunity_score: champion_score,
+                    shadow_success_probability: None,
+                    shadow_rank_score: None,
+                    rationale_codes: vec![],
+                },
+                VariantEvaluation {
+                    variant: "VOL_NORMALIZED".to_string(),
+                    score_last: 0.0,
+                    sample_count: 100,
+                    win_rate: 0.57,
+                    edge_bps: challenger_score,
+                    reliability: 0.7,
+                    regime_fit: 0.8,
+                    opportunity_score: challenger_score,
+                    shadow_success_probability: None,
+                    shadow_rank_score: None,
+                    rationale_codes: vec![],
+                },
+            ],
+            half_life_bars: 12.0,
+            hedge_ratio: 1.0,
+            hedge_ratio_stability: 0.1,
+            spread_vol_bps: 2.0,
+        }
+    }
+
+    #[test]
+    fn champion_transition_initializes_when_no_previous_selection() {
+        let evaluation = output("VOL_NORMALIZED", 2.0, 1.0, 2.0);
+        let transition = decide_champion_transition(None, &evaluation, 0.25);
+        assert_eq!(transition.decision, ChampionDecision::Initialize);
+        assert_eq!(transition.selected_variant, "VOL_NORMALIZED");
+    }
+
+    #[test]
+    fn champion_transition_promotes_when_delta_exceeds_threshold() {
+        let existing = SelectedSignalRow {
+            signal_variant: "ROBUST_Z".to_string(),
+            opportunity_score: 1.0,
+        };
+        let evaluation = output("VOL_NORMALIZED", 2.0, 1.0, 2.0);
+        let transition = decide_champion_transition(Some(&existing), &evaluation, 0.25);
+        assert_eq!(transition.decision, ChampionDecision::PromoteChallenger);
+        assert_eq!(transition.selected_variant, "VOL_NORMALIZED");
+        assert!((transition.score_delta - 1.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn champion_transition_locks_when_delta_below_threshold() {
+        let existing = SelectedSignalRow {
+            signal_variant: "ROBUST_Z".to_string(),
+            opportunity_score: 1.0,
+        };
+        let evaluation = output("VOL_NORMALIZED", 1.1, 1.0, 1.1);
+        let transition = decide_champion_transition(Some(&existing), &evaluation, 0.25);
+        assert_eq!(transition.decision, ChampionDecision::KeepChampion);
+        assert_eq!(transition.selected_variant, "ROBUST_Z");
+        assert!(transition.score_delta < 0.25);
+    }
 }

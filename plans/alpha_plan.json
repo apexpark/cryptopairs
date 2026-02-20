@@ -1,7 +1,7 @@
 {
   "version": 1,
-  "updated_at": "2026-02-20T01:56:36Z",
-  "active_focus_id": 6,
+  "updated_at": "2026-02-20T03:05:00Z",
+  "active_focus_id": 11,
   "milestone": "Alpha Trial Readiness",
   "items": [
     {
@@ -81,61 +81,84 @@
     {
       "id": 6,
       "title": "Lock Kraken historical depth limits per timeframe/symbol and enforce start bounds",
-      "status": "PENDING",
+      "status": "DONE",
       "priority": "NEXT",
       "depends_on": [
         4
       ],
       "owner": "codex",
-      "evidence": [],
-      "notes": []
+      "evidence": [
+        "services/kraken-adapter/src/lib.rs"
+      ],
+      "notes": [
+        "2026-02-20T02:09:36Z Enforced symbol/timeframe start bounds and page depth with operator-configurable policy file"
+      ]
     },
     {
       "id": 7,
       "title": "Add timeframe-switch integration tests for global seamless behavior",
-      "status": "PENDING",
+      "status": "DONE",
       "priority": "NEXT",
       "depends_on": [
         2,
         4
       ],
       "owner": "codex",
-      "evidence": [],
-      "notes": []
+      "evidence": [
+        "apps/web/src/__tests__/timeframeSwitch.integration.test.tsx"
+      ],
+      "notes": [
+        "2026-02-20T02:13:39Z Added global timeframe-switch integration tests covering strategy/gate/integrity/analytics refetches"
+      ]
     },
     {
       "id": 8,
       "title": "Harden strategy reoptimization persistence and champion/challenger drift handling",
-      "status": "PENDING",
+      "status": "DONE",
       "priority": "NEXT",
       "depends_on": [
         1
       ],
       "owner": "codex",
-      "evidence": [],
-      "notes": []
+      "evidence": [
+        "services/strategy-service/src/main.rs"
+      ],
+      "notes": [
+        "2026-02-20T02:22:59Z Hardened champion/challenger persistence with drift audit events and promotion threshold policy"
+      ]
     },
     {
       "id": 9,
       "title": "Implement hard risk caps: per-pair, gross, leverage, daily loss, cooldown",
-      "status": "PENDING",
+      "status": "DONE",
       "priority": "NEXT",
       "depends_on": [],
       "owner": "codex",
-      "evidence": [],
-      "notes": []
+      "evidence": [
+        "services/execution-service/src/main.rs"
+      ],
+      "notes": [
+        "2026-02-20T02:32:29Z Added fail-closed ENTRY risk caps (per-pair, gross, leverage, daily loss, cooldown) with account snapshot exposure checks"
+      ]
     },
     {
       "id": 10,
       "title": "Add live account snapshot ingestion into execution/risk decisions",
-      "status": "PENDING",
+      "status": "DONE",
       "priority": "NEXT",
       "depends_on": [
         9
       ],
       "owner": "codex",
-      "evidence": [],
-      "notes": []
+      "evidence": [
+        "services/execution-service/src/main.rs",
+        "services/account-service/src/lib.rs",
+        "specs/contracts/account_snapshot_response.schema.json",
+        "specs/contracts/account_reconcile_response.schema.json"
+      ],
+      "notes": [
+        "2026-02-20T03:05:00Z Switched execution risk/reconcile gates to account-service HTTP server-truth with snapshot freshness fail-closed and UTC day-start loss baseline endpoint"
+      ]
     },
     {
       "id": 11,
@@ -247,6 +270,41 @@
       "focus_id": 6,
       "delta": "Completed items 3-5 with live z feed, E2E validator, and integrity reason-code hardening",
       "next_action": "Implement Kraken historical depth limit enforcement for item 6",
+      "blockers": []
+    },
+    {
+      "ts": "2026-02-20T02:09:36Z",
+      "focus_id": 7,
+      "delta": "Completed item 6 historical depth lock and start-bound enforcement",
+      "next_action": "Implement timeframe-switch integration tests for global chart/data behavior (item 7)",
+      "blockers": []
+    },
+    {
+      "ts": "2026-02-20T02:13:39Z",
+      "focus_id": 8,
+      "delta": "Completed item 7 global timeframe integration tests",
+      "next_action": "Implement strategy reoptimization persistence hardening and champion/challenger drift controls (item 8)",
+      "blockers": []
+    },
+    {
+      "ts": "2026-02-20T02:22:59Z",
+      "focus_id": 9,
+      "delta": "Completed item 8 strategy reopt persistence + drift handling hardening",
+      "next_action": "Implement hard risk caps in execution-service (item 9)",
+      "blockers": []
+    },
+    {
+      "ts": "2026-02-20T02:32:29Z",
+      "focus_id": 10,
+      "delta": "Completed item 9 risk-cap enforcement in execution intent gate",
+      "next_action": "Integrate live account snapshot ingestion into execution/risk decisions (item 10)",
+      "blockers": []
+    },
+    {
+      "ts": "2026-02-20T03:05:00Z",
+      "focus_id": 11,
+      "delta": "Completed item 10 with live account snapshot ingestion into execution risk/reconcile decisions via account-service endpoints",
+      "next_action": "Implement item 11 by migrating portfolio/position UI data reads to server-truth ledger endpoints",
       "blockers": []
     }
   ]

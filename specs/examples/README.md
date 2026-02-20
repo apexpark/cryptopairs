@@ -5,6 +5,8 @@ Example payloads used for validation, tests, and documentation.
 Keep these in sync with `specs/contracts/`.
 
 Current baseline examples:
+- `specs/examples/account_snapshot_response.example.json`
+- `specs/examples/account_reconcile_response.example.json`
 - `specs/examples/data_query_request.example.json`
 - `specs/examples/data_query_response_complete.example.json`
 - `specs/examples/data_query_response_incomplete.example.json`

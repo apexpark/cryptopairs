@@ -72,6 +72,30 @@ This runbook uses friendly setting names first, with technical key names in pare
 17. Reconcile On Terminal State (`EXECUTION_TRIGGER_RECONCILE_ON_TERMINAL`)
 - Default: `true`
 
+18. Per-Pair Qty Cap (`EXECUTION_RISK_PER_PAIR_MAX_QTY`)
+- Maximum projected open quantity per instrument/pair leg for new `ENTRY` intents.
+- Default: `12`
+
+19. Gross Qty Cap (`EXECUTION_RISK_GROSS_MAX_QTY`)
+- Maximum projected gross open quantity across all active instruments.
+- Default: `40`
+
+20. Max Leverage (`EXECUTION_RISK_MAX_LEVERAGE`)
+- Risk gate blocks `ENTRY` intents above this ratio (`margin_used / equity`).
+- Default: `3.0`
+
+21. Daily Loss Cap USD (`EXECUTION_RISK_DAILY_LOSS_LIMIT_USD`)
+- Risk gate blocks `ENTRY` intents after this UTC-day drawdown.
+- Default: `500`
+
+22. Entry Cooldown Seconds (`EXECUTION_RISK_ENTRY_COOLDOWN_SECONDS`)
+- Minimum delay between accepted `ENTRY` intents for the same instrument.
+- Default: `30`
+
+23. Max Account Snapshot Age Seconds (`EXECUTION_RISK_MAX_SNAPSHOT_AGE_SECONDS`)
+- Blocks `ENTRY` intents when account-service snapshot freshness exceeds this threshold.
+- Default: `120`
+
 ## Recommended Presets
 
 1. Paper Preset
@@ -114,6 +138,13 @@ Preset files in repo:
 3. Symptom: Reconcile not triggered
 - Confirm `Reconcile On Terminal State` is enabled.
 - Confirm account-service URL is reachable.
+
+4. Symptom: `ENTRY` blocked by risk gate
+- Confirm latest account snapshot exists (`account_snapshots`).
+- Confirm account-service snapshot endpoint is returning recent `ts`.
+- Check leverage and daily loss against configured caps.
+- Check per-pair and gross quantity caps.
+- Check cooldown window for recent accepted `ENTRY` intents.
 
 ## Validation Checklist Before Live
 

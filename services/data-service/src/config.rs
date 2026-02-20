@@ -4,6 +4,7 @@ pub struct Settings {
     pub integrity_threshold_pct: f64,
     pub postgres_url: String,
     pub kraken_base_url: String,
+    pub kraken_history_bounds_path: String,
     pub symbols: Vec<String>,
     pub backfill_interval_seconds: u64,
 }
@@ -20,6 +21,8 @@ impl Settings {
         });
         let kraken_base_url = std::env::var("KRAKEN_BASE_URL")
             .unwrap_or_else(|_| "https://futures.kraken.com".to_string());
+        let kraken_history_bounds_path = std::env::var("KRAKEN_HISTORY_BOUNDS_PATH")
+            .unwrap_or_else(|_| "infra/config/kraken_history_bounds.json".to_string());
         let symbols = std::env::var("KRAKEN_SYMBOLS")
             .unwrap_or_else(|_| "PI_XBTUSD,PI_ETHUSD".to_string())
             .split(',')
@@ -37,6 +40,7 @@ impl Settings {
             integrity_threshold_pct,
             postgres_url,
             kraken_base_url,
+            kraken_history_bounds_path,
             symbols,
             backfill_interval_seconds,
         }

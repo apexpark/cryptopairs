@@ -22,6 +22,7 @@ Define strict rules for local-first market data retrieval, gap detection, backfi
 6. `MUST NOT` silently downgrade integrity status.
 7. `MUST` persist integrity checks in a quality table for audit/replay.
 8. `MUST` block live execution when integrity threshold fails.
+9. `MUST` enforce exchange history start bounds and page-depth limits per symbol/timeframe.
 
 ## Required Response Fields
 

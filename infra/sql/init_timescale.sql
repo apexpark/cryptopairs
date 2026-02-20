@@ -179,3 +179,17 @@ CREATE TABLE IF NOT EXISTS strategy_shadow_model_runs (
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   PRIMARY KEY (pair_id, timeframe, run_at)
 );
+
+CREATE TABLE IF NOT EXISTS strategy_champion_drift_events (
+  pair_id TEXT NOT NULL,
+  timeframe TEXT NOT NULL,
+  event_at TIMESTAMPTZ NOT NULL,
+  champion_variant TEXT NOT NULL,
+  challenger_variant TEXT NOT NULL,
+  champion_score DOUBLE PRECISION NOT NULL,
+  challenger_score DOUBLE PRECISION NOT NULL,
+  score_delta DOUBLE PRECISION NOT NULL,
+  decision TEXT NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  PRIMARY KEY (pair_id, timeframe, event_at)
+);

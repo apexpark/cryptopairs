@@ -112,6 +112,8 @@ Current behavior:
 - Detects missing ranges for `1m`, `15m`, `1h`.
 - Performs targeted Kraken backfill only for missing ranges.
 - Re-queries local store and returns data + integrity report.
+- Enforces Kraken historical start bounds + page-depth limits per symbol/timeframe
+  using `KRAKEN_HISTORY_BOUNDS_PATH` (default: `infra/config/kraken_history_bounds.json`).
 - Background worker continuously backfills configured symbols (`KRAKEN_SYMBOLS`).
 - WebSocket worker subscribes to Kraken Futures trade feed and persists live trades.
 
@@ -191,6 +193,12 @@ Operator Settings (friendly name -> technical key):
 - Ack Timeout Batch Limit (`EXECUTION_ACK_WATCHDOG_BATCH_LIMIT`): default `200`.
 - Account Service URL (`ACCOUNT_SERVICE_URL`): default `http://127.0.0.1:8081`.
 - Reconcile On Terminal State (`EXECUTION_TRIGGER_RECONCILE_ON_TERMINAL`): default `true`.
+- Per-Pair Qty Cap (`EXECUTION_RISK_PER_PAIR_MAX_QTY`): default `12`.
+- Gross Qty Cap (`EXECUTION_RISK_GROSS_MAX_QTY`): default `40`.
+- Max Leverage (`EXECUTION_RISK_MAX_LEVERAGE`): default `3.0`.
+- Daily Loss Cap USD (`EXECUTION_RISK_DAILY_LOSS_LIMIT_USD`): default `500`.
+- Entry Cooldown Seconds (`EXECUTION_RISK_ENTRY_COOLDOWN_SECONDS`): default `30`.
+- Max Account Snapshot Age Seconds (`EXECUTION_RISK_MAX_SNAPSHOT_AGE_SECONDS`): default `120`.
 
 Operator playbook: `docs/playbooks/execution-operations-runbook.md`
 Preset examples:
@@ -203,6 +211,11 @@ The execution service includes an automatic stale-ack watchdog:
 
 Terminal lifecycle transitions (`FILLED`, `CANCELED`, `REJECTED`, `EXPIRED`) now trigger
 `POST /v1/account/reconcile/run` as a best-effort synchronization hook.
+
+New `ENTRY` intents are also pre-gated by fail-closed risk caps (per-pair qty, gross qty,
+leverage, daily loss, cooldown) using account-service snapshots and active intent exposure.
+`ENTRY` is blocked when account snapshot freshness exceeds
+`EXECUTION_RISK_MAX_SNAPSHOT_AGE_SECONDS`.
 
 When `EXECUTION_DISPATCH_MODE=live_kraken`, an open-orders poller now reads
 `GET /derivatives/api/v3/openorders` and applies deterministic `ACKNOWLEDGED -> PARTIALLY_FILLED`
@@ -233,6 +246,15 @@ POST /v1/account/reconcile/run
 ```
 
 Runs a reconciliation pass for all accounts with recent snapshots and persists results.
+
+## Account Snapshot Read Endpoints
+
+```bash
+GET /v1/account/snapshot?exchange=kraken_futures&account_id=primary
+GET /v1/account/snapshot/day-start?exchange=kraken_futures&account_id=primary&day_start_utc=2026-02-20T00:00:00Z
+```
+
+Execution risk checks consume these account-service endpoints as server-truth inputs.
 
 ## Strategy Pairs Cues Endpoint
 
@@ -289,6 +311,9 @@ POST /v1/strategy/pairs/reoptimize
 
 Runs rolling recent-performance evaluation and persists selected signal variants by pair/timeframe.
 Response includes shadow model counters, cost-gate pass/fail counters, and portfolio advisory availability counters.
+Champion/challenger handling is hardened with:
+- `STRATEGY_CHAMPION_SWITCH_MIN_DELTA` (minimum score delta required before champion promotion)
+- `STRATEGY_BLOCK_ON_CHAMPION_DRIFT` (fail-closed cue gating when live challenger drifts from stored champion)
 
 ## Bootstrap Historical Backfill
 
@@ -326,6 +351,12 @@ python3 tools/scripts/kraken_history_depth_probe.py \
 ```
 
 The generated report captures earliest returned candles, page continuity checks, and pagination flags for each timeframe.
+
+Configured historical bounds file:
+
+- `infra/config/kraken_history_bounds.json`
+- Loaded by data-service/bootstrap via:
+  - `Historical Bounds File (KRAKEN_HISTORY_BOUNDS_PATH)`
 
 ## Monorepo Layout
 - `services/` Rust services (`kraken-adapter`, `data-service`, `strategy-service`, `execution-service`, `account-service`)
