@@ -1,0 +1,38 @@
+{
+  "generated_at": "2026-02-20T14:30:00Z",
+  "exchange": "kraken_futures",
+  "account_id": "primary",
+  "window_minutes": 60,
+  "thresholds": {
+    "max_snapshot_age_seconds_p1": 120,
+    "reconcile_non_ok_count_p2": 1
+  },
+  "metrics": {
+    "latest_snapshot_age_seconds": 35,
+    "latest_reconcile_status": "OK",
+    "reconcile_events_total": 20,
+    "reconcile_non_ok_count": 0,
+    "stale_snapshot_count": 0,
+    "drift_exceeded_count": 0
+  },
+  "alerts": [
+    {
+      "code": "account_snapshot_age",
+      "severity": "P1",
+      "triggered": false,
+      "message": "snapshot age seconds=35 threshold=120"
+    },
+    {
+      "code": "account_reconcile_non_ok",
+      "severity": "P2",
+      "triggered": false,
+      "message": "reconcile non-OK count=0 threshold=1"
+    },
+    {
+      "code": "account_reconcile_latest_missing",
+      "severity": "P2",
+      "triggered": false,
+      "message": "latest reconcile status=OK"
+    }
+  ]
+}

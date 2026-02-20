@@ -1,0 +1,81 @@
+{
+  "$id": "https://cryptopairs/specs/contracts/execution_observability_summary_response.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "ExecutionObservabilitySummaryResponse",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "generated_at",
+    "exchange",
+    "account_id",
+    "window_minutes",
+    "thresholds",
+    "metrics",
+    "alerts"
+  ],
+  "properties": {
+    "generated_at": { "type": "string", "format": "date-time" },
+    "exchange": { "type": "string" },
+    "account_id": { "type": "string" },
+    "window_minutes": { "type": "integer", "minimum": 1 },
+    "thresholds": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "risk_block_ratio_p2",
+        "dispatch_reject_ratio_p2",
+        "stale_ack_count_p1",
+        "reconcile_block_count_p1"
+      ],
+      "properties": {
+        "risk_block_ratio_p2": { "type": "number", "minimum": 0 },
+        "dispatch_reject_ratio_p2": { "type": "number", "minimum": 0 },
+        "stale_ack_count_p1": { "type": "integer", "minimum": 0 },
+        "reconcile_block_count_p1": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "metrics": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "intents_total",
+        "intents_blocked",
+        "risk_blocked",
+        "integrity_blocked",
+        "reconcile_blocked",
+        "kill_switch_blocked",
+        "dispatch_total",
+        "dispatch_rejected",
+        "dispatch_acknowledged",
+        "stale_ack_count"
+      ],
+      "properties": {
+        "intents_total": { "type": "integer", "minimum": 0 },
+        "intents_blocked": { "type": "integer", "minimum": 0 },
+        "risk_blocked": { "type": "integer", "minimum": 0 },
+        "integrity_blocked": { "type": "integer", "minimum": 0 },
+        "reconcile_blocked": { "type": "integer", "minimum": 0 },
+        "kill_switch_blocked": { "type": "integer", "minimum": 0 },
+        "dispatch_total": { "type": "integer", "minimum": 0 },
+        "dispatch_rejected": { "type": "integer", "minimum": 0 },
+        "dispatch_acknowledged": { "type": "integer", "minimum": 0 },
+        "stale_ack_count": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "alerts": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["code", "severity", "triggered", "message"],
+        "properties": {
+          "code": { "type": "string" },
+          "severity": { "type": "string", "enum": ["P1", "P2", "P3"] },
+          "triggered": { "type": "boolean" },
+          "message": { "type": "string" }
+        }
+      }
+    }
+  },
+  "version": "0.1.0"
+}

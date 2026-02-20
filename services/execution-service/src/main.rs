@@ -40,6 +40,7 @@ struct AppState {
     trigger_reconcile_on_terminal: bool,
     risk_caps: RiskCapsConfig,
     risk_max_snapshot_age_seconds: i64,
+    observability_thresholds: ExecutionObservabilityThresholds,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -450,6 +451,14 @@ struct OpenOrdersPollerConfig {
 struct OrderStatusLookupConfig {
     enabled: bool,
     query_key: String,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct ExecutionObservabilityThresholds {
+    risk_block_ratio_p2: f64,
+    dispatch_reject_ratio_p2: f64,
+    stale_ack_count_p1: i64,
+    reconcile_block_count_p1: i64,
 }
 
 #[derive(Debug, Clone)]
@@ -1193,6 +1202,77 @@ impl ExecutionRepository {
             })
             .collect())
     }
+
+    async fn fetch_observability_metrics(
+        &self,
+        exchange: &str,
+        account_id: &str,
+        window_minutes: i64,
+        stale_ack_seconds: i64,
+    ) -> anyhow::Result<ExecutionObservabilityMetricsRaw> {
+        let bounded_window = window_minutes.max(1);
+        let intents_row = self
+            .client
+            .query_one(
+                "SELECT
+                    COUNT(*) AS intents_total,
+                    COUNT(*) FILTER (WHERE decision='BLOCKED') AS intents_blocked,
+                    COUNT(*) FILTER (WHERE decision='BLOCKED' AND reason LIKE 'risk gate blocked signal:%') AS risk_blocked,
+                    COUNT(*) FILTER (WHERE decision='BLOCKED' AND reason LIKE 'integrity gate blocked signal:%') AS integrity_blocked,
+                    COUNT(*) FILTER (WHERE decision='BLOCKED' AND reason LIKE 'reconcile gate blocked signal:%') AS reconcile_blocked,
+                    COUNT(*) FILTER (WHERE decision='BLOCKED' AND reason = 'kill switch is active; order intent blocked') AS kill_switch_blocked
+                 FROM execution_order_intents
+                 WHERE exchange=$1
+                   AND account_id=$2
+                   AND created_at >= NOW() - ($3::BIGINT * INTERVAL '1 minute')",
+                &[&exchange, &account_id, &bounded_window],
+            )
+            .await?;
+        let dispatch_row = self
+            .client
+            .query_one(
+                "SELECT
+                    COUNT(*) AS dispatch_total,
+                    COUNT(*) FILTER (WHERE result_state='REJECTED') AS dispatch_rejected,
+                    COUNT(*) FILTER (WHERE result_state='ACKNOWLEDGED') AS dispatch_acknowledged
+                 FROM execution_dispatch_attempts
+                 WHERE created_at >= NOW() - ($1::BIGINT * INTERVAL '1 minute')",
+                &[&bounded_window],
+            )
+            .await?;
+        let stale_ack_row = self
+            .client
+            .query_one(
+                "SELECT COUNT(*) AS stale_ack_count
+                 FROM (
+                    SELECT DISTINCT ON (idempotency_key)
+                      idempotency_key, state, created_at
+                    FROM execution_order_state_events
+                    ORDER BY idempotency_key, created_at DESC
+                 ) latest
+                 JOIN execution_order_intents i
+                   ON i.idempotency_key = latest.idempotency_key
+                 WHERE i.exchange=$1
+                   AND i.account_id=$2
+                   AND latest.state='ACKNOWLEDGED'
+                   AND latest.created_at <= NOW() - ($3::BIGINT * INTERVAL '1 second')",
+                &[&exchange, &account_id, &stale_ack_seconds.max(1)],
+            )
+            .await?;
+
+        Ok(ExecutionObservabilityMetricsRaw {
+            intents_total: intents_row.get(0),
+            intents_blocked: intents_row.get(1),
+            risk_blocked: intents_row.get(2),
+            integrity_blocked: intents_row.get(3),
+            reconcile_blocked: intents_row.get(4),
+            kill_switch_blocked: intents_row.get(5),
+            dispatch_total: dispatch_row.get(0),
+            dispatch_rejected: dispatch_row.get(1),
+            dispatch_acknowledged: dispatch_row.get(2),
+            stale_ack_count: stale_ack_row.get(0),
+        })
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -1359,6 +1439,68 @@ struct PortfolioPositionsResponse {
 }
 
 #[derive(Debug, Deserialize)]
+struct ExecutionObservabilitySummaryQuery {
+    exchange: String,
+    account_id: String,
+    window_minutes: Option<i64>,
+}
+
+#[derive(Debug, Serialize)]
+struct ExecutionObservabilitySummaryResponse {
+    generated_at: DateTime<Utc>,
+    exchange: String,
+    account_id: String,
+    window_minutes: i64,
+    thresholds: ExecutionObservabilityThresholdsResponse,
+    metrics: ExecutionObservabilityMetricsResponse,
+    alerts: Vec<ExecutionObservabilityAlert>,
+}
+
+#[derive(Debug, Serialize)]
+struct ExecutionObservabilityThresholdsResponse {
+    risk_block_ratio_p2: f64,
+    dispatch_reject_ratio_p2: f64,
+    stale_ack_count_p1: i64,
+    reconcile_block_count_p1: i64,
+}
+
+#[derive(Debug, Serialize)]
+struct ExecutionObservabilityMetricsResponse {
+    intents_total: i64,
+    intents_blocked: i64,
+    risk_blocked: i64,
+    integrity_blocked: i64,
+    reconcile_blocked: i64,
+    kill_switch_blocked: i64,
+    dispatch_total: i64,
+    dispatch_rejected: i64,
+    dispatch_acknowledged: i64,
+    stale_ack_count: i64,
+}
+
+#[derive(Debug, Serialize)]
+struct ExecutionObservabilityAlert {
+    code: String,
+    severity: String,
+    triggered: bool,
+    message: String,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct ExecutionObservabilityMetricsRaw {
+    intents_total: i64,
+    intents_blocked: i64,
+    risk_blocked: i64,
+    integrity_blocked: i64,
+    reconcile_blocked: i64,
+    kill_switch_blocked: i64,
+    dispatch_total: i64,
+    dispatch_rejected: i64,
+    dispatch_acknowledged: i64,
+    stale_ack_count: i64,
+}
+
+#[derive(Debug, Deserialize)]
 struct DispatchIntentRequest {
     idempotency_key: String,
     actor: Option<String>,
@@ -1510,6 +1652,24 @@ async fn main() -> anyhow::Result<()> {
         .ok()
         .and_then(|value| value.parse::<i64>().ok())
         .unwrap_or(120);
+    let observability_thresholds = ExecutionObservabilityThresholds {
+        risk_block_ratio_p2: std::env::var("EXECUTION_ALERT_RISK_BLOCK_RATIO_P2")
+            .ok()
+            .and_then(|value| value.parse::<f64>().ok())
+            .unwrap_or(0.25),
+        dispatch_reject_ratio_p2: std::env::var("EXECUTION_ALERT_DISPATCH_REJECT_RATIO_P2")
+            .ok()
+            .and_then(|value| value.parse::<f64>().ok())
+            .unwrap_or(0.15),
+        stale_ack_count_p1: std::env::var("EXECUTION_ALERT_STALE_ACK_COUNT_P1")
+            .ok()
+            .and_then(|value| value.parse::<i64>().ok())
+            .unwrap_or(1),
+        reconcile_block_count_p1: std::env::var("EXECUTION_ALERT_RECONCILE_BLOCK_COUNT_P1")
+            .ok()
+            .and_then(|value| value.parse::<i64>().ok())
+            .unwrap_or(1),
+    };
     let http_client = reqwest::Client::builder()
         .timeout(Duration::from_secs(5))
         .build()?;
@@ -1544,6 +1704,7 @@ async fn main() -> anyhow::Result<()> {
         trigger_reconcile_on_terminal,
         risk_caps,
         risk_max_snapshot_age_seconds,
+        observability_thresholds,
     };
     tokio::spawn(spawn_ack_watchdog(app_state.clone()));
     tokio::spawn(spawn_open_orders_poller(app_state.clone()));
@@ -1562,6 +1723,10 @@ async fn main() -> anyhow::Result<()> {
         .route(
             "/v1/execution/portfolio/positions",
             get(portfolio_positions),
+        )
+        .route(
+            "/v1/execution/observability/summary",
+            get(execution_observability_summary),
         )
         .route(
             "/v1/execution/order-intent/history",
@@ -1597,6 +1762,10 @@ async fn main() -> anyhow::Result<()> {
         risk_daily_loss_limit_usd = risk_caps.daily_loss_limit_usd,
         risk_entry_cooldown_seconds = risk_caps.entry_cooldown_seconds,
         risk_max_snapshot_age_seconds = risk_max_snapshot_age_seconds,
+        alert_risk_block_ratio_p2 = observability_thresholds.risk_block_ratio_p2,
+        alert_dispatch_reject_ratio_p2 = observability_thresholds.dispatch_reject_ratio_p2,
+        alert_stale_ack_count_p1 = observability_thresholds.stale_ack_count_p1,
+        alert_reconcile_block_count_p1 = observability_thresholds.reconcile_block_count_p1,
         "execution-service started"
     );
     axum::serve(listener, app).await?;
@@ -1942,6 +2111,109 @@ fn api_error_to_message(error: ApiError) -> String {
 
 async fn health() -> Json<HealthResponse> {
     Json(HealthResponse { status: "ok" })
+}
+
+fn safe_ratio(numerator: i64, denominator: i64) -> f64 {
+    if denominator <= 0 {
+        return 0.0;
+    }
+    numerator as f64 / denominator as f64
+}
+
+fn build_execution_alerts(
+    metrics: ExecutionObservabilityMetricsRaw,
+    thresholds: ExecutionObservabilityThresholds,
+) -> Vec<ExecutionObservabilityAlert> {
+    let risk_block_ratio = safe_ratio(metrics.risk_blocked, metrics.intents_total);
+    let dispatch_reject_ratio = safe_ratio(metrics.dispatch_rejected, metrics.dispatch_total);
+
+    vec![
+        ExecutionObservabilityAlert {
+            code: "execution_risk_block_ratio".to_string(),
+            severity: "P2".to_string(),
+            triggered: risk_block_ratio >= thresholds.risk_block_ratio_p2,
+            message: format!(
+                "risk-block ratio={risk_block_ratio:.4} threshold={:.4}",
+                thresholds.risk_block_ratio_p2
+            ),
+        },
+        ExecutionObservabilityAlert {
+            code: "execution_dispatch_reject_ratio".to_string(),
+            severity: "P2".to_string(),
+            triggered: dispatch_reject_ratio >= thresholds.dispatch_reject_ratio_p2,
+            message: format!(
+                "dispatch-reject ratio={dispatch_reject_ratio:.4} threshold={:.4}",
+                thresholds.dispatch_reject_ratio_p2
+            ),
+        },
+        ExecutionObservabilityAlert {
+            code: "execution_stale_ack_count".to_string(),
+            severity: "P1".to_string(),
+            triggered: metrics.stale_ack_count >= thresholds.stale_ack_count_p1,
+            message: format!(
+                "stale ACK count={} threshold={}",
+                metrics.stale_ack_count, thresholds.stale_ack_count_p1
+            ),
+        },
+        ExecutionObservabilityAlert {
+            code: "execution_reconcile_block_count".to_string(),
+            severity: "P1".to_string(),
+            triggered: metrics.reconcile_blocked >= thresholds.reconcile_block_count_p1,
+            message: format!(
+                "reconcile-block count={} threshold={}",
+                metrics.reconcile_blocked, thresholds.reconcile_block_count_p1
+            ),
+        },
+    ]
+}
+
+async fn execution_observability_summary(
+    State(state): State<AppState>,
+    Query(query): Query<ExecutionObservabilitySummaryQuery>,
+) -> Result<Json<ExecutionObservabilitySummaryResponse>, ApiError> {
+    if query.exchange.trim().is_empty() || query.account_id.trim().is_empty() {
+        return Err(ApiError::BadRequest(
+            "exchange and account_id are required".to_string(),
+        ));
+    }
+    let window_minutes = query.window_minutes.unwrap_or(60).clamp(1, 24 * 60);
+    let metrics = state
+        .repository
+        .fetch_observability_metrics(
+            &query.exchange,
+            &query.account_id,
+            window_minutes,
+            state.ack_watchdog.expire_after_seconds as i64,
+        )
+        .await
+        .map_err(|error| ApiError::Upstream(error.to_string()))?;
+    let alerts = build_execution_alerts(metrics, state.observability_thresholds);
+
+    Ok(Json(ExecutionObservabilitySummaryResponse {
+        generated_at: Utc::now(),
+        exchange: query.exchange,
+        account_id: query.account_id,
+        window_minutes,
+        thresholds: ExecutionObservabilityThresholdsResponse {
+            risk_block_ratio_p2: state.observability_thresholds.risk_block_ratio_p2,
+            dispatch_reject_ratio_p2: state.observability_thresholds.dispatch_reject_ratio_p2,
+            stale_ack_count_p1: state.observability_thresholds.stale_ack_count_p1,
+            reconcile_block_count_p1: state.observability_thresholds.reconcile_block_count_p1,
+        },
+        metrics: ExecutionObservabilityMetricsResponse {
+            intents_total: metrics.intents_total,
+            intents_blocked: metrics.intents_blocked,
+            risk_blocked: metrics.risk_blocked,
+            integrity_blocked: metrics.integrity_blocked,
+            reconcile_blocked: metrics.reconcile_blocked,
+            kill_switch_blocked: metrics.kill_switch_blocked,
+            dispatch_total: metrics.dispatch_total,
+            dispatch_rejected: metrics.dispatch_rejected,
+            dispatch_acknowledged: metrics.dispatch_acknowledged,
+            stale_ack_count: metrics.stale_ack_count,
+        },
+        alerts,
+    }))
 }
 
 async fn decision(
@@ -3040,11 +3312,12 @@ fn map_order_intent(record: OrderIntentRecord) -> OrderIntentResponse {
 #[cfg(test)]
 mod tests {
     use super::{
-        derive_open_order_transition, derive_order_status_transition, fold_spread_positions,
-        is_snapshot_stale, is_terminal_state, parse_ingest_target_state,
+        build_execution_alerts, derive_open_order_transition, derive_order_status_transition,
+        fold_spread_positions, is_snapshot_stale, is_terminal_state, parse_ingest_target_state,
         parse_kraken_open_orders_response, parse_kraken_order_status_response,
-        parse_kraken_submit_response, sign_kraken_futures_payload, validate_manual_controls,
-        ApiError, DispatchMode, KrakenOpenOrder, KrakenStatusOrder, SpreadLedgerEvent,
+        parse_kraken_submit_response, safe_ratio, sign_kraken_futures_payload,
+        validate_manual_controls, ApiError, DispatchMode, ExecutionObservabilityMetricsRaw,
+        ExecutionObservabilityThresholds, KrakenOpenOrder, KrakenStatusOrder, SpreadLedgerEvent,
     };
     use chrono::{DateTime, Duration, Utc};
     use execution_service::{OrderIntentAction, OrderLifecycleState};
@@ -3431,5 +3704,36 @@ mod tests {
             },
         ]);
         assert!(rows.is_empty());
+    }
+
+    #[test]
+    fn safe_ratio_returns_zero_for_empty_denominator() {
+        assert!((safe_ratio(5, 0) - 0.0).abs() < f64::EPSILON);
+        assert!((safe_ratio(2, 4) - 0.5).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn execution_observability_alerts_trigger_on_thresholds() {
+        let metrics = ExecutionObservabilityMetricsRaw {
+            intents_total: 10,
+            intents_blocked: 4,
+            risk_blocked: 3,
+            integrity_blocked: 0,
+            reconcile_blocked: 2,
+            kill_switch_blocked: 0,
+            dispatch_total: 8,
+            dispatch_rejected: 2,
+            dispatch_acknowledged: 6,
+            stale_ack_count: 1,
+        };
+        let thresholds = ExecutionObservabilityThresholds {
+            risk_block_ratio_p2: 0.25,
+            dispatch_reject_ratio_p2: 0.2,
+            stale_ack_count_p1: 1,
+            reconcile_block_count_p1: 2,
+        };
+        let alerts = build_execution_alerts(metrics, thresholds);
+        assert_eq!(alerts.len(), 4);
+        assert!(alerts.iter().all(|alert| alert.triggered));
     }
 }

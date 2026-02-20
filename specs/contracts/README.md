@@ -9,6 +9,7 @@ Contracts are the canonical, machine-readable definitions of system interfaces.
 Current baseline contracts:
 - `specs/contracts/account_snapshot_response.schema.json`
 - `specs/contracts/account_reconcile_response.schema.json`
+- `specs/contracts/account_observability_summary_response.schema.json`
 - `specs/contracts/data_query_request.schema.json`
 - `specs/contracts/data_query_response.schema.json`
 - `specs/contracts/candle.schema.json`
@@ -20,6 +21,7 @@ Current baseline contracts:
 - `specs/contracts/execution_order_intent_request.schema.json`
 - `specs/contracts/execution_order_intent_response.schema.json`
 - `specs/contracts/execution_portfolio_positions_response.schema.json`
+- `specs/contracts/execution_observability_summary_response.schema.json`
 - `specs/contracts/execution_order_lifecycle_state_machine.schema.json`
 - `specs/contracts/execution_order_state_history_response.schema.json`
 - `specs/contracts/execution_dispatch_response.schema.json`

@@ -227,6 +227,18 @@ This project follows SemVer as defined in `docs/02-versioning-and-releases.md`.
 - Frontend manual flow integration coverage:
   - Added `apps/web/src/__tests__/manualTradeFlow.integration.test.tsx`
   - Verifies spread metadata submit, dispatch sequencing, and acknowledged-flow UI state.
+- Observability summary package with operator alert thresholds:
+  - New execution endpoint:
+    - `GET /v1/execution/observability/summary`
+  - New account endpoint:
+    - `GET /v1/account/observability/summary`
+  - New contracts/examples:
+    - `specs/contracts/execution_observability_summary_response.schema.json`
+    - `specs/examples/execution_observability_summary_response.example.json`
+    - `specs/contracts/account_observability_summary_response.schema.json`
+    - `specs/examples/account_observability_summary_response.example.json`
+  - New observability SLO runbook:
+    - `docs/playbooks/observability-slo-runbook.md`
 
 ### Changed
 - Product/risk/architecture docs now explicitly define manual-first live trading for MVP.

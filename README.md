@@ -209,6 +209,12 @@ Operator Settings (friendly name -> technical key):
 - Daily Loss Cap USD (`EXECUTION_RISK_DAILY_LOSS_LIMIT_USD`): default `500`.
 - Entry Cooldown Seconds (`EXECUTION_RISK_ENTRY_COOLDOWN_SECONDS`): default `30`.
 - Max Account Snapshot Age Seconds (`EXECUTION_RISK_MAX_SNAPSHOT_AGE_SECONDS`): default `120`.
+- Execution Risk-Block Ratio Alert Threshold (`EXECUTION_ALERT_RISK_BLOCK_RATIO_P2`): default `0.25`.
+- Execution Dispatch-Reject Ratio Alert Threshold (`EXECUTION_ALERT_DISPATCH_REJECT_RATIO_P2`): default `0.15`.
+- Execution Stale-ACK Count Alert Threshold (`EXECUTION_ALERT_STALE_ACK_COUNT_P1`): default `1`.
+- Execution Reconcile-Block Count Alert Threshold (`EXECUTION_ALERT_RECONCILE_BLOCK_COUNT_P1`): default `1`.
+- Account Snapshot Age Alert Threshold (`ACCOUNT_ALERT_MAX_SNAPSHOT_AGE_SECONDS_P1`): default `120`.
+- Account Reconcile Non-OK Count Alert Threshold (`ACCOUNT_ALERT_RECONCILE_NON_OK_COUNT_P2`): default `1`.
 
 Operator playbook: `docs/playbooks/execution-operations-runbook.md`
 Preset examples:
@@ -266,6 +272,16 @@ GET /v1/account/snapshot/day-start?exchange=kraken_futures&account_id=primary&da
 ```
 
 Execution risk checks consume these account-service endpoints as server-truth inputs.
+
+## Observability Summary Endpoints
+
+```bash
+GET /v1/execution/observability/summary?exchange=kraken_futures&account_id=primary&window_minutes=60
+GET /v1/account/observability/summary?exchange=kraken_futures&account_id=primary&window_minutes=60
+```
+
+These endpoints provide operator-facing alert evaluations and SLO threshold context for
+execution risk/dispatch health and account snapshot/reconcile health.
 
 ## Strategy Pairs Cues Endpoint
 

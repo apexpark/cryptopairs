@@ -48,6 +48,7 @@ If instructions conflict, use this order:
 - `docs/playbooks/backfill-runbook.md`
 - `docs/playbooks/incident-runbook.md`
 - `docs/playbooks/execution-operations-runbook.md`
+- `docs/playbooks/observability-slo-runbook.md`
 - `plans/alpha_plan.json`
 - `infra/env/paper-mode.env.example`
 - `infra/env/live-mode.env.example`

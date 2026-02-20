@@ -1,7 +1,7 @@
 {
   "version": 1,
-  "updated_at": "2026-02-20T03:21:52Z",
-  "active_focus_id": 14,
+  "updated_at": "2026-02-20T03:30:22Z",
+  "active_focus_id": 15,
   "milestone": "Alpha Trial Readiness",
   "items": [
     {
@@ -216,6 +216,23 @@
     {
       "id": 14,
       "title": "Implement production observability package with alerts and SLO thresholds",
+      "status": "DONE",
+      "priority": "LATER",
+      "depends_on": [
+        13
+      ],
+      "owner": "codex",
+      "evidence": [
+        "docs/playbooks/observability-slo-runbook.md"
+      ],
+      "notes": [
+        "2026-02-20T03:21:52Z Started observability package implementation",
+        "2026-02-20T03:30:22Z Added observability summary endpoints, alert thresholds, contracts/examples, and runbook"
+      ]
+    },
+    {
+      "id": 15,
+      "title": "Finalize hosted secrets/credential lifecycle (vault/KMS, rotation, audit)",
       "status": "IN_PROGRESS",
       "priority": "LATER",
       "depends_on": [
@@ -224,20 +241,8 @@
       "owner": "codex",
       "evidence": [],
       "notes": [
-        "2026-02-20T03:21:52Z Started observability package implementation"
+        "2026-02-20T03:30:22Z Started hosted secrets lifecycle hardening"
       ]
-    },
-    {
-      "id": 15,
-      "title": "Finalize hosted secrets/credential lifecycle (vault/KMS, rotation, audit)",
-      "status": "PENDING",
-      "priority": "LATER",
-      "depends_on": [
-        13
-      ],
-      "owner": "codex",
-      "evidence": [],
-      "notes": []
     },
     {
       "id": 16,
@@ -344,6 +349,13 @@
       "focus_id": 14,
       "delta": "Completed item 13 with manual flow harness, runbook wiring, and UI integration test",
       "next_action": "Implement observability summary endpoints/contracts and alert threshold package",
+      "blockers": []
+    },
+    {
+      "ts": "2026-02-20T03:30:22Z",
+      "focus_id": 15,
+      "delta": "Completed item 14 observability package with summary endpoints and SLO alerts",
+      "next_action": "Implement hosted secrets lifecycle: env/file secret sources, rotation audit tooling, and runbook",
       "blockers": []
     }
   ]

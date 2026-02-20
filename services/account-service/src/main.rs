@@ -1,5 +1,6 @@
 use account_service::{
-    build_router, run_reconciliation_once, AccountRepository, AppState, ReconcileJobConfig,
+    build_router, run_reconciliation_once, AccountObservabilityThresholds, AccountRepository,
+    AppState, ReconcileJobConfig,
 };
 use std::sync::Arc;
 use tokio::net::TcpListener;
@@ -24,6 +25,16 @@ async fn main() -> anyhow::Result<()> {
         .ok()
         .and_then(|value| value.parse::<f64>().ok())
         .unwrap_or(25.0);
+    let observability_thresholds = AccountObservabilityThresholds {
+        max_snapshot_age_seconds_p1: std::env::var("ACCOUNT_ALERT_MAX_SNAPSHOT_AGE_SECONDS_P1")
+            .ok()
+            .and_then(|value| value.parse::<i64>().ok())
+            .unwrap_or(120),
+        reconcile_non_ok_count_p2: std::env::var("ACCOUNT_ALERT_RECONCILE_NON_OK_COUNT_P2")
+            .ok()
+            .and_then(|value| value.parse::<i64>().ok())
+            .unwrap_or(1),
+    };
     let bind_addr = format!("0.0.0.0:{port}");
 
     let repository = Arc::new(AccountRepository::connect(&postgres_url).await?);
@@ -55,7 +66,10 @@ async fn main() -> anyhow::Result<()> {
         }
     });
 
-    let app = build_router(AppState { repository });
+    let app = build_router(AppState {
+        repository,
+        observability_thresholds,
+    });
     let listener = TcpListener::bind(&bind_addr).await?;
 
     info!(
@@ -63,6 +77,8 @@ async fn main() -> anyhow::Result<()> {
         reconcile_interval_secs,
         max_snapshot_age_secs,
         max_drift_notional,
+        alert_max_snapshot_age_seconds_p1 = observability_thresholds.max_snapshot_age_seconds_p1,
+        alert_reconcile_non_ok_count_p2 = observability_thresholds.reconcile_non_ok_count_p2,
         "account-service started"
     );
     axum::serve(listener, app).await?;

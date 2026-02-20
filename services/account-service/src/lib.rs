@@ -15,6 +15,13 @@ use tower_http::cors::{Any, CorsLayer};
 #[derive(Clone)]
 pub struct AppState {
     pub repository: Arc<AccountRepository>,
+    pub observability_thresholds: AccountObservabilityThresholds,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct AccountObservabilityThresholds {
+    pub max_snapshot_age_seconds_p1: i64,
+    pub reconcile_non_ok_count_p2: i64,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -201,6 +208,72 @@ impl AccountRepository {
             .await?;
         Ok(())
     }
+
+    async fn fetch_observability_metrics(
+        &self,
+        exchange: &str,
+        account_id: &str,
+        window_minutes: i64,
+    ) -> anyhow::Result<AccountObservabilityMetricsRaw> {
+        let bounded_window = window_minutes.max(1);
+        let snapshot_row = self
+            .client
+            .query_opt(
+                "SELECT ts
+                 FROM account_snapshots
+                 WHERE exchange=$1 AND account_id=$2
+                 ORDER BY ts DESC
+                 LIMIT 1",
+                &[&exchange, &account_id],
+            )
+            .await?;
+        let latest_snapshot_age_seconds = snapshot_row
+            .map(|row| {
+                let ts: DateTime<Utc> = row.get(0);
+                (Utc::now() - ts).num_seconds().max(0)
+            })
+            .unwrap_or(i64::MAX);
+
+        let latest_reconcile = self
+            .client
+            .query_opt(
+                "SELECT status
+                 FROM reconciliation_events
+                 WHERE exchange=$1 AND account_id=$2
+                 ORDER BY ts DESC
+                 LIMIT 1",
+                &[&exchange, &account_id],
+            )
+            .await?;
+        let latest_reconcile_status = latest_reconcile
+            .map(|row| row.get::<usize, String>(0))
+            .unwrap_or_else(|| "MISSING".to_string());
+
+        let reconcile_window_row = self
+            .client
+            .query_one(
+                "SELECT
+                    COUNT(*) AS reconcile_events_total,
+                    COUNT(*) FILTER (WHERE status <> 'OK') AS reconcile_non_ok_count,
+                    COUNT(*) FILTER (WHERE status = 'STALE_SNAPSHOT') AS stale_snapshot_count,
+                    COUNT(*) FILTER (WHERE status = 'DRIFT_EXCEEDED') AS drift_exceeded_count
+                 FROM reconciliation_events
+                 WHERE exchange=$1
+                   AND account_id=$2
+                   AND ts >= NOW() - ($3::BIGINT * INTERVAL '1 minute')",
+                &[&exchange, &account_id, &bounded_window],
+            )
+            .await?;
+
+        Ok(AccountObservabilityMetricsRaw {
+            latest_snapshot_age_seconds,
+            latest_reconcile_status,
+            reconcile_events_total: reconcile_window_row.get(0),
+            reconcile_non_ok_count: reconcile_window_row.get(1),
+            stale_snapshot_count: reconcile_window_row.get(2),
+            drift_exceeded_count: reconcile_window_row.get(3),
+        })
+    }
 }
 
 pub async fn run_reconciliation_once(
@@ -341,6 +414,58 @@ struct SnapshotDayStartQuery {
     day_start_utc: DateTime<Utc>,
 }
 
+#[derive(Debug, Deserialize)]
+struct AccountObservabilitySummaryQuery {
+    exchange: String,
+    account_id: String,
+    window_minutes: Option<i64>,
+}
+
+#[derive(Debug, Serialize)]
+struct AccountObservabilitySummaryResponse {
+    generated_at: DateTime<Utc>,
+    exchange: String,
+    account_id: String,
+    window_minutes: i64,
+    thresholds: AccountObservabilityThresholdsResponse,
+    metrics: AccountObservabilityMetricsResponse,
+    alerts: Vec<AccountObservabilityAlert>,
+}
+
+#[derive(Debug, Serialize)]
+struct AccountObservabilityThresholdsResponse {
+    max_snapshot_age_seconds_p1: i64,
+    reconcile_non_ok_count_p2: i64,
+}
+
+#[derive(Debug, Serialize)]
+struct AccountObservabilityMetricsResponse {
+    latest_snapshot_age_seconds: i64,
+    latest_reconcile_status: String,
+    reconcile_events_total: i64,
+    reconcile_non_ok_count: i64,
+    stale_snapshot_count: i64,
+    drift_exceeded_count: i64,
+}
+
+#[derive(Debug, Serialize)]
+struct AccountObservabilityAlert {
+    code: String,
+    severity: String,
+    triggered: bool,
+    message: String,
+}
+
+#[derive(Debug, Clone)]
+struct AccountObservabilityMetricsRaw {
+    latest_snapshot_age_seconds: i64,
+    latest_reconcile_status: String,
+    reconcile_events_total: i64,
+    reconcile_non_ok_count: i64,
+    stale_snapshot_count: i64,
+    drift_exceeded_count: i64,
+}
+
 pub fn build_router(state: AppState) -> Router {
     let cors = CorsLayer::new()
         .allow_origin(Any)
@@ -359,6 +484,10 @@ pub fn build_router(state: AppState) -> Router {
         .route(
             "/v1/account/reconcile",
             post(write_reconcile).get(read_reconcile),
+        )
+        .route(
+            "/v1/account/observability/summary",
+            get(account_observability_summary),
         )
         .route("/v1/account/reconcile/run", post(run_reconcile_now))
         .layer(cors)
@@ -380,6 +509,77 @@ impl IntoResponse for ApiError {
 
 async fn health() -> Json<serde_json::Value> {
     Json(serde_json::json!({ "status":"ok" }))
+}
+
+fn build_account_alerts(
+    metrics: &AccountObservabilityMetricsRaw,
+    thresholds: AccountObservabilityThresholds,
+) -> Vec<AccountObservabilityAlert> {
+    vec![
+        AccountObservabilityAlert {
+            code: "account_snapshot_age".to_string(),
+            severity: "P1".to_string(),
+            triggered: metrics.latest_snapshot_age_seconds >= thresholds.max_snapshot_age_seconds_p1,
+            message: format!(
+                "snapshot age seconds={} threshold={}",
+                metrics.latest_snapshot_age_seconds, thresholds.max_snapshot_age_seconds_p1
+            ),
+        },
+        AccountObservabilityAlert {
+            code: "account_reconcile_non_ok".to_string(),
+            severity: "P2".to_string(),
+            triggered: metrics.reconcile_non_ok_count >= thresholds.reconcile_non_ok_count_p2,
+            message: format!(
+                "reconcile non-OK count={} threshold={}",
+                metrics.reconcile_non_ok_count, thresholds.reconcile_non_ok_count_p2
+            ),
+        },
+        AccountObservabilityAlert {
+            code: "account_reconcile_latest_missing".to_string(),
+            severity: "P2".to_string(),
+            triggered: metrics.latest_reconcile_status == "MISSING",
+            message: format!(
+                "latest reconcile status={}",
+                metrics.latest_reconcile_status
+            ),
+        },
+    ]
+}
+
+async fn account_observability_summary(
+    State(state): State<AppState>,
+    axum::extract::Query(query): axum::extract::Query<AccountObservabilitySummaryQuery>,
+) -> Result<impl IntoResponse, ApiError> {
+    if query.exchange.trim().is_empty() || query.account_id.trim().is_empty() {
+        return Err(ApiError("exchange and account_id are required".to_string()));
+    }
+    let window_minutes = query.window_minutes.unwrap_or(60).clamp(1, 24 * 60);
+    let metrics = state
+        .repository
+        .fetch_observability_metrics(&query.exchange, &query.account_id, window_minutes)
+        .await
+        .map_err(|error| ApiError(error.to_string()))?;
+    let alerts = build_account_alerts(&metrics, state.observability_thresholds);
+
+    Ok(Json(AccountObservabilitySummaryResponse {
+        generated_at: Utc::now(),
+        exchange: query.exchange,
+        account_id: query.account_id,
+        window_minutes,
+        thresholds: AccountObservabilityThresholdsResponse {
+            max_snapshot_age_seconds_p1: state.observability_thresholds.max_snapshot_age_seconds_p1,
+            reconcile_non_ok_count_p2: state.observability_thresholds.reconcile_non_ok_count_p2,
+        },
+        metrics: AccountObservabilityMetricsResponse {
+            latest_snapshot_age_seconds: metrics.latest_snapshot_age_seconds,
+            latest_reconcile_status: metrics.latest_reconcile_status,
+            reconcile_events_total: metrics.reconcile_events_total,
+            reconcile_non_ok_count: metrics.reconcile_non_ok_count,
+            stale_snapshot_count: metrics.stale_snapshot_count,
+            drift_exceeded_count: metrics.drift_exceeded_count,
+        },
+        alerts,
+    }))
 }
 
 async fn write_snapshot(
@@ -475,7 +675,10 @@ async fn run_reconcile_now(State(state): State<AppState>) -> Result<impl IntoRes
 
 #[cfg(test)]
 mod tests {
-    use super::{evaluate_snapshot, AccountSnapshotRead, ReconcileJobConfig};
+    use super::{
+        build_account_alerts, evaluate_snapshot, AccountObservabilityMetricsRaw,
+        AccountObservabilityThresholds, AccountSnapshotRead, ReconcileJobConfig,
+    };
     use chrono::{Duration, Utc};
 
     #[test]
@@ -524,5 +727,24 @@ mod tests {
             },
         );
         assert_eq!(event.status, "DRIFT_EXCEEDED");
+    }
+
+    #[test]
+    fn account_alerts_trigger_on_thresholds() {
+        let metrics = AccountObservabilityMetricsRaw {
+            latest_snapshot_age_seconds: 300,
+            latest_reconcile_status: "MISSING".to_string(),
+            reconcile_events_total: 1,
+            reconcile_non_ok_count: 1,
+            stale_snapshot_count: 1,
+            drift_exceeded_count: 0,
+        };
+        let thresholds = AccountObservabilityThresholds {
+            max_snapshot_age_seconds_p1: 120,
+            reconcile_non_ok_count_p2: 1,
+        };
+        let alerts = build_account_alerts(&metrics, thresholds);
+        assert_eq!(alerts.len(), 3);
+        assert!(alerts.iter().all(|alert| alert.triggered));
     }
 }

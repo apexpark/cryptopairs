@@ -96,6 +96,22 @@ This runbook uses friendly setting names first, with technical key names in pare
 - Blocks `ENTRY` intents when account-service snapshot freshness exceeds this threshold.
 - Default: `120`
 
+24. Execution Risk-Block Ratio Alert Threshold (`EXECUTION_ALERT_RISK_BLOCK_RATIO_P2`)
+- Triggers P2 when risk-blocked intents / total intents in window exceeds threshold.
+- Default: `0.25`
+
+25. Execution Dispatch-Reject Ratio Alert Threshold (`EXECUTION_ALERT_DISPATCH_REJECT_RATIO_P2`)
+- Triggers P2 when dispatch rejected / dispatch total in window exceeds threshold.
+- Default: `0.15`
+
+26. Execution Stale-ACK Count Alert Threshold (`EXECUTION_ALERT_STALE_ACK_COUNT_P1`)
+- Triggers P1 when stale acknowledged orders count meets/exceeds threshold.
+- Default: `1`
+
+27. Execution Reconcile-Block Count Alert Threshold (`EXECUTION_ALERT_RECONCILE_BLOCK_COUNT_P1`)
+- Triggers P1 when reconcile-blocked intents count meets/exceeds threshold.
+- Default: `1`
+
 ## Recommended Presets
 
 1. Paper Preset
@@ -150,6 +166,18 @@ Spread metadata for best portfolio fidelity:
 - Check leverage and daily loss against configured caps.
 - Check per-pair and gross quantity caps.
 - Check cooldown window for recent accepted `ENTRY` intents.
+
+## Observability Checks
+
+1. Execution summary:
+- `GET /v1/execution/observability/summary?exchange=kraken_futures&account_id=primary&window_minutes=60`
+
+2. Account summary:
+- `GET /v1/account/observability/summary?exchange=kraken_futures&account_id=primary&window_minutes=60`
+
+3. Alert handling:
+- `P1` triggered: keep/activate kill switch and investigate before new entries.
+- `P2` triggered: continue manual controls cautiously and remediate before scaling size.
 
 ## Validation Checklist Before Live
 
