@@ -245,9 +245,12 @@ export interface OrderIntentRequest {
   idempotency_key: string;
   exchange: string;
   account_id: string;
+  pair_id?: string | null;
   instrument: string;
   timeframe: Timeframe;
   action: ExecutionAction;
+  spread_direction?: "LONG_SPREAD" | "SHORT_SPREAD" | null;
+  spread_z?: number | null;
   side: TradeSide;
   qty: number;
   operator_confirmed: boolean;
@@ -259,9 +262,12 @@ export interface OrderIntentResponse {
   idempotency_key: string;
   exchange: string;
   account_id: string;
+  pair_id: string | null;
   instrument: string;
   timeframe: Timeframe;
   action: ExecutionAction;
+  spread_direction: "LONG_SPREAD" | "SHORT_SPREAD" | null;
+  spread_z: number | null;
   side: TradeSide;
   qty: number;
   operator_confirmed: boolean;
@@ -348,6 +354,19 @@ export interface ReconcileResponse {
     drift_notional: number;
     notes: string;
   } | null;
+}
+
+export interface ExecutionPortfolioPositionsResponse {
+  exchange: string;
+  account_id: string;
+  generated_at: string;
+  positions: Array<{
+    pair_id: string;
+    direction: DirectionHint;
+    total_size: number;
+    avg_entry_z: number;
+    updated_at: string;
+  }>;
 }
 
 export interface SpreadPosition {

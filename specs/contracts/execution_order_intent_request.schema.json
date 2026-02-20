@@ -28,6 +28,10 @@
       "type": "string",
       "minLength": 1
     },
+    "pair_id": {
+      "type": ["string", "null"],
+      "minLength": 1
+    },
     "instrument": {
       "type": "string",
       "minLength": 1
@@ -39,6 +43,13 @@
     "action": {
       "type": "string",
       "enum": ["ENTRY", "EXIT", "EMERGENCY_STOP_CLOSE"]
+    },
+    "spread_direction": {
+      "type": ["string", "null"],
+      "enum": ["LONG_SPREAD", "SHORT_SPREAD", null]
+    },
+    "spread_z": {
+      "type": ["number", "null"]
     },
     "side": {
       "type": "string",

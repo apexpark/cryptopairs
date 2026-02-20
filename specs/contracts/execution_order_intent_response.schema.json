@@ -28,6 +28,9 @@
     "account_id": {
       "type": "string"
     },
+    "pair_id": {
+      "type": ["string", "null"]
+    },
     "instrument": {
       "type": "string"
     },
@@ -38,6 +41,13 @@
     "action": {
       "type": "string",
       "enum": ["ENTRY", "EXIT", "EMERGENCY_STOP_CLOSE"]
+    },
+    "spread_direction": {
+      "type": ["string", "null"],
+      "enum": ["LONG_SPREAD", "SHORT_SPREAD", null]
+    },
+    "spread_z": {
+      "type": ["number", "null"]
     },
     "side": {
       "type": "string",

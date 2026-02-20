@@ -1,0 +1,38 @@
+{
+  "$id": "https://cryptopairs/specs/contracts/execution_portfolio_positions_response.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "ExecutionPortfolioPositionsResponse",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["exchange", "account_id", "generated_at", "positions"],
+  "properties": {
+    "exchange": { "type": "string" },
+    "account_id": { "type": "string" },
+    "generated_at": { "type": "string", "format": "date-time" },
+    "positions": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "pair_id",
+          "direction",
+          "total_size",
+          "avg_entry_z",
+          "updated_at"
+        ],
+        "properties": {
+          "pair_id": { "type": "string" },
+          "direction": {
+            "type": "string",
+            "enum": ["LONG_SPREAD", "SHORT_SPREAD", "NONE"]
+          },
+          "total_size": { "type": "number", "minimum": 0 },
+          "avg_entry_z": { "type": "number" },
+          "updated_at": { "type": "string", "format": "date-time" }
+        }
+      }
+    }
+  },
+  "version": "0.1.0"
+}

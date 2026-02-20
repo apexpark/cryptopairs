@@ -2,6 +2,7 @@ import type {
   DataQueryResponse,
   DispatchIntentRequest,
   DispatchIntentResponse,
+  ExecutionPortfolioPositionsResponse,
   ExecutionDecisionResponse,
   IntegrityHistoryResponse,
   KillSwitchState,
@@ -91,6 +92,16 @@ export async function fetchExecutionDecision(
     instrument
   )}&timeframe=${timeframe}`;
   return parseJson<ExecutionDecisionResponse>(await fetch(url));
+}
+
+export async function fetchExecutionPortfolioPositions(
+  exchange: string,
+  accountId: string
+): Promise<ExecutionPortfolioPositionsResponse> {
+  const url = `${EXECUTION_SERVICE_BASE_URL}/v1/execution/portfolio/positions?exchange=${encodeURIComponent(
+    exchange
+  )}&account_id=${encodeURIComponent(accountId)}`;
+  return parseJson<ExecutionPortfolioPositionsResponse>(await fetch(url));
 }
 
 export async function submitOrderIntent(

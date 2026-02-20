@@ -1,0 +1,14 @@
+{
+  "exchange": "kraken_futures",
+  "account_id": "primary",
+  "generated_at": "2026-02-20T03:40:00Z",
+  "positions": [
+    {
+      "pair_id": "PI_XBTUSD__PI_ETHUSD",
+      "direction": "LONG_SPREAD",
+      "total_size": 1.5,
+      "avg_entry_z": -1.72,
+      "updated_at": "2026-02-20T03:39:18Z"
+    }
+  ]
+}

@@ -1,7 +1,7 @@
 {
   "version": 1,
-  "updated_at": "2026-02-20T03:05:00Z",
-  "active_focus_id": 11,
+  "updated_at": "2026-02-20T03:50:00Z",
+  "active_focus_id": 12,
   "milestone": "Alpha Trial Readiness",
   "items": [
     {
@@ -163,14 +163,20 @@
     {
       "id": 11,
       "title": "Migrate portfolio/position display to server-truth ledger",
-      "status": "PENDING",
+      "status": "DONE",
       "priority": "NEXT",
       "depends_on": [
         10
       ],
       "owner": "codex",
-      "evidence": [],
-      "notes": []
+      "evidence": [
+        "services/execution-service/src/main.rs",
+        "apps/web/src/App.tsx",
+        "specs/contracts/execution_portfolio_positions_response.schema.json"
+      ],
+      "notes": [
+        "2026-02-20T03:50:00Z Migrated Portfolio/Trade position state to server-truth execution ledger endpoint with spread metadata persistence on intents"
+      ]
     },
     {
       "id": 12,
@@ -305,6 +311,13 @@
       "focus_id": 11,
       "delta": "Completed item 10 with live account snapshot ingestion into execution risk/reconcile decisions via account-service endpoints",
       "next_action": "Implement item 11 by migrating portfolio/position UI data reads to server-truth ledger endpoints",
+      "blockers": []
+    },
+    {
+      "ts": "2026-02-20T03:50:00Z",
+      "focus_id": 12,
+      "delta": "Completed item 11 with execution ledger portfolio endpoint and UI migration off client-local position authority",
+      "next_action": "Implement item 12 by finalizing Kraken open-orders/order-status normalization contracts and fixture matrix",
       "blockers": []
     }
   ]
