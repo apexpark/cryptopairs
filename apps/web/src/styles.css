@@ -129,13 +129,16 @@ body {
 .metrics-row {
   display: flex;
   align-items: stretch;
-  justify-content: center;
-  gap: 16px;
+  justify-content: flex-start;
+  gap: 12px;
+  overflow-x: auto;
+  padding-bottom: 2px;
 }
 
 .metric {
-  min-width: 78px;
+  min-width: 102px;
   text-align: left;
+  flex: 0 0 auto;
 }
 
 .metric-label {

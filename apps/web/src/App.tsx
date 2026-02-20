@@ -168,6 +168,26 @@ function formatFundingRate(value: number | null | undefined): string {
   return `${(value * 100).toFixed(4)}% / hr`;
 }
 
+function formatSignedMetric(value: number | null | undefined, digits = 3): string {
+  if (value == null || !Number.isFinite(value)) {
+    return "--";
+  }
+  const abs = Math.abs(value).toFixed(digits);
+  return `${value >= 0 ? "+" : "-"}${abs}`;
+}
+
+function deriveLegPositionSizes(position: SpreadPosition): { leftSize: number; rightSize: number } {
+  if (!Number.isFinite(position.totalSize) || position.totalSize <= 0 || position.direction === "NONE") {
+    return { leftSize: 0, rightSize: 0 };
+  }
+
+  if (position.direction === "LONG_SPREAD") {
+    return { leftSize: position.totalSize, rightSize: -position.totalSize };
+  }
+
+  return { leftSize: -position.totalSize, rightSize: position.totalSize };
+}
+
 function formatOpenInterest(value: number | null | undefined): string {
   if (value == null || !Number.isFinite(value)) {
     return "--";
@@ -262,7 +282,8 @@ function App(): JSX.Element {
   const [zMarkers, setZMarkers] = useState<ChartMarker[]>([]);
   const [analyticsError, setAnalyticsError] = useState<string | null>(null);
   const [analyticsLoading, setAnalyticsLoading] = useState(false);
-  const [headerMetrics, setHeaderMetrics] = useState<MarketMetricsResponse | null>(null);
+  const [headerLeftMetrics, setHeaderLeftMetrics] = useState<MarketMetricsResponse | null>(null);
+  const [headerRightMetrics, setHeaderRightMetrics] = useState<MarketMetricsResponse | null>(null);
   const [headerMetricsError, setHeaderMetricsError] = useState<string | null>(null);
 
   const [stopMethod, setStopMethod] = useState<"Z-Score" | "Dollar" | "Percent">("Z-Score");
@@ -624,26 +645,46 @@ function App(): JSX.Element {
     };
   }, [selectedCueRow, timeframe]);
 
-  const headerInstrument = selectedCueRow?.cue.left_instrument ?? "PI_XBTUSD";
+  const headerLeftInstrument = selectedCueRow?.cue.left_instrument ?? "PF_XBTUSD";
+  const headerRightInstrument = selectedCueRow?.cue.right_instrument ?? "PF_ETHUSD";
+  const headerLeftLabel = formatInstrumentLabel(headerLeftInstrument);
+  const headerRightLabel = formatInstrumentLabel(headerRightInstrument);
+  const headerHedgeRatio = selectedCueRow?.hedge_ratio ?? 1;
+  const spreadPrice =
+    headerLeftMetrics && headerRightMetrics
+      ? headerLeftMetrics.mark - headerHedgeRatio * headerRightMetrics.mark
+      : null;
+  const spreadFundingRate =
+    headerLeftMetrics && headerRightMetrics
+      ? headerLeftMetrics.funding_rate - headerHedgeRatio * headerRightMetrics.funding_rate
+      : null;
+  const legSizes = deriveLegPositionSizes(currentPosition);
 
   useEffect(() => {
     let cancelled = false;
 
     const refreshMetrics = async (): Promise<void> => {
       try {
-        const metrics = await fetchMarketMetrics(headerInstrument);
+        const [leftMetrics, rightMetrics] = await Promise.all([
+          fetchMarketMetrics(headerLeftInstrument),
+          fetchMarketMetrics(headerRightInstrument),
+        ]);
         if (cancelled) {
           return;
         }
-        setHeaderMetrics(metrics);
+        setHeaderLeftMetrics(leftMetrics);
+        setHeaderRightMetrics(rightMetrics);
         setHeaderMetricsError(null);
       } catch (error) {
         if (cancelled) {
           return;
         }
-        setHeaderMetrics(null);
+        setHeaderLeftMetrics(null);
+        setHeaderRightMetrics(null);
         setHeaderMetricsError(
-          `Live metrics unavailable: ${error instanceof Error ? error.message : String(error)}`
+          `Live metrics unavailable for ${headerLeftLabel}/${headerRightLabel}: ${
+            error instanceof Error ? error.message : String(error)
+          }`
         );
       }
     };
@@ -657,7 +698,7 @@ function App(): JSX.Element {
       cancelled = true;
       window.clearInterval(intervalId);
     };
-  }, [headerInstrument]);
+  }, [headerLeftInstrument, headerRightInstrument, headerLeftLabel, headerRightLabel]);
 
   const addTimelineEvent = (pairId: string, event: TimelineEvent): void => {
     setTimelineByPair((prev) => {
@@ -1025,21 +1066,22 @@ function App(): JSX.Element {
         </div>
 
         <div className="metrics-row">
-          <Metric label="Mark" value={formatMetricPrice(headerMetrics?.mark)} />
-          <Metric label="Index" value={formatMetricPrice(headerMetrics?.index)} />
+          <Metric label={`${headerLeftLabel} Mark`} value={formatMetricPrice(headerLeftMetrics?.mark)} />
+          <Metric label={`${headerLeftLabel} Index`} value={formatMetricPrice(headerLeftMetrics?.index)} />
+          <Metric label={`${headerRightLabel} Mark`} value={formatMetricPrice(headerRightMetrics?.mark)} />
+          <Metric label={`${headerRightLabel} Index`} value={formatMetricPrice(headerRightMetrics?.index)} />
+          <Metric label="Net Spread Price" value={formatSignedMetric(spreadPrice, 3)} />
           <Metric
-            label="24h"
-            value={formatMetricPercent(headerMetrics?.change_24h_pct)}
-            tone={
-              (headerMetrics?.change_24h_pct ?? 0) < 0
-                ? "bad"
-                : (headerMetrics?.change_24h_pct ?? 0) > 0
-                  ? "ok"
-                  : "neutral"
-            }
+            label={`${headerLeftLabel} Position Size`}
+            value={formatSignedMetric(legSizes.leftSize, 2)}
+            tone={legSizes.leftSize === 0 ? "neutral" : legSizes.leftSize > 0 ? "ok" : "warn"}
           />
-          <Metric label="Funding" value={formatFundingRate(headerMetrics?.funding_rate)} />
-          <Metric label="OI" value={formatOpenInterest(headerMetrics?.open_interest)} />
+          <Metric
+            label={`${headerRightLabel} Position Size`}
+            value={formatSignedMetric(legSizes.rightSize, 2)}
+            tone={legSizes.rightSize === 0 ? "neutral" : legSizes.rightSize > 0 ? "ok" : "warn"}
+          />
+          <Metric label="Net Spread Funding" value={formatFundingRate(spreadFundingRate)} />
         </div>
 
         <div className="topbar-right">

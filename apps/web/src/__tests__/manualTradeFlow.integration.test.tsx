@@ -312,6 +312,7 @@ describe("manual trade flow", () => {
       expect(api.fetchStrategyCues).toHaveBeenCalled();
       expect(api.fetchExecutionDecision).toHaveBeenCalledTimes(2);
       expect(api.fetchMarketMetrics).toHaveBeenCalledWith(LEFT);
+      expect(api.fetchMarketMetrics).toHaveBeenCalledWith(RIGHT);
     });
 
     fireEvent.click(screen.getByLabelText(/Live Trading Armed/i));

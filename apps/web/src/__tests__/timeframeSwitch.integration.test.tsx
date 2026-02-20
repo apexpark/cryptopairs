@@ -336,6 +336,7 @@ describe("global timeframe switching", () => {
       expect(api.fetchStrategyLiveZ).toHaveBeenCalledWith("1m", PAIR_ID, 300);
       expect(api.fetchStrategyBacktest).toHaveBeenCalledWith("1m", PAIR_ID, 300);
       expect(api.fetchMarketMetrics).toHaveBeenCalledWith(LEFT);
+      expect(api.fetchMarketMetrics).toHaveBeenCalledWith(RIGHT);
       expect(api.fetchExecutionPortfolioPositions).toHaveBeenCalledWith(
         "kraken_futures",
         "primary"
