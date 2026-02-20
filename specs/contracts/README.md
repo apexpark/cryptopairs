@@ -24,6 +24,7 @@ Current baseline contracts:
 - `specs/contracts/execution_order_event_ingest_response.schema.json`
 - `specs/contracts/strategy_pairs_cues_response.schema.json`
 - `specs/contracts/strategy_pairs_backtest_response.schema.json`
+- `specs/contracts/strategy_pairs_live_z_response.schema.json`
 - `specs/contracts/strategy_pairs_reoptimize_response.schema.json`
 - `specs/contracts/strategy_pairs_cost_gate_response.schema.json`
 - `specs/contracts/strategy_pairs_portfolio_plan_response.schema.json`

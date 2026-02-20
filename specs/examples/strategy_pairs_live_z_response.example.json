@@ -1,0 +1,37 @@
+{
+  "timeframe": "1m",
+  "pair_id": "PI_XBTUSD__PI_ETHUSD",
+  "generated_at": "2026-02-20T01:45:00Z",
+  "entry_band": 1.8,
+  "exit_band": 0.6,
+  "stop_band": 3.2,
+  "selected_variant": "ROBUST_Z",
+  "points": [
+    {
+      "ts": "2026-02-20T01:42:00Z",
+      "z": -1.84
+    },
+    {
+      "ts": "2026-02-20T01:43:00Z",
+      "z": -1.22
+    },
+    {
+      "ts": "2026-02-20T01:44:00Z",
+      "z": -0.52
+    }
+  ],
+  "markers": [
+    {
+      "index": 0,
+      "kind": "entry"
+    },
+    {
+      "index": 2,
+      "kind": "exit"
+    }
+  ],
+  "rationale_codes": [
+    "COST_PASS",
+    "HALF_LIFE_OK"
+  ]
+}

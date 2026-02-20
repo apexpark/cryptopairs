@@ -257,6 +257,14 @@ Returns deterministic, backend-generated analytics series for the selected pair:
 - `markers[]` for `entry`, `exit`, and `stop`
 - selected variant + active trading bands used for the simulation
 
+## Strategy Live Z Endpoint
+
+```bash
+GET /v1/strategy/pairs/live-z?timeframe=1m&pair_id=PI_XBTUSD__PI_ETHUSD&points=300
+```
+
+Returns near-real-time z-score series + entry/exit/stop markers for Trade-page operator timing cues.
+
 ## Strategy Cost Gate Endpoint
 
 ```bash
@@ -292,6 +300,19 @@ This command:
 - Pulls real Kraken candles in chunked windows from `BOOTSTRAP_START_TS`.
 - Upserts candles to local Timescale.
 - Writes integrity audit rows into `data_quality_intervals` for each chunk.
+
+## Data Pipeline E2E Validation
+
+```bash
+python3 tools/scripts/data_pipeline_e2e_check.py \
+  --data-service-url http://127.0.0.1:8080 \
+  --instrument PI_XBTUSD \
+  --timeframe 1m \
+  --output-json artifacts/data_pipeline_e2e_report.json
+```
+
+The script checks live service health, queries local-first candles, validates integrity metadata,
+reads integrity history, and emits a machine-readable pass/fail report.
 
 ## Kraken History Depth Probe (Live Data)
 

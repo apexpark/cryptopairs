@@ -158,6 +158,14 @@ This project follows SemVer as defined in `docs/02-versioning-and-releases.md`.
     - `EXECUTION_ORDER_STATUS_LOOKUP_ENABLED` (default `false`)
     - `KRAKEN_FUTURES_ORDER_STATUS_PATH` (default `/derivatives/api/v3/orders/status`)
     - `KRAKEN_FUTURES_ORDER_STATUS_QUERY_KEY` (default `orderId`)
+- Strategy live z-score feed endpoint:
+  - `GET /v1/strategy/pairs/live-z` for near-real-time z-score series + entry/exit/stop markers.
+  - New contract/example:
+    - `specs/contracts/strategy_pairs_live_z_response.schema.json`
+    - `specs/examples/strategy_pairs_live_z_response.example.json`
+- Data pipeline reproducible E2E verifier:
+  - `tools/scripts/data_pipeline_e2e_check.py` validates health, local-first query integrity,
+    and integrity history persistence with machine-readable report output.
 
 ### Changed
 - Product/risk/architecture docs now explicitly define manual-first live trading for MVP.
@@ -177,8 +185,15 @@ This project follows SemVer as defined in `docs/02-versioning-and-releases.md`.
   - after intent acceptance, UI dispatches each leg through `POST /v1/execution/order-intent/dispatch`
   - UI stores and displays lifecycle snapshots from `GET /v1/execution/order-intent/history`
   - local spread position ledger updates only when accepted legs are acknowledged by dispatch
+- Trade and Analytics z-score rendering now use strategy-service backend outputs:
+  - Trade page z-series uses `/v1/strategy/pairs/live-z`
+  - Analytics equity curve remains from `/v1/strategy/pairs/backtest`
+- Data query windows are normalized to timeframe boundaries before integrity evaluation and persistence,
+  with explicit `REQUEST_WINDOW_NORMALIZED` warning codes for auditability.
 
 ### Fixed
 - Removed accidental duplicate spec/example files with `* 2.json` suffix.
 - Execution lifecycle transition matrix now permits watchdog-driven expiration from
   `ACKNOWLEDGED` and `PARTIALLY_FILLED` (`-> EXPIRED`).
+- Integrity false-negative gap detection when request bounds were unaligned to timeframe steps
+  (could report `INCOMPLETE` with non-empty candle windows).

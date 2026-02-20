@@ -11,6 +11,7 @@ use axum::{
     routing::{get, post},
     Json, Router,
 };
+use chrono::{TimeZone, Utc};
 use common_types::{DataQueryRequest, DataQueryResponse, Timeframe};
 use kraken_adapter::MarketDataAdapter;
 use repository::{IntegrityHistoryEntry, MarketDataRepository};
@@ -68,28 +69,32 @@ async fn query_data(
     State(state): State<AppState>,
     Json(request): Json<DataQueryRequest>,
 ) -> Result<Json<DataQueryResponse>, ApiError> {
+    let normalized_request = normalize_request_window(&request);
+    let normalization_warning = normalization_warning_code(&request, &normalized_request);
+
     let initial_candles = state
         .repository
-        .fetch_candles(&request)
+        .fetch_candles(&normalized_request)
         .await
         .map_err(|error| ApiError::SourceUnavailable(error.to_string()))?;
 
     let mut integrity = gap_detector::build_integrity_report(
-        &request,
+        &normalized_request,
         &initial_candles,
         state.integrity_threshold_pct,
     );
+    let mut unresolved_backfill_codes: Vec<String> = vec![];
     if !integrity.missing_ranges.is_empty() {
         info!(
-            instrument = %request.instrument,
+            instrument = %normalized_request.instrument,
             missing_ranges = integrity.missing_ranges.len(),
             "local gap detected; attempting targeted backfill"
         );
 
         for range in &integrity.missing_ranges {
             let backfill_request = DataQueryRequest {
-                instrument: request.instrument.clone(),
-                timeframe: request.timeframe,
+                instrument: normalized_request.instrument.clone(),
+                timeframe: normalized_request.timeframe,
                 start_ts: range.start_ts,
                 end_ts: range.end_ts,
             };
@@ -97,27 +102,42 @@ async fn query_data(
                 Ok(candles) if !candles.is_empty() => {
                     let written = state
                         .repository
-                        .upsert_candles(&request.instrument, request.timeframe, &candles)
+                        .upsert_candles(
+                            &normalized_request.instrument,
+                            normalized_request.timeframe,
+                            &candles,
+                        )
                         .await
                         .map_err(|error| ApiError::SourceUnavailable(error.to_string()))?;
                     info!(
-                        instrument = %request.instrument,
-                        timeframe = ?request.timeframe,
+                        instrument = %normalized_request.instrument,
+                        timeframe = ?normalized_request.timeframe,
                         written,
                         "backfill range persisted"
                     );
                 }
                 Ok(_) => {
+                    unresolved_backfill_codes.push(format!(
+                        "UNRESOLVED_BACKFILL_EMPTY:{}:{}",
+                        range.start_ts.to_rfc3339(),
+                        range.end_ts.to_rfc3339()
+                    ));
                     warn!(
-                        instrument = %request.instrument,
+                        instrument = %normalized_request.instrument,
                         start_ts = %range.start_ts,
                         end_ts = %range.end_ts,
                         "backfill returned no candles"
                     );
                 }
                 Err(error) => {
+                    unresolved_backfill_codes.push(format!(
+                        "UNRESOLVED_BACKFILL_ERROR:{}:{}:{}",
+                        range.start_ts.to_rfc3339(),
+                        range.end_ts.to_rfc3339(),
+                        error
+                    ));
                     warn!(
-                        instrument = %request.instrument,
+                        instrument = %normalized_request.instrument,
                         start_ts = %range.start_ts,
                         end_ts = %range.end_ts,
                         error = %error,
@@ -130,22 +150,31 @@ async fn query_data(
 
     let candles = state
         .repository
-        .fetch_candles(&request)
+        .fetch_candles(&normalized_request)
         .await
         .map_err(|error| ApiError::SourceUnavailable(error.to_string()))?;
-    integrity =
-        gap_detector::build_integrity_report(&request, &candles, state.integrity_threshold_pct);
+    integrity = gap_detector::build_integrity_report(
+        &normalized_request,
+        &candles,
+        state.integrity_threshold_pct,
+    );
+    if let Some(code) = normalization_warning {
+        integrity.warnings.push(code);
+    }
+    if !integrity.missing_ranges.is_empty() && !unresolved_backfill_codes.is_empty() {
+        integrity.warnings.extend(unresolved_backfill_codes);
+    }
     state
         .repository
-        .record_quality_interval(&request, &integrity)
+        .record_quality_interval(&normalized_request, &integrity)
         .await
         .map_err(|error| ApiError::SourceUnavailable(error.to_string()))?;
 
     Ok(Json(DataQueryResponse {
-        instrument: request.instrument,
-        timeframe: request.timeframe,
-        start_ts: request.start_ts,
-        end_ts: request.end_ts,
+        instrument: normalized_request.instrument,
+        timeframe: normalized_request.timeframe,
+        start_ts: normalized_request.start_ts,
+        end_ts: normalized_request.end_ts,
         candles,
         integrity,
     }))
@@ -204,5 +233,110 @@ fn map_history_row(value: IntegrityHistoryEntry) -> IntegrityHistoryRow {
         coverage_pct: value.coverage_pct,
         reason: value.reason,
         checked_at: value.checked_at,
+    }
+}
+
+fn normalize_request_window(request: &DataQueryRequest) -> DataQueryRequest {
+    let step = request.timeframe.step_seconds();
+    let (start, end) = align_bounds_to_step(
+        request.start_ts.timestamp(),
+        request.end_ts.timestamp(),
+        step,
+    );
+    if start > end {
+        return request.clone();
+    }
+    let start_ts = Utc
+        .timestamp_opt(start, 0)
+        .single()
+        .unwrap_or(request.start_ts);
+    let end_ts = Utc.timestamp_opt(end, 0).single().unwrap_or(request.end_ts);
+    DataQueryRequest {
+        instrument: request.instrument.clone(),
+        timeframe: request.timeframe,
+        start_ts,
+        end_ts,
+    }
+}
+
+fn align_bounds_to_step(start: i64, end: i64, step: i64) -> (i64, i64) {
+    if step <= 0 {
+        return (start, end);
+    }
+    let start_offset = start.rem_euclid(step);
+    let aligned_start = if start_offset == 0 {
+        start
+    } else {
+        start + (step - start_offset)
+    };
+    let aligned_end = end - end.rem_euclid(step);
+    (aligned_start, aligned_end)
+}
+
+fn normalization_warning_code(
+    original: &DataQueryRequest,
+    normalized: &DataQueryRequest,
+) -> Option<String> {
+    if original.start_ts == normalized.start_ts && original.end_ts == normalized.end_ts {
+        return None;
+    }
+    Some(format!(
+        "REQUEST_WINDOW_NORMALIZED:{}:{}:{}:{}",
+        original.start_ts.to_rfc3339(),
+        original.end_ts.to_rfc3339(),
+        normalized.start_ts.to_rfc3339(),
+        normalized.end_ts.to_rfc3339()
+    ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{align_bounds_to_step, normalize_request_window};
+    use chrono::{TimeZone, Utc};
+    use common_types::{DataQueryRequest, Timeframe};
+
+    #[test]
+    fn align_bounds_ceil_start_and_floor_end() {
+        let (start, end) = align_bounds_to_step(1_700_000_005, 1_700_000_125, 60);
+        assert_eq!(start, 1_700_000_040);
+        assert_eq!(end, 1_700_000_100);
+    }
+
+    #[test]
+    fn normalize_request_window_preserves_usable_range() {
+        let request = DataQueryRequest {
+            instrument: "PI_XBTUSD".to_string(),
+            timeframe: Timeframe::OneMinute,
+            start_ts: Utc
+                .timestamp_opt(1_700_000_005, 0)
+                .single()
+                .expect("valid timestamp"),
+            end_ts: Utc
+                .timestamp_opt(1_700_000_125, 0)
+                .single()
+                .expect("valid timestamp"),
+        };
+        let normalized = normalize_request_window(&request);
+        assert_eq!(normalized.start_ts.timestamp(), 1_700_000_040);
+        assert_eq!(normalized.end_ts.timestamp(), 1_700_000_100);
+    }
+
+    #[test]
+    fn normalize_request_window_falls_back_when_alignment_inverts_window() {
+        let request = DataQueryRequest {
+            instrument: "PI_XBTUSD".to_string(),
+            timeframe: Timeframe::OneMinute,
+            start_ts: Utc
+                .timestamp_opt(1_700_000_005, 0)
+                .single()
+                .expect("valid timestamp"),
+            end_ts: Utc
+                .timestamp_opt(1_700_000_039, 0)
+                .single()
+                .expect("valid timestamp"),
+        };
+        let normalized = normalize_request_window(&request);
+        assert_eq!(normalized.start_ts, request.start_ts);
+        assert_eq!(normalized.end_ts, request.end_ts);
     }
 }

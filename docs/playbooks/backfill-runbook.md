@@ -45,3 +45,15 @@ Operational procedure for diagnosing and repairing missing market data.
 1. Exchange API limitations or outages.
 2. Persistent schema/parsing failures.
 3. Repeated unresolved gaps on core trading pairs.
+
+## Automated Verification
+
+Run the E2E checker to produce an auditable report:
+
+```bash
+python3 tools/scripts/data_pipeline_e2e_check.py \
+  --data-service-url http://127.0.0.1:8080 \
+  --instrument PI_XBTUSD \
+  --timeframe 1m \
+  --output-json artifacts/data_pipeline_e2e_report.json
+```

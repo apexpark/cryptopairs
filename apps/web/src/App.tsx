@@ -15,6 +15,7 @@ import {
   fetchStrategyBacktest,
   fetchStrategyCostGates,
   fetchStrategyCues,
+  fetchStrategyLiveZ,
   fetchStrategyPortfolioPlan,
   submitOrderIntent,
 } from "./lib/api";
@@ -421,13 +422,16 @@ function App(): JSX.Element {
       const bars = timeframe === "1m" ? 300 : timeframe === "15m" ? 280 : 220;
 
       try {
-        const backtest = await fetchStrategyBacktest(timeframe, selectedCueRow.cue.pair_id, bars);
+        const [liveZ, backtest] = await Promise.all([
+          fetchStrategyLiveZ(timeframe, selectedCueRow.cue.pair_id, bars),
+          fetchStrategyBacktest(timeframe, selectedCueRow.cue.pair_id, bars),
+        ]);
 
         if (cancelled) {
           return;
         }
 
-        if (backtest.points.length < 20) {
+        if (liveZ.points.length < 20 || backtest.points.length < 20) {
           setAnalyticsError("Insufficient aligned data for analytics charts.");
           setZSeries([]);
           setEquitySeries([]);
@@ -435,9 +439,9 @@ function App(): JSX.Element {
           return;
         }
 
-        const zValues = backtest.points.map((point) => point.z);
+        const zValues = liveZ.points.map((point) => point.z);
         const equity = backtest.points.map((point) => point.equity);
-        const markers = backtest.markers.filter((marker) =>
+        const markers = liveZ.markers.filter((marker) =>
           marker.kind === "entry" || marker.kind === "exit" || marker.kind === "stop"
         );
 
@@ -450,7 +454,7 @@ function App(): JSX.Element {
           return;
         }
         setAnalyticsError(
-          `Analytics unavailable from strategy backtest: ${
+          `Analytics unavailable from strategy services: ${
             error instanceof Error ? error.message : String(error)
           }`
         );

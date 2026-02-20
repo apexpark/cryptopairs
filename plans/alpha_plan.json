@@ -1,7 +1,7 @@
 {
   "version": 1,
-  "updated_at": "2026-02-20T01:39:14Z",
-  "active_focus_id": 3,
+  "updated_at": "2026-02-20T01:56:36Z",
+  "active_focus_id": 6,
   "milestone": "Alpha Trial Readiness",
   "items": [
     {
@@ -37,34 +37,46 @@
     {
       "id": 3,
       "title": "Add near-real-time spread z-score feed endpoint for Trade page",
-      "status": "PENDING",
+      "status": "DONE",
       "priority": "NEXT",
       "depends_on": [],
       "owner": "codex",
-      "evidence": [],
-      "notes": []
+      "evidence": [
+        "services/strategy-service/src/main.rs"
+      ],
+      "notes": [
+        "2026-02-20T01:56:36Z Added live z endpoint and wired Trade chart feed"
+      ]
     },
     {
       "id": 4,
       "title": "Run reproducible live E2E validation for historical capture/backfill/storage",
-      "status": "PENDING",
+      "status": "DONE",
       "priority": "NEXT",
       "depends_on": [],
       "owner": "codex",
-      "evidence": [],
-      "notes": []
+      "evidence": [
+        "tools/scripts/data_pipeline_e2e_check.py"
+      ],
+      "notes": [
+        "2026-02-20T01:56:36Z Added reproducible live E2E checker and validated PASS report"
+      ]
     },
     {
       "id": 5,
       "title": "Add unresolved-gap escalation path and operator-visible reason codes",
-      "status": "PENDING",
+      "status": "DONE",
       "priority": "NEXT",
       "depends_on": [
         4
       ],
       "owner": "codex",
-      "evidence": [],
-      "notes": []
+      "evidence": [
+        "services/data-service/src/lib.rs"
+      ],
+      "notes": [
+        "2026-02-20T01:56:36Z Added unresolved backfill reason codes and normalization warning propagation"
+      ]
     },
     {
       "id": 6,
@@ -228,6 +240,13 @@
       "focus_id": 3,
       "delta": "Completed items 1-2 with contracts, endpoint, frontend migration, and tests",
       "next_action": "Implement live z-score feed endpoint and wire Trade chart to stream",
+      "blockers": []
+    },
+    {
+      "ts": "2026-02-20T01:56:36Z",
+      "focus_id": 6,
+      "delta": "Completed items 3-5 with live z feed, E2E validator, and integrity reason-code hardening",
+      "next_action": "Implement Kraken historical depth limit enforcement for item 6",
       "blockers": []
     }
   ]
