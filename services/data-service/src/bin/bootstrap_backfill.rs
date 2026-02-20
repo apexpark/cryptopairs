@@ -6,7 +6,7 @@ use data_service::{
     gap_detector::build_integrity_report,
     repository::{MarketDataRepository, PostgresMarketDataRepository},
 };
-use kraken_adapter::{KrakenFuturesRestClient, MarketDataAdapter};
+use kraken_adapter::{KrakenFuturesRestClient, KrakenHistoryBounds, MarketDataAdapter};
 use std::sync::Arc;
 use tracing::{info, warn};
 
@@ -25,9 +25,19 @@ async fn main() -> Result<()> {
 
     let repository: Arc<dyn MarketDataRepository> =
         Arc::new(PostgresMarketDataRepository::connect(&settings.postgres_url).await?);
-    let adapter: Arc<dyn MarketDataAdapter> = Arc::new(KrakenFuturesRestClient::new(
-        settings.kraken_base_url.clone(),
-    ));
+    let history_bounds = KrakenHistoryBounds::from_file(&settings.kraken_history_bounds_path)
+        .unwrap_or_else(|error| {
+            warn!(
+                path = %settings.kraken_history_bounds_path,
+                error = %error,
+                "failed loading configured history bounds; falling back to built-in defaults"
+            );
+            KrakenHistoryBounds::default()
+        });
+    let adapter: Arc<dyn MarketDataAdapter> = Arc::new(
+        KrakenFuturesRestClient::new(settings.kraken_base_url.clone())
+            .with_history_bounds(history_bounds),
+    );
 
     for symbol in &settings.symbols {
         for timeframe in [

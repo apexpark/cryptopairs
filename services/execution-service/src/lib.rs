@@ -7,6 +7,25 @@ pub struct ExecutionGateConfig {
     pub min_coverage_pct: f64,
 }
 
+#[derive(Debug, Clone, Copy)]
+pub struct RiskCapsConfig {
+    pub per_pair_max_qty: f64,
+    pub gross_max_qty: f64,
+    pub max_leverage: f64,
+    pub daily_loss_limit_usd: f64,
+    pub entry_cooldown_seconds: i64,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct RiskCheckInput {
+    pub active_pair_qty: f64,
+    pub active_gross_qty: f64,
+    pub request_qty: f64,
+    pub leverage: f64,
+    pub daily_loss_usd: f64,
+    pub seconds_since_last_entry: Option<i64>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum GateDecision {
     Allowed,
@@ -175,6 +194,7 @@ pub fn evaluate_order_intent(
     kill_switch_active: bool,
     gate_decision: GateDecision,
     reconcile_decision: ReconcileDecision,
+    risk_decision: GateDecision,
 ) -> OrderIntentDecision {
     if matches!(action, OrderIntentAction::EmergencyStopClose) {
         return OrderIntentDecision::Accepted;
@@ -190,9 +210,86 @@ pub fn evaluate_order_intent(
         GateDecision::Blocked(reason) => return OrderIntentDecision::Blocked(reason),
     }
     match reconcile_decision {
-        ReconcileDecision::Allowed => OrderIntentDecision::Accepted,
-        ReconcileDecision::Blocked(reason) => OrderIntentDecision::Blocked(reason),
+        ReconcileDecision::Allowed => {}
+        ReconcileDecision::Blocked(reason) => return OrderIntentDecision::Blocked(reason),
     }
+    match risk_decision {
+        GateDecision::Allowed => OrderIntentDecision::Accepted,
+        GateDecision::Blocked(reason) => OrderIntentDecision::Blocked(reason),
+    }
+}
+
+pub fn evaluate_risk_caps(
+    action: OrderIntentAction,
+    input: RiskCheckInput,
+    config: RiskCapsConfig,
+) -> GateDecision {
+    if !matches!(action, OrderIntentAction::Entry) {
+        return GateDecision::Allowed;
+    }
+    if !input.request_qty.is_finite() || input.request_qty <= 0.0 {
+        return GateDecision::Blocked(
+            "risk gate blocked signal: request_qty must be finite and > 0".to_string(),
+        );
+    }
+    if !input.active_pair_qty.is_finite() || !input.active_gross_qty.is_finite() {
+        return GateDecision::Blocked(
+            "risk gate blocked signal: active exposure snapshot is invalid".to_string(),
+        );
+    }
+    if !input.leverage.is_finite() {
+        return GateDecision::Blocked(
+            "risk gate blocked signal: leverage snapshot is invalid".to_string(),
+        );
+    }
+    if !input.daily_loss_usd.is_finite() {
+        return GateDecision::Blocked(
+            "risk gate blocked signal: daily loss snapshot is invalid".to_string(),
+        );
+    }
+
+    let projected_pair_qty = input.active_pair_qty + input.request_qty;
+    if projected_pair_qty > config.per_pair_max_qty {
+        return GateDecision::Blocked(format!(
+            "risk gate blocked signal: per_pair_cap exceeded projected_pair_qty={projected_pair_qty:.4} cap={:.4}",
+            config.per_pair_max_qty
+        ));
+    }
+
+    let projected_gross_qty = input.active_gross_qty + input.request_qty;
+    if projected_gross_qty > config.gross_max_qty {
+        return GateDecision::Blocked(format!(
+            "risk gate blocked signal: gross_cap exceeded projected_gross_qty={projected_gross_qty:.4} cap={:.4}",
+            config.gross_max_qty
+        ));
+    }
+
+    if input.leverage > config.max_leverage {
+        return GateDecision::Blocked(format!(
+            "risk gate blocked signal: leverage exceeded leverage={:.4} cap={:.4}",
+            input.leverage, config.max_leverage
+        ));
+    }
+
+    if input.daily_loss_usd >= config.daily_loss_limit_usd {
+        return GateDecision::Blocked(format!(
+            "risk gate blocked signal: daily_loss exceeded daily_loss_usd={:.4} cap={:.4}",
+            input.daily_loss_usd, config.daily_loss_limit_usd
+        ));
+    }
+
+    if config.entry_cooldown_seconds > 0 {
+        if let Some(seconds_since_last_entry) = input.seconds_since_last_entry {
+            if seconds_since_last_entry < config.entry_cooldown_seconds {
+                return GateDecision::Blocked(format!(
+                    "risk gate blocked signal: cooldown active seconds_since_last_entry={seconds_since_last_entry} cooldown_seconds={}",
+                    config.entry_cooldown_seconds
+                ));
+            }
+        }
+    }
+
+    GateDecision::Allowed
 }
 
 pub fn normalize_side(value: &str) -> Option<&'static str> {
@@ -263,9 +360,10 @@ fn parse_integrity_status(value: &str) -> Option<IntegrityStatus> {
 #[cfg(test)]
 mod tests {
     use super::{
-        can_transition_state, evaluate_integrity_gate, evaluate_order_intent, normalize_side,
-        parse_integrity_status, ExecutionGateConfig, GateDecision, OrderIntentAction,
-        OrderIntentDecision, OrderLifecycleState, ReconcileDecision,
+        can_transition_state, evaluate_integrity_gate, evaluate_order_intent, evaluate_risk_caps,
+        normalize_side, parse_integrity_status, ExecutionGateConfig, GateDecision,
+        OrderIntentAction, OrderIntentDecision, OrderLifecycleState, ReconcileDecision,
+        RiskCapsConfig, RiskCheckInput,
     };
     use chrono::Utc;
     use common_types::{DataIntegrityReport, IntegrityStatus};
@@ -322,6 +420,7 @@ mod tests {
             true,
             GateDecision::Allowed,
             ReconcileDecision::Allowed,
+            GateDecision::Allowed,
         );
         assert!(matches!(decision, OrderIntentDecision::Blocked(_)));
     }
@@ -333,6 +432,7 @@ mod tests {
             false,
             GateDecision::Allowed,
             ReconcileDecision::Allowed,
+            GateDecision::Allowed,
         );
         assert_eq!(decision, OrderIntentDecision::Accepted);
     }
@@ -344,6 +444,7 @@ mod tests {
             true,
             GateDecision::Blocked("integrity failed".to_string()),
             ReconcileDecision::Blocked("reconcile failed".to_string()),
+            GateDecision::Blocked("risk failed".to_string()),
         );
         assert_eq!(decision, OrderIntentDecision::Accepted);
     }
@@ -355,8 +456,67 @@ mod tests {
             false,
             GateDecision::Allowed,
             ReconcileDecision::Blocked("drift exceeded".to_string()),
+            GateDecision::Allowed,
         );
         assert!(matches!(decision, OrderIntentDecision::Blocked(_)));
+    }
+
+    #[test]
+    fn order_intent_blocks_when_risk_gate_blocks() {
+        let decision = evaluate_order_intent(
+            OrderIntentAction::Entry,
+            false,
+            GateDecision::Allowed,
+            ReconcileDecision::Allowed,
+            GateDecision::Blocked("risk cap".to_string()),
+        );
+        assert!(matches!(decision, OrderIntentDecision::Blocked(_)));
+    }
+
+    #[test]
+    fn risk_caps_block_when_per_pair_cap_exceeded() {
+        let decision = evaluate_risk_caps(
+            OrderIntentAction::Entry,
+            RiskCheckInput {
+                active_pair_qty: 4.0,
+                active_gross_qty: 8.0,
+                request_qty: 2.0,
+                leverage: 1.2,
+                daily_loss_usd: 10.0,
+                seconds_since_last_entry: Some(120),
+            },
+            RiskCapsConfig {
+                per_pair_max_qty: 5.0,
+                gross_max_qty: 20.0,
+                max_leverage: 3.0,
+                daily_loss_limit_usd: 500.0,
+                entry_cooldown_seconds: 30,
+            },
+        );
+        assert!(matches!(decision, GateDecision::Blocked(_)));
+    }
+
+    #[test]
+    fn risk_caps_allow_entry_when_limits_are_safe() {
+        let decision = evaluate_risk_caps(
+            OrderIntentAction::Entry,
+            RiskCheckInput {
+                active_pair_qty: 2.0,
+                active_gross_qty: 6.0,
+                request_qty: 1.0,
+                leverage: 1.2,
+                daily_loss_usd: 30.0,
+                seconds_since_last_entry: Some(120),
+            },
+            RiskCapsConfig {
+                per_pair_max_qty: 5.0,
+                gross_max_qty: 20.0,
+                max_leverage: 3.0,
+                daily_loss_limit_usd: 500.0,
+                entry_cooldown_seconds: 30,
+            },
+        );
+        assert_eq!(decision, GateDecision::Allowed);
     }
 
     #[test]

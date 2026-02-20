@@ -1,0 +1,10 @@
+{
+  "reconcile": {
+    "exchange": "kraken_futures",
+    "account_id": "primary",
+    "ts": "2026-02-20T02:11:00Z",
+    "status": "OK",
+    "drift_notional": 0.12,
+    "notes": "reconciliation passed"
+  }
+}

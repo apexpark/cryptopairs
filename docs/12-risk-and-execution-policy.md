@@ -35,6 +35,8 @@ Define mandatory controls for converting strategy signals into safe and auditabl
 4. Exposure and leverage within configured limits.
 5. Kill switch not active.
 6. Operator confirmation present for `ENTRY` and `EXIT`.
+7. Daily loss and entry cooldown within configured limits.
+8. Fresh account snapshot available from account-service within configured age threshold.
 
 ## Post-Trade Checks
 

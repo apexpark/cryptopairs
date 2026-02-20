@@ -25,3 +25,14 @@ python3 tools/scripts/data_pipeline_e2e_check.py \
   --timeframe 1m \
   --output-json artifacts/data_pipeline_e2e_report.json
 ```
+
+## Kraken History Depth Probe
+
+Run live Kraken depth checks to update the historical bounds policy:
+
+```bash
+python3 tools/scripts/kraken_history_depth_probe.py \
+  --symbol PI_XBTUSD \
+  --timeframes 1m 15m 1h \
+  --output-json artifacts/kraken_history_depth_probe_PI_XBTUSD.json
+```

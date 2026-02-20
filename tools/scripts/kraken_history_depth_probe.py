@@ -45,7 +45,7 @@ def continuity_issues(candles: List[Dict[str, Any]], step_ms: int) -> int:
 
 
 def iso(ms: int) -> str:
-    return dt.datetime.utcfromtimestamp(ms / 1000).replace(tzinfo=dt.timezone.utc).isoformat()
+    return dt.datetime.fromtimestamp(ms / 1000, tz=dt.timezone.utc).isoformat()
 
 
 def probe(symbol: str, timeframe: str) -> Dict[str, Any]:

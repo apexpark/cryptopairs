@@ -334,6 +334,13 @@ struct AccountQuery {
     account_id: String,
 }
 
+#[derive(Debug, Deserialize)]
+struct SnapshotDayStartQuery {
+    exchange: String,
+    account_id: String,
+    day_start_utc: DateTime<Utc>,
+}
+
 pub fn build_router(state: AppState) -> Router {
     let cors = CorsLayer::new()
         .allow_origin(Any)
@@ -344,6 +351,10 @@ pub fn build_router(state: AppState) -> Router {
         .route(
             "/v1/account/snapshot",
             post(write_snapshot).get(read_snapshot),
+        )
+        .route(
+            "/v1/account/snapshot/day-start",
+            get(read_day_start_snapshot),
         )
         .route(
             "/v1/account/reconcile",
@@ -392,6 +403,36 @@ async fn read_snapshot(
         .latest_snapshot(&query.exchange, &query.account_id)
         .await
         .map_err(|error| ApiError(error.to_string()))?;
+    Ok(Json(serde_json::json!({ "snapshot": snapshot })))
+}
+
+async fn read_day_start_snapshot(
+    State(state): State<AppState>,
+    axum::extract::Query(query): axum::extract::Query<SnapshotDayStartQuery>,
+) -> Result<impl IntoResponse, ApiError> {
+    let row = state
+        .repository
+        .client
+        .query_opt(
+            "SELECT exchange, account_id, ts, equity, balance, margin_used, unrealized_pnl, realized_pnl
+             FROM account_snapshots
+             WHERE exchange=$1 AND account_id=$2 AND ts >= $3
+             ORDER BY ts ASC
+             LIMIT 1",
+            &[&query.exchange, &query.account_id, &query.day_start_utc],
+        )
+        .await
+        .map_err(|error| ApiError(error.to_string()))?;
+    let snapshot = row.map(|r| AccountSnapshotRead {
+        exchange: r.get(0),
+        account_id: r.get(1),
+        ts: r.get(2),
+        equity: r.get(3),
+        balance: r.get(4),
+        margin_used: r.get(5),
+        unrealized_pnl: r.get(6),
+        realized_pnl: r.get(7),
+    });
     Ok(Json(serde_json::json!({ "snapshot": snapshot })))
 }
 

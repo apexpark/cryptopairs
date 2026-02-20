@@ -1,0 +1,36 @@
+{
+  "$id": "https://cryptopairs/specs/contracts/account_reconcile_response.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "AccountReconcileResponse",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["reconcile"],
+  "properties": {
+    "reconcile": {
+      "anyOf": [
+        { "type": "null" },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "exchange",
+            "account_id",
+            "ts",
+            "status",
+            "drift_notional",
+            "notes"
+          ],
+          "properties": {
+            "exchange": { "type": "string" },
+            "account_id": { "type": "string" },
+            "ts": { "type": "string", "format": "date-time" },
+            "status": { "type": "string" },
+            "drift_notional": { "type": "number", "minimum": 0 },
+            "notes": { "type": "string" }
+          }
+        }
+      ]
+    }
+  },
+  "version": "0.1.0"
+}

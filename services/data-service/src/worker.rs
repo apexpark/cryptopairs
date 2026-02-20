@@ -1,8 +1,10 @@
 use crate::AppState;
-use chrono::{Duration, Utc};
+use chrono::{DateTime, Duration, Utc};
 use common_types::{DataQueryRequest, Timeframe};
 use tokio::time::{sleep, Duration as TokioDuration};
 use tracing::{info, warn};
+
+const KRAKEN_MAX_CANDLES_PER_REQUEST: i64 = 2000;
 
 pub fn spawn_backfill_worker(
     state: AppState,
@@ -55,34 +57,43 @@ async fn backfill_window(state: &AppState, request: &DataQueryRequest) -> anyhow
     }
 
     let mut total_written = 0usize;
+    let step_seconds = request.timeframe.step_seconds();
+
     for range in report.missing_ranges {
-        let segment = DataQueryRequest {
-            instrument: request.instrument.clone(),
-            timeframe: request.timeframe,
-            start_ts: range.start_ts,
-            end_ts: range.end_ts,
-        };
-        let fetched = match state.adapter.fetch_candles(&segment).await {
-            Ok(candles) => candles,
-            Err(error) => {
-                warn!(
-                    instrument = %request.instrument,
-                    timeframe = ?request.timeframe,
-                    start_ts = %segment.start_ts,
-                    end_ts = %segment.end_ts,
-                    error = %error,
-                    "backfill segment request failed"
-                );
+        for (segment_start, segment_end) in split_range_into_segments(
+            range.start_ts,
+            range.end_ts,
+            step_seconds,
+            KRAKEN_MAX_CANDLES_PER_REQUEST,
+        ) {
+            let segment = DataQueryRequest {
+                instrument: request.instrument.clone(),
+                timeframe: request.timeframe,
+                start_ts: segment_start,
+                end_ts: segment_end,
+            };
+            let fetched = match state.adapter.fetch_candles(&segment).await {
+                Ok(candles) => candles,
+                Err(error) => {
+                    warn!(
+                        instrument = %request.instrument,
+                        timeframe = ?request.timeframe,
+                        start_ts = %segment.start_ts,
+                        end_ts = %segment.end_ts,
+                        error = %error,
+                        "backfill segment request failed"
+                    );
+                    continue;
+                }
+            };
+            if fetched.is_empty() {
                 continue;
             }
-        };
-        if fetched.is_empty() {
-            continue;
+            total_written += state
+                .repository
+                .upsert_candles(&request.instrument, request.timeframe, &fetched)
+                .await?;
         }
-        total_written += state
-            .repository
-            .upsert_candles(&request.instrument, request.timeframe, &fetched)
-            .await?;
     }
 
     info!(
@@ -103,4 +114,65 @@ async fn backfill_window(state: &AppState, request: &DataQueryRequest) -> anyhow
         .record_quality_interval(request, &refreshed_report)
         .await?;
     Ok(())
+}
+
+fn split_range_into_segments(
+    start_ts: DateTime<Utc>,
+    end_ts: DateTime<Utc>,
+    step_seconds: i64,
+    max_candles_per_request: i64,
+) -> Vec<(DateTime<Utc>, DateTime<Utc>)> {
+    if step_seconds <= 0 || max_candles_per_request <= 1 || end_ts < start_ts {
+        return vec![];
+    }
+
+    let chunk_seconds = step_seconds * (max_candles_per_request - 1);
+    let mut segments = Vec::new();
+    let mut cursor = start_ts;
+    while cursor <= end_ts {
+        let segment_end = std::cmp::min(cursor + Duration::seconds(chunk_seconds), end_ts);
+        segments.push((cursor, segment_end));
+        cursor = segment_end + Duration::seconds(step_seconds);
+    }
+    segments
+}
+
+#[cfg(test)]
+mod tests {
+    use super::split_range_into_segments;
+    use chrono::{TimeZone, Utc};
+
+    #[test]
+    fn split_range_respects_page_depth_limit() {
+        let start = Utc
+            .timestamp_opt(1_700_000_000, 0)
+            .single()
+            .expect("valid timestamp");
+        let end = Utc
+            .timestamp_opt(1_700_172_740, 0)
+            .single()
+            .expect("valid timestamp");
+        let segments = split_range_into_segments(start, end, 60, 2_000);
+        assert_eq!(segments.len(), 2);
+        assert_eq!(
+            segments[0].1.timestamp() - segments[0].0.timestamp(),
+            60 * 1_999
+        );
+        assert!(segments[1].1 <= end);
+    }
+
+    #[test]
+    fn split_range_returns_empty_for_invalid_inputs() {
+        let start = Utc
+            .timestamp_opt(1_700_000_000, 0)
+            .single()
+            .expect("valid timestamp");
+        let end = Utc
+            .timestamp_opt(1_699_999_940, 0)
+            .single()
+            .expect("valid timestamp");
+        assert!(split_range_into_segments(start, end, 60, 2_000).is_empty());
+        assert!(split_range_into_segments(start, start, 0, 2_000).is_empty());
+        assert!(split_range_into_segments(start, start, 60, 1).is_empty());
+    }
 }

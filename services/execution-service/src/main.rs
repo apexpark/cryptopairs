@@ -10,8 +10,8 @@ use chrono::{DateTime, Utc};
 use common_types::Timeframe;
 use execution_service::{
     can_transition_state, evaluate_integrity_gate_from_store, evaluate_order_intent,
-    normalize_side, GateDecision, OrderIntentAction, OrderIntentDecision, OrderLifecycleState,
-    ReconcileDecision,
+    evaluate_risk_caps, normalize_side, GateDecision, OrderIntentAction, OrderIntentDecision,
+    OrderLifecycleState, ReconcileDecision, RiskCapsConfig, RiskCheckInput,
 };
 use hmac::{Hmac, Mac};
 use reqwest::header::{HeaderMap, HeaderValue, CONTENT_TYPE};
@@ -38,6 +38,8 @@ struct AppState {
     open_orders_poller: OpenOrdersPollerConfig,
     order_status_lookup: OrderStatusLookupConfig,
     trigger_reconcile_on_terminal: bool,
+    risk_caps: RiskCapsConfig,
+    risk_max_snapshot_age_seconds: i64,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -457,6 +459,53 @@ struct LiveTrackedOrder {
     current_state: OrderLifecycleState,
 }
 
+#[derive(Debug, Clone, Copy)]
+struct AccountSnapshotRow {
+    ts: DateTime<Utc>,
+    equity: f64,
+    margin_used: f64,
+}
+
+#[derive(Debug, Deserialize)]
+struct AccountServiceSnapshotResponse {
+    snapshot: Option<AccountSnapshotPayload>,
+}
+
+#[derive(Debug, Deserialize)]
+struct AccountSnapshotPayload {
+    #[allow(dead_code)]
+    exchange: String,
+    #[allow(dead_code)]
+    account_id: String,
+    ts: DateTime<Utc>,
+    equity: f64,
+    #[allow(dead_code)]
+    balance: f64,
+    margin_used: f64,
+    #[allow(dead_code)]
+    unrealized_pnl: f64,
+    #[allow(dead_code)]
+    realized_pnl: f64,
+}
+
+#[derive(Debug, Deserialize)]
+struct AccountServiceReconcileResponse {
+    reconcile: Option<AccountReconcilePayload>,
+}
+
+#[derive(Debug, Deserialize)]
+struct AccountReconcilePayload {
+    #[allow(dead_code)]
+    exchange: String,
+    #[allow(dead_code)]
+    account_id: String,
+    #[allow(dead_code)]
+    ts: DateTime<Utc>,
+    status: String,
+    drift_notional: f64,
+    notes: String,
+}
+
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct KrakenOpenOrdersResponse {
@@ -761,37 +810,103 @@ impl ExecutionRepository {
         Ok(())
     }
 
-    async fn fetch_latest_reconcile_decision(
+    async fn fetch_active_pair_qty(
         &self,
         exchange: &str,
         account_id: &str,
-    ) -> anyhow::Result<ReconcileDecision> {
+        instrument: &str,
+    ) -> anyhow::Result<f64> {
         let row = self
             .client
-            .query_opt(
-                "SELECT status, drift_notional, notes
-                 FROM reconciliation_events
-                 WHERE exchange=$1 AND account_id=$2
-                 ORDER BY ts DESC
-                 LIMIT 1",
+            .query_one(
+                "SELECT COALESCE(SUM(
+                    CASE
+                      WHEN i.action = 'ENTRY' THEN i.qty
+                      WHEN i.action IN ('EXIT', 'EMERGENCY_STOP_CLOSE') THEN -i.qty
+                      ELSE 0
+                    END
+                 ), 0.0) AS active_qty
+                 FROM execution_order_intents i
+                 JOIN (
+                    SELECT DISTINCT ON (idempotency_key)
+                      idempotency_key, state, created_at
+                    FROM execution_order_state_events
+                    ORDER BY idempotency_key, created_at DESC
+                 ) latest
+                    ON latest.idempotency_key = i.idempotency_key
+                 WHERE i.exchange = $1
+                   AND i.account_id = $2
+                   AND i.instrument = $3
+                   AND i.decision = 'ACCEPTED'
+                   AND latest.state IN ('APPROVED', 'PENDING_SUBMIT', 'ACKNOWLEDGED', 'PARTIALLY_FILLED')",
+                &[&exchange, &account_id, &instrument],
+            )
+            .await?;
+        let active_qty: f64 = row.get(0);
+        Ok(active_qty.max(0.0))
+    }
+
+    async fn fetch_active_gross_qty(
+        &self,
+        exchange: &str,
+        account_id: &str,
+    ) -> anyhow::Result<f64> {
+        let row = self
+            .client
+            .query_one(
+                "SELECT COALESCE(SUM(ABS(net_qty)), 0.0) AS gross_qty
+                 FROM (
+                    SELECT i.instrument,
+                           SUM(
+                             CASE
+                               WHEN i.action = 'ENTRY' THEN i.qty
+                               WHEN i.action IN ('EXIT', 'EMERGENCY_STOP_CLOSE') THEN -i.qty
+                               ELSE 0
+                             END
+                           ) AS net_qty
+                    FROM execution_order_intents i
+                    JOIN (
+                        SELECT DISTINCT ON (idempotency_key)
+                          idempotency_key, state, created_at
+                        FROM execution_order_state_events
+                        ORDER BY idempotency_key, created_at DESC
+                    ) latest
+                      ON latest.idempotency_key = i.idempotency_key
+                    WHERE i.exchange = $1
+                      AND i.account_id = $2
+                      AND i.decision = 'ACCEPTED'
+                      AND latest.state IN ('APPROVED', 'PENDING_SUBMIT', 'ACKNOWLEDGED', 'PARTIALLY_FILLED')
+                    GROUP BY i.instrument
+                 ) exposures",
                 &[&exchange, &account_id],
             )
             .await?;
-        let Some(row) = row else {
-            return Ok(ReconcileDecision::Blocked(format!(
-                "reconcile gate blocked signal: no reconcile history for exchange={exchange} account_id={account_id}"
-            )));
-        };
-        let status: String = row.get(0);
-        let drift_notional: f64 = row.get(1);
-        let notes: String = row.get(2);
-        if status == "OK" {
-            Ok(ReconcileDecision::Allowed)
-        } else {
-            Ok(ReconcileDecision::Blocked(format!(
-                "reconcile gate blocked signal: status={status} drift_notional={drift_notional:.4} notes={notes}"
-            )))
-        }
+        let gross_qty: f64 = row.get(0);
+        Ok(gross_qty.max(0.0))
+    }
+
+    async fn fetch_last_accepted_entry_ts(
+        &self,
+        exchange: &str,
+        account_id: &str,
+        instrument: &str,
+    ) -> anyhow::Result<Option<DateTime<Utc>>> {
+        let row = self
+            .client
+            .query_opt(
+                "SELECT created_at
+                 FROM execution_order_intents
+                 WHERE exchange=$1
+                   AND account_id=$2
+                   AND instrument=$3
+                   AND action='ENTRY'
+                   AND decision='ACCEPTED'
+                 ORDER BY created_at DESC
+                 LIMIT 1",
+                &[&exchange, &account_id, &instrument],
+            )
+            .await?;
+        Ok(row.map(|row| row.get(0)))
     }
 
     async fn record_state_event(
@@ -1261,6 +1376,32 @@ async fn main() -> anyhow::Result<()> {
         .ok()
         .and_then(|value| value.parse::<bool>().ok())
         .unwrap_or(true);
+    let risk_caps = RiskCapsConfig {
+        per_pair_max_qty: std::env::var("EXECUTION_RISK_PER_PAIR_MAX_QTY")
+            .ok()
+            .and_then(|value| value.parse::<f64>().ok())
+            .unwrap_or(12.0),
+        gross_max_qty: std::env::var("EXECUTION_RISK_GROSS_MAX_QTY")
+            .ok()
+            .and_then(|value| value.parse::<f64>().ok())
+            .unwrap_or(40.0),
+        max_leverage: std::env::var("EXECUTION_RISK_MAX_LEVERAGE")
+            .ok()
+            .and_then(|value| value.parse::<f64>().ok())
+            .unwrap_or(3.0),
+        daily_loss_limit_usd: std::env::var("EXECUTION_RISK_DAILY_LOSS_LIMIT_USD")
+            .ok()
+            .and_then(|value| value.parse::<f64>().ok())
+            .unwrap_or(500.0),
+        entry_cooldown_seconds: std::env::var("EXECUTION_RISK_ENTRY_COOLDOWN_SECONDS")
+            .ok()
+            .and_then(|value| value.parse::<i64>().ok())
+            .unwrap_or(30),
+    };
+    let risk_max_snapshot_age_seconds = std::env::var("EXECUTION_RISK_MAX_SNAPSHOT_AGE_SECONDS")
+        .ok()
+        .and_then(|value| value.parse::<i64>().ok())
+        .unwrap_or(120);
     let http_client = reqwest::Client::builder()
         .timeout(Duration::from_secs(5))
         .build()?;
@@ -1293,6 +1434,8 @@ async fn main() -> anyhow::Result<()> {
         open_orders_poller,
         order_status_lookup: order_status_lookup.clone(),
         trigger_reconcile_on_terminal,
+        risk_caps,
+        risk_max_snapshot_age_seconds,
     };
     tokio::spawn(spawn_ack_watchdog(app_state.clone()));
     tokio::spawn(spawn_open_orders_poller(app_state.clone()));
@@ -1336,6 +1479,12 @@ async fn main() -> anyhow::Result<()> {
         order_status_lookup_enabled = order_status_lookup.enabled,
         order_status_query_key = %order_status_lookup.query_key,
         trigger_reconcile_on_terminal,
+        risk_per_pair_max_qty = risk_caps.per_pair_max_qty,
+        risk_gross_max_qty = risk_caps.gross_max_qty,
+        risk_max_leverage = risk_caps.max_leverage,
+        risk_daily_loss_limit_usd = risk_caps.daily_loss_limit_usd,
+        risk_entry_cooldown_seconds = risk_caps.entry_cooldown_seconds,
+        risk_max_snapshot_age_seconds = risk_max_snapshot_age_seconds,
         "execution-service started"
     );
     axum::serve(listener, app).await?;
@@ -1727,6 +1876,210 @@ async fn update_kill_switch(
     Ok(Json(updated))
 }
 
+async fn fetch_latest_account_snapshot_from_service(
+    state: &AppState,
+    exchange: &str,
+    account_id: &str,
+) -> anyhow::Result<Option<AccountSnapshotRow>> {
+    let url = format!(
+        "{}/v1/account/snapshot",
+        state.account_service_url.trim_end_matches('/')
+    );
+    let response = state
+        .http_client
+        .get(url)
+        .query(&[("exchange", exchange), ("account_id", account_id)])
+        .send()
+        .await?;
+    if !response.status().is_success() {
+        return Err(anyhow::anyhow!(
+            "account-service snapshot read failed with status {}",
+            response.status()
+        ));
+    }
+    let payload: AccountServiceSnapshotResponse = response.json().await?;
+    Ok(payload.snapshot.map(|snapshot| AccountSnapshotRow {
+        ts: snapshot.ts,
+        equity: snapshot.equity,
+        margin_used: snapshot.margin_used,
+    }))
+}
+
+async fn fetch_day_start_equity_from_service(
+    state: &AppState,
+    exchange: &str,
+    account_id: &str,
+    day_start_utc: DateTime<Utc>,
+) -> anyhow::Result<Option<f64>> {
+    let url = format!(
+        "{}/v1/account/snapshot/day-start",
+        state.account_service_url.trim_end_matches('/')
+    );
+    let day_start_utc_raw = day_start_utc.to_rfc3339();
+    let response = state
+        .http_client
+        .get(url)
+        .query(&[
+            ("exchange", exchange),
+            ("account_id", account_id),
+            ("day_start_utc", day_start_utc_raw.as_str()),
+        ])
+        .send()
+        .await?;
+    if !response.status().is_success() {
+        return Err(anyhow::anyhow!(
+            "account-service day-start snapshot read failed with status {}",
+            response.status()
+        ));
+    }
+    let payload: AccountServiceSnapshotResponse = response.json().await?;
+    Ok(payload.snapshot.map(|snapshot| snapshot.equity))
+}
+
+async fn fetch_latest_reconcile_decision_from_service(
+    state: &AppState,
+    exchange: &str,
+    account_id: &str,
+) -> anyhow::Result<ReconcileDecision> {
+    let url = format!(
+        "{}/v1/account/reconcile",
+        state.account_service_url.trim_end_matches('/')
+    );
+    let response = state
+        .http_client
+        .get(url)
+        .query(&[("exchange", exchange), ("account_id", account_id)])
+        .send()
+        .await?;
+    if !response.status().is_success() {
+        return Err(anyhow::anyhow!(
+            "account-service reconcile read failed with status {}",
+            response.status()
+        ));
+    }
+    let payload: AccountServiceReconcileResponse = response.json().await?;
+    let Some(reconcile) = payload.reconcile else {
+        return Ok(ReconcileDecision::Blocked(format!(
+            "reconcile gate blocked signal: no reconcile history for exchange={exchange} account_id={account_id}"
+        )));
+    };
+    if reconcile.status == "OK" {
+        Ok(ReconcileDecision::Allowed)
+    } else {
+        Ok(ReconcileDecision::Blocked(format!(
+            "reconcile gate blocked signal: status={} drift_notional={:.4} notes={}",
+            reconcile.status, reconcile.drift_notional, reconcile.notes
+        )))
+    }
+}
+
+fn is_snapshot_stale(
+    snapshot_ts: DateTime<Utc>,
+    now: DateTime<Utc>,
+    max_snapshot_age_seconds: i64,
+) -> bool {
+    (now - snapshot_ts).num_seconds() > max_snapshot_age_seconds.max(0)
+}
+
+async fn evaluate_risk_gate_from_store(
+    state: &AppState,
+    exchange: &str,
+    account_id: &str,
+    instrument: &str,
+    action: OrderIntentAction,
+    request_qty: f64,
+) -> anyhow::Result<GateDecision> {
+    if !matches!(action, OrderIntentAction::Entry) {
+        return Ok(GateDecision::Allowed);
+    }
+
+    let latest_snapshot = match fetch_latest_account_snapshot_from_service(
+        state, exchange, account_id,
+    )
+    .await
+    {
+        Ok(snapshot) => snapshot,
+        Err(error) => {
+            return Ok(GateDecision::Blocked(format!(
+                "risk gate blocked signal: failed to fetch account snapshot from account-service: {error}"
+            )));
+        }
+    };
+
+    let Some(latest_snapshot) = latest_snapshot else {
+        return Ok(GateDecision::Blocked(format!(
+            "risk gate blocked signal: no account snapshot for exchange={exchange} account_id={account_id}"
+        )));
+    };
+
+    let now = Utc::now();
+    let snapshot_age_seconds = (now - latest_snapshot.ts).num_seconds();
+    if is_snapshot_stale(latest_snapshot.ts, now, state.risk_max_snapshot_age_seconds) {
+        return Ok(GateDecision::Blocked(format!(
+            "risk gate blocked signal: stale account snapshot age_seconds={snapshot_age_seconds} max_age_seconds={}",
+            state.risk_max_snapshot_age_seconds.max(0)
+        )));
+    }
+
+    let day_start = chrono::DateTime::<Utc>::from_naive_utc_and_offset(
+        Utc::now()
+            .date_naive()
+            .and_hms_opt(0, 0, 0)
+            .expect("midnight is valid"),
+        Utc,
+    );
+    let day_start_equity = match fetch_day_start_equity_from_service(
+        state, exchange, account_id, day_start,
+    )
+    .await
+    {
+        Ok(Some(equity)) => equity,
+        Ok(None) => {
+            return Ok(GateDecision::Blocked(format!(
+                "risk gate blocked signal: no day-start account snapshot for exchange={exchange} account_id={account_id} day_start_utc={}",
+                day_start.to_rfc3339()
+            )));
+        }
+        Err(error) => {
+            return Ok(GateDecision::Blocked(format!(
+                "risk gate blocked signal: failed to fetch day-start account snapshot from account-service: {error}"
+            )));
+        }
+    };
+    let daily_loss_usd = (day_start_equity - latest_snapshot.equity).max(0.0);
+    let leverage = if latest_snapshot.equity > 0.0 {
+        latest_snapshot.margin_used / latest_snapshot.equity
+    } else {
+        f64::INFINITY
+    };
+    let active_pair_qty = state
+        .repository
+        .fetch_active_pair_qty(exchange, account_id, instrument)
+        .await?;
+    let active_gross_qty = state
+        .repository
+        .fetch_active_gross_qty(exchange, account_id)
+        .await?;
+    let last_entry_ts = state
+        .repository
+        .fetch_last_accepted_entry_ts(exchange, account_id, instrument)
+        .await?;
+    let seconds_since_last_entry = last_entry_ts.map(|ts| (Utc::now() - ts).num_seconds());
+
+    Ok(evaluate_risk_caps(
+        action,
+        RiskCheckInput {
+            active_pair_qty,
+            active_gross_qty,
+            request_qty,
+            leverage,
+            daily_loss_usd,
+            seconds_since_last_entry,
+        },
+        state.risk_caps,
+    ))
+}
+
 async fn order_intent(
     State(state): State<AppState>,
     Json(payload): Json<OrderIntentRequest>,
@@ -1816,11 +2169,24 @@ async fn order_intent(
     let reconcile_decision = if matches!(action, OrderIntentAction::EmergencyStopClose) {
         ReconcileDecision::Allowed
     } else {
-        state
-            .repository
-            .fetch_latest_reconcile_decision(&payload.exchange, &payload.account_id)
+        fetch_latest_reconcile_decision_from_service(&state, &payload.exchange, &payload.account_id)
             .await
             .map_err(|error| ApiError::Upstream(error.to_string()))?
+    };
+
+    let risk_decision = if matches!(action, OrderIntentAction::EmergencyStopClose) {
+        GateDecision::Allowed
+    } else {
+        evaluate_risk_gate_from_store(
+            &state,
+            &payload.exchange,
+            &payload.account_id,
+            &payload.instrument,
+            action,
+            payload.qty,
+        )
+        .await
+        .map_err(|error| ApiError::Upstream(error.to_string()))?
     };
 
     let intent_decision = evaluate_order_intent(
@@ -1828,6 +2194,7 @@ async fn order_intent(
         kill_switch.active,
         gate_decision,
         reconcile_decision,
+        risk_decision,
     );
     let (decision, reason) = match intent_decision {
         OrderIntentDecision::Accepted => ("ACCEPTED".to_string(), String::new()),
@@ -2389,12 +2756,13 @@ fn map_order_intent(record: OrderIntentRecord) -> OrderIntentResponse {
 #[cfg(test)]
 mod tests {
     use super::{
-        derive_open_order_transition, derive_order_status_transition, is_terminal_state,
-        parse_ingest_target_state, parse_kraken_open_orders_response,
+        derive_open_order_transition, derive_order_status_transition, is_snapshot_stale,
+        is_terminal_state, parse_ingest_target_state, parse_kraken_open_orders_response,
         parse_kraken_order_status_response, parse_kraken_submit_response,
         sign_kraken_futures_payload, validate_manual_controls, ApiError, DispatchMode,
         KrakenOpenOrder, KrakenStatusOrder,
     };
+    use chrono::{Duration, Utc};
     use execution_service::{OrderIntentAction, OrderLifecycleState};
 
     #[test]
@@ -2654,5 +3022,12 @@ mod tests {
             derive_order_status_transition(OrderLifecycleState::Acknowledged, rejected),
             Some((OrderLifecycleState::Rejected, _))
         ));
+    }
+
+    #[test]
+    fn snapshot_freshness_blocks_when_older_than_threshold() {
+        let now = Utc::now();
+        assert!(is_snapshot_stale(now - Duration::seconds(121), now, 120));
+        assert!(!is_snapshot_stale(now - Duration::seconds(120), now, 120));
     }
 }
