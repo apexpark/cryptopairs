@@ -519,7 +519,8 @@ fn build_account_alerts(
         AccountObservabilityAlert {
             code: "account_snapshot_age".to_string(),
             severity: "P1".to_string(),
-            triggered: metrics.latest_snapshot_age_seconds >= thresholds.max_snapshot_age_seconds_p1,
+            triggered: metrics.latest_snapshot_age_seconds
+                >= thresholds.max_snapshot_age_seconds_p1,
             message: format!(
                 "snapshot age seconds={} threshold={}",
                 metrics.latest_snapshot_age_seconds, thresholds.max_snapshot_age_seconds_p1
