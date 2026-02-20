@@ -176,16 +176,14 @@ function formatSignedMetric(value: number | null | undefined, digits = 3): strin
   return `${value >= 0 ? "+" : "-"}${abs}`;
 }
 
-function deriveLegPositionSizes(position: SpreadPosition): { leftSize: number; rightSize: number } {
-  if (!Number.isFinite(position.totalSize) || position.totalSize <= 0 || position.direction === "NONE") {
-    return { leftSize: 0, rightSize: 0 };
-  }
-
-  if (position.direction === "LONG_SPREAD") {
-    return { leftSize: position.totalSize, rightSize: -position.totalSize };
-  }
-
-  return { leftSize: -position.totalSize, rightSize: position.totalSize };
+function derivePairLotSizes(
+  hedgeRatio: number | null | undefined
+): { leftSize: number; rightSize: number } {
+  const sanitizedHedgeRatio =
+    hedgeRatio != null && Number.isFinite(hedgeRatio) && hedgeRatio > 0
+      ? Math.abs(hedgeRatio)
+      : 1;
+  return { leftSize: 1, rightSize: sanitizedHedgeRatio };
 }
 
 function formatOpenInterest(value: number | null | undefined): string {
@@ -658,7 +656,7 @@ function App(): JSX.Element {
     headerLeftMetrics && headerRightMetrics
       ? headerLeftMetrics.funding_rate - headerHedgeRatio * headerRightMetrics.funding_rate
       : null;
-  const legSizes = deriveLegPositionSizes(currentPosition);
+  const pairLotSizes = derivePairLotSizes(headerHedgeRatio);
 
   useEffect(() => {
     let cancelled = false;
@@ -1073,13 +1071,13 @@ function App(): JSX.Element {
           <Metric label="Net Spread Price" value={formatSignedMetric(spreadPrice, 3)} />
           <Metric
             label={`${headerLeftLabel} Position Size`}
-            value={formatSignedMetric(legSizes.leftSize, 2)}
-            tone={legSizes.leftSize === 0 ? "neutral" : legSizes.leftSize > 0 ? "ok" : "warn"}
+            value={formatSignedMetric(pairLotSizes.leftSize, 2)}
+            tone="neutral"
           />
           <Metric
             label={`${headerRightLabel} Position Size`}
-            value={formatSignedMetric(legSizes.rightSize, 2)}
-            tone={legSizes.rightSize === 0 ? "neutral" : legSizes.rightSize > 0 ? "ok" : "warn"}
+            value={formatSignedMetric(pairLotSizes.rightSize, 2)}
+            tone="neutral"
           />
           <Metric label="Net Spread Funding" value={formatFundingRate(spreadFundingRate)} />
         </div>

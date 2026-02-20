@@ -314,6 +314,8 @@ describe("manual trade flow", () => {
       expect(api.fetchMarketMetrics).toHaveBeenCalledWith(LEFT);
       expect(api.fetchMarketMetrics).toHaveBeenCalledWith(RIGHT);
     });
+    expect(screen.getByText("XBTUSD Position Size").parentElement).toHaveTextContent("+1.00");
+    expect(screen.getByText("ETHUSD Position Size").parentElement).toHaveTextContent("+0.85");
 
     fireEvent.click(screen.getByLabelText(/Live Trading Armed/i));
     await waitFor(() => {

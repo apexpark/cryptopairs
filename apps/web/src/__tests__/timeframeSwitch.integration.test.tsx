@@ -342,6 +342,8 @@ describe("global timeframe switching", () => {
         "primary"
       );
     });
+    expect(screen.getByText("XBTUSD Position Size").parentElement).toHaveTextContent("+1.00");
+    expect(screen.getByText("ETHUSD Position Size").parentElement).toHaveTextContent("+0.85");
 
     selectTimeframe("15m");
 
