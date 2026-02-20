@@ -301,6 +301,8 @@ This project follows SemVer as defined in `docs/02-versioning-and-releases.md`.
 
 ### Fixed
 - Removed accidental duplicate spec/example files with `* 2.json` suffix.
+- Strategy marker generation no longer emits same-bar `entry` + `stop` overlaps in live z-score/backtest series,
+  preventing visual stop markers without a preceding visible entry.
 - Execution lifecycle transition matrix now permits watchdog-driven expiration from
   `ACKNOWLEDGED` and `PARTIALLY_FILLED` (`-> EXPIRED`).
 - Integrity false-negative gap detection when request bounds were unaligned to timeframe steps

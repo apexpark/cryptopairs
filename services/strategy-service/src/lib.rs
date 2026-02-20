@@ -929,8 +929,9 @@ pub fn compute_backtest_series(
         let left_return = (left_closes[idx] / left_closes[idx - 1]) - 1.0;
         let right_return = (right_closes[idx] / right_closes[idx - 1]) - 1.0;
         let spread_return = left_return - config.hedge_ratio * right_return;
+        let position_at_bar_start = position;
 
-        if position == 0 {
+        if position_at_bar_start == 0 {
             if z <= -config.entry_band {
                 position = 1;
                 equity *= 1.0 - round_trip_cost;
@@ -946,9 +947,9 @@ pub fn compute_backtest_series(
                     kind: "entry".to_string(),
                 });
             }
-        }
-
-        if position != 0 {
+        } else {
+            // Only evaluate close conditions for positions that were open
+            // at the start of this bar. This prevents same-bar entry+stop overlays.
             let signed_return = if position == 1 {
                 spread_return
             } else {
@@ -1503,6 +1504,36 @@ mod tests {
         );
         assert!(series.points.is_empty());
         assert!(series.markers.is_empty());
+    }
+
+    #[test]
+    fn backtest_markers_do_not_overlap_at_same_index() {
+        let (timestamps, mut left, right) = synthetic_pair_series(260);
+        // Force an extreme z-move that can otherwise produce same-bar entry+stop
+        // if close logic is evaluated immediately after opening a position.
+        left[180] *= 1.45;
+
+        let series = compute_backtest_series(
+            &timestamps,
+            &left,
+            &right,
+            BacktestConfig {
+                hedge_ratio: 1.15,
+                entry_band: 1.0,
+                exit_band: 0.2,
+                stop_band: 1.2,
+                round_trip_cost_bps: 0.0,
+            },
+        );
+
+        let mut seen = std::collections::HashSet::new();
+        for marker in &series.markers {
+            assert!(
+                seen.insert(marker.index),
+                "multiple markers at same index {}",
+                marker.index
+            );
+        }
     }
 
     fn synthetic_pair_series(n: usize) -> (Vec<chrono::DateTime<Utc>>, Vec<f64>, Vec<f64>) {
