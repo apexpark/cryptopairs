@@ -275,6 +275,34 @@ pub struct PairEvaluationOutput {
     pub spread_vol_bps: f64,
 }
 
+#[derive(Debug, Clone, Serialize)]
+pub struct BacktestPoint {
+    pub ts: DateTime<Utc>,
+    pub z: f64,
+    pub equity: f64,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+pub struct BacktestMarker {
+    pub index: usize,
+    pub kind: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct BacktestSeries {
+    pub points: Vec<BacktestPoint>,
+    pub markers: Vec<BacktestMarker>,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct BacktestConfig {
+    pub hedge_ratio: f64,
+    pub entry_band: f64,
+    pub exit_band: f64,
+    pub stop_band: f64,
+    pub round_trip_cost_bps: f64,
+}
+
 #[derive(Debug, Clone)]
 pub struct ShadowModelTrainingRow {
     pub variant: SignalVariant,
@@ -860,6 +888,101 @@ pub fn evaluate_pair(input: PairEvaluationInput) -> anyhow::Result<PairEvaluatio
     })
 }
 
+pub fn compute_backtest_series(
+    timestamps: &[DateTime<Utc>],
+    left_closes: &[f64],
+    right_closes: &[f64],
+    config: BacktestConfig,
+) -> BacktestSeries {
+    if timestamps.len() < 2
+        || timestamps.len() != left_closes.len()
+        || timestamps.len() != right_closes.len()
+    {
+        return BacktestSeries {
+            points: vec![],
+            markers: vec![],
+        };
+    }
+
+    let spread = left_closes
+        .iter()
+        .zip(right_closes.iter())
+        .map(|(left, right)| left.max(1e-9).ln() - config.hedge_ratio * right.max(1e-9).ln())
+        .collect::<Vec<_>>();
+    let spread_mean = mean(&spread);
+    let spread_std = stddev(&spread);
+    if !spread_std.is_finite() || spread_std <= 0.0 {
+        return BacktestSeries {
+            points: vec![],
+            markers: vec![],
+        };
+    }
+
+    let mut points = Vec::with_capacity(timestamps.len().saturating_sub(1));
+    let mut markers = vec![];
+    let mut position: i8 = 0;
+    let mut equity = 1.0;
+    let round_trip_cost = (config.round_trip_cost_bps.max(0.0) / 20_000.0).clamp(0.0, 1.0);
+
+    for idx in 1..timestamps.len() {
+        let z = (spread[idx] - spread_mean) / spread_std;
+        let left_return = (left_closes[idx] / left_closes[idx - 1]) - 1.0;
+        let right_return = (right_closes[idx] / right_closes[idx - 1]) - 1.0;
+        let spread_return = left_return - config.hedge_ratio * right_return;
+
+        if position == 0 {
+            if z <= -config.entry_band {
+                position = 1;
+                equity *= 1.0 - round_trip_cost;
+                markers.push(BacktestMarker {
+                    index: points.len(),
+                    kind: "entry".to_string(),
+                });
+            } else if z >= config.entry_band {
+                position = -1;
+                equity *= 1.0 - round_trip_cost;
+                markers.push(BacktestMarker {
+                    index: points.len(),
+                    kind: "entry".to_string(),
+                });
+            }
+        }
+
+        if position != 0 {
+            let signed_return = if position == 1 {
+                spread_return
+            } else {
+                -spread_return
+            };
+            equity *= 1.0 + signed_return;
+
+            if z.abs() >= config.stop_band {
+                position = 0;
+                equity *= 1.0 - round_trip_cost;
+                markers.push(BacktestMarker {
+                    index: points.len(),
+                    kind: "stop".to_string(),
+                });
+            } else if z.abs() <= config.exit_band {
+                position = 0;
+                equity *= 1.0 - round_trip_cost;
+                markers.push(BacktestMarker {
+                    index: points.len(),
+                    kind: "exit".to_string(),
+                });
+            }
+        }
+
+        points.push(BacktestPoint {
+            ts: timestamps[idx],
+            z,
+            equity,
+        });
+    }
+
+    BacktestSeries { points, markers }
+}
+
 fn to_direction_hint(score: f64, entry_band: f64) -> DirectionHint {
     if score >= entry_band {
         DirectionHint::ShortSpread
@@ -1180,10 +1303,10 @@ fn median(values: &[f64]) -> f64 {
 #[cfg(test)]
 mod tests {
     use super::{
-        annotate_with_shadow_model, build_portfolio_plan, evaluate_cost_gate, evaluate_pair,
-        train_shadow_model, CostGateDiagnostics, CostGateInput, DirectionHint, PairCue,
-        PairEvaluationInput, PortfolioHint, Regime, ShadowMlDiagnostics, ShadowModelTrainingRow,
-        SignalVariant,
+        annotate_with_shadow_model, build_portfolio_plan, compute_backtest_series,
+        evaluate_cost_gate, evaluate_pair, train_shadow_model, BacktestConfig, CostGateDiagnostics,
+        CostGateInput, DirectionHint, PairCue, PairEvaluationInput, PortfolioHint, Regime,
+        ShadowMlDiagnostics, ShadowModelTrainingRow, SignalVariant,
     };
     use chrono::{Duration, Utc};
     use common_types::Timeframe;
@@ -1340,6 +1463,46 @@ mod tests {
                     .iter()
                     .any(|code| code == "NEUTRALITY_APPROXIMATED")
         );
+    }
+
+    #[test]
+    fn backtest_series_emits_points_and_markers() {
+        let (timestamps, left, right) = synthetic_pair_series(260);
+        let series = compute_backtest_series(
+            &timestamps,
+            &left,
+            &right,
+            BacktestConfig {
+                hedge_ratio: 1.15,
+                entry_band: 1.6,
+                exit_band: 0.6,
+                stop_band: 3.2,
+                round_trip_cost_bps: 2.0,
+            },
+        );
+        assert!(series.points.len() > 200);
+        assert!(series.markers.iter().all(|marker| marker.kind == "entry"
+            || marker.kind == "exit"
+            || marker.kind == "stop"));
+    }
+
+    #[test]
+    fn backtest_series_returns_empty_when_lengths_mismatch() {
+        let (timestamps, left, right) = synthetic_pair_series(40);
+        let series = compute_backtest_series(
+            &timestamps,
+            &left[1..],
+            &right,
+            BacktestConfig {
+                hedge_ratio: 1.0,
+                entry_band: 1.8,
+                exit_band: 0.6,
+                stop_band: 3.2,
+                round_trip_cost_bps: 0.0,
+            },
+        );
+        assert!(series.points.is_empty());
+        assert!(series.markers.is_empty());
     }
 
     fn synthetic_pair_series(n: usize) -> (Vec<chrono::DateTime<Utc>>, Vec<f64>, Vec<f64>) {

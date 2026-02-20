@@ -1,30 +1,38 @@
 {
   "version": 1,
-  "updated_at": "2026-02-20T01:04:48Z",
-  "active_focus_id": 1,
+  "updated_at": "2026-02-20T01:39:14Z",
+  "active_focus_id": 3,
   "milestone": "Alpha Trial Readiness",
   "items": [
     {
       "id": 1,
       "title": "Server-side backtest/analytics endpoint with persisted run artifacts",
-      "status": "PENDING",
+      "status": "DONE",
       "priority": "NOW",
       "depends_on": [],
       "owner": "codex",
-      "evidence": [],
-      "notes": []
+      "evidence": [
+        "services/strategy-service/src/main.rs"
+      ],
+      "notes": [
+        "2026-02-20T01:39:14Z Added /v1/strategy/pairs/backtest endpoint with deterministic series output"
+      ]
     },
     {
       "id": 2,
       "title": "Migrate Analytics page charts to backend-generated deterministic outputs",
-      "status": "PENDING",
+      "status": "DONE",
       "priority": "NOW",
       "depends_on": [
         1
       ],
       "owner": "codex",
-      "evidence": [],
-      "notes": []
+      "evidence": [
+        "apps/web/src/App.tsx"
+      ],
+      "notes": [
+        "2026-02-20T01:39:14Z Trade/Analytics charts now sourced from backend backtest payload"
+      ]
     },
     {
       "id": 3,
@@ -213,6 +221,13 @@
       "focus_id": 1,
       "delta": "Installed alpha tracking artifacts and workflow",
       "next_action": "Set item #1 to IN_PROGRESS when backend analytics implementation starts",
+      "blockers": []
+    },
+    {
+      "ts": "2026-02-20T01:39:14Z",
+      "focus_id": 3,
+      "delta": "Completed items 1-2 with contracts, endpoint, frontend migration, and tests",
+      "next_action": "Implement live z-score feed endpoint and wire Trade chart to stream",
       "blockers": []
     }
   ]

@@ -149,6 +149,27 @@ export interface StrategyPairsPortfolioPlanResponse {
   skipped: Array<{ pair_id: string; reason: string }>;
 }
 
+export interface StrategyPairsBacktestResponse {
+  timeframe: Timeframe;
+  pair_id: string;
+  generated_at: string;
+  left_instrument: string;
+  right_instrument: string;
+  selected_variant: string;
+  hedge_ratio: number;
+  entry_band: number;
+  exit_band: number;
+  stop_band: number;
+  round_trip_cost_bps: number;
+  points: Array<{
+    ts: string;
+    z: number;
+    equity: number;
+  }>;
+  markers: ChartMarker[];
+  rationale_codes: string[];
+}
+
 export interface IntegrityHistoryResponse {
   instrument: string;
   timeframe: Timeframe;

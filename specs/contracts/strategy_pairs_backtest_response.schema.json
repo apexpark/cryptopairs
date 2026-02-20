@@ -1,0 +1,106 @@
+{
+  "$id": "https://cryptopairs/specs/contracts/strategy_pairs_backtest_response.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "StrategyPairsBacktestResponse",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "timeframe",
+    "pair_id",
+    "generated_at",
+    "left_instrument",
+    "right_instrument",
+    "selected_variant",
+    "hedge_ratio",
+    "entry_band",
+    "exit_band",
+    "stop_band",
+    "round_trip_cost_bps",
+    "points",
+    "markers",
+    "rationale_codes"
+  ],
+  "properties": {
+    "timeframe": {
+      "type": "string",
+      "enum": ["1m", "15m", "1h"]
+    },
+    "pair_id": {
+      "type": "string"
+    },
+    "generated_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "left_instrument": {
+      "type": "string"
+    },
+    "right_instrument": {
+      "type": "string"
+    },
+    "selected_variant": {
+      "type": "string",
+      "enum": ["COINTEGRATION_Z", "ROBUST_Z", "VOL_NORMALIZED", "FUNDING_ADJUSTED"]
+    },
+    "hedge_ratio": {
+      "type": "number"
+    },
+    "entry_band": {
+      "type": "number"
+    },
+    "exit_band": {
+      "type": "number"
+    },
+    "stop_band": {
+      "type": "number"
+    },
+    "round_trip_cost_bps": {
+      "type": "number"
+    },
+    "points": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["ts", "z", "equity"],
+        "properties": {
+          "ts": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "z": {
+            "type": "number"
+          },
+          "equity": {
+            "type": "number",
+            "exclusiveMinimum": 0
+          }
+        }
+      }
+    },
+    "markers": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["index", "kind"],
+        "properties": {
+          "index": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "kind": {
+            "type": "string",
+            "enum": ["entry", "exit", "stop"]
+          }
+        }
+      }
+    },
+    "rationale_codes": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    }
+  }
+}

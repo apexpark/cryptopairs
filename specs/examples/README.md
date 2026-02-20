@@ -21,6 +21,7 @@ Current baseline examples:
 - `specs/examples/execution_dispatch_response_fail_closed.example.json`
 - `specs/examples/execution_dispatch_response_acknowledged.example.json`
 - `specs/examples/strategy_pairs_cues_response.example.json`
+- `specs/examples/strategy_pairs_backtest_response.example.json`
 - `specs/examples/strategy_pairs_reoptimize_response.example.json`
 - `specs/examples/strategy_pairs_cost_gate_response.example.json`
 - `specs/examples/strategy_pairs_portfolio_plan_response.example.json`
