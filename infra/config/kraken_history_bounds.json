@@ -1,38 +1,276 @@
 {
   "version": 1,
-  "generated_at": "2026-02-20T02:00:13Z",
-  "source": "tools/scripts/kraken_history_depth_probe.py (live Kraken Futures probe)",
+  "generated_at": "2026-02-20T04:53:18Z",
+  "source": "live Kraken Futures charts probe (from=0,to=now)",
   "symbols": [
     {
-      "symbol": "PI_XBTUSD",
+      "symbol": "PF_XBTUSD",
       "timeframes": {
         "1m": {
-          "earliest_start_sec": 1582719360,
+          "earliest_start_sec": 1648029780,
           "max_candles_per_request": 2000
         },
         "15m": {
-          "earliest_start_sec": 1582719300,
+          "earliest_start_sec": 1648029600,
           "max_candles_per_request": 2000
         },
         "1h": {
-          "earliest_start_sec": 1582718400,
+          "earliest_start_sec": 1648029600,
           "max_candles_per_request": 2000
         }
       }
     },
     {
-      "symbol": "PI_ETHUSD",
+      "symbol": "PF_ETHUSD",
       "timeframes": {
         "1m": {
-          "earliest_start_sec": 1582719360,
+          "earliest_start_sec": 1648029840,
           "max_candles_per_request": 2000
         },
         "15m": {
-          "earliest_start_sec": 1582719300,
+          "earliest_start_sec": 1648029600,
           "max_candles_per_request": 2000
         },
         "1h": {
-          "earliest_start_sec": 1582718400,
+          "earliest_start_sec": 1648029600,
+          "max_candles_per_request": 2000
+        }
+      }
+    },
+    {
+      "symbol": "PF_SOLUSD",
+      "timeframes": {
+        "1m": {
+          "earliest_start_sec": 1648033860,
+          "max_candles_per_request": 2000
+        },
+        "15m": {
+          "earliest_start_sec": 1648033200,
+          "max_candles_per_request": 2000
+        },
+        "1h": {
+          "earliest_start_sec": 1648033200,
+          "max_candles_per_request": 2000
+        }
+      }
+    },
+    {
+      "symbol": "PF_XRPUSD",
+      "timeframes": {
+        "1m": {
+          "earliest_start_sec": 1648035540,
+          "max_candles_per_request": 2000
+        },
+        "15m": {
+          "earliest_start_sec": 1648035000,
+          "max_candles_per_request": 2000
+        },
+        "1h": {
+          "earliest_start_sec": 1648033200,
+          "max_candles_per_request": 2000
+        }
+      }
+    },
+    {
+      "symbol": "PF_ZECUSD",
+      "timeframes": {
+        "1m": {
+          "earliest_start_sec": 1661352300,
+          "max_candles_per_request": 2000
+        },
+        "15m": {
+          "earliest_start_sec": 1661352300,
+          "max_candles_per_request": 2000
+        },
+        "1h": {
+          "earliest_start_sec": 1661349600,
+          "max_candles_per_request": 2000
+        }
+      }
+    },
+    {
+      "symbol": "PF_DOGEUSD",
+      "timeframes": {
+        "1m": {
+          "earliest_start_sec": 1655740080,
+          "max_candles_per_request": 2000
+        },
+        "15m": {
+          "earliest_start_sec": 1655739900,
+          "max_candles_per_request": 2000
+        },
+        "1h": {
+          "earliest_start_sec": 1655737200,
+          "max_candles_per_request": 2000
+        }
+      }
+    },
+    {
+      "symbol": "PF_ADAUSD",
+      "timeframes": {
+        "1m": {
+          "earliest_start_sec": 1648035480,
+          "max_candles_per_request": 2000
+        },
+        "15m": {
+          "earliest_start_sec": 1648035000,
+          "max_candles_per_request": 2000
+        },
+        "1h": {
+          "earliest_start_sec": 1648033200,
+          "max_candles_per_request": 2000
+        }
+      }
+    },
+    {
+      "symbol": "PF_PEPEUSD",
+      "timeframes": {
+        "1m": {
+          "earliest_start_sec": 1685017080,
+          "max_candles_per_request": 2000
+        },
+        "15m": {
+          "earliest_start_sec": 1685016900,
+          "max_candles_per_request": 2000
+        },
+        "1h": {
+          "earliest_start_sec": 1685016000,
+          "max_candles_per_request": 2000
+        }
+      }
+    },
+    {
+      "symbol": "PF_SUIUSD",
+      "timeframes": {
+        "1m": {
+          "earliest_start_sec": 1683120060,
+          "max_candles_per_request": 2000
+        },
+        "15m": {
+          "earliest_start_sec": 1683119700,
+          "max_candles_per_request": 2000
+        },
+        "1h": {
+          "earliest_start_sec": 1683118800,
+          "max_candles_per_request": 2000
+        }
+      }
+    },
+    {
+      "symbol": "PF_AVAXUSD",
+      "timeframes": {
+        "1m": {
+          "earliest_start_sec": 1648033860,
+          "max_candles_per_request": 2000
+        },
+        "15m": {
+          "earliest_start_sec": 1648033200,
+          "max_candles_per_request": 2000
+        },
+        "1h": {
+          "earliest_start_sec": 1648033200,
+          "max_candles_per_request": 2000
+        }
+      }
+    },
+    {
+      "symbol": "PF_XAUTUSD",
+      "timeframes": {
+        "1m": {
+          "earliest_start_sec": 1757606640,
+          "max_candles_per_request": 2000
+        },
+        "15m": {
+          "earliest_start_sec": 1757606400,
+          "max_candles_per_request": 2000
+        },
+        "1h": {
+          "earliest_start_sec": 1757606400,
+          "max_candles_per_request": 2000
+        }
+      }
+    },
+    {
+      "symbol": "PF_TAOUSD",
+      "timeframes": {
+        "1m": {
+          "earliest_start_sec": 1719588000,
+          "max_candles_per_request": 2000
+        },
+        "15m": {
+          "earliest_start_sec": 1719587700,
+          "max_candles_per_request": 2000
+        },
+        "1h": {
+          "earliest_start_sec": 1719586800,
+          "max_candles_per_request": 2000
+        }
+      }
+    },
+    {
+      "symbol": "PF_LINKUSD",
+      "timeframes": {
+        "1m": {
+          "earliest_start_sec": 1648035480,
+          "max_candles_per_request": 2000
+        },
+        "15m": {
+          "earliest_start_sec": 1648035000,
+          "max_candles_per_request": 2000
+        },
+        "1h": {
+          "earliest_start_sec": 1648033200,
+          "max_candles_per_request": 2000
+        }
+      }
+    },
+    {
+      "symbol": "PF_BNBUSD",
+      "timeframes": {
+        "1m": {
+          "earliest_start_sec": 1700659020,
+          "max_candles_per_request": 2000
+        },
+        "15m": {
+          "earliest_start_sec": 1700658900,
+          "max_candles_per_request": 2000
+        },
+        "1h": {
+          "earliest_start_sec": 1700658000,
+          "max_candles_per_request": 2000
+        }
+      }
+    },
+    {
+      "symbol": "PF_HYPEUSD",
+      "timeframes": {
+        "1m": {
+          "earliest_start_sec": 1737754620,
+          "max_candles_per_request": 2000
+        },
+        "15m": {
+          "earliest_start_sec": 1737754200,
+          "max_candles_per_request": 2000
+        },
+        "1h": {
+          "earliest_start_sec": 1737752400,
+          "max_candles_per_request": 2000
+        }
+      }
+    },
+    {
+      "symbol": "PF_ARBUSD",
+      "timeframes": {
+        "1m": {
+          "earliest_start_sec": 1679583000,
+          "max_candles_per_request": 2000
+        },
+        "15m": {
+          "earliest_start_sec": 1679582700,
+          "max_candles_per_request": 2000
+        },
+        "1h": {
+          "earliest_start_sec": 1679580000,
           "max_candles_per_request": 2000
         }
       }

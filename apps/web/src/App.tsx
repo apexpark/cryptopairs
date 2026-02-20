@@ -135,6 +135,17 @@ function formatSigned(value: number, digits = 2): string {
   return `${value >= 0 ? "+" : "-"}${abs}`;
 }
 
+function formatInstrumentLabel(instrument: string): string {
+  return instrument.replace(/^PI_/, "").replace(/^PF_/, "");
+}
+
+function formatPairLabel(pairId: string): string {
+  return pairId
+    .split("__")
+    .map((instrument) => formatInstrumentLabel(instrument))
+    .join("/");
+}
+
 function toneFromStatus(status?: string): "ok" | "warn" | "bad" {
   if (status === "COMPLETE" || status === "OK") {
     return "ok";
@@ -276,6 +287,53 @@ function App(): JSX.Element {
   const canCloseSpread = isCloseAllowed(currentPosition);
 
   const gateSafe = isGateSafe(gateState);
+  const latestLeftIntegrity = leftIntegrity?.rows?.[0] ?? null;
+  const latestRightIntegrity = rightIntegrity?.rows?.[0] ?? null;
+  const startupStatus = useMemo(() => {
+    if (coreLoading) {
+      return {
+        tone: "warn" as const,
+        text: "Market data is syncing. Backfill is running before trading gates open.",
+      };
+    }
+    if (coreError) {
+      return {
+        tone: "bad" as const,
+        text: "Live strategy data is unavailable. Fail-closed mode is active.",
+      };
+    }
+    if (!selectedCueRow || !latestLeftIntegrity || !latestRightIntegrity) {
+      return {
+        tone: "warn" as const,
+        text: "Waiting for first integrity checks and backfill confirmation.",
+      };
+    }
+
+    const readyStatuses = new Set(["COMPLETE", "PARTIAL_BACKFILLED"]);
+    const leftReady =
+      readyStatuses.has(latestLeftIntegrity.status) && latestLeftIntegrity.coverage_pct >= 99.5;
+    const rightReady =
+      readyStatuses.has(latestRightIntegrity.status) && latestRightIntegrity.coverage_pct >= 99.5;
+    if (leftReady && rightReady) {
+      return {
+        tone: "ok" as const,
+        text: `Data sync complete. ${formatInstrumentLabel(
+          selectedCueRow.cue.left_instrument
+        )} ${latestLeftIntegrity.coverage_pct.toFixed(2)}%, ${formatInstrumentLabel(
+          selectedCueRow.cue.right_instrument
+        )} ${latestRightIntegrity.coverage_pct.toFixed(2)}%.`,
+      };
+    }
+
+    return {
+      tone: "warn" as const,
+      text: `Backfill in progress. ${formatInstrumentLabel(
+        selectedCueRow.cue.left_instrument
+      )} ${latestLeftIntegrity.coverage_pct.toFixed(2)}% (${latestLeftIntegrity.status}), ${formatInstrumentLabel(
+        selectedCueRow.cue.right_instrument
+      )} ${latestRightIntegrity.coverage_pct.toFixed(2)}% (${latestRightIntegrity.status}).`,
+    };
+  }, [coreLoading, coreError, latestLeftIntegrity, latestRightIntegrity, selectedCueRow]);
 
   const refreshPositions = async (): Promise<void> => {
     const response = await fetchExecutionPortfolioPositions(exchange, accountId);
@@ -910,6 +968,10 @@ function App(): JSX.Element {
         </div>
       </header>
 
+      <div className={`startup-status tone-${startupStatus.tone}`}>
+        {startupStatus.text}
+      </div>
+
       <div className="app-body">
         <aside className="side-nav">
           {NAV_ITEMS.map((item) => (
@@ -1045,7 +1107,7 @@ function TradePage(props: {
                   className={entry.cue.pair_id === props.selectedPairId ? "selected-row" : ""}
                   onClick={() => props.onSelectPair(entry.cue.pair_id)}
                 >
-                  <td>{entry.cue.pair_id.replace("PI_", "").replaceAll("__", "/")}</td>
+                  <td>{formatPairLabel(entry.cue.pair_id)}</td>
                   <td>{entry.cue.spread_z.toFixed(2)}</td>
                   <td>{formatSigned(entry.cue.cost_gate.net_edge_bps)}bp</td>
                   <td className={entry.cue.cost_gate.pass ? "tone-ok" : "tone-bad"}>
@@ -1301,7 +1363,7 @@ function MarketsPage({
             <tbody>
               {cues?.cues.map((entry) => (
                 <tr key={entry.cue.pair_id}>
-                  <td>{entry.cue.pair_id.replaceAll("PI_", "")}</td>
+                  <td>{formatPairLabel(entry.cue.pair_id)}</td>
                   <td>{entry.cue.regime}</td>
                   <td>{entry.cue.opportunity_score.toFixed(2)}</td>
                   <td className={entry.cue.actionable ? "tone-ok" : "tone-warn"}>
@@ -1327,7 +1389,7 @@ function MarketsPage({
             <tbody>
               {costs?.gates.map((gate) => (
                 <tr key={gate.pair_id}>
-                  <td>{gate.pair_id.replaceAll("PI_", "")}</td>
+                  <td>{formatPairLabel(gate.pair_id)}</td>
                   <td>{formatSigned(gate.net_edge_bps)}bp</td>
                   <td className={gate.pass ? "tone-ok" : "tone-bad"}>{gate.pass ? "PASS" : "BLOCK"}</td>
                 </tr>
@@ -1389,7 +1451,7 @@ function AnalyticsPage({
             >
               {cues?.cues.map((entry) => (
                 <option key={entry.cue.pair_id} value={entry.cue.pair_id}>
-                  {entry.cue.pair_id.replaceAll("PI_", "")}
+                  {formatPairLabel(entry.cue.pair_id)}
                 </option>
               ))}
             </select>
@@ -1492,7 +1554,7 @@ function PortfolioPage({
                     className={pairId === selectedPairId ? "selected-row" : ""}
                     onClick={() => onSelectPair(pairId)}
                   >
-                    <td>{pairId.replaceAll("PI_", "")}</td>
+                    <td>{formatPairLabel(pairId)}</td>
                     <td>{position.direction}</td>
                     <td>{position.totalSize.toFixed(2)}</td>
                     <td>{position.avgEntryZ.toFixed(2)}</td>
@@ -1523,7 +1585,7 @@ function PortfolioPage({
             <tbody>
               {plan?.plan.weights.map((weight) => (
                 <tr key={weight.pair_id}>
-                  <td>{weight.pair_id.replaceAll("PI_", "")}</td>
+                  <td>{formatPairLabel(weight.pair_id)}</td>
                   <td>{weight.target_weight.toFixed(2)}</td>
                   <td>{(weight.risk_contribution * 100).toFixed(1)}%</td>
                 </tr>
@@ -1556,10 +1618,18 @@ function DataQualityPage({
           tone={gateState.leftAllowed && gateState.rightAllowed ? "ok" : "bad"}
         />
 
-        <h3>{selected?.cue.left_instrument ?? "Left Instrument"}</h3>
+        <h3>
+          {selected?.cue.left_instrument
+            ? formatInstrumentLabel(selected.cue.left_instrument)
+            : "Left Instrument"}
+        </h3>
         <IntegrityTable rows={left?.rows ?? []} />
 
-        <h3>{selected?.cue.right_instrument ?? "Right Instrument"}</h3>
+        <h3>
+          {selected?.cue.right_instrument
+            ? formatInstrumentLabel(selected.cue.right_instrument)
+            : "Right Instrument"}
+        </h3>
         <IntegrityTable rows={right?.rows ?? []} />
       </SectionCard>
 
