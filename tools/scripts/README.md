@@ -26,6 +26,25 @@ python3 tools/scripts/data_pipeline_e2e_check.py \
   --output-json artifacts/data_pipeline_e2e_report.json
 ```
 
+## Manual Trade Flow E2E Check
+
+Run a deterministic manual trade vertical-slice check:
+- strategy cue selection
+- account/reconcile seed
+- kill-switch preflight
+- intent submit + dispatch
+- lifecycle history verification
+- portfolio position verification
+- optional emergency close legs
+
+```bash
+python3 tools/scripts/manual_trade_e2e_check.py \
+  --timeframe 1m \
+  --include-close \
+  --require-flat-after-close \
+  --output-json artifacts/manual_trade_e2e_report.json
+```
+
 ## Kraken History Depth Probe
 
 Run live Kraken depth checks to update the historical bounds policy:

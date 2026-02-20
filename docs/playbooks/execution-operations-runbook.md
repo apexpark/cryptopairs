@@ -159,6 +159,25 @@ Spread metadata for best portfolio fidelity:
 4. Order lifecycle history endpoint checked for deterministic transitions.
 5. Reconcile trigger confirmed after terminal transition.
 
+## End-To-End Manual Flow Check
+
+Use the deterministic harness script before enabling sustained live operation:
+
+```bash
+python3 tools/scripts/manual_trade_e2e_check.py \
+  --timeframe 1m \
+  --include-close \
+  --require-flat-after-close \
+  --output-json artifacts/manual_trade_e2e_report.json
+```
+
+Expected result:
+1. `"pass": true` in the report.
+2. Entry legs accepted and dispatched.
+3. Lifecycle includes `NEW -> APPROVED -> PENDING_SUBMIT -> ACKNOWLEDGED` for accepted legs.
+4. Position appears after entry and is flat after close when `--require-flat-after-close` is used.
+5. Reconcile status remains `OK`.
+
 ## Live Canary And Fixture Capture
 
 1. Start with smallest allowed order size and one instrument.

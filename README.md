@@ -350,6 +350,26 @@ python3 tools/scripts/data_pipeline_e2e_check.py \
 The script checks live service health, queries local-first candles, validates integrity metadata,
 reads integrity history, and emits a machine-readable pass/fail report.
 
+## Manual Trade E2E Validation
+
+```bash
+python3 tools/scripts/manual_trade_e2e_check.py \
+  --timeframe 1m \
+  --include-close \
+  --require-flat-after-close \
+  --output-json artifacts/manual_trade_e2e_report.json
+```
+
+The script validates a full manual-first trading slice:
+- strategy cue selection
+- integrity warm-up for pair legs
+- account snapshot + reconcile gate seeding
+- kill-switch preflight
+- order intent + dispatch + lifecycle history
+- portfolio spread position update
+- optional emergency-stop-close and flat-position check
+- reconcile run and final status check
+
 ## Kraken History Depth Probe (Live Data)
 
 Run:

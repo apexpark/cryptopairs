@@ -220,6 +220,13 @@ This project follows SemVer as defined in `docs/02-versioning-and-releases.md`.
     - open-orders: cancel/reject/expire status mapping
     - order-status: `ENTERED_BOOK` full-fill mapping and explicit `EXPIRED` mapping
   - Added replay test coverage against normalization matrix fixture.
+- End-to-end manual trade validation harness:
+  - Added script: `tools/scripts/manual_trade_e2e_check.py`
+  - Validates preflight + manual entry/dispatch/lifecycle/position/reconcile path.
+  - Supports optional emergency stop-close validation with flat-position enforcement.
+- Frontend manual flow integration coverage:
+  - Added `apps/web/src/__tests__/manualTradeFlow.integration.test.tsx`
+  - Verifies spread metadata submit, dispatch sequencing, and acknowledged-flow UI state.
 
 ### Changed
 - Product/risk/architecture docs now explicitly define manual-first live trading for MVP.

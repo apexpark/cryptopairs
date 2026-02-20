@@ -1,7 +1,7 @@
 {
   "version": 1,
-  "updated_at": "2026-02-20T04:12:00Z",
-  "active_focus_id": 13,
+  "updated_at": "2026-02-20T03:21:52Z",
+  "active_focus_id": 14,
   "milestone": "Alpha Trial Readiness",
   "items": [
     {
@@ -197,7 +197,7 @@
     {
       "id": 13,
       "title": "Build E2E manual trade flow harness (intent, dispatch, lifecycle, reconcile, UI)",
-      "status": "PENDING",
+      "status": "DONE",
       "priority": "NEXT",
       "depends_on": [
         9,
@@ -206,20 +206,26 @@
         12
       ],
       "owner": "codex",
-      "evidence": [],
-      "notes": []
+      "evidence": [
+        "apps/web/src/__tests__/manualTradeFlow.integration.test.tsx"
+      ],
+      "notes": [
+        "2026-02-20T03:21:52Z Completed deterministic manual flow harness + UI integration coverage"
+      ]
     },
     {
       "id": 14,
       "title": "Implement production observability package with alerts and SLO thresholds",
-      "status": "PENDING",
+      "status": "IN_PROGRESS",
       "priority": "LATER",
       "depends_on": [
         13
       ],
       "owner": "codex",
       "evidence": [],
-      "notes": []
+      "notes": [
+        "2026-02-20T03:21:52Z Started observability package implementation"
+      ]
     },
     {
       "id": 15,
@@ -331,6 +337,13 @@
       "focus_id": 13,
       "delta": "Completed item 12 with normalization contract + fixture matrix and deterministic replay coverage for openorders/order-status transitions",
       "next_action": "Implement item 13 end-to-end manual trade flow harness across intent, dispatch, lifecycle, reconcile, and UI",
+      "blockers": []
+    },
+    {
+      "ts": "2026-02-20T03:21:52Z",
+      "focus_id": 14,
+      "delta": "Completed item 13 with manual flow harness, runbook wiring, and UI integration test",
+      "next_action": "Implement observability summary endpoints/contracts and alert threshold package",
       "blockers": []
     }
   ]
