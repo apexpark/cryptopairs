@@ -44,9 +44,11 @@ If instructions conflict, use this order:
 - `docs/17-verification-protocol.md`
 - `docs/18-strategy-module-implementation-spec.md`
 - `docs/19-manual-trading-operator-ui-session.md`
+- `docs/20-alpha-delivery-control.md`
 - `docs/playbooks/backfill-runbook.md`
 - `docs/playbooks/incident-runbook.md`
 - `docs/playbooks/execution-operations-runbook.md`
+- `plans/alpha_plan.json`
 - `infra/env/paper-mode.env.example`
 - `infra/env/live-mode.env.example`
 - `docs/adr/ADR-0001-hybrid-rust-python.md`

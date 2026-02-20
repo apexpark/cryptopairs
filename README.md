@@ -7,6 +7,15 @@ This repo is **docs-governed and implementation-active**: policies/contracts def
 - `docs/README.md` (documentation map + precedence)
 - `docs/00-guardrails.md` and `docs/01-product-scope.md`
 - `docs/05-agent-build-workflow.md` and `docs/17-verification-protocol.md`
+- `docs/20-alpha-delivery-control.md` and `plans/alpha_plan.json` (delivery tracking)
+
+## Alpha Progress Tracking
+
+Use the tracker to keep one active focus and recover quickly after interruptions:
+
+```bash
+python3 tools/scripts/alpha_tracker.py summary
+```
 
 ## Precedence
 

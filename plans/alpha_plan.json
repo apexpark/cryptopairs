@@ -1,0 +1,219 @@
+{
+  "version": 1,
+  "updated_at": "2026-02-20T01:04:48Z",
+  "active_focus_id": 1,
+  "milestone": "Alpha Trial Readiness",
+  "items": [
+    {
+      "id": 1,
+      "title": "Server-side backtest/analytics endpoint with persisted run artifacts",
+      "status": "PENDING",
+      "priority": "NOW",
+      "depends_on": [],
+      "owner": "codex",
+      "evidence": [],
+      "notes": []
+    },
+    {
+      "id": 2,
+      "title": "Migrate Analytics page charts to backend-generated deterministic outputs",
+      "status": "PENDING",
+      "priority": "NOW",
+      "depends_on": [
+        1
+      ],
+      "owner": "codex",
+      "evidence": [],
+      "notes": []
+    },
+    {
+      "id": 3,
+      "title": "Add near-real-time spread z-score feed endpoint for Trade page",
+      "status": "PENDING",
+      "priority": "NEXT",
+      "depends_on": [],
+      "owner": "codex",
+      "evidence": [],
+      "notes": []
+    },
+    {
+      "id": 4,
+      "title": "Run reproducible live E2E validation for historical capture/backfill/storage",
+      "status": "PENDING",
+      "priority": "NEXT",
+      "depends_on": [],
+      "owner": "codex",
+      "evidence": [],
+      "notes": []
+    },
+    {
+      "id": 5,
+      "title": "Add unresolved-gap escalation path and operator-visible reason codes",
+      "status": "PENDING",
+      "priority": "NEXT",
+      "depends_on": [
+        4
+      ],
+      "owner": "codex",
+      "evidence": [],
+      "notes": []
+    },
+    {
+      "id": 6,
+      "title": "Lock Kraken historical depth limits per timeframe/symbol and enforce start bounds",
+      "status": "PENDING",
+      "priority": "NEXT",
+      "depends_on": [
+        4
+      ],
+      "owner": "codex",
+      "evidence": [],
+      "notes": []
+    },
+    {
+      "id": 7,
+      "title": "Add timeframe-switch integration tests for global seamless behavior",
+      "status": "PENDING",
+      "priority": "NEXT",
+      "depends_on": [
+        2,
+        4
+      ],
+      "owner": "codex",
+      "evidence": [],
+      "notes": []
+    },
+    {
+      "id": 8,
+      "title": "Harden strategy reoptimization persistence and champion/challenger drift handling",
+      "status": "PENDING",
+      "priority": "NEXT",
+      "depends_on": [
+        1
+      ],
+      "owner": "codex",
+      "evidence": [],
+      "notes": []
+    },
+    {
+      "id": 9,
+      "title": "Implement hard risk caps: per-pair, gross, leverage, daily loss, cooldown",
+      "status": "PENDING",
+      "priority": "NEXT",
+      "depends_on": [],
+      "owner": "codex",
+      "evidence": [],
+      "notes": []
+    },
+    {
+      "id": 10,
+      "title": "Add live account snapshot ingestion into execution/risk decisions",
+      "status": "PENDING",
+      "priority": "NEXT",
+      "depends_on": [
+        9
+      ],
+      "owner": "codex",
+      "evidence": [],
+      "notes": []
+    },
+    {
+      "id": 11,
+      "title": "Migrate portfolio/position display to server-truth ledger",
+      "status": "PENDING",
+      "priority": "NEXT",
+      "depends_on": [
+        10
+      ],
+      "owner": "codex",
+      "evidence": [],
+      "notes": []
+    },
+    {
+      "id": 12,
+      "title": "Finalize Kraken open-orders/order-status normalization contract and fixtures",
+      "status": "PENDING",
+      "priority": "NEXT",
+      "depends_on": [],
+      "owner": "codex",
+      "evidence": [],
+      "notes": []
+    },
+    {
+      "id": 13,
+      "title": "Build E2E manual trade flow harness (intent, dispatch, lifecycle, reconcile, UI)",
+      "status": "PENDING",
+      "priority": "NEXT",
+      "depends_on": [
+        9,
+        10,
+        11,
+        12
+      ],
+      "owner": "codex",
+      "evidence": [],
+      "notes": []
+    },
+    {
+      "id": 14,
+      "title": "Implement production observability package with alerts and SLO thresholds",
+      "status": "PENDING",
+      "priority": "LATER",
+      "depends_on": [
+        13
+      ],
+      "owner": "codex",
+      "evidence": [],
+      "notes": []
+    },
+    {
+      "id": 15,
+      "title": "Finalize hosted secrets/credential lifecycle (vault/KMS, rotation, audit)",
+      "status": "PENDING",
+      "priority": "LATER",
+      "depends_on": [
+        13
+      ],
+      "owner": "codex",
+      "evidence": [],
+      "notes": []
+    },
+    {
+      "id": 16,
+      "title": "Complete fail-closed operator runbooks for recovery and incidents",
+      "status": "PENDING",
+      "priority": "LATER",
+      "depends_on": [
+        13,
+        14
+      ],
+      "owner": "codex",
+      "evidence": [],
+      "notes": []
+    },
+    {
+      "id": 17,
+      "title": "Run alpha readiness dry-run (48-72h) and go/no-go checklist signoff",
+      "status": "PENDING",
+      "priority": "LATER",
+      "depends_on": [
+        14,
+        15,
+        16
+      ],
+      "owner": "codex",
+      "evidence": [],
+      "notes": []
+    }
+  ],
+  "sidetrack_queue": [],
+  "checkpoints": [
+    {
+      "ts": "2026-02-20T01:04:48Z",
+      "focus_id": 1,
+      "delta": "Installed alpha tracking artifacts and workflow",
+      "next_action": "Set item #1 to IN_PROGRESS when backend analytics implementation starts",
+      "blockers": []
+    }
+  ]
+}
