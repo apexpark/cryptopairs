@@ -25,6 +25,7 @@ import App from "../App";
 const api = vi.hoisted(() => ({
   dispatchOrderIntent: vi.fn(),
   fetchExecutionDecision: vi.fn(),
+  fetchExecutionPortfolioPositions: vi.fn(),
   fetchIntegrityHistory: vi.fn(),
   fetchKillSwitchState: vi.fn(),
   fetchOrderIntentHistory: vi.fn(),
@@ -275,6 +276,12 @@ beforeEach(() => {
     min_coverage_pct: 99.5,
     evaluated_at: "2026-02-20T00:00:00Z",
   });
+  api.fetchExecutionPortfolioPositions.mockResolvedValue({
+    exchange: "kraken_futures",
+    account_id: "primary",
+    generated_at: "2026-02-20T00:00:00Z",
+    positions: [],
+  });
   api.fetchReconcile.mockResolvedValue({
     reconcile: {
       exchange: "kraken_futures",
@@ -318,6 +325,10 @@ describe("global timeframe switching", () => {
       expect(api.fetchStrategyCues).toHaveBeenCalledWith("1m", 20);
       expect(api.fetchStrategyLiveZ).toHaveBeenCalledWith("1m", PAIR_ID, 300);
       expect(api.fetchStrategyBacktest).toHaveBeenCalledWith("1m", PAIR_ID, 300);
+      expect(api.fetchExecutionPortfolioPositions).toHaveBeenCalledWith(
+        "kraken_futures",
+        "primary"
+      );
     });
 
     selectTimeframe("15m");

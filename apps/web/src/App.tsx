@@ -6,6 +6,7 @@ import {
   latestLifecycleState,
 } from "./lib/orderLifecycle";
 import {
+  fetchExecutionPortfolioPositions,
   dispatchOrderIntent,
   fetchExecutionDecision,
   fetchIntegrityHistory,
@@ -20,8 +21,6 @@ import {
   submitOrderIntent,
 } from "./lib/api";
 import {
-  applyEntryLike,
-  applyReduce,
   emptyPosition,
   isAddAllowed,
   isCloseAllowed,
@@ -213,10 +212,7 @@ function App(): JSX.Element {
   const [tradeMessage, setTradeMessage] = useState<string>("No trade submitted yet.");
   const [submitting, setSubmitting] = useState(false);
 
-  const [positions, setPositions] = usePersistentState<Record<string, SpreadPosition>>(
-    "cp.positions",
-    {}
-  );
+  const [positions, setPositions] = useState<Record<string, SpreadPosition>>({});
   const [timelineByPair, setTimelineByPair] = usePersistentState<Record<string, TimelineEvent[]>>(
     "cp.timeline",
     {}
@@ -280,6 +276,20 @@ function App(): JSX.Element {
   const canCloseSpread = isCloseAllowed(currentPosition);
 
   const gateSafe = isGateSafe(gateState);
+
+  const refreshPositions = async (): Promise<void> => {
+    const response = await fetchExecutionPortfolioPositions(exchange, accountId);
+    const next: Record<string, SpreadPosition> = {};
+    for (const row of response.positions) {
+      next[row.pair_id] = {
+        direction: row.direction,
+        totalSize: row.total_size,
+        avgEntryZ: row.avg_entry_z,
+        updatedAt: row.updated_at,
+      };
+    }
+    setPositions(next);
+  };
 
   useEffect(() => {
     let cancelled = false;
@@ -365,6 +375,27 @@ function App(): JSX.Element {
       cancelled = true;
     };
   }, [selectedCueRow, timeframe, exchange, accountId]);
+
+  useEffect(() => {
+    let cancelled = false;
+    void refreshPositions().catch(() => {
+      if (!cancelled) {
+        setPositions({});
+      }
+    });
+    const intervalId = window.setInterval(() => {
+      void refreshPositions().catch(() => {
+        if (!cancelled) {
+          setPositions({});
+        }
+      });
+    }, 10_000);
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(intervalId);
+    };
+  }, [exchange, accountId]);
 
   useEffect(() => {
     if (!selectedCueRow) {
@@ -487,19 +518,6 @@ function App(): JSX.Element {
     });
   };
 
-  const updatePosition = (
-    pairId: string,
-    updater: (position: SpreadPosition) => SpreadPosition
-  ): void => {
-    setPositions((prev) => {
-      const current = prev[pairId] ?? emptyPosition(nowIso());
-      return {
-        ...prev,
-        [pairId]: updater(current),
-      };
-    });
-  };
-
   const upsertIntentHistories = (
     pairId: string,
     histories: OrderIntentHistoryResponse[]
@@ -594,9 +612,12 @@ function App(): JSX.Element {
             idempotency_key: `${Date.now()}-${pairId}-${command}-${leg.instrument}-${index}`,
             exchange,
             account_id: accountId,
+            pair_id: pairId,
             instrument: leg.instrument,
             timeframe,
             action,
+            spread_direction: direction,
+            spread_z: action === "ENTRY" ? currentZ : null,
             side: leg.side,
             qty,
             operator_confirmed: action === "EMERGENCY_STOP_CLOSE" ? false : operatorConfirmed,
@@ -691,21 +712,9 @@ function App(): JSX.Element {
         });
       }
 
-      if (allDispatchAcknowledged) {
-        updatePosition(pairId, (position) => {
-          if (command === "long-entry") {
-            return applyEntryLike(position, "LONG_SPREAD", qty, currentZ, now);
-          }
-          if (command === "short-entry") {
-            return applyEntryLike(position, "SHORT_SPREAD", qty, currentZ, now);
-          }
-          if (command === "add-exposure") {
-            return applyEntryLike(position, direction, qty, currentZ, now);
-          }
-          if (command === "reduce-exposure") {
-            return applyReduce(position, qty, now);
-          }
-          return emptyPosition(now);
+      if (acceptedCount > 0) {
+        await refreshPositions().catch(() => {
+          setPositions({});
         });
       }
 
@@ -1464,7 +1473,7 @@ function PortfolioPage({
 
   return (
     <div className="split-grid">
-      <SectionCard title="Portfolio" subtitle="Live open spread positions (client ledger from accepted intents)">
+      <SectionCard title="Portfolio" subtitle="Live open spread positions (server-truth execution ledger)">
         <div className="table-wrap">
           <table>
             <thead>
@@ -1492,7 +1501,7 @@ function PortfolioPage({
               ) : (
                 <tr>
                   <td colSpan={4} className="empty-text">
-                    No accepted spread positions yet.
+                    No open spread positions in execution ledger.
                   </td>
                 </tr>
               )}

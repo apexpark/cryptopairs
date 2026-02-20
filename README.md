@@ -154,6 +154,8 @@ Evaluates idempotent order intents against kill switch + integrity gate and pers
 Manual-first behavior:
 - `ENTRY` and `EXIT` require `operator_confirmed=true` plus `operator_id`.
 - `ENTRY` and `EXIT` require `exchange` and `account_id` for reconciliation gate checks.
+- Optional spread metadata (`pair_id`, `spread_direction`, `spread_z`) can be supplied for
+  server-truth spread ledger reconstruction.
 - `EMERGENCY_STOP_CLOSE` is the only action allowed without operator confirmation.
 - Lifecycle events are persisted in `execution_order_state_events` (`NEW`, `APPROVED`, `REJECTED`, etc.).
 
@@ -164,6 +166,14 @@ GET /v1/execution/order-intent/history?idempotency_key=<key>
 ```
 
 Returns the persisted intent record, lifecycle state events, and dispatch attempt audit rows.
+
+## Execution Portfolio Positions Endpoint
+
+```bash
+GET /v1/execution/portfolio/positions?exchange=kraken_futures&account_id=primary
+```
+
+Returns server-truth spread positions folded from accepted + acknowledged/fill lifecycle events.
 
 ## Execution Dispatch Endpoint
 

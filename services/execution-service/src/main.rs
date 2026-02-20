@@ -583,9 +583,12 @@ impl ExecutionRepository {
                     idempotency_key TEXT PRIMARY KEY,
                     exchange TEXT NOT NULL DEFAULT 'kraken_futures',
                     account_id TEXT NOT NULL DEFAULT 'default',
+                    pair_id TEXT,
                     instrument TEXT NOT NULL,
                     timeframe TEXT NOT NULL,
                     action TEXT NOT NULL,
+                    spread_direction TEXT,
+                    spread_z DOUBLE PRECISION,
                     side TEXT NOT NULL,
                     qty DOUBLE PRECISION NOT NULL,
                     operator_confirmed BOOLEAN NOT NULL,
@@ -622,7 +625,13 @@ impl ExecutionRepository {
                  ALTER TABLE execution_order_intents
                  ADD COLUMN IF NOT EXISTS operator_confirmed BOOLEAN NOT NULL DEFAULT FALSE;
                  ALTER TABLE execution_order_intents
-                 ADD COLUMN IF NOT EXISTS operator_id TEXT;",
+                 ADD COLUMN IF NOT EXISTS operator_id TEXT;
+                 ALTER TABLE execution_order_intents
+                 ADD COLUMN IF NOT EXISTS pair_id TEXT;
+                 ALTER TABLE execution_order_intents
+                 ADD COLUMN IF NOT EXISTS spread_direction TEXT;
+                 ALTER TABLE execution_order_intents
+                 ADD COLUMN IF NOT EXISTS spread_z DOUBLE PRECISION;",
             )
             .await?;
         Ok(())
@@ -697,7 +706,7 @@ impl ExecutionRepository {
             .query_opt(
                 "SELECT idempotency_key, instrument, timeframe, action, side, qty,
                         operator_confirmed, operator_id, min_coverage_pct, exchange, account_id,
-                        decision, reason, created_at
+                        pair_id, spread_direction, spread_z, decision, reason, created_at
                  FROM execution_order_intents
                  WHERE idempotency_key = $1",
                 &[&idempotency_key],
@@ -716,9 +725,12 @@ impl ExecutionRepository {
             min_coverage_pct: row.get(8),
             exchange: row.get(9),
             account_id: row.get(10),
-            decision: row.get(11),
-            reason: row.get(12),
-            created_at: row.get(13),
+            pair_id: row.get(11),
+            spread_direction: row.get(12),
+            spread_z: row.get(13),
+            decision: row.get(14),
+            reason: row.get(15),
+            created_at: row.get(16),
         }))
     }
 
@@ -731,11 +743,11 @@ impl ExecutionRepository {
             .query_opt(
                 "SELECT i.idempotency_key, i.instrument, i.timeframe, i.action, i.side, i.qty,
                         i.operator_confirmed, i.operator_id, i.min_coverage_pct, i.exchange, i.account_id,
-                        i.decision, i.reason, i.created_at
+                        i.pair_id, i.spread_direction, i.spread_z, i.decision, i.reason, i.created_at
                  FROM execution_order_intents i
                  JOIN execution_dispatch_attempts d
                    ON d.idempotency_key = i.idempotency_key
-                 WHERE d.exchange_order_id = $1
+                WHERE d.exchange_order_id = $1
                  ORDER BY d.created_at DESC
                  LIMIT 1",
                 &[&exchange_order_id],
@@ -754,9 +766,12 @@ impl ExecutionRepository {
             min_coverage_pct: row.get(8),
             exchange: row.get(9),
             account_id: row.get(10),
-            decision: row.get(11),
-            reason: row.get(12),
-            created_at: row.get(13),
+            pair_id: row.get(11),
+            spread_direction: row.get(12),
+            spread_z: row.get(13),
+            decision: row.get(14),
+            reason: row.get(15),
+            created_at: row.get(16),
         }))
     }
 
@@ -766,8 +781,8 @@ impl ExecutionRepository {
                 "INSERT INTO execution_order_intents
                  (idempotency_key, instrument, timeframe, action, side, qty,
                   operator_confirmed, operator_id, min_coverage_pct, exchange, account_id,
-                  decision, reason, created_at)
-                 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
+                  pair_id, spread_direction, spread_z, decision, reason, created_at)
+                 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)
                  ON CONFLICT (idempotency_key) DO NOTHING",
                 &[
                     &record.idempotency_key as &(dyn ToSql + Sync),
@@ -781,6 +796,9 @@ impl ExecutionRepository {
                     &record.min_coverage_pct,
                     &record.exchange,
                     &record.account_id,
+                    &record.pair_id,
+                    &record.spread_direction,
+                    &record.spread_z,
                     &record.decision,
                     &record.reason,
                     &record.created_at,
@@ -838,7 +856,7 @@ impl ExecutionRepository {
                    AND i.account_id = $2
                    AND i.instrument = $3
                    AND i.decision = 'ACCEPTED'
-                   AND latest.state IN ('APPROVED', 'PENDING_SUBMIT', 'ACKNOWLEDGED', 'PARTIALLY_FILLED')",
+                   AND latest.state IN ('APPROVED', 'PENDING_SUBMIT', 'ACKNOWLEDGED', 'PARTIALLY_FILLED', 'FILLED')",
                 &[&exchange, &account_id, &instrument],
             )
             .await?;
@@ -875,7 +893,7 @@ impl ExecutionRepository {
                     WHERE i.exchange = $1
                       AND i.account_id = $2
                       AND i.decision = 'ACCEPTED'
-                      AND latest.state IN ('APPROVED', 'PENDING_SUBMIT', 'ACKNOWLEDGED', 'PARTIALLY_FILLED')
+                      AND latest.state IN ('APPROVED', 'PENDING_SUBMIT', 'ACKNOWLEDGED', 'PARTIALLY_FILLED', 'FILLED')
                     GROUP BY i.instrument
                  ) exposures",
                 &[&exchange, &account_id],
@@ -907,6 +925,46 @@ impl ExecutionRepository {
             )
             .await?;
         Ok(row.map(|row| row.get(0)))
+    }
+
+    async fn fetch_spread_ledger_events(
+        &self,
+        exchange: &str,
+        account_id: &str,
+    ) -> anyhow::Result<Vec<SpreadLedgerEvent>> {
+        let rows = self
+            .client
+            .query(
+                "SELECT i.pair_id, i.action, i.spread_direction, i.spread_z, i.qty, i.created_at
+                 FROM execution_order_intents i
+                 JOIN (
+                    SELECT DISTINCT ON (idempotency_key)
+                      idempotency_key, state, created_at
+                    FROM execution_order_state_events
+                    ORDER BY idempotency_key, created_at DESC
+                 ) latest
+                   ON latest.idempotency_key = i.idempotency_key
+                 WHERE i.exchange = $1
+                   AND i.account_id = $2
+                   AND i.decision = 'ACCEPTED'
+                   AND i.pair_id IS NOT NULL
+                   AND i.pair_id <> ''
+                   AND latest.state IN ('ACKNOWLEDGED', 'PARTIALLY_FILLED', 'FILLED')
+                 ORDER BY i.created_at ASC",
+                &[&exchange, &account_id],
+            )
+            .await?;
+        Ok(rows
+            .iter()
+            .map(|row| SpreadLedgerEvent {
+                pair_id: row.get(0),
+                action: row.get(1),
+                spread_direction: row.get(2),
+                spread_z: row.get(3),
+                qty: row.get(4),
+                created_at: row.get(5),
+            })
+            .collect())
     }
 
     async fn record_state_event(
@@ -1173,9 +1231,12 @@ struct OrderIntentRequest {
     idempotency_key: String,
     exchange: String,
     account_id: String,
+    pair_id: Option<String>,
     instrument: String,
     timeframe: String,
     action: String,
+    spread_direction: Option<String>,
+    spread_z: Option<f64>,
     side: String,
     qty: f64,
     operator_confirmed: bool,
@@ -1188,9 +1249,12 @@ struct OrderIntentResponse {
     idempotency_key: String,
     exchange: String,
     account_id: String,
+    pair_id: Option<String>,
     instrument: String,
     timeframe: String,
     action: String,
+    spread_direction: Option<String>,
+    spread_z: Option<f64>,
     side: String,
     qty: f64,
     operator_confirmed: bool,
@@ -1206,9 +1270,12 @@ struct OrderIntentRecord {
     idempotency_key: String,
     exchange: String,
     account_id: String,
+    pair_id: Option<String>,
     instrument: String,
     timeframe: String,
     action: String,
+    spread_direction: Option<String>,
+    spread_z: Option<f64>,
     side: String,
     qty: f64,
     operator_confirmed: bool,
@@ -1248,6 +1315,47 @@ struct DispatchAttempt {
     reason: String,
     actor: String,
     created_at: DateTime<Utc>,
+}
+
+#[derive(Debug)]
+struct SpreadLedgerEvent {
+    pair_id: String,
+    action: String,
+    spread_direction: Option<String>,
+    spread_z: Option<f64>,
+    qty: f64,
+    created_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Default)]
+struct FoldedSpreadPosition {
+    direction: String,
+    total_size: f64,
+    avg_entry_z: f64,
+    updated_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Deserialize)]
+struct PortfolioPositionsQuery {
+    exchange: String,
+    account_id: String,
+}
+
+#[derive(Debug, Serialize)]
+struct PortfolioPositionRow {
+    pair_id: String,
+    direction: String,
+    total_size: f64,
+    avg_entry_z: f64,
+    updated_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Serialize)]
+struct PortfolioPositionsResponse {
+    exchange: String,
+    account_id: String,
+    generated_at: DateTime<Utc>,
+    positions: Vec<PortfolioPositionRow>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -1451,6 +1559,10 @@ async fn main() -> anyhow::Result<()> {
             get(kill_switch).post(update_kill_switch),
         )
         .route("/v1/execution/order-intent", post(order_intent))
+        .route(
+            "/v1/execution/portfolio/positions",
+            get(portfolio_positions),
+        )
         .route(
             "/v1/execution/order-intent/history",
             get(order_intent_history),
@@ -1835,6 +1947,104 @@ async fn decision(
     }))
 }
 
+fn fold_spread_positions(events: &[SpreadLedgerEvent]) -> Vec<PortfolioPositionRow> {
+    let mut by_pair: HashMap<String, FoldedSpreadPosition> = HashMap::new();
+    for event in events {
+        if !event.qty.is_finite() || event.qty <= 0.0 {
+            continue;
+        }
+        let state = by_pair.entry(event.pair_id.clone()).or_default();
+        if event.action == "ENTRY" {
+            let direction = event
+                .spread_direction
+                .as_deref()
+                .unwrap_or("NONE")
+                .to_string();
+            if state.total_size <= 0.0 {
+                state.direction = direction;
+                state.total_size = event.qty;
+                state.avg_entry_z = event.spread_z.unwrap_or(0.0);
+            } else {
+                let prior_size = state.total_size;
+                let next_size = prior_size + event.qty;
+                let next_avg = if let Some(z) = event.spread_z {
+                    ((state.avg_entry_z * prior_size) + (z * event.qty))
+                        / next_size.max(f64::EPSILON)
+                } else {
+                    state.avg_entry_z
+                };
+                state.total_size = next_size;
+                if state.direction == "NONE" {
+                    state.direction = direction;
+                }
+                state.avg_entry_z = next_avg;
+            }
+            state.updated_at = event.created_at;
+            continue;
+        }
+
+        if event.action == "EXIT" || event.action == "EMERGENCY_STOP_CLOSE" {
+            if state.total_size <= 0.0 {
+                continue;
+            }
+            let remaining = (state.total_size - event.qty).max(0.0);
+            state.total_size = remaining;
+            state.updated_at = event.created_at;
+            if remaining <= 0.0 {
+                state.direction = "NONE".to_string();
+                state.avg_entry_z = 0.0;
+            }
+        }
+    }
+
+    let mut rows: Vec<_> = by_pair
+        .into_iter()
+        .filter_map(|(pair_id, folded)| {
+            if folded.total_size <= 0.0 {
+                return None;
+            }
+            Some(PortfolioPositionRow {
+                pair_id,
+                direction: folded.direction,
+                total_size: folded.total_size,
+                avg_entry_z: folded.avg_entry_z,
+                updated_at: folded.updated_at,
+            })
+        })
+        .collect();
+    rows.sort_by(|left, right| right.updated_at.cmp(&left.updated_at));
+    rows
+}
+
+async fn portfolio_positions(
+    State(state): State<AppState>,
+    Query(query): Query<PortfolioPositionsQuery>,
+) -> Result<Json<PortfolioPositionsResponse>, ApiError> {
+    if query.exchange.trim().is_empty() || query.account_id.trim().is_empty() {
+        return Err(ApiError::BadRequest(
+            "exchange and account_id are required".to_string(),
+        ));
+    }
+    let events = state
+        .repository
+        .fetch_spread_ledger_events(&query.exchange, &query.account_id)
+        .await
+        .map_err(|error| ApiError::Upstream(error.to_string()))?;
+    let positions = fold_spread_positions(&events);
+    info!(
+        exchange = %query.exchange,
+        account_id = %query.account_id,
+        positions_count = positions.len(),
+        "execution portfolio positions generated"
+    );
+    Ok(Json(PortfolioPositionsResponse {
+        exchange: query.exchange,
+        account_id: query.account_id,
+        generated_at: Utc::now(),
+        positions,
+    }))
+}
+
 async fn kill_switch(State(state): State<AppState>) -> Result<Json<KillSwitchState>, ApiError> {
     let current = state
         .repository
@@ -2105,12 +2315,18 @@ async fn order_intent(
     })?;
     let side = normalize_side(&payload.side)
         .ok_or_else(|| ApiError::BadRequest("side must be BUY or SELL".to_string()))?;
-    let normalized_operator_id = payload
-        .operator_id
-        .as_deref()
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map(ToString::to_string);
+    let normalized_operator_id = normalize_optional_string(payload.operator_id.as_deref());
+    let normalized_pair_id = normalize_optional_string(payload.pair_id.as_deref());
+    let normalized_spread_direction =
+        normalize_spread_direction(payload.spread_direction.as_deref())?;
+    let normalized_spread_z = payload
+        .spread_z
+        .filter(|value| value.is_finite() && value.abs() <= 100.0);
+    if payload.spread_z.is_some() && normalized_spread_z.is_none() {
+        return Err(ApiError::BadRequest(
+            "spread_z must be finite and within +/-100 when provided".to_string(),
+        ));
+    }
     validate_manual_controls(
         action,
         payload.operator_confirmed,
@@ -2131,9 +2347,12 @@ async fn order_intent(
             &existing,
             &payload.exchange,
             &payload.account_id,
+            normalized_pair_id.as_deref(),
             &payload.instrument,
             timeframe,
             action,
+            normalized_spread_direction.as_deref(),
+            normalized_spread_z,
             side,
             payload.qty,
             payload.operator_confirmed,
@@ -2205,9 +2424,12 @@ async fn order_intent(
         idempotency_key: payload.idempotency_key,
         exchange: payload.exchange,
         account_id: payload.account_id,
+        pair_id: normalized_pair_id,
         instrument: payload.instrument,
         timeframe: timeframe.as_str().to_string(),
         action: action.as_str().to_string(),
+        spread_direction: normalized_spread_direction,
+        spread_z: normalized_spread_z,
         side: side.to_string(),
         qty: payload.qty,
         operator_confirmed: payload.operator_confirmed,
@@ -2692,6 +2914,25 @@ fn validate_manual_controls(
     Ok(())
 }
 
+fn normalize_optional_string(value: Option<&str>) -> Option<String> {
+    value
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToString::to_string)
+}
+
+fn normalize_spread_direction(value: Option<&str>) -> Result<Option<String>, ApiError> {
+    let Some(raw) = value.map(str::trim).filter(|raw| !raw.is_empty()) else {
+        return Ok(None);
+    };
+    if raw == "LONG_SPREAD" || raw == "SHORT_SPREAD" {
+        return Ok(Some(raw.to_string()));
+    }
+    Err(ApiError::BadRequest(
+        "spread_direction must be LONG_SPREAD or SHORT_SPREAD when provided".to_string(),
+    ))
+}
+
 fn parse_ingest_target_state(value: &str) -> Option<OrderLifecycleState> {
     match value {
         "ACKNOWLEDGED" => Some(OrderLifecycleState::Acknowledged),
@@ -2709,9 +2950,12 @@ fn is_same_intent(
     existing: &OrderIntentRecord,
     exchange: &str,
     account_id: &str,
+    pair_id: Option<&str>,
     instrument: &str,
     timeframe: Timeframe,
     action: OrderIntentAction,
+    spread_direction: Option<&str>,
+    spread_z: Option<f64>,
     side: &str,
     qty: f64,
     operator_confirmed: bool,
@@ -2720,9 +2964,16 @@ fn is_same_intent(
 ) -> bool {
     existing.exchange == exchange
         && existing.account_id == account_id
+        && existing.pair_id.as_deref() == pair_id
         && existing.instrument == instrument
         && existing.timeframe == timeframe.as_str()
         && existing.action == action.as_str()
+        && existing.spread_direction.as_deref() == spread_direction
+        && match (existing.spread_z, spread_z) {
+            (Some(left), Some(right)) => (left - right).abs() < f64::EPSILON,
+            (None, None) => true,
+            _ => false,
+        }
         && existing.side == side
         && (existing.qty - qty).abs() < f64::EPSILON
         && existing.operator_confirmed == operator_confirmed
@@ -2735,9 +2986,12 @@ fn map_order_intent(record: OrderIntentRecord) -> OrderIntentResponse {
         idempotency_key: record.idempotency_key,
         exchange: record.exchange,
         account_id: record.account_id,
+        pair_id: record.pair_id,
         instrument: record.instrument,
         timeframe: record.timeframe,
         action: record.action,
+        spread_direction: record.spread_direction,
+        spread_z: record.spread_z,
         side: record.side,
         qty: record.qty,
         operator_confirmed: record.operator_confirmed,
@@ -2756,13 +3010,13 @@ fn map_order_intent(record: OrderIntentRecord) -> OrderIntentResponse {
 #[cfg(test)]
 mod tests {
     use super::{
-        derive_open_order_transition, derive_order_status_transition, is_snapshot_stale,
-        is_terminal_state, parse_ingest_target_state, parse_kraken_open_orders_response,
-        parse_kraken_order_status_response, parse_kraken_submit_response,
-        sign_kraken_futures_payload, validate_manual_controls, ApiError, DispatchMode,
-        KrakenOpenOrder, KrakenStatusOrder,
+        derive_open_order_transition, derive_order_status_transition, fold_spread_positions,
+        is_snapshot_stale, is_terminal_state, parse_ingest_target_state,
+        parse_kraken_open_orders_response, parse_kraken_order_status_response,
+        parse_kraken_submit_response, sign_kraken_futures_payload, validate_manual_controls,
+        ApiError, DispatchMode, KrakenOpenOrder, KrakenStatusOrder, SpreadLedgerEvent,
     };
-    use chrono::{Duration, Utc};
+    use chrono::{DateTime, Duration, Utc};
     use execution_service::{OrderIntentAction, OrderLifecycleState};
 
     #[test]
@@ -3029,5 +3283,79 @@ mod tests {
         let now = Utc::now();
         assert!(is_snapshot_stale(now - Duration::seconds(121), now, 120));
         assert!(!is_snapshot_stale(now - Duration::seconds(120), now, 120));
+    }
+
+    #[test]
+    fn fold_spread_positions_applies_entry_add_and_exit() {
+        let t0 = DateTime::parse_from_rfc3339("2026-02-20T03:00:00Z")
+            .expect("valid time")
+            .with_timezone(&Utc);
+        let t1 = DateTime::parse_from_rfc3339("2026-02-20T03:01:00Z")
+            .expect("valid time")
+            .with_timezone(&Utc);
+        let t2 = DateTime::parse_from_rfc3339("2026-02-20T03:02:00Z")
+            .expect("valid time")
+            .with_timezone(&Utc);
+        let rows = fold_spread_positions(&[
+            SpreadLedgerEvent {
+                pair_id: "PI_XBTUSD__PI_ETHUSD".to_string(),
+                action: "ENTRY".to_string(),
+                spread_direction: Some("LONG_SPREAD".to_string()),
+                spread_z: Some(-2.0),
+                qty: 1.0,
+                created_at: t0,
+            },
+            SpreadLedgerEvent {
+                pair_id: "PI_XBTUSD__PI_ETHUSD".to_string(),
+                action: "ENTRY".to_string(),
+                spread_direction: Some("LONG_SPREAD".to_string()),
+                spread_z: Some(-1.0),
+                qty: 1.0,
+                created_at: t1,
+            },
+            SpreadLedgerEvent {
+                pair_id: "PI_XBTUSD__PI_ETHUSD".to_string(),
+                action: "EXIT".to_string(),
+                spread_direction: Some("LONG_SPREAD".to_string()),
+                spread_z: None,
+                qty: 0.5,
+                created_at: t2,
+            },
+        ]);
+        assert_eq!(rows.len(), 1);
+        let row = &rows[0];
+        assert_eq!(row.pair_id, "PI_XBTUSD__PI_ETHUSD");
+        assert_eq!(row.direction, "LONG_SPREAD");
+        assert!((row.total_size - 1.5).abs() < f64::EPSILON);
+        assert!((row.avg_entry_z - (-1.5)).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn fold_spread_positions_drops_closed_positions() {
+        let t0 = DateTime::parse_from_rfc3339("2026-02-20T03:00:00Z")
+            .expect("valid time")
+            .with_timezone(&Utc);
+        let t1 = DateTime::parse_from_rfc3339("2026-02-20T03:01:00Z")
+            .expect("valid time")
+            .with_timezone(&Utc);
+        let rows = fold_spread_positions(&[
+            SpreadLedgerEvent {
+                pair_id: "PI_SOLUSD__PI_XRPUSD".to_string(),
+                action: "ENTRY".to_string(),
+                spread_direction: Some("SHORT_SPREAD".to_string()),
+                spread_z: Some(2.1),
+                qty: 1.25,
+                created_at: t0,
+            },
+            SpreadLedgerEvent {
+                pair_id: "PI_SOLUSD__PI_XRPUSD".to_string(),
+                action: "EMERGENCY_STOP_CLOSE".to_string(),
+                spread_direction: Some("SHORT_SPREAD".to_string()),
+                spread_z: None,
+                qty: 1.25,
+                created_at: t1,
+            },
+        ]);
+        assert!(rows.is_empty());
     }
 }

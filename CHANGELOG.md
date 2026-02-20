@@ -200,6 +200,16 @@ This project follows SemVer as defined in `docs/02-versioning-and-releases.md`.
     - `specs/contracts/account_reconcile_response.schema.json`
     - `specs/examples/account_snapshot_response.example.json`
     - `specs/examples/account_reconcile_response.example.json`
+- Server-truth spread portfolio ledger slice:
+  - New endpoint: `GET /v1/execution/portfolio/positions`
+  - Execution intents now accept optional spread context fields:
+    - `pair_id`
+    - `spread_direction`
+    - `spread_z`
+  - Web portfolio/trade position state now reads backend ledger output instead of browser-local position storage.
+  - New contract/example:
+    - `specs/contracts/execution_portfolio_positions_response.schema.json`
+    - `specs/examples/execution_portfolio_positions_response.example.json`
 
 ### Changed
 - Product/risk/architecture docs now explicitly define manual-first live trading for MVP.

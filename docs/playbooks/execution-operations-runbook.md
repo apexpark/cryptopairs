@@ -121,6 +121,11 @@ Preset files in repo:
 3. Exchange ack: `PENDING_SUBMIT -> ACKNOWLEDGED`
 4. Fill flow: `ACKNOWLEDGED -> PARTIALLY_FILLED -> FILLED` (or terminal cancel/reject/expire)
 5. Terminal states trigger account reconcile hook.
+6. Server-truth portfolio endpoint folds spread positions from accepted + acknowledged/fill intents:
+- `GET /v1/execution/portfolio/positions?exchange=<...>&account_id=<...>`
+
+Spread metadata for best portfolio fidelity:
+- Include `pair_id`, `spread_direction`, and `spread_z` in `POST /v1/execution/order-intent` payloads.
 
 ## Quick Troubleshooting
 
