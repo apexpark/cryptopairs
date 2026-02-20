@@ -24,7 +24,9 @@ impl Settings {
         let kraken_history_bounds_path = std::env::var("KRAKEN_HISTORY_BOUNDS_PATH")
             .unwrap_or_else(|_| "infra/config/kraken_history_bounds.json".to_string());
         let symbols = std::env::var("KRAKEN_SYMBOLS")
-            .unwrap_or_else(|_| "PI_XBTUSD,PI_ETHUSD".to_string())
+            .unwrap_or_else(|_| {
+                "PF_XBTUSD,PF_ETHUSD,PF_SOLUSD,PF_XRPUSD,PF_ZECUSD,PF_DOGEUSD,PF_ADAUSD,PF_PEPEUSD,PF_SUIUSD,PF_AVAXUSD,PF_XAUTUSD,PF_TAOUSD,PF_LINKUSD,PF_BNBUSD,PF_HYPEUSD,PF_ARBUSD".to_string()
+            })
             .split(',')
             .map(str::trim)
             .filter(|symbol| !symbol.is_empty())

@@ -116,11 +116,12 @@ Current behavior:
   using `KRAKEN_HISTORY_BOUNDS_PATH` (default: `infra/config/kraken_history_bounds.json`).
 - Background worker continuously backfills configured symbols (`KRAKEN_SYMBOLS`).
 - WebSocket worker subscribes to Kraken Futures trade feed and persists live trades.
+- Symbol conventions: `PI_*` = inverse perpetual contracts, `PF_*` = linear perpetual contracts.
 
 ## Integrity History Endpoint
 
 ```bash
-GET /v1/integrity/history?instrument=PI_XBTUSD&timeframe=1m&limit=100
+GET /v1/integrity/history?instrument=PF_XBTUSD&timeframe=1m&limit=100
 ```
 
 Returns recent integrity audit rows from `data_quality_intervals`.
@@ -128,7 +129,7 @@ Returns recent integrity audit rows from `data_quality_intervals`.
 ## Execution Decision Endpoint
 
 ```bash
-GET /v1/execution/decision?instrument=PI_XBTUSD&timeframe=1m
+GET /v1/execution/decision?instrument=PF_XBTUSD&timeframe=1m
 ```
 
 Returns a fail-closed decision (`ALLOWED` or `BLOCKED`) using persisted integrity history.
@@ -306,7 +307,7 @@ Response-level `candidate_set` and `portfolio_plan` objects summarize scan quali
 ## Strategy Backtest Endpoint
 
 ```bash
-GET /v1/strategy/pairs/backtest?timeframe=1m&pair_id=PI_XBTUSD__PI_ETHUSD&bars=300
+GET /v1/strategy/pairs/backtest?timeframe=1m&pair_id=PF_XBTUSD__PF_ETHUSD&bars=300
 ```
 
 Returns deterministic, backend-generated analytics series for the selected pair:
@@ -317,7 +318,7 @@ Returns deterministic, backend-generated analytics series for the selected pair:
 ## Strategy Live Z Endpoint
 
 ```bash
-GET /v1/strategy/pairs/live-z?timeframe=1m&pair_id=PI_XBTUSD__PI_ETHUSD&points=300
+GET /v1/strategy/pairs/live-z?timeframe=1m&pair_id=PF_XBTUSD__PF_ETHUSD&points=300
 ```
 
 Returns near-real-time z-score series + entry/exit/stop markers for Trade-page operator timing cues.
@@ -366,7 +367,7 @@ This command:
 ```bash
 python3 tools/scripts/data_pipeline_e2e_check.py \
   --data-service-url http://127.0.0.1:8080 \
-  --instrument PI_XBTUSD \
+  --instrument PF_XBTUSD \
   --timeframe 1m \
   --output-json artifacts/data_pipeline_e2e_report.json
 ```
@@ -426,9 +427,9 @@ Run:
 
 ```bash
 python3 tools/scripts/kraken_history_depth_probe.py \
-  --symbol PI_XBTUSD \
+  --symbol PF_XBTUSD \
   --timeframes 1m 15m 1h \
-  --output-json specs/examples/kraken_history_depth_probe_PI_XBTUSD.json
+  --output-json specs/examples/kraken_history_depth_probe_PF_XBTUSD.json
 ```
 
 The generated report captures earliest returned candles, page continuity checks, and pagination flags for each timeframe.

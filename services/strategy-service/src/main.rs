@@ -82,7 +82,9 @@ impl StrategySettings {
         });
 
         let pairs_raw =
-            std::env::var("STRATEGY_PAIRS").unwrap_or_else(|_| "PI_XBTUSD:PI_ETHUSD".to_string());
+            std::env::var("STRATEGY_PAIRS").unwrap_or_else(|_| {
+                "PF_XBTUSD:PF_ETHUSD,PF_XBTUSD:PF_SOLUSD,PF_XBTUSD:PF_XRPUSD,PF_XBTUSD:PF_ADAUSD,PF_XBTUSD:PF_DOGEUSD,PF_XBTUSD:PF_AVAXUSD,PF_XBTUSD:PF_BNBUSD,PF_XBTUSD:PF_LINKUSD,PF_ETHUSD:PF_SOLUSD,PF_ETHUSD:PF_XRPUSD,PF_ETHUSD:PF_ADAUSD,PF_SOLUSD:PF_AVAXUSD,PF_XRPUSD:PF_ADAUSD,PF_DOGEUSD:PF_PEPEUSD,PF_SUIUSD:PF_ARBUSD,PF_TAOUSD:PF_HYPEUSD".to_string()
+            });
         let pairs = parse_pairs(&pairs_raw);
         let timeframes_raw =
             std::env::var("STRATEGY_TIMEFRAMES").unwrap_or_else(|_| "1m,15m,1h".to_string());
@@ -1761,8 +1763,8 @@ fn parse_pairs(raw: &str) -> Vec<PairSpec> {
 
     if pairs.is_empty() {
         pairs.push(PairSpec {
-            left: "PI_XBTUSD".to_string(),
-            right: "PI_ETHUSD".to_string(),
+            left: "PF_XBTUSD".to_string(),
+            right: "PF_ETHUSD".to_string(),
         });
     }
     pairs

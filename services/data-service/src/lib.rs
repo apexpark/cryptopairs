@@ -243,7 +243,7 @@ fn map_history_row(value: IntegrityHistoryEntry) -> IntegrityHistoryRow {
     }
 }
 
-fn normalize_request_window(request: &DataQueryRequest) -> DataQueryRequest {
+pub(crate) fn normalize_request_window(request: &DataQueryRequest) -> DataQueryRequest {
     let step = request.timeframe.step_seconds();
     let (start, end) = align_bounds_to_step(
         request.start_ts.timestamp(),
@@ -266,7 +266,7 @@ fn normalize_request_window(request: &DataQueryRequest) -> DataQueryRequest {
     }
 }
 
-fn align_bounds_to_step(start: i64, end: i64, step: i64) -> (i64, i64) {
+pub(crate) fn align_bounds_to_step(start: i64, end: i64, step: i64) -> (i64, i64) {
     if step <= 0 {
         return (start, end);
     }
