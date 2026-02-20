@@ -40,7 +40,7 @@ services:
     container_name: cryptopairs-data-service
     profiles: ["app"]
     working_dir: /workspace
-    command: ["bash", "-lc", "cargo run -p data-service --bin data-service"]
+    command: ["bash", "-lc", "source /usr/local/cargo/env && cargo run -p data-service --bin data-service"]
     environment:
       POSTGRES_URL: postgres://${POSTGRES_USER:-cryptopairs}:${POSTGRES_PASSWORD:-cryptopairs}@timescaledb:5432/${POSTGRES_DB:-cryptopairs}
       DATA_SERVICE_PORT: 8080
@@ -60,7 +60,7 @@ services:
     container_name: cryptopairs-account-service
     profiles: ["app"]
     working_dir: /workspace
-    command: ["bash", "-lc", "cargo run -p account-service --bin account-service"]
+    command: ["bash", "-lc", "source /usr/local/cargo/env && cargo run -p account-service --bin account-service"]
     environment:
       POSTGRES_URL: postgres://${POSTGRES_USER:-cryptopairs}:${POSTGRES_PASSWORD:-cryptopairs}@timescaledb:5432/${POSTGRES_DB:-cryptopairs}
       ACCOUNT_SERVICE_PORT: 8081
@@ -80,7 +80,7 @@ services:
     container_name: cryptopairs-execution-service
     profiles: ["app"]
     working_dir: /workspace
-    command: ["bash", "-lc", "cargo run -p execution-service --bin execution-service"]
+    command: ["bash", "-lc", "source /usr/local/cargo/env && cargo run -p execution-service --bin execution-service"]
     environment:
       POSTGRES_URL: postgres://${POSTGRES_USER:-cryptopairs}:${POSTGRES_PASSWORD:-cryptopairs}@timescaledb:5432/${POSTGRES_DB:-cryptopairs}
       EXECUTION_SERVICE_PORT: 8082
@@ -104,7 +104,7 @@ services:
     container_name: cryptopairs-strategy-service
     profiles: ["app"]
     working_dir: /workspace
-    command: ["bash", "-lc", "cargo run -p strategy-service --bin strategy-service"]
+    command: ["bash", "-lc", "source /usr/local/cargo/env && cargo run -p strategy-service --bin strategy-service"]
     environment:
       POSTGRES_URL: postgres://${POSTGRES_USER:-cryptopairs}:${POSTGRES_PASSWORD:-cryptopairs}@timescaledb:5432/${POSTGRES_DB:-cryptopairs}
       STRATEGY_SERVICE_PORT: 8083
