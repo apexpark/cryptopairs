@@ -29,72 +29,100 @@ This runbook uses friendly setting names first, with technical key names in pare
 3. Kraken API Secret (Base64) (`KRAKEN_FUTURES_API_SECRET`)
 - Required for live mode.
 
-4. Kraken API Base URL (`KRAKEN_FUTURES_API_BASE_URL`)
+4. Kraken API Key Mounted File (`KRAKEN_FUTURES_API_KEY_FILE`)
+- Optional. When set, execution-service reads key from file if inline value is empty.
+
+5. Kraken API Secret Mounted File (`KRAKEN_FUTURES_API_SECRET_FILE`)
+- Optional. When set, execution-service reads secret from file if inline value is empty.
+
+6. Kraken API Key Secret Reference (`KRAKEN_FUTURES_API_KEY_REF`)
+- Optional operator metadata pointer (vault/KMS path).
+
+7. Kraken API Secret Reference (`KRAKEN_FUTURES_API_SECRET_REF`)
+- Optional operator metadata pointer (vault/KMS path).
+
+8. Kraken API Base URL (`KRAKEN_FUTURES_API_BASE_URL`)
 - Default: `https://futures.kraken.com`
 
-5. Send Order Endpoint (`KRAKEN_FUTURES_SENDORDER_PATH`)
+9. Send Order Endpoint (`KRAKEN_FUTURES_SENDORDER_PATH`)
 - Default: `/derivatives/api/v3/sendorder`
 
-6. Open Orders Endpoint (`KRAKEN_FUTURES_OPENORDERS_PATH`)
+10. Open Orders Endpoint (`KRAKEN_FUTURES_OPENORDERS_PATH`)
 - Default: `/derivatives/api/v3/openorders`
 
-7. Open Orders Poller Enabled (`EXECUTION_OPENORDERS_POLLER_ENABLED`)
+11. Open Orders Poller Enabled (`EXECUTION_OPENORDERS_POLLER_ENABLED`)
 - Default: `true`
 
-8. Open Orders Poll Interval Seconds (`EXECUTION_OPENORDERS_POLL_SECONDS`)
+12. Open Orders Poll Interval Seconds (`EXECUTION_OPENORDERS_POLL_SECONDS`)
 - Default: `5`
 
-9. Open Orders Poll Batch Limit (`EXECUTION_OPENORDERS_POLL_BATCH_LIMIT`)
+13. Open Orders Poll Batch Limit (`EXECUTION_OPENORDERS_POLL_BATCH_LIMIT`)
 - Default: `200`
 
-10. Order Status Lookup Enabled (`EXECUTION_ORDER_STATUS_LOOKUP_ENABLED`)
+14. Order Status Lookup Enabled (`EXECUTION_ORDER_STATUS_LOOKUP_ENABLED`)
 - Default: `false`
 - Use only when endpoint query parameter behavior is verified.
 
-11. Order Status Endpoint (`KRAKEN_FUTURES_ORDER_STATUS_PATH`)
+15. Order Status Endpoint (`KRAKEN_FUTURES_ORDER_STATUS_PATH`)
 - Default: `/derivatives/api/v3/orders/status`
 
-12. Order Status Query Key (`KRAKEN_FUTURES_ORDER_STATUS_QUERY_KEY`)
+16. Order Status Query Key (`KRAKEN_FUTURES_ORDER_STATUS_QUERY_KEY`)
 - Default: `orderId`
 
-13. Ack Timeout Poll Seconds (`EXECUTION_ACK_WATCHDOG_POLL_SECONDS`)
+17. Ack Timeout Poll Seconds (`EXECUTION_ACK_WATCHDOG_POLL_SECONDS`)
 - Default: `15`
 
-14. Ack Expiry Threshold Seconds (`EXECUTION_ACK_EXPIRE_AFTER_SECONDS`)
+18. Ack Expiry Threshold Seconds (`EXECUTION_ACK_EXPIRE_AFTER_SECONDS`)
 - Default: `90`
 
-15. Ack Timeout Batch Limit (`EXECUTION_ACK_WATCHDOG_BATCH_LIMIT`)
+19. Ack Timeout Batch Limit (`EXECUTION_ACK_WATCHDOG_BATCH_LIMIT`)
 - Default: `200`
 
-16. Account Service URL (`ACCOUNT_SERVICE_URL`)
+20. Account Service URL (`ACCOUNT_SERVICE_URL`)
 - Default: `http://127.0.0.1:8081`
 
-17. Reconcile On Terminal State (`EXECUTION_TRIGGER_RECONCILE_ON_TERMINAL`)
+21. Reconcile On Terminal State (`EXECUTION_TRIGGER_RECONCILE_ON_TERMINAL`)
 - Default: `true`
 
-18. Per-Pair Qty Cap (`EXECUTION_RISK_PER_PAIR_MAX_QTY`)
+22. Per-Pair Qty Cap (`EXECUTION_RISK_PER_PAIR_MAX_QTY`)
 - Maximum projected open quantity per instrument/pair leg for new `ENTRY` intents.
 - Default: `12`
 
-19. Gross Qty Cap (`EXECUTION_RISK_GROSS_MAX_QTY`)
+23. Gross Qty Cap (`EXECUTION_RISK_GROSS_MAX_QTY`)
 - Maximum projected gross open quantity across all active instruments.
 - Default: `40`
 
-20. Max Leverage (`EXECUTION_RISK_MAX_LEVERAGE`)
+24. Max Leverage (`EXECUTION_RISK_MAX_LEVERAGE`)
 - Risk gate blocks `ENTRY` intents above this ratio (`margin_used / equity`).
 - Default: `3.0`
 
-21. Daily Loss Cap USD (`EXECUTION_RISK_DAILY_LOSS_LIMIT_USD`)
+25. Daily Loss Cap USD (`EXECUTION_RISK_DAILY_LOSS_LIMIT_USD`)
 - Risk gate blocks `ENTRY` intents after this UTC-day drawdown.
 - Default: `500`
 
-22. Entry Cooldown Seconds (`EXECUTION_RISK_ENTRY_COOLDOWN_SECONDS`)
+26. Entry Cooldown Seconds (`EXECUTION_RISK_ENTRY_COOLDOWN_SECONDS`)
 - Minimum delay between accepted `ENTRY` intents for the same instrument.
 - Default: `30`
 
-23. Max Account Snapshot Age Seconds (`EXECUTION_RISK_MAX_SNAPSHOT_AGE_SECONDS`)
+27. Max Account Snapshot Age Seconds (`EXECUTION_RISK_MAX_SNAPSHOT_AGE_SECONDS`)
 - Blocks `ENTRY` intents when account-service snapshot freshness exceeds this threshold.
 - Default: `120`
+
+28. Execution Risk-Block Ratio Alert Threshold (`EXECUTION_ALERT_RISK_BLOCK_RATIO_P2`)
+- Triggers P2 when risk-blocked intents / total intents in window exceeds threshold.
+- Default: `0.25`
+
+29. Execution Dispatch-Reject Ratio Alert Threshold (`EXECUTION_ALERT_DISPATCH_REJECT_RATIO_P2`)
+- Triggers P2 when dispatch rejected / dispatch total in window exceeds threshold.
+- Default: `0.15`
+
+30. Execution Stale-ACK Count Alert Threshold (`EXECUTION_ALERT_STALE_ACK_COUNT_P1`)
+- Triggers P1 when stale acknowledged orders count meets/exceeds threshold.
+- Default: `1`
+
+31. Execution Reconcile-Block Count Alert Threshold (`EXECUTION_ALERT_RECONCILE_BLOCK_COUNT_P1`)
+- Triggers P1 when reconcile-blocked intents count meets/exceeds threshold.
+- Default: `1`
 
 ## Recommended Presets
 
@@ -109,6 +137,13 @@ This runbook uses friendly setting names first, with technical key names in pare
 - Open Orders Poller Enabled: `true`
 - Order Status Lookup Enabled: `true` (only after validation)
 - Reconcile On Terminal State: `true`
+
+3. Hosted Preset
+- Trading Mode: `live_kraken`
+- Inline API key/secret: empty
+- API key/secret file paths configured
+- API key/secret reference paths configured
+- Run secrets lifecycle audit before enabling live entries.
 
 Preset files in repo:
 - `infra/env/paper-mode.env.example`
@@ -151,6 +186,33 @@ Spread metadata for best portfolio fidelity:
 - Check per-pair and gross quantity caps.
 - Check cooldown window for recent accepted `ENTRY` intents.
 
+## Observability Checks
+
+1. Execution summary:
+- `GET /v1/execution/observability/summary?exchange=kraken_futures&account_id=primary&window_minutes=60`
+
+2. Account summary:
+- `GET /v1/account/observability/summary?exchange=kraken_futures&account_id=primary&window_minutes=60`
+
+3. Alert handling:
+- `P1` triggered: keep/activate kill switch and investigate before new entries.
+- `P2` triggered: continue manual controls cautiously and remediate before scaling size.
+
+4. Pre-session readiness gate:
+
+```bash
+python3 tools/scripts/fail_closed_readiness_check.py \
+  --exchange kraken_futures \
+  --account-id primary \
+  --window-minutes 60 \
+  --output-json artifacts/fail_closed_readiness_report.json
+```
+
+Use `recommended_action` from report as entry enable/disable decision.
+
+5. Cross-runbook recovery reference:
+- `docs/playbooks/fail-closed-recovery-runbook.md`
+
 ## Validation Checklist Before Live
 
 1. Kill switch behavior verified.
@@ -158,6 +220,25 @@ Spread metadata for best portfolio fidelity:
 3. Dispatch path tested with small order size.
 4. Order lifecycle history endpoint checked for deterministic transitions.
 5. Reconcile trigger confirmed after terminal transition.
+
+## End-To-End Manual Flow Check
+
+Use the deterministic harness script before enabling sustained live operation:
+
+```bash
+python3 tools/scripts/manual_trade_e2e_check.py \
+  --timeframe 1m \
+  --include-close \
+  --require-flat-after-close \
+  --output-json artifacts/manual_trade_e2e_report.json
+```
+
+Expected result:
+1. `"pass": true` in the report.
+2. Entry legs accepted and dispatched.
+3. Lifecycle includes `NEW -> APPROVED -> PENDING_SUBMIT -> ACKNOWLEDGED` for accepted legs.
+4. Position appears after entry and is flat after close when `--require-flat-after-close` is used.
+5. Reconcile status remains `OK`.
 
 ## Live Canary And Fixture Capture
 

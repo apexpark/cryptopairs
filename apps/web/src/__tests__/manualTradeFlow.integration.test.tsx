@@ -1,0 +1,328 @@
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+
+vi.mock("@radix-ui/react-dropdown-menu", () => ({
+  Root: ({ children }: { children: any }) => <div>{children}</div>,
+  Trigger: ({ children }: { children: any }) => <>{children}</>,
+  Content: ({ children }: { children: any }) => <div>{children}</div>,
+  Item: ({
+    children,
+    onSelect,
+    className,
+  }: {
+    children: any;
+    onSelect?: () => void;
+    className?: string;
+  }) => (
+    <button type="button" className={className} onClick={() => onSelect?.()}>
+      {children}
+    </button>
+  ),
+}));
+
+import App from "../App";
+
+const api = vi.hoisted(() => ({
+  dispatchOrderIntent: vi.fn(),
+  fetchExecutionDecision: vi.fn(),
+  fetchExecutionPortfolioPositions: vi.fn(),
+  fetchIntegrityHistory: vi.fn(),
+  fetchKillSwitchState: vi.fn(),
+  fetchOrderIntentHistory: vi.fn(),
+  fetchReconcile: vi.fn(),
+  fetchStrategyBacktest: vi.fn(),
+  fetchStrategyCostGates: vi.fn(),
+  fetchStrategyCues: vi.fn(),
+  fetchStrategyLiveZ: vi.fn(),
+  fetchStrategyPortfolioPlan: vi.fn(),
+  submitOrderIntent: vi.fn(),
+}));
+
+vi.mock("../lib/api", () => api);
+
+const PAIR_ID = "PI_XBTUSD__PI_ETHUSD";
+const LEFT = "PI_XBTUSD";
+const RIGHT = "PI_ETHUSD";
+
+beforeEach(() => {
+  window.localStorage.clear();
+  vi.clearAllMocks();
+
+  api.fetchStrategyCues.mockResolvedValue({
+    timeframe: "1m",
+    generated_at: "2026-02-20T00:00:00Z",
+    cues: [
+      {
+        cue: {
+          pair_id: PAIR_ID,
+          left_instrument: LEFT,
+          right_instrument: RIGHT,
+          timeframe: "1m",
+          regime: "CALM",
+          selected_variant: "ROBUST_Z",
+          direction_hint: "NONE",
+          spread_z: -2.1,
+          opportunity_score: 0.77,
+          confidence_band: "MEDIUM",
+          entry_band: 1.8,
+          exit_band: 0.6,
+          stop_band: 3.2,
+          expected_hold_bars: 42,
+          cost_estimate_bps: 1.1,
+          actionable: true,
+          rationale_codes: ["COST_PASS"],
+          cost_gate: {
+            status: "AVAILABLE",
+            expected_edge_bps: 4.0,
+            fee_bps: 1.0,
+            funding_bps: 0.6,
+            slippage_bps: 0.8,
+            net_edge_bps: 1.6,
+            pass: true,
+            rationale_codes: ["EDGE_POSITIVE"],
+          },
+          portfolio_hint: {
+            status: "AVAILABLE",
+            target_weight: 0.3,
+            risk_contribution: 0.2,
+            cap_applied: false,
+            rationale_codes: ["WITHIN_CAP"],
+          },
+          shadow_ml: {
+            status: "AVAILABLE",
+            model_name: "shadow-logit",
+            training_rows: 200,
+            positive_rate: 0.56,
+            precision: 0.61,
+            brier_score: 0.22,
+            recommended_variant: "ROBUST_Z",
+            recommended_probability: 0.62,
+            agrees_with_selected: true,
+            rationale_codes: ["STABLE"],
+          },
+          evaluated_at: "2026-02-20T00:00:00Z",
+        },
+        variants: [
+          {
+            variant: "ROBUST_Z",
+            score_last: 0.77,
+            sample_count: 300,
+            win_rate: 0.58,
+            edge_bps: 3.8,
+            reliability: 0.71,
+            regime_fit: 0.64,
+            opportunity_score: 0.77,
+            shadow_success_probability: 0.62,
+            shadow_rank_score: 0.81,
+            rationale_codes: ["PASS"],
+          },
+        ],
+        half_life_bars: 36,
+        hedge_ratio: 0.85,
+        hedge_ratio_stability: 0.92,
+      },
+    ],
+    candidate_set: {
+      total_pairs: 1,
+      evaluated_pairs: 1,
+      actionable_pairs: 1,
+      cost_gate_pass_pairs: 1,
+      shadow_disagreement_pairs: 0,
+    },
+    portfolio_plan: {
+      status: "AVAILABLE",
+      weights: [
+        {
+          pair_id: PAIR_ID,
+          target_weight: 0.35,
+          risk_contribution: 0.2,
+          cap_applied: false,
+        },
+      ],
+      constraints: {
+        dollar_neutral: true,
+        gross_cap: 1.0,
+        per_pair_cap: 0.4,
+      },
+      rationale_codes: ["PASS"],
+    },
+    skipped: [],
+  });
+  api.fetchStrategyCostGates.mockResolvedValue({
+    timeframe: "1m",
+    generated_at: "2026-02-20T00:00:00Z",
+    gates: [],
+    skipped: [],
+  });
+  api.fetchStrategyPortfolioPlan.mockResolvedValue({
+    timeframe: "1m",
+    generated_at: "2026-02-20T00:00:00Z",
+    plan: {
+      status: "AVAILABLE",
+      weights: [],
+      constraints: { dollar_neutral: true, gross_cap: 1, per_pair_cap: 0.4 },
+      rationale_codes: [],
+    },
+    skipped: [],
+  });
+  api.fetchStrategyLiveZ.mockResolvedValue({
+    timeframe: "1m",
+    pair_id: PAIR_ID,
+    generated_at: "2026-02-20T00:00:00Z",
+    entry_band: 1.8,
+    exit_band: 0.6,
+    stop_band: 3.2,
+    selected_variant: "ROBUST_Z",
+    points: Array.from({ length: 40 }, (_, i) => ({
+      ts: `2026-02-20T00:${String(i).padStart(2, "0")}:00Z`,
+      z: -2 + i * 0.05,
+    })),
+    markers: [],
+    rationale_codes: [],
+  });
+  api.fetchStrategyBacktest.mockResolvedValue({
+    timeframe: "1m",
+    pair_id: PAIR_ID,
+    generated_at: "2026-02-20T00:00:00Z",
+    left_instrument: LEFT,
+    right_instrument: RIGHT,
+    selected_variant: "ROBUST_Z",
+    hedge_ratio: 0.85,
+    entry_band: 1.8,
+    exit_band: 0.6,
+    stop_band: 3.2,
+    round_trip_cost_bps: 1.2,
+    points: Array.from({ length: 40 }, (_, i) => ({
+      ts: `2026-02-20T00:${String(i).padStart(2, "0")}:00Z`,
+      z: -2 + i * 0.05,
+      equity: 10_000 + i * 10,
+    })),
+    markers: [],
+    rationale_codes: [],
+  });
+
+  api.fetchKillSwitchState.mockResolvedValue({
+    active: false,
+    reason: "manual",
+    updated_at: "2026-02-20T00:00:00Z",
+  });
+  api.fetchExecutionDecision.mockResolvedValue({
+    instrument: LEFT,
+    timeframe: "1m",
+    decision: "ALLOWED",
+    reason: null,
+    min_coverage_pct: 99.5,
+    evaluated_at: "2026-02-20T00:00:00Z",
+  });
+  api.fetchReconcile.mockResolvedValue({
+    reconcile: {
+      exchange: "kraken_futures",
+      account_id: "primary",
+      ts: "2026-02-20T00:00:00Z",
+      status: "OK",
+      drift_notional: 0,
+      notes: "ok",
+    },
+  });
+  api.fetchIntegrityHistory.mockResolvedValue({
+    instrument: LEFT,
+    timeframe: "1m",
+    rows: [],
+  });
+
+  api.fetchExecutionPortfolioPositions
+    .mockResolvedValueOnce({
+      exchange: "kraken_futures",
+      account_id: "primary",
+      generated_at: "2026-02-20T00:00:00Z",
+      positions: [],
+    })
+    .mockResolvedValue({
+      exchange: "kraken_futures",
+      account_id: "primary",
+      generated_at: "2026-02-20T00:00:10Z",
+      positions: [
+        {
+          pair_id: PAIR_ID,
+          direction: "LONG_SPREAD",
+          total_size: 1.25,
+          avg_entry_z: -2.1,
+          updated_at: "2026-02-20T00:00:10Z",
+        },
+      ],
+    });
+
+  api.submitOrderIntent.mockImplementation(async (payload: any) => ({
+    ...payload,
+    decision: "ACCEPTED",
+    reason: null,
+    evaluated_at: "2026-02-20T00:00:00Z",
+  }));
+  api.dispatchOrderIntent.mockImplementation(async (payload: any) => ({
+    idempotency_key: payload.idempotency_key,
+    result: "ACKNOWLEDGED",
+    from_state: "PENDING_SUBMIT",
+    to_state: "ACKNOWLEDGED",
+    exchange_order_id: `ex-${payload.idempotency_key}`,
+    reason: "simulate ack",
+    attempted_at: "2026-02-20T00:00:00Z",
+  }));
+  api.fetchOrderIntentHistory.mockImplementation(async (idempotencyKey: string) => ({
+    idempotency_key: idempotencyKey,
+    intent: { evaluated_at: "2026-02-20T00:00:00Z" },
+    state_events: [
+      { state: "NEW", reason: "", actor: "execution-service", created_at: "2026-02-20T00:00:00Z" },
+      {
+        state: "APPROVED",
+        reason: "",
+        actor: "execution-service",
+        created_at: "2026-02-20T00:00:00Z",
+      },
+      {
+        state: "PENDING_SUBMIT",
+        reason: "",
+        actor: "dispatch",
+        created_at: "2026-02-20T00:00:01Z",
+      },
+      {
+        state: "ACKNOWLEDGED",
+        reason: "",
+        actor: "dispatch",
+        created_at: "2026-02-20T00:00:02Z",
+      },
+    ],
+    dispatch_attempts: [],
+  }));
+});
+
+describe("manual trade flow", () => {
+  it("submits and dispatches long spread entry with spread metadata", async () => {
+    render(<App />);
+
+    await waitFor(() => {
+      expect(api.fetchStrategyCues).toHaveBeenCalled();
+    });
+
+    fireEvent.click(screen.getByLabelText(/Live Trading Armed/i));
+    fireEvent.click(screen.getByRole("button", { name: "Long Spread Entry" }));
+
+    await waitFor(() => {
+      expect(api.submitOrderIntent).toHaveBeenCalledTimes(2);
+      expect(api.dispatchOrderIntent).toHaveBeenCalledTimes(2);
+    });
+
+    const firstPayload = api.submitOrderIntent.mock.calls[0][0];
+    expect(firstPayload.pair_id).toBe(PAIR_ID);
+    expect(firstPayload.spread_direction).toBe("LONG_SPREAD");
+    expect(firstPayload.spread_z).toBe(-2.1);
+
+    await waitFor(() => {
+      expect(
+        screen.getByText(/Spread dispatched and acknowledged\./i)
+      ).toBeInTheDocument();
+      expect(api.fetchExecutionPortfolioPositions).toHaveBeenCalledWith(
+        "kraken_futures",
+        "primary"
+      );
+    });
+  });
+});

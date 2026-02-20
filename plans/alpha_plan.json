@@ -1,7 +1,7 @@
 {
   "version": 1,
-  "updated_at": "2026-02-20T04:12:00Z",
-  "active_focus_id": 13,
+  "updated_at": "2026-02-20T03:39:45Z",
+  "active_focus_id": 17,
   "milestone": "Alpha Trial Readiness",
   "items": [
     {
@@ -197,7 +197,7 @@
     {
       "id": 13,
       "title": "Build E2E manual trade flow harness (intent, dispatch, lifecycle, reconcile, UI)",
-      "status": "PENDING",
+      "status": "DONE",
       "priority": "NEXT",
       "depends_on": [
         9,
@@ -206,45 +206,64 @@
         12
       ],
       "owner": "codex",
-      "evidence": [],
-      "notes": []
+      "evidence": [
+        "apps/web/src/__tests__/manualTradeFlow.integration.test.tsx"
+      ],
+      "notes": [
+        "2026-02-20T03:21:52Z Completed deterministic manual flow harness + UI integration coverage"
+      ]
     },
     {
       "id": 14,
       "title": "Implement production observability package with alerts and SLO thresholds",
-      "status": "PENDING",
+      "status": "DONE",
       "priority": "LATER",
       "depends_on": [
         13
       ],
       "owner": "codex",
-      "evidence": [],
-      "notes": []
+      "evidence": [
+        "docs/playbooks/observability-slo-runbook.md"
+      ],
+      "notes": [
+        "2026-02-20T03:21:52Z Started observability package implementation",
+        "2026-02-20T03:30:22Z Added observability summary endpoints, alert thresholds, contracts/examples, and runbook"
+      ]
     },
     {
       "id": 15,
       "title": "Finalize hosted secrets/credential lifecycle (vault/KMS, rotation, audit)",
-      "status": "PENDING",
+      "status": "DONE",
       "priority": "LATER",
       "depends_on": [
         13
       ],
       "owner": "codex",
-      "evidence": [],
-      "notes": []
+      "evidence": [
+        "docs/playbooks/secrets-lifecycle-runbook.md"
+      ],
+      "notes": [
+        "2026-02-20T03:30:22Z Started hosted secrets lifecycle hardening",
+        "2026-02-20T03:36:35Z Added hosted secrets lifecycle with file-based secret loading, rotation policy, and audit tooling"
+      ]
     },
     {
       "id": 16,
       "title": "Complete fail-closed operator runbooks for recovery and incidents",
-      "status": "PENDING",
+      "status": "DONE",
       "priority": "LATER",
       "depends_on": [
         13,
         14
       ],
       "owner": "codex",
-      "evidence": [],
-      "notes": []
+      "evidence": [
+        "tools/scripts/fail_closed_readiness_check.py"
+      ],
+      "notes": [
+        "2026-02-20T03:36:35Z Started fail-closed operator runbook finalization",
+        "2026-02-20T03:39:45Z Completed fail-closed operator recovery runbooks and deterministic readiness gate"
+      ]
     },
     {
       "id": 17,
@@ -331,6 +350,34 @@
       "focus_id": 13,
       "delta": "Completed item 12 with normalization contract + fixture matrix and deterministic replay coverage for openorders/order-status transitions",
       "next_action": "Implement item 13 end-to-end manual trade flow harness across intent, dispatch, lifecycle, reconcile, and UI",
+      "blockers": []
+    },
+    {
+      "ts": "2026-02-20T03:21:52Z",
+      "focus_id": 14,
+      "delta": "Completed item 13 with manual flow harness, runbook wiring, and UI integration test",
+      "next_action": "Implement observability summary endpoints/contracts and alert threshold package",
+      "blockers": []
+    },
+    {
+      "ts": "2026-02-20T03:30:22Z",
+      "focus_id": 15,
+      "delta": "Completed item 14 observability package with summary endpoints and SLO alerts",
+      "next_action": "Implement hosted secrets lifecycle: env/file secret sources, rotation audit tooling, and runbook",
+      "blockers": []
+    },
+    {
+      "ts": "2026-02-20T03:36:35Z",
+      "focus_id": 16,
+      "delta": "Completed item 15 hosted secrets lifecycle package",
+      "next_action": "Finalize fail-closed operator runbooks and recovery procedures across execution/account/observability/secrets",
+      "blockers": []
+    },
+    {
+      "ts": "2026-02-20T03:39:45Z",
+      "focus_id": 17,
+      "delta": "Completed item 16 runbook hardening and fail-closed readiness automation",
+      "next_action": "User-managed item 17: run 48-72h alpha dry-run and go/no-go signoff",
       "blockers": []
     }
   ]

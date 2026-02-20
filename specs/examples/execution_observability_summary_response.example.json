@@ -1,0 +1,50 @@
+{
+  "generated_at": "2026-02-20T14:30:00Z",
+  "exchange": "kraken_futures",
+  "account_id": "primary",
+  "window_minutes": 60,
+  "thresholds": {
+    "risk_block_ratio_p2": 0.25,
+    "dispatch_reject_ratio_p2": 0.15,
+    "stale_ack_count_p1": 1,
+    "reconcile_block_count_p1": 1
+  },
+  "metrics": {
+    "intents_total": 12,
+    "intents_blocked": 3,
+    "risk_blocked": 2,
+    "integrity_blocked": 1,
+    "reconcile_blocked": 0,
+    "kill_switch_blocked": 0,
+    "dispatch_total": 9,
+    "dispatch_rejected": 1,
+    "dispatch_acknowledged": 8,
+    "stale_ack_count": 0
+  },
+  "alerts": [
+    {
+      "code": "execution_risk_block_ratio",
+      "severity": "P2",
+      "triggered": false,
+      "message": "risk-block ratio=0.1667 threshold=0.2500"
+    },
+    {
+      "code": "execution_dispatch_reject_ratio",
+      "severity": "P2",
+      "triggered": false,
+      "message": "dispatch-reject ratio=0.1111 threshold=0.1500"
+    },
+    {
+      "code": "execution_stale_ack_count",
+      "severity": "P1",
+      "triggered": false,
+      "message": "stale ACK count=0 threshold=1"
+    },
+    {
+      "code": "execution_reconcile_block_count",
+      "severity": "P1",
+      "triggered": false,
+      "message": "reconcile-block count=0 threshold=1"
+    }
+  ]
+}

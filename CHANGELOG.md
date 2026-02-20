@@ -220,6 +220,46 @@ This project follows SemVer as defined in `docs/02-versioning-and-releases.md`.
     - open-orders: cancel/reject/expire status mapping
     - order-status: `ENTERED_BOOK` full-fill mapping and explicit `EXPIRED` mapping
   - Added replay test coverage against normalization matrix fixture.
+- End-to-end manual trade validation harness:
+  - Added script: `tools/scripts/manual_trade_e2e_check.py`
+  - Validates preflight + manual entry/dispatch/lifecycle/position/reconcile path.
+  - Supports optional emergency stop-close validation with flat-position enforcement.
+- Frontend manual flow integration coverage:
+  - Added `apps/web/src/__tests__/manualTradeFlow.integration.test.tsx`
+  - Verifies spread metadata submit, dispatch sequencing, and acknowledged-flow UI state.
+- Observability summary package with operator alert thresholds:
+  - New execution endpoint:
+    - `GET /v1/execution/observability/summary`
+  - New account endpoint:
+    - `GET /v1/account/observability/summary`
+  - New contracts/examples:
+    - `specs/contracts/execution_observability_summary_response.schema.json`
+    - `specs/examples/execution_observability_summary_response.example.json`
+    - `specs/contracts/account_observability_summary_response.schema.json`
+    - `specs/examples/account_observability_summary_response.example.json`
+  - New observability SLO runbook:
+    - `docs/playbooks/observability-slo-runbook.md`
+- Hosted secrets lifecycle package:
+  - `execution-service` live credential loading now supports file sources:
+    - `KRAKEN_FUTURES_API_KEY_FILE`
+    - `KRAKEN_FUTURES_API_SECRET_FILE`
+  - Added hosted-mode env template:
+    - `infra/env/hosted-mode.env.example`
+  - Added secrets rotation policy config:
+    - `infra/config/hosted_secrets_rotation_policy.json`
+  - Added secrets lifecycle audit script:
+    - `tools/scripts/secrets_lifecycle_audit.py`
+  - Added runbook:
+    - `docs/playbooks/secrets-lifecycle-runbook.md`
+  - Added contract/example:
+    - `specs/contracts/hosted_secrets_rotation_policy.schema.json`
+    - `specs/examples/hosted_secrets_rotation_policy.example.json`
+- Fail-closed operator recovery package:
+  - Added readiness checker:
+    - `tools/scripts/fail_closed_readiness_check.py`
+  - Added fail-closed recovery runbook:
+    - `docs/playbooks/fail-closed-recovery-runbook.md`
+  - Expanded incident and execution runbooks with deterministic recovery command gates.
 
 ### Changed
 - Product/risk/architecture docs now explicitly define manual-first live trading for MVP.

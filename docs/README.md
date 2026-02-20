@@ -48,9 +48,13 @@ If instructions conflict, use this order:
 - `docs/playbooks/backfill-runbook.md`
 - `docs/playbooks/incident-runbook.md`
 - `docs/playbooks/execution-operations-runbook.md`
+- `docs/playbooks/observability-slo-runbook.md`
+- `docs/playbooks/secrets-lifecycle-runbook.md`
+- `docs/playbooks/fail-closed-recovery-runbook.md`
 - `plans/alpha_plan.json`
 - `infra/env/paper-mode.env.example`
 - `infra/env/live-mode.env.example`
+- `infra/env/hosted-mode.env.example`
 - `docs/adr/ADR-0001-hybrid-rust-python.md`
 
 ## Definition Of Ready

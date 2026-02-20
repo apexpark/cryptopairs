@@ -16,6 +16,7 @@ Provide a standard response for production-impacting failures in data, execution
 2. Capture incident timestamp and primary symptom.
 3. Identify impacted modules and symbols.
 4. Assign incident owner.
+5. Keep `EMERGENCY_STOP_CLOSE` available for open spread risk reduction.
 
 ## Investigation Checklist
 
@@ -40,6 +41,34 @@ Provide a standard response for production-impacting failures in data, execution
 3. Reconcile account and position state against exchange.
 4. Resume paper/live mode only after explicit checks pass.
 5. Confirm strategy cues are fail-closed when advisory or cost model inputs are degraded.
+6. Run objective readiness gate:
+
+```bash
+python3 tools/scripts/fail_closed_readiness_check.py \
+  --exchange kraken_futures \
+  --account-id primary \
+  --window-minutes 60 \
+  --output-json artifacts/fail_closed_readiness_report.json
+```
+
+7. If credentials were involved, run:
+
+```bash
+python3 tools/scripts/secrets_lifecycle_audit.py \
+  --policy-json infra/config/hosted_secrets_rotation_policy.json \
+  --env-file infra/env/hosted-mode.env.example \
+  --output-json artifacts/secrets_lifecycle_audit_report.json
+```
+
+8. Confirm manual trade vertical slice is healthy:
+
+```bash
+python3 tools/scripts/manual_trade_e2e_check.py \
+  --timeframe 1m \
+  --include-close \
+  --require-flat-after-close \
+  --output-json artifacts/manual_trade_e2e_report.json
+```
 
 ## Post-Incident
 

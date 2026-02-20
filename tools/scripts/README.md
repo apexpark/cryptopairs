@@ -26,6 +26,25 @@ python3 tools/scripts/data_pipeline_e2e_check.py \
   --output-json artifacts/data_pipeline_e2e_report.json
 ```
 
+## Manual Trade Flow E2E Check
+
+Run a deterministic manual trade vertical-slice check:
+- strategy cue selection
+- account/reconcile seed
+- kill-switch preflight
+- intent submit + dispatch
+- lifecycle history verification
+- portfolio position verification
+- optional emergency close legs
+
+```bash
+python3 tools/scripts/manual_trade_e2e_check.py \
+  --timeframe 1m \
+  --include-close \
+  --require-flat-after-close \
+  --output-json artifacts/manual_trade_e2e_report.json
+```
+
 ## Kraken History Depth Probe
 
 Run live Kraken depth checks to update the historical bounds policy:
@@ -35,4 +54,27 @@ python3 tools/scripts/kraken_history_depth_probe.py \
   --symbol PI_XBTUSD \
   --timeframes 1m 15m 1h \
   --output-json artifacts/kraken_history_depth_probe_PI_XBTUSD.json
+```
+
+## Secrets Lifecycle Audit
+
+Audit hosted credential references, mounted-file wiring, and optional file-age checks:
+
+```bash
+python3 tools/scripts/secrets_lifecycle_audit.py \
+  --policy-json infra/config/hosted_secrets_rotation_policy.json \
+  --env-file infra/env/hosted-mode.env.example \
+  --output-json artifacts/secrets_lifecycle_audit_report.json
+```
+
+## Fail-Closed Readiness Check
+
+Run a pre-session go/no-go check for manual entries:
+
+```bash
+python3 tools/scripts/fail_closed_readiness_check.py \
+  --exchange kraken_futures \
+  --account-id primary \
+  --window-minutes 60 \
+  --output-json artifacts/fail_closed_readiness_report.json
 ```

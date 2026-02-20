@@ -189,6 +189,10 @@ Operator Settings (friendly name -> technical key):
 - Trading Mode (`EXECUTION_DISPATCH_MODE`): `fail_closed` (default), `simulate_ack`, `live_kraken`.
 - Kraken API Key (`KRAKEN_FUTURES_API_KEY`): required for `live_kraken`.
 - Kraken API Secret (Base64) (`KRAKEN_FUTURES_API_SECRET`): required for `live_kraken`.
+- Kraken API Key Mounted File (`KRAKEN_FUTURES_API_KEY_FILE`): optional file source, preferred for hosted mode.
+- Kraken API Secret Mounted File (`KRAKEN_FUTURES_API_SECRET_FILE`): optional file source, preferred for hosted mode.
+- Kraken API Key Secret Reference (`KRAKEN_FUTURES_API_KEY_REF`): operator metadata for vault/KMS source.
+- Kraken API Secret Reference (`KRAKEN_FUTURES_API_SECRET_REF`): operator metadata for vault/KMS source.
 - Kraken API Base URL (`KRAKEN_FUTURES_API_BASE_URL`): default `https://futures.kraken.com`.
 - Send Order Endpoint (`KRAKEN_FUTURES_SENDORDER_PATH`): default `/derivatives/api/v3/sendorder`.
 - Open Orders Endpoint (`KRAKEN_FUTURES_OPENORDERS_PATH`): default `/derivatives/api/v3/openorders`.
@@ -209,11 +213,21 @@ Operator Settings (friendly name -> technical key):
 - Daily Loss Cap USD (`EXECUTION_RISK_DAILY_LOSS_LIMIT_USD`): default `500`.
 - Entry Cooldown Seconds (`EXECUTION_RISK_ENTRY_COOLDOWN_SECONDS`): default `30`.
 - Max Account Snapshot Age Seconds (`EXECUTION_RISK_MAX_SNAPSHOT_AGE_SECONDS`): default `120`.
+- Execution Risk-Block Ratio Alert Threshold (`EXECUTION_ALERT_RISK_BLOCK_RATIO_P2`): default `0.25`.
+- Execution Dispatch-Reject Ratio Alert Threshold (`EXECUTION_ALERT_DISPATCH_REJECT_RATIO_P2`): default `0.15`.
+- Execution Stale-ACK Count Alert Threshold (`EXECUTION_ALERT_STALE_ACK_COUNT_P1`): default `1`.
+- Execution Reconcile-Block Count Alert Threshold (`EXECUTION_ALERT_RECONCILE_BLOCK_COUNT_P1`): default `1`.
+- Account Snapshot Age Alert Threshold (`ACCOUNT_ALERT_MAX_SNAPSHOT_AGE_SECONDS_P1`): default `120`.
+- Account Reconcile Non-OK Count Alert Threshold (`ACCOUNT_ALERT_RECONCILE_NON_OK_COUNT_P2`): default `1`.
 
 Operator playbook: `docs/playbooks/execution-operations-runbook.md`
 Preset examples:
 - `infra/env/paper-mode.env.example`
 - `infra/env/live-mode.env.example`
+- `infra/env/hosted-mode.env.example`
+
+Hosted secrets lifecycle policy:
+- `infra/config/hosted_secrets_rotation_policy.json`
 
 The execution service includes an automatic stale-ack watchdog:
 - any order stuck in `ACKNOWLEDGED` beyond the configured threshold is deterministically
@@ -266,6 +280,16 @@ GET /v1/account/snapshot/day-start?exchange=kraken_futures&account_id=primary&da
 ```
 
 Execution risk checks consume these account-service endpoints as server-truth inputs.
+
+## Observability Summary Endpoints
+
+```bash
+GET /v1/execution/observability/summary?exchange=kraken_futures&account_id=primary&window_minutes=60
+GET /v1/account/observability/summary?exchange=kraken_futures&account_id=primary&window_minutes=60
+```
+
+These endpoints provide operator-facing alert evaluations and SLO threshold context for
+execution risk/dispatch health and account snapshot/reconcile health.
 
 ## Strategy Pairs Cues Endpoint
 
@@ -349,6 +373,52 @@ python3 tools/scripts/data_pipeline_e2e_check.py \
 
 The script checks live service health, queries local-first candles, validates integrity metadata,
 reads integrity history, and emits a machine-readable pass/fail report.
+
+## Manual Trade E2E Validation
+
+```bash
+python3 tools/scripts/manual_trade_e2e_check.py \
+  --timeframe 1m \
+  --include-close \
+  --require-flat-after-close \
+  --output-json artifacts/manual_trade_e2e_report.json
+```
+
+The script validates a full manual-first trading slice:
+- strategy cue selection
+- integrity warm-up for pair legs
+- account snapshot + reconcile gate seeding
+- kill-switch preflight
+- order intent + dispatch + lifecycle history
+- portfolio spread position update
+- optional emergency-stop-close and flat-position check
+- reconcile run and final status check
+
+## Secrets Lifecycle Audit
+
+```bash
+python3 tools/scripts/secrets_lifecycle_audit.py \
+  --policy-json infra/config/hosted_secrets_rotation_policy.json \
+  --env-file infra/env/hosted-mode.env.example \
+  --output-json artifacts/secrets_lifecycle_audit_report.json
+```
+
+Use this audit before hosted/live operation to verify secret references, mounted-file wiring,
+and optional rotation-age checks.
+
+## Fail-Closed Readiness Check
+
+```bash
+python3 tools/scripts/fail_closed_readiness_check.py \
+  --exchange kraken_futures \
+  --account-id primary \
+  --window-minutes 60 \
+  --output-json artifacts/fail_closed_readiness_report.json
+```
+
+Use this pre-session gate before enabling manual entries. If report recommends
+`KEEP_FAIL_CLOSED`, keep entry actions blocked and follow:
+- `docs/playbooks/fail-closed-recovery-runbook.md`
 
 ## Kraken History Depth Probe (Live Data)
 

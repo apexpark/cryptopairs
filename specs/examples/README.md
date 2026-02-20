@@ -7,6 +7,8 @@ Keep these in sync with `specs/contracts/`.
 Current baseline examples:
 - `specs/examples/account_snapshot_response.example.json`
 - `specs/examples/account_reconcile_response.example.json`
+- `specs/examples/account_observability_summary_response.example.json`
+- `specs/examples/hosted_secrets_rotation_policy.example.json`
 - `specs/examples/data_query_request.example.json`
 - `specs/examples/data_query_response_complete.example.json`
 - `specs/examples/data_query_response_incomplete.example.json`
@@ -18,6 +20,7 @@ Current baseline examples:
 - `specs/examples/execution_order_intent_request.example.json`
 - `specs/examples/execution_order_intent_response_blocked.example.json`
 - `specs/examples/execution_portfolio_positions_response.example.json`
+- `specs/examples/execution_observability_summary_response.example.json`
 - `specs/examples/execution_order_intent_response_emergency_stop_accepted.example.json`
 - `specs/examples/execution_order_lifecycle_state_machine.example.json`
 - `specs/examples/execution_order_state_history_response.example.json`
