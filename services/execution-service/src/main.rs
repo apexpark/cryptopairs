@@ -79,8 +79,8 @@ fn resolve_secret_value(
         return Ok(normalized);
     }
     if let Some(path) = file_path.and_then(normalize_secret_value) {
-        let content =
-            fs::read_to_string(&path).map_err(|error| format!("failed to read {base_key}_FILE: {error}"))?;
+        let content = fs::read_to_string(&path)
+            .map_err(|error| format!("failed to read {base_key}_FILE: {error}"))?;
         if let Some(normalized) = normalize_secret_value(content) {
             return Ok(normalized);
         }
