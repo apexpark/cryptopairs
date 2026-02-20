@@ -2,6 +2,12 @@
 
 This is the standard workflow for building features safely and quickly.
 
+## Focus Control
+
+- Keep alpha scope status in `plans/alpha_plan.json`.
+- Use `tools/scripts/alpha_tracker.py` for summary/checkpoints/sidetrack parking.
+- Keep one active `IN_PROGRESS` item unless explicitly re-prioritized.
+
 ## Step 1: Read the right policies
 - Always start with `docs/00-guardrails.md` and `docs/01-product-scope.md`
 - Then consult governance docs as needed (`docs/02-05`, `docs/07`, `docs/17`)
