@@ -6,6 +6,7 @@ import type {
   ExecutionDecisionResponse,
   IntegrityHistoryResponse,
   KillSwitchState,
+  MarketMetricsResponse,
   OrderIntentHistoryResponse,
   OrderIntentRequest,
   OrderIntentResponse,
@@ -179,4 +180,13 @@ export async function fetchIntegrityHistory(
     instrument
   )}&timeframe=${timeframe}&limit=${limit}`;
   return parseJson<IntegrityHistoryResponse>(await fetch(url));
+}
+
+export async function fetchMarketMetrics(
+  instrument: string
+): Promise<MarketMetricsResponse> {
+  const url = `${DATA_SERVICE_BASE_URL}/v1/market/metrics?instrument=${encodeURIComponent(
+    instrument
+  )}`;
+  return parseJson<MarketMetricsResponse>(await fetch(url));
 }

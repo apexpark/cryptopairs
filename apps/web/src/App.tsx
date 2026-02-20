@@ -11,6 +11,7 @@ import {
   fetchExecutionDecision,
   fetchIntegrityHistory,
   fetchKillSwitchState,
+  fetchMarketMetrics,
   fetchOrderIntentHistory,
   fetchReconcile,
   fetchStrategyBacktest,
@@ -36,6 +37,7 @@ import type {
   ExecutionAction,
   IntegrityHistoryResponse,
   KillSwitchState,
+  MarketMetricsResponse,
   OrderIntentHistoryResponse,
   ReconcileResponse,
   SpreadPosition,
@@ -135,6 +137,50 @@ function formatSigned(value: number, digits = 2): string {
   return `${value >= 0 ? "+" : "-"}${abs}`;
 }
 
+function formatMetricPrice(value: number | null | undefined): string {
+  if (value == null || !Number.isFinite(value)) {
+    return "--";
+  }
+  const abs = Math.abs(value);
+  if (abs >= 1_000) {
+    return value.toFixed(0);
+  }
+  if (abs >= 100) {
+    return value.toFixed(2);
+  }
+  if (abs >= 1) {
+    return value.toFixed(3);
+  }
+  return value.toFixed(6);
+}
+
+function formatMetricPercent(value: number | null | undefined): string {
+  if (value == null || !Number.isFinite(value)) {
+    return "--";
+  }
+  return `${value >= 0 ? "+" : ""}${value.toFixed(2)}%`;
+}
+
+function formatFundingRate(value: number | null | undefined): string {
+  if (value == null || !Number.isFinite(value)) {
+    return "--";
+  }
+  return `${(value * 100).toFixed(4)}% / hr`;
+}
+
+function formatOpenInterest(value: number | null | undefined): string {
+  if (value == null || !Number.isFinite(value)) {
+    return "--";
+  }
+  if (Math.abs(value) >= 1_000_000) {
+    return `${(value / 1_000_000).toFixed(1)}m`;
+  }
+  if (Math.abs(value) >= 1_000) {
+    return `${(value / 1_000).toFixed(1)}k`;
+  }
+  return value.toFixed(0);
+}
+
 function formatInstrumentLabel(instrument: string): string {
   return instrument.replace(/^PI_/, "").replace(/^PF_/, "");
 }
@@ -210,10 +256,14 @@ function App(): JSX.Element {
   const [rightIntegrity, setRightIntegrity] = useState<IntegrityHistoryResponse | null>(null);
 
   const [zSeries, setZSeries] = useState<number[]>([]);
+  const [zTimestamps, setZTimestamps] = useState<string[]>([]);
   const [equitySeries, setEquitySeries] = useState<number[]>([]);
+  const [equityTimestamps, setEquityTimestamps] = useState<string[]>([]);
   const [zMarkers, setZMarkers] = useState<ChartMarker[]>([]);
   const [analyticsError, setAnalyticsError] = useState<string | null>(null);
   const [analyticsLoading, setAnalyticsLoading] = useState(false);
+  const [headerMetrics, setHeaderMetrics] = useState<MarketMetricsResponse | null>(null);
+  const [headerMetricsError, setHeaderMetricsError] = useState<string | null>(null);
 
   const [stopMethod, setStopMethod] = useState<"Z-Score" | "Dollar" | "Percent">("Z-Score");
   const [stopValue, setStopValue] = useState<string>("3.2");
@@ -488,7 +538,9 @@ function App(): JSX.Element {
   useEffect(() => {
     if (!selectedCueRow) {
       setZSeries([]);
+      setZTimestamps([]);
       setEquitySeries([]);
+      setEquityTimestamps([]);
       setZMarkers([]);
       setAnalyticsError("No pair selected.");
       setAnalyticsLoading(false);
@@ -523,20 +575,26 @@ function App(): JSX.Element {
         if (liveZ.points.length < 20 || backtest.points.length < 20) {
           setAnalyticsError("Insufficient aligned data for analytics charts.");
           setZSeries([]);
+          setZTimestamps([]);
           setEquitySeries([]);
+          setEquityTimestamps([]);
           setZMarkers([]);
           return;
         }
 
         const zValues = liveZ.points.map((point) => point.z);
+        const zTimes = liveZ.points.map((point) => point.ts);
         const equity = backtest.points.map((point) => point.equity);
+        const equityTimes = backtest.points.map((point) => point.ts);
         const markers = liveZ.markers.filter((marker) =>
           marker.kind === "entry" || marker.kind === "exit" || marker.kind === "stop"
         );
 
         setZSeries(zValues);
+        setZTimestamps(zTimes);
         setZMarkers(markers);
         setEquitySeries(equity);
+        setEquityTimestamps(equityTimes);
         setAnalyticsError(null);
       } catch (error) {
         if (cancelled) {
@@ -565,6 +623,41 @@ function App(): JSX.Element {
       window.clearInterval(refreshIntervalId);
     };
   }, [selectedCueRow, timeframe]);
+
+  const headerInstrument = selectedCueRow?.cue.left_instrument ?? "PI_XBTUSD";
+
+  useEffect(() => {
+    let cancelled = false;
+
+    const refreshMetrics = async (): Promise<void> => {
+      try {
+        const metrics = await fetchMarketMetrics(headerInstrument);
+        if (cancelled) {
+          return;
+        }
+        setHeaderMetrics(metrics);
+        setHeaderMetricsError(null);
+      } catch (error) {
+        if (cancelled) {
+          return;
+        }
+        setHeaderMetrics(null);
+        setHeaderMetricsError(
+          `Live metrics unavailable: ${error instanceof Error ? error.message : String(error)}`
+        );
+      }
+    };
+
+    void refreshMetrics();
+    const intervalId = window.setInterval(() => {
+      void refreshMetrics();
+    }, 15_000);
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(intervalId);
+    };
+  }, [headerInstrument]);
 
   const addTimelineEvent = (pairId: string, event: TimelineEvent): void => {
     setTimelineByPair((prev) => {
@@ -815,6 +908,7 @@ function App(): JSX.Element {
           selectedPairId={currentPairId}
           onSelectPair={setSelectedPairId}
           zSeries={zSeries}
+          zTimestamps={zTimestamps}
           zMarkers={zMarkers}
           analyticsError={analyticsError}
           currentPosition={currentPosition}
@@ -867,8 +961,10 @@ function App(): JSX.Element {
           selectedPairId={currentPairId}
           onSelectPair={setSelectedPairId}
           zSeries={zSeries}
+          zTimestamps={zTimestamps}
           zMarkers={zMarkers}
           equitySeries={equitySeries}
+          equityTimestamps={equityTimestamps}
           loading={analyticsLoading}
           error={analyticsError}
         />
@@ -929,11 +1025,21 @@ function App(): JSX.Element {
         </div>
 
         <div className="metrics-row">
-          <Metric label="Mark" value="28.50" />
-          <Metric label="Index" value="28.53" />
-          <Metric label="24h" value="-2.81%" tone="bad" />
-          <Metric label="Funding" value="-0.0040% / hr" />
-          <Metric label="OI" value="69.6k" />
+          <Metric label="Mark" value={formatMetricPrice(headerMetrics?.mark)} />
+          <Metric label="Index" value={formatMetricPrice(headerMetrics?.index)} />
+          <Metric
+            label="24h"
+            value={formatMetricPercent(headerMetrics?.change_24h_pct)}
+            tone={
+              (headerMetrics?.change_24h_pct ?? 0) < 0
+                ? "bad"
+                : (headerMetrics?.change_24h_pct ?? 0) > 0
+                  ? "ok"
+                  : "neutral"
+            }
+          />
+          <Metric label="Funding" value={formatFundingRate(headerMetrics?.funding_rate)} />
+          <Metric label="OI" value={formatOpenInterest(headerMetrics?.open_interest)} />
         </div>
 
         <div className="topbar-right">
@@ -996,6 +1102,7 @@ function App(): JSX.Element {
             ? "Trade gates healthy"
             : "Fail-closed mode: entry actions blocked until all gates are safe"}
         </span>
+        {headerMetricsError ? <span className="tone-warn">{headerMetricsError}</span> : null}
       </footer>
     </div>
   );
@@ -1043,6 +1150,7 @@ function TradePage(props: {
   selectedPairId: string;
   onSelectPair: (pairId: string) => void;
   zSeries: number[];
+  zTimestamps: string[];
   zMarkers: ChartMarker[];
   analyticsError: string | null;
   currentPosition: SpreadPosition;
@@ -1146,6 +1254,7 @@ function TradePage(props: {
       >
         <LineChart
           values={props.zSeries}
+          timestamps={props.zTimestamps}
           markers={props.zMarkers}
           thresholds={
             selectedCue
@@ -1407,8 +1516,10 @@ function AnalyticsPage({
   selectedPairId,
   onSelectPair,
   zSeries,
+  zTimestamps,
   zMarkers,
   equitySeries,
+  equityTimestamps,
   loading,
   error,
 }: {
@@ -1416,8 +1527,10 @@ function AnalyticsPage({
   selectedPairId: string;
   onSelectPair: (value: string) => void;
   zSeries: number[];
+  zTimestamps: string[];
   zMarkers: ChartMarker[];
   equitySeries: number[];
+  equityTimestamps: string[];
   loading: boolean;
   error: string | null;
 }): JSX.Element {
@@ -1486,6 +1599,7 @@ function AnalyticsPage({
         >
           <LineChart
             values={equitySeries}
+            timestamps={equityTimestamps}
             height={360}
             title="Hypothetical equity (net of estimated costs)"
             unavailableText={loading ? "Loading live candles..." : error ?? "No data"}
@@ -1498,6 +1612,7 @@ function AnalyticsPage({
         >
           <LineChart
             values={zSeries}
+            timestamps={zTimestamps}
             markers={zMarkers}
             thresholds={
               selected
@@ -1663,35 +1778,41 @@ function IntegrityTable({
     checked_at: string;
   }>;
 }): JSX.Element {
+  const visibleRows = rows.slice(0, 8);
   return (
-    <div className="table-wrap">
-      <table>
-        <thead>
-          <tr>
-            <th>Checked</th>
-            <th>Status</th>
-            <th>Coverage</th>
-          </tr>
-        </thead>
-        <tbody>
-          {rows.length ? (
-            rows.slice(0, 8).map((row) => (
-              <tr key={`${row.checked_at}-${row.start_ts}`}>
-                <td>{new Date(row.checked_at).toLocaleTimeString()}</td>
-                <td className={`tone-${toneFromStatus(row.status)}`}>{row.status}</td>
-                <td>{row.coverage_pct.toFixed(2)}%</td>
-              </tr>
-            ))
-          ) : (
+    <>
+      <div className="table-wrap">
+        <table>
+          <thead>
             <tr>
-              <td colSpan={3} className="empty-text">
-                No live integrity rows available.
-              </td>
+              <th>Checked</th>
+              <th>Status</th>
+              <th>Coverage</th>
             </tr>
-          )}
-        </tbody>
-      </table>
-    </div>
+          </thead>
+          <tbody>
+            {rows.length ? (
+              visibleRows.map((row) => (
+                <tr key={`${row.checked_at}-${row.start_ts}`}>
+                  <td>{new Date(row.checked_at).toLocaleTimeString()}</td>
+                  <td className={`tone-${toneFromStatus(row.status)}`}>{row.status}</td>
+                  <td>{row.coverage_pct.toFixed(2)}%</td>
+                </tr>
+              ))
+            ) : (
+              <tr>
+                <td colSpan={3} className="empty-text">
+                  No live integrity rows available.
+                </td>
+              </tr>
+            )}
+          </tbody>
+        </table>
+      </div>
+      <p className="small-text">
+        Showing latest {visibleRows.length} checks (newest first) from {rows.length} stored rows.
+      </p>
+    </>
   );
 }
 

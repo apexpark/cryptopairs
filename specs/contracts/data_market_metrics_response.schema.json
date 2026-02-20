@@ -1,0 +1,41 @@
+{
+  "$id": "https://cryptopairs/specs/contracts/data_market_metrics_response.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "DataMarketMetricsResponse",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "instrument",
+    "server_time",
+    "mark",
+    "index",
+    "change_24h_pct",
+    "funding_rate",
+    "open_interest"
+  ],
+  "properties": {
+    "instrument": {
+      "type": "string"
+    },
+    "server_time": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "mark": {
+      "type": "number"
+    },
+    "index": {
+      "type": "number"
+    },
+    "change_24h_pct": {
+      "type": "number"
+    },
+    "funding_rate": {
+      "type": "number"
+    },
+    "open_interest": {
+      "type": "number"
+    }
+  },
+  "version": "0.1.0"
+}

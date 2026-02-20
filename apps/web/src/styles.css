@@ -520,6 +520,11 @@ button:disabled {
   stroke-width: 1;
 }
 
+.chart .x-axis-label {
+  fill: var(--muted);
+  font-size: 10px;
+}
+
 .chart-empty {
   display: flex;
   flex-direction: column;

@@ -7,6 +7,7 @@ interface Threshold {
 
 interface LineChartProps {
   values: number[];
+  timestamps?: string[];
   markers?: ChartMarker[];
   thresholds?: Threshold[];
   height?: number;
@@ -39,6 +40,7 @@ function thresholdColor(tone: Threshold["tone"]): string {
 
 export default function LineChart({
   values,
+  timestamps = [],
   markers = [],
   thresholds = [],
   height = 260,
@@ -55,17 +57,44 @@ export default function LineChart({
   }
 
   const width = 1000;
-  const padding = 24;
+  const leftPadding = 30;
+  const rightPadding = 18;
+  const topPadding = 18;
+  const hasTimestampAxis = timestamps.length === values.length && values.length >= 2;
+  const bottomPadding = hasTimestampAxis ? 34 : 24;
   const min = Math.min(...values, ...thresholds.map((item) => item.value));
   const max = Math.max(...values, ...thresholds.map((item) => item.value));
   const span = Math.max(max - min, 1e-6);
 
   const mapX = (index: number) =>
-    padding + (index / (values.length - 1)) * (width - padding * 2);
+    leftPadding + (index / (values.length - 1)) * (width - leftPadding - rightPadding);
   const mapY = (value: number) =>
-    padding + (1 - (value - min) / span) * (height - padding * 2);
+    topPadding + (1 - (value - min) / span) * (height - topPadding - bottomPadding);
 
   const points = values.map((value, index) => `${mapX(index)},${mapY(value)}`).join(" ");
+  const axisTickIndexes = Array.from(new Set([0, Math.floor((values.length - 1) / 2), values.length - 1]));
+  const xAxisLabels = hasTimestampAxis
+    ? axisTickIndexes.map((index) => {
+        const raw = timestamps[index];
+        const date = new Date(raw);
+        if (Number.isNaN(date.getTime())) {
+          return { index, label: `#${index}` };
+        }
+        const earliest = new Date(timestamps[0]).getTime();
+        const latest = new Date(timestamps[timestamps.length - 1]).getTime();
+        const showDate = Number.isFinite(earliest) && Number.isFinite(latest) && latest - earliest >= 86_400_000;
+        return {
+          index,
+          label: date.toLocaleString([], {
+            month: showDate ? "short" : undefined,
+            day: showDate ? "2-digit" : undefined,
+            hour: "2-digit",
+            minute: "2-digit",
+            hour12: false,
+          }),
+        };
+      })
+    : [];
 
   return (
     <div className="chart" style={{ minHeight: `${height}px` }}>
@@ -73,12 +102,16 @@ export default function LineChart({
       <svg viewBox={`0 0 ${width} ${height}`} preserveAspectRatio="none">
         <g className="grid">
           {Array.from({ length: 9 }).map((_, i) => {
-            const x = padding + (i / 8) * (width - padding * 2);
-            return <line key={`vx-${x}`} x1={x} y1={padding} x2={x} y2={height - padding} />;
+            const x = leftPadding + (i / 8) * (width - leftPadding - rightPadding);
+            return (
+              <line key={`vx-${x}`} x1={x} y1={topPadding} x2={x} y2={height - bottomPadding} />
+            );
           })}
           {Array.from({ length: 7 }).map((_, i) => {
-            const y = padding + (i / 6) * (height - padding * 2);
-            return <line key={`hy-${y}`} x1={padding} y1={y} x2={width - padding} y2={y} />;
+            const y = topPadding + (i / 6) * (height - topPadding - bottomPadding);
+            return (
+              <line key={`hy-${y}`} x1={leftPadding} y1={y} x2={width - rightPadding} y2={y} />
+            );
           })}
         </g>
 
@@ -87,9 +120,9 @@ export default function LineChart({
           return (
             <line
               key={`threshold-${index}`}
-              x1={padding}
+              x1={leftPadding}
               y1={y}
-              x2={width - padding}
+              x2={width - rightPadding}
               y2={y}
               stroke={thresholdColor(threshold.tone)}
               strokeWidth={1}
@@ -111,6 +144,18 @@ export default function LineChart({
               fill={markerColor(marker.kind)}
             />
           ))}
+
+        {xAxisLabels.map((item, idx) => (
+          <text
+            key={`axis-label-${item.index}`}
+            className="x-axis-label"
+            x={mapX(item.index)}
+            y={height - 8}
+            textAnchor={idx === 0 ? "start" : idx === xAxisLabels.length - 1 ? "end" : "middle"}
+          >
+            {item.label}
+          </text>
+        ))}
       </svg>
     </div>
   );
