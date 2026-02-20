@@ -17,6 +17,7 @@ use kraken_adapter::MarketDataAdapter;
 use repository::{IntegrityHistoryEntry, MarketDataRepository};
 use serde::Serialize;
 use std::sync::Arc;
+use tower_http::cors::{Any, CorsLayer};
 use tracing::{info, warn};
 
 #[derive(Clone)]
@@ -54,10 +55,16 @@ impl IntoResponse for ApiError {
 }
 
 pub fn build_router(state: AppState) -> Router {
+    let cors = CorsLayer::new()
+        .allow_origin(Any)
+        .allow_methods(Any)
+        .allow_headers(Any);
+
     Router::new()
         .route("/health", get(health))
         .route("/v1/data/query", post(query_data))
         .route("/v1/integrity/history", get(integrity_history))
+        .layer(cors)
         .with_state(state)
 }
 

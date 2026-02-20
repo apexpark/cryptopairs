@@ -18,6 +18,7 @@ use strategy_service::{
 };
 use tokio::net::TcpListener;
 use tokio_postgres::{types::ToSql, Client, NoTls};
+use tower_http::cors::{Any, CorsLayer};
 use tracing::info;
 
 #[derive(Clone)]
@@ -880,6 +881,10 @@ async fn main() -> anyhow::Result<()> {
     };
 
     let _worker = spawn_reoptimize_worker(state.clone());
+    let cors = CorsLayer::new()
+        .allow_origin(Any)
+        .allow_methods(Any)
+        .allow_headers(Any);
 
     let app = Router::new()
         .route("/health", get(health))
@@ -892,6 +897,7 @@ async fn main() -> anyhow::Result<()> {
             get(pairs_portfolio_plan),
         )
         .route("/v1/strategy/pairs/reoptimize", post(reoptimize))
+        .layer(cors)
         .with_state(state);
 
     let listener = TcpListener::bind(&settings.bind_addr).await?;
