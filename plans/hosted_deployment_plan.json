@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "updated_at": "2026-02-21T01:49:35Z",
+  "updated_at": "2026-02-21T03:24:23Z",
   "active_focus_id": 2,
   "milestone": "Hosted Demo Readiness (Hetzner + Timescale + Vercel)",
   "items": [
@@ -227,6 +227,13 @@
       "focus_id": 2,
       "delta": "Completed control framework and deployment task registry",
       "next_action": "User completes provider purchases and confirms account readiness for Hetzner/Timescale/Vercel",
+      "blockers": []
+    },
+    {
+      "ts": "2026-02-21T03:24:23Z",
+      "focus_id": 2,
+      "delta": "Recorded Hetzner bootstrap VM IPv4: 46.224.220.150",
+      "next_action": "Continue provider prep: Timescale service config and Vercel project/env wiring",
       "blockers": []
     }
   ]

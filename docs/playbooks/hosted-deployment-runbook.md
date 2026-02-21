@@ -75,3 +75,7 @@ Use this runbook with:
 - `docs/21-hosted-deployment-control.md`
 - `docs/playbooks/execution-operations-runbook.md`
 - `docs/playbooks/secrets-lifecycle-runbook.md`
+
+Bootstrap metadata:
+- Hetzner VM public IPv4 (initial): `46.224.220.150`
+- This IP is for first-connection/bootstrap only; production routing should use DNS hostnames.
