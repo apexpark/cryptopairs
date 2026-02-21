@@ -1,0 +1,233 @@
+{
+  "version": 1,
+  "updated_at": "2026-02-21T01:49:35Z",
+  "active_focus_id": 2,
+  "milestone": "Hosted Demo Readiness (Hetzner + Timescale + Vercel)",
+  "items": [
+    {
+      "id": 1,
+      "title": "Create hosted deployment control artifacts and freeze scope",
+      "status": "DONE",
+      "priority": "NOW",
+      "depends_on": [],
+      "owner": "codex",
+      "requires_user": false,
+      "evidence": [
+        "docs/21-hosted-deployment-control.md"
+      ],
+      "notes": [
+        "2026-02-21T01:49:35Z Created hosted deployment control and tracker artifacts"
+      ]
+    },
+    {
+      "id": 2,
+      "title": "Purchase/provider setup: Hetzner CPX32, Timescale Performance, Vercel Pro",
+      "status": "PENDING",
+      "priority": "NOW",
+      "depends_on": [
+        1
+      ],
+      "owner": "user",
+      "requires_user": true,
+      "evidence": [],
+      "notes": []
+    },
+    {
+      "id": 3,
+      "title": "Provision DNS domain/subdomains and access model for demo",
+      "status": "PENDING",
+      "priority": "NOW",
+      "depends_on": [
+        2
+      ],
+      "owner": "user",
+      "requires_user": true,
+      "evidence": [],
+      "notes": []
+    },
+    {
+      "id": 4,
+      "title": "Create production env template and secret inventory (no plaintext secrets committed)",
+      "status": "PENDING",
+      "priority": "NOW",
+      "depends_on": [
+        1
+      ],
+      "owner": "codex",
+      "requires_user": false,
+      "evidence": [],
+      "notes": []
+    },
+    {
+      "id": 5,
+      "title": "Build immutable release images for services (remove runtime cargo compile dependency)",
+      "status": "PENDING",
+      "priority": "NOW",
+      "depends_on": [
+        4
+      ],
+      "owner": "codex",
+      "requires_user": false,
+      "evidence": [],
+      "notes": []
+    },
+    {
+      "id": 6,
+      "title": "Provision Hetzner VM baseline hardening (SSH keys, firewall, unattended security updates)",
+      "status": "PENDING",
+      "priority": "NOW",
+      "depends_on": [
+        2
+      ],
+      "owner": "user",
+      "requires_user": true,
+      "evidence": [],
+      "notes": []
+    },
+    {
+      "id": 7,
+      "title": "Deploy reverse proxy/TLS gateway and service routing on VM",
+      "status": "PENDING",
+      "priority": "NOW",
+      "depends_on": [
+        3,
+        5,
+        6
+      ],
+      "owner": "codex",
+      "requires_user": false,
+      "evidence": [],
+      "notes": []
+    },
+    {
+      "id": 8,
+      "title": "Create Timescale service and connect backend with least-privileged credentials",
+      "status": "PENDING",
+      "priority": "NOW",
+      "depends_on": [
+        2,
+        4,
+        6
+      ],
+      "owner": "codex",
+      "requires_user": true,
+      "evidence": [],
+      "notes": []
+    },
+    {
+      "id": 9,
+      "title": "Migrate bootstrap data policies (symbols/timeframes/history bounds) for hosted mode",
+      "status": "PENDING",
+      "priority": "NEXT",
+      "depends_on": [
+        8
+      ],
+      "owner": "codex",
+      "requires_user": false,
+      "evidence": [],
+      "notes": []
+    },
+    {
+      "id": 10,
+      "title": "Deploy backend stack with persistent startup and health-restart policies",
+      "status": "PENDING",
+      "priority": "NOW",
+      "depends_on": [
+        5,
+        7,
+        8,
+        9
+      ],
+      "owner": "codex",
+      "requires_user": false,
+      "evidence": [],
+      "notes": []
+    },
+    {
+      "id": 11,
+      "title": "Deploy web app to Vercel with environment wiring to hosted APIs",
+      "status": "PENDING",
+      "priority": "NOW",
+      "depends_on": [
+        2,
+        3,
+        7,
+        10
+      ],
+      "owner": "codex",
+      "requires_user": true,
+      "evidence": [],
+      "notes": []
+    },
+    {
+      "id": 12,
+      "title": "Run hosted fail-closed readiness checks and data pipeline verification",
+      "status": "PENDING",
+      "priority": "NOW",
+      "depends_on": [
+        10,
+        11
+      ],
+      "owner": "codex",
+      "requires_user": false,
+      "evidence": [],
+      "notes": []
+    },
+    {
+      "id": 13,
+      "title": "Enable external demo mode (manual-only, fail-closed, explicit operator workflow)",
+      "status": "PENDING",
+      "priority": "NOW",
+      "depends_on": [
+        12
+      ],
+      "owner": "codex",
+      "requires_user": false,
+      "evidence": [],
+      "notes": []
+    },
+    {
+      "id": 14,
+      "title": "Invite first external testers and collect structured feedback",
+      "status": "PENDING",
+      "priority": "NEXT",
+      "depends_on": [
+        13
+      ],
+      "owner": "user",
+      "requires_user": true,
+      "evidence": [],
+      "notes": []
+    },
+    {
+      "id": 15,
+      "title": "Post-demo hardening pass: incidents, backlog triage, next release plan",
+      "status": "PENDING",
+      "priority": "NEXT",
+      "depends_on": [
+        14
+      ],
+      "owner": "codex",
+      "requires_user": false,
+      "evidence": [],
+      "notes": []
+    }
+  ],
+  "sidetrack_queue": [],
+  "checkpoints": [
+    {
+      "ts": "2026-02-21T00:00:00Z",
+      "focus_id": 1,
+      "delta": "Initialized hosted deployment plan and control framework",
+      "next_action": "Publish hosted deployment control runbook and wiring instructions",
+      "blockers": []
+    },
+    {
+      "ts": "2026-02-21T01:49:35Z",
+      "focus_id": 2,
+      "delta": "Completed control framework and deployment task registry",
+      "next_action": "User completes provider purchases and confirms account readiness for Hetzner/Timescale/Vercel",
+      "blockers": []
+    }
+  ]
+}

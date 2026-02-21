@@ -78,3 +78,13 @@ python3 tools/scripts/fail_closed_readiness_check.py \
   --window-minutes 60 \
   --output-json artifacts/fail_closed_readiness_report.json
 ```
+
+## Hosted Deployment Tracking
+
+Use the same tracker utility with the hosted deployment plan:
+
+```bash
+python3 tools/scripts/alpha_tracker.py --plan plans/hosted_deployment_plan.json summary
+python3 tools/scripts/alpha_tracker.py --plan plans/hosted_deployment_plan.json set-focus --id 1
+python3 tools/scripts/alpha_tracker.py --plan plans/hosted_deployment_plan.json checkpoint --delta "initialized provider accounts" --next-action "provision DNS records"
+```
