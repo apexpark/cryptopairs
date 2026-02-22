@@ -301,15 +301,22 @@ def choose_restore_mode(
     return "custom"
 
 
-def build_downloads(paths: list[tuple[str, Path]], repo_root: Path) -> list[dict[str, str]]:
+def build_downloads(
+    paths: list[tuple[str, Path]], repo_root: Path, artifacts_root: Path
+) -> list[dict[str, str]]:
     downloads: list[dict[str, str]] = []
     for label, path in paths:
         if not path.exists():
             continue
+        resolved = path.resolve()
+        try:
+            relative_path = str(resolved.relative_to(artifacts_root.resolve()))
+        except ValueError:
+            relative_path = repo_relative(resolved, repo_root)
         downloads.append(
             {
                 "label": label,
-                "path": repo_relative(path, repo_root),
+                "path": relative_path,
             }
         )
     return downloads
@@ -604,6 +611,7 @@ def main() -> int:
                 ("Restore Report", restore_report_path),
             ],
             repo_root,
+            output_root.parent.resolve(),
         )
         cycle_report["downloads"] = downloads
 
