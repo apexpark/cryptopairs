@@ -322,6 +322,86 @@ def build_downloads(
     return downloads
 
 
+def human_action_recommendation(decision: str) -> str:
+    normalized = decision.strip().upper()
+    if normalized == "PROMOTE":
+        return "PROMOTE"
+    if normalized == "REVERT":
+        return "REVERT"
+    return "LEAVE AS IS"
+
+
+def render_human_summary(
+    *,
+    generated_at: str,
+    run_id: str,
+    status: str,
+    decision: str,
+    decision_reasons: list[str],
+    step_pass_summary: dict[str, bool],
+    artifacts: dict[str, str],
+) -> str:
+    recommendation = human_action_recommendation(decision)
+    lines: list[str] = [
+        "# Strategy Maintenance Summary",
+        "",
+        f"- Generated: {generated_at}",
+        f"- Run ID: {run_id}",
+        f"- Cycle status: {status}",
+        f"- Engine decision: {decision}",
+        f"- Recommended operator action: {recommendation}",
+        "",
+        "## What this means",
+    ]
+    if recommendation == "PROMOTE":
+        lines.append("- Candidate profile passed checks. You can promote if this aligns with your risk preference.")
+    elif recommendation == "REVERT":
+        lines.append("- Candidate profile failed one or more safety/performance checks. Revert is recommended.")
+    else:
+        lines.append("- Evidence is inconclusive or fail-closed protections triggered. Keep current settings.")
+
+    lines.extend(["", "## Decision reasons"])
+    if decision_reasons:
+        lines.extend(f"- {reason}" for reason in decision_reasons)
+    else:
+        lines.append("- No explicit reasons were provided.")
+
+    lines.extend(["", "## Step outcomes"])
+    for step_name, passed in step_pass_summary.items():
+        lines.append(f"- {step_name}: {'PASS' if passed else 'FAIL'}")
+
+    lines.extend(["", "## Report artifacts"])
+    artifact_items = [
+        ("Baseline report", artifacts.get("baseline_report", "")),
+        ("Candidate dry-run apply report", artifacts.get("candidate_apply_dry_run", "")),
+        ("Candidate live apply report", artifacts.get("candidate_apply_live", "")),
+        ("Candidate report", artifacts.get("candidate_report", "")),
+        ("Restore report", artifacts.get("restore_report", "")),
+        ("Decision report", artifacts.get("decision_report", "")),
+        ("Cycle report", artifacts.get("cycle_report", "")),
+    ]
+    for label, path in artifact_items:
+        if path:
+            lines.append(f"- {label}: `{path}`")
+
+    lines.extend(
+        [
+            "",
+            "## Operator action guide",
+            "- If recommendation is `PROMOTE`: promote candidate settings using the approved promote flow.",
+            "- If recommendation is `REVERT`: run revert flow to restore baseline settings.",
+            "- If recommendation is `LEAVE AS IS`: make no profile change and review next scheduled cycle.",
+            "",
+        ]
+    )
+    return "\n".join(lines)
+
+
+def write_text(path: Path, payload: str) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(payload, encoding="utf-8")
+
+
 def write_json(path: Path, payload: dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
@@ -400,6 +480,7 @@ def main() -> int:
         restore_report_path = run_dir / "restore_original_report.json"
         decision_report_path = run_dir / "maintenance_decision.json"
         cycle_report_path = run_dir / "maintenance_cycle_report.json"
+        human_summary_path = run_dir / "maintenance_human_summary.md"
 
         steps: dict[str, Any] = {}
         decision = "HOLD"
@@ -596,12 +677,39 @@ def main() -> int:
                 "restore_report": repo_relative(restore_report_path, repo_root),
                 "decision_report": repo_relative(decision_report_path, repo_root),
                 "cycle_report": repo_relative(cycle_report_path, repo_root),
+                "human_summary": repo_relative(human_summary_path, repo_root),
                 "latest_report": repo_relative(latest_report_path, repo_root),
             },
         }
 
+        step_pass_summary = {name: bool(value.get("pass")) for name, value in steps.items()}
+        decision_report = {
+            "generated_at": cycle_report["generated_at"],
+            "run_id": run_id,
+            "status": status,
+            "decision": decision,
+            "decision_reasons": cycle_report["decision_reasons"],
+            "artifacts": cycle_report["artifacts"],
+            "downloads": [],
+            "step_pass_summary": step_pass_summary,
+        }
+
+        human_summary = render_human_summary(
+            generated_at=str(cycle_report["generated_at"]),
+            run_id=run_id,
+            status=status,
+            decision=decision,
+            decision_reasons=list(cycle_report["decision_reasons"]),
+            step_pass_summary=step_pass_summary,
+            artifacts=cycle_report["artifacts"],
+        )
+        write_json(decision_report_path, decision_report)
+        write_json(cycle_report_path, cycle_report)
+        write_text(human_summary_path, human_summary)
+
         downloads = build_downloads(
             [
+                ("Human Summary", human_summary_path),
                 ("Decision Report", decision_report_path),
                 ("Cycle Report", cycle_report_path),
                 ("Baseline Report", baseline_report_path),
@@ -614,20 +722,7 @@ def main() -> int:
             output_root.parent.resolve(),
         )
         cycle_report["downloads"] = downloads
-
-        decision_report = {
-            "generated_at": cycle_report["generated_at"],
-            "run_id": run_id,
-            "status": status,
-            "decision": decision,
-            "decision_reasons": cycle_report["decision_reasons"],
-            "artifacts": cycle_report["artifacts"],
-            "downloads": downloads,
-            "step_pass_summary": {
-                name: bool(value.get("pass"))
-                for name, value in steps.items()
-            },
-        }
+        decision_report["downloads"] = downloads
 
         write_json(decision_report_path, decision_report)
         write_json(cycle_report_path, cycle_report)
