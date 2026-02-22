@@ -34,3 +34,4 @@ Current baseline examples:
 - `specs/examples/strategy_pairs_reoptimize_response.example.json`
 - `specs/examples/strategy_pairs_cost_gate_response.example.json`
 - `specs/examples/strategy_pairs_portfolio_plan_response.example.json`
+- `specs/examples/strategy_tuning_report.example.json`

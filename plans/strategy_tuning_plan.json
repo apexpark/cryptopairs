@@ -1,7 +1,7 @@
 {
   "version": 1,
-  "updated_at": "2026-02-22T21:28:45Z",
-  "active_focus_id": 2,
+  "updated_at": "2026-02-22T21:31:30Z",
+  "active_focus_id": 3,
   "milestone": "Strategy Tuning Automation and Governance",
   "items": [
     {
@@ -22,22 +22,24 @@
     {
       "id": 2,
       "title": "Add strategy tuning report contract and example payload",
-      "status": "IN_PROGRESS",
+      "status": "DONE",
       "priority": "NOW",
       "depends_on": [
         1
       ],
       "owner": "codex",
       "requires_user": false,
-      "evidence": [],
+      "evidence": [
+        "specs/contracts/strategy_tuning_report.schema.json"
+      ],
       "notes": [
-        "2026-02-22T21:28:45Z Started contract slice for tuning report"
+        "2026-02-22T21:30:42Z Added strategy tuning report contract and example"
       ]
     },
     {
       "id": 3,
       "title": "Implement deterministic reporter (snapshot, compare, decision)",
-      "status": "PENDING",
+      "status": "IN_PROGRESS",
       "priority": "NOW",
       "depends_on": [
         1,
@@ -46,7 +48,9 @@
       "owner": "codex",
       "requires_user": false,
       "evidence": [],
-      "notes": []
+      "notes": [
+        "2026-02-22T21:31:30Z Started reporter implementation slice"
+      ]
     },
     {
       "id": 4,
@@ -133,6 +137,13 @@
       "focus_id": 2,
       "delta": "Completed control scaffolding and switched focus to contract slice",
       "next_action": "Add strategy tuning report schema and example",
+      "blockers": []
+    },
+    {
+      "ts": "2026-02-22T21:31:30Z",
+      "focus_id": 3,
+      "delta": "Completed schema/example slice and recovered tracker from race-condition corruption",
+      "next_action": "Implement strategy_tuning_report.py with deterministic decision logic",
       "blockers": []
     }
   ]

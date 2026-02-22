@@ -1,0 +1,236 @@
+{
+  "$id": "https://cryptopairs/specs/contracts/strategy_tuning_report.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "StrategyTuningReport",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "generated_at",
+    "profile",
+    "decision",
+    "decision_reasons",
+    "policy",
+    "metrics",
+    "comparison",
+    "execution_observability",
+    "reoptimize_summary",
+    "backtest_insights",
+    "artifacts"
+  ],
+  "properties": {
+    "generated_at": { "type": "string", "format": "date-time" },
+    "profile": { "type": "string", "enum": ["baseline", "candidate"] },
+    "decision": { "type": "string", "enum": ["PROMOTE", "HOLD", "REVERT"] },
+    "decision_reasons": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "policy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "version", "guardrail_codes"],
+      "properties": {
+        "path": { "type": "string" },
+        "version": { "type": "integer", "minimum": 1 },
+        "guardrail_codes": {
+          "type": "array",
+          "items": { "type": "string" }
+        }
+      }
+    },
+    "metrics": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["by_timeframe", "aggregate"],
+      "properties": {
+        "by_timeframe": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "timeframe",
+              "total_pairs",
+              "evaluated_pairs",
+              "actionable_pairs",
+              "actionable_ratio",
+              "cost_gate_pass_pairs",
+              "cost_gate_pass_ratio",
+              "shadow_disagreement_pairs",
+              "shadow_disagreement_ratio",
+              "guardrail_blocked_pairs",
+              "guardrail_block_ratio",
+              "guardrail_code_counts"
+            ],
+            "properties": {
+              "timeframe": { "type": "string", "enum": ["1m", "15m", "1h"] },
+              "total_pairs": { "type": "integer", "minimum": 0 },
+              "evaluated_pairs": { "type": "integer", "minimum": 0 },
+              "actionable_pairs": { "type": "integer", "minimum": 0 },
+              "actionable_ratio": { "type": "number", "minimum": 0, "maximum": 1 },
+              "cost_gate_pass_pairs": { "type": "integer", "minimum": 0 },
+              "cost_gate_pass_ratio": { "type": "number", "minimum": 0, "maximum": 1 },
+              "shadow_disagreement_pairs": { "type": "integer", "minimum": 0 },
+              "shadow_disagreement_ratio": { "type": "number", "minimum": 0, "maximum": 1 },
+              "guardrail_blocked_pairs": { "type": "integer", "minimum": 0 },
+              "guardrail_block_ratio": { "type": "number", "minimum": 0, "maximum": 1 },
+              "guardrail_code_counts": {
+                "type": "object",
+                "additionalProperties": { "type": "integer", "minimum": 0 }
+              }
+            }
+          }
+        },
+        "aggregate": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "timeframes",
+            "actionable_ratio_mean",
+            "cost_gate_pass_ratio_mean",
+            "shadow_disagreement_ratio_mean",
+            "guardrail_block_ratio_mean"
+          ],
+          "properties": {
+            "timeframes": {
+              "type": "array",
+              "items": { "type": "string", "enum": ["1m", "15m", "1h"] }
+            },
+            "actionable_ratio_mean": { "type": "number", "minimum": 0, "maximum": 1 },
+            "cost_gate_pass_ratio_mean": { "type": "number", "minimum": 0, "maximum": 1 },
+            "shadow_disagreement_ratio_mean": { "type": "number", "minimum": 0, "maximum": 1 },
+            "guardrail_block_ratio_mean": { "type": "number", "minimum": 0, "maximum": 1 }
+          }
+        }
+      }
+    },
+    "comparison": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["baseline_report", "deltas", "checks"],
+      "properties": {
+        "baseline_report": { "type": ["string", "null"] },
+        "deltas": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "actionable_ratio_mean",
+            "cost_gate_pass_ratio_mean",
+            "shadow_disagreement_ratio_mean",
+            "guardrail_block_ratio_mean"
+          ],
+          "properties": {
+            "actionable_ratio_mean": { "type": "number" },
+            "cost_gate_pass_ratio_mean": { "type": "number" },
+            "shadow_disagreement_ratio_mean": { "type": "number" },
+            "guardrail_block_ratio_mean": { "type": "number" }
+          }
+        },
+        "checks": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["name", "pass", "detail"],
+            "properties": {
+              "name": { "type": "string" },
+              "pass": { "type": "boolean" },
+              "detail": { "type": "string" }
+            }
+          }
+        }
+      }
+    },
+    "execution_observability": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["window_minutes", "p1_triggered", "p2_triggered", "alerts"],
+      "properties": {
+        "window_minutes": { "type": "integer", "minimum": 1 },
+        "p1_triggered": { "type": "integer", "minimum": 0 },
+        "p2_triggered": { "type": "integer", "minimum": 0 },
+        "alerts": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["code", "severity", "triggered", "message"],
+            "properties": {
+              "code": { "type": "string" },
+              "severity": { "type": "string", "enum": ["P1", "P2", "P3"] },
+              "triggered": { "type": "boolean" },
+              "message": { "type": "string" }
+            }
+          }
+        }
+      }
+    },
+    "reoptimize_summary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "pairs_processed",
+        "cues_generated",
+        "cost_gate_pass",
+        "cost_gate_fail",
+        "errors"
+      ],
+      "properties": {
+        "pairs_processed": { "type": "integer", "minimum": 0 },
+        "cues_generated": { "type": "integer", "minimum": 0 },
+        "cost_gate_pass": { "type": "integer", "minimum": 0 },
+        "cost_gate_fail": { "type": "integer", "minimum": 0 },
+        "errors": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["pair_id", "timeframe", "error"],
+            "properties": {
+              "pair_id": { "type": "string" },
+              "timeframe": { "type": "string", "enum": ["1m", "15m", "1h"] },
+              "error": { "type": "string" }
+            }
+          }
+        }
+      }
+    },
+    "backtest_insights": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "timeframe",
+          "pair_id",
+          "bars",
+          "equity_return_pct",
+          "max_drawdown_pct",
+          "entries",
+          "exits",
+          "stops"
+        ],
+        "properties": {
+          "timeframe": { "type": "string", "enum": ["1m", "15m", "1h"] },
+          "pair_id": { "type": "string" },
+          "bars": { "type": "integer", "minimum": 1 },
+          "equity_return_pct": { "type": "number" },
+          "max_drawdown_pct": { "type": "number" },
+          "entries": { "type": "integer", "minimum": 0 },
+          "exits": { "type": "integer", "minimum": 0 },
+          "stops": { "type": "integer", "minimum": 0 }
+        }
+      }
+    },
+    "artifacts": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["report_path", "baseline_report_path"],
+      "properties": {
+        "report_path": { "type": "string" },
+        "baseline_report_path": { "type": ["string", "null"] }
+      }
+    }
+  },
+  "version": "0.1.0"
+}

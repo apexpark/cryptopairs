@@ -1,0 +1,166 @@
+{
+  "generated_at": "2026-02-22T20:45:00Z",
+  "profile": "candidate",
+  "decision": "PROMOTE",
+  "decision_reasons": [
+    "All threshold checks passed for candidate profile.",
+    "No execution P1 alerts triggered in evaluation window."
+  ],
+  "policy": {
+    "path": "infra/config/strategy_tuning_policy.json",
+    "version": 1,
+    "guardrail_codes": [
+      "COST_GATE_BLOCKED",
+      "CHAMPION_DRIFT_BLOCKED",
+      "NEGATIVE_EXPECTED_EDGE",
+      "NEGATIVE_EDGE"
+    ]
+  },
+  "metrics": {
+    "by_timeframe": [
+      {
+        "timeframe": "1m",
+        "total_pairs": 16,
+        "evaluated_pairs": 16,
+        "actionable_pairs": 2,
+        "actionable_ratio": 0.125,
+        "cost_gate_pass_pairs": 5,
+        "cost_gate_pass_ratio": 0.3125,
+        "shadow_disagreement_pairs": 0,
+        "shadow_disagreement_ratio": 0.0,
+        "guardrail_blocked_pairs": 8,
+        "guardrail_block_ratio": 0.5,
+        "guardrail_code_counts": {
+          "COST_GATE_BLOCKED": 8,
+          "CHAMPION_DRIFT_BLOCKED": 1
+        }
+      },
+      {
+        "timeframe": "15m",
+        "total_pairs": 16,
+        "evaluated_pairs": 16,
+        "actionable_pairs": 3,
+        "actionable_ratio": 0.1875,
+        "cost_gate_pass_pairs": 7,
+        "cost_gate_pass_ratio": 0.4375,
+        "shadow_disagreement_pairs": 0,
+        "shadow_disagreement_ratio": 0.0,
+        "guardrail_blocked_pairs": 6,
+        "guardrail_block_ratio": 0.375,
+        "guardrail_code_counts": {
+          "COST_GATE_BLOCKED": 6
+        }
+      },
+      {
+        "timeframe": "1h",
+        "total_pairs": 16,
+        "evaluated_pairs": 16,
+        "actionable_pairs": 4,
+        "actionable_ratio": 0.25,
+        "cost_gate_pass_pairs": 9,
+        "cost_gate_pass_ratio": 0.5625,
+        "shadow_disagreement_pairs": 0,
+        "shadow_disagreement_ratio": 0.0,
+        "guardrail_blocked_pairs": 5,
+        "guardrail_block_ratio": 0.3125,
+        "guardrail_code_counts": {
+          "COST_GATE_BLOCKED": 5
+        }
+      }
+    ],
+    "aggregate": {
+      "timeframes": ["1m", "15m", "1h"],
+      "actionable_ratio_mean": 0.1875,
+      "cost_gate_pass_ratio_mean": 0.4375,
+      "shadow_disagreement_ratio_mean": 0.0,
+      "guardrail_block_ratio_mean": 0.3958333333
+    }
+  },
+  "comparison": {
+    "baseline_report": "artifacts/strategy_tuning/2026-02-22T08-00-00Z-baseline.json",
+    "deltas": {
+      "actionable_ratio_mean": 0.0208,
+      "cost_gate_pass_ratio_mean": 0.0417,
+      "shadow_disagreement_ratio_mean": 0.0,
+      "guardrail_block_ratio_mean": -0.03125
+    },
+    "checks": [
+      {
+        "name": "actionable_ratio_delta",
+        "pass": true,
+        "detail": "delta=0.0208 threshold>=0.0000"
+      },
+      {
+        "name": "cost_gate_pass_ratio_delta",
+        "pass": true,
+        "detail": "delta=0.0417 threshold>=0.0000"
+      },
+      {
+        "name": "guardrail_block_ratio_delta",
+        "pass": true,
+        "detail": "delta=-0.0312 threshold<=0.0300"
+      },
+      {
+        "name": "shadow_disagreement_ratio_delta",
+        "pass": true,
+        "detail": "delta=0.0000 threshold<=0.0200"
+      },
+      {
+        "name": "reopt_errors",
+        "pass": true,
+        "detail": "errors=0 threshold<=0"
+      },
+      {
+        "name": "execution_p1_alerts",
+        "pass": true,
+        "detail": "p1=0 policy_allow=false"
+      }
+    ]
+  },
+  "execution_observability": {
+    "window_minutes": 60,
+    "p1_triggered": 0,
+    "p2_triggered": 1,
+    "alerts": [
+      {
+        "code": "execution_risk_block_ratio",
+        "severity": "P2",
+        "triggered": true,
+        "message": "risk-block ratio=0.2667 threshold=0.2500"
+      }
+    ]
+  },
+  "reoptimize_summary": {
+    "pairs_processed": 48,
+    "cues_generated": 9,
+    "cost_gate_pass": 21,
+    "cost_gate_fail": 27,
+    "errors": []
+  },
+  "backtest_insights": [
+    {
+      "timeframe": "1m",
+      "pair_id": "PF_DOGEUSD__PF_PEPEUSD",
+      "bars": 600,
+      "equity_return_pct": 3.21,
+      "max_drawdown_pct": -1.82,
+      "entries": 4,
+      "exits": 3,
+      "stops": 1
+    },
+    {
+      "timeframe": "15m",
+      "pair_id": "PF_SUIUSD__PF_ARBUSD",
+      "bars": 500,
+      "equity_return_pct": 2.77,
+      "max_drawdown_pct": -1.33,
+      "entries": 2,
+      "exits": 2,
+      "stops": 0
+    }
+  ],
+  "artifacts": {
+    "report_path": "artifacts/strategy_tuning/2026-02-22T20-45-00Z-candidate.json",
+    "baseline_report_path": "artifacts/strategy_tuning/2026-02-22T08-00-00Z-baseline.json"
+  }
+}
