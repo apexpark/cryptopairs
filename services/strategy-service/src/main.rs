@@ -2182,7 +2182,6 @@ mod tests {
         fs::remove_dir_all(&root).expect("cleanup root");
         fs::remove_dir_all(&outside).expect("cleanup outside");
     }
-
     #[test]
     fn resolve_artifact_path_accepts_workspace_prefixed_path() {
         let root = temp_dir("artifact-root-prefixed");
