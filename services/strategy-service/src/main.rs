@@ -1,6 +1,6 @@
 use axum::{
     extract::{Query, State},
-    http::StatusCode,
+    http::{header, HeaderMap, HeaderValue, StatusCode},
     response::{IntoResponse, Response},
     routing::{get, post},
     Json, Router,
@@ -9,6 +9,7 @@ use chrono::{DateTime, Utc};
 use common_types::Timeframe;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use strategy_service::{
     annotate_with_shadow_model, apply_portfolio_plan_to_cues, build_portfolio_plan,
@@ -72,6 +73,8 @@ struct StrategySettings {
     advisory_enabled: bool,
     champion_switch_min_delta: f64,
     block_on_champion_drift: bool,
+    maintenance_report_path: String,
+    maintenance_artifacts_root: String,
 }
 
 impl StrategySettings {
@@ -108,6 +111,12 @@ impl StrategySettings {
         let advisory_enabled = parse_env_bool("STRATEGY_ADVISORY_ENABLED", true);
         let champion_switch_min_delta = parse_env_f64("STRATEGY_CHAMPION_SWITCH_MIN_DELTA", 0.25);
         let block_on_champion_drift = parse_env_bool("STRATEGY_BLOCK_ON_CHAMPION_DRIFT", true);
+        let maintenance_report_path = std::env::var("STRATEGY_MAINTENANCE_REPORT_PATH")
+            .unwrap_or_else(|_| {
+                "artifacts/strategy_tuning/latest_maintenance_report.json".to_string()
+            });
+        let maintenance_artifacts_root = std::env::var("STRATEGY_MAINTENANCE_ARTIFACT_ROOT")
+            .unwrap_or_else(|_| "artifacts/strategy_tuning".to_string());
 
         Self {
             bind_addr: format!("0.0.0.0:{port}"),
@@ -141,6 +150,8 @@ impl StrategySettings {
             advisory_enabled,
             champion_switch_min_delta,
             block_on_champion_drift,
+            maintenance_report_path,
+            maintenance_artifacts_root,
         }
     }
 
@@ -703,6 +714,11 @@ struct ReoptimizeRequest {
     timeframes: Option<Vec<String>>,
 }
 
+#[derive(Debug, Deserialize)]
+struct MaintenanceArtifactQuery {
+    path: String,
+}
+
 #[derive(Debug, Serialize)]
 struct HealthResponse {
     status: &'static str,
@@ -842,6 +858,15 @@ struct ReoptimizeResponse {
 }
 
 #[derive(Debug, Serialize)]
+struct MaintenanceLatestResponse {
+    available: bool,
+    generated_at: DateTime<Utc>,
+    report: Option<serde_json::Value>,
+    reason: Option<String>,
+    artifact_download_route: String,
+}
+
+#[derive(Debug, Serialize)]
 struct ReoptError {
     pair_id: String,
     timeframe: String,
@@ -851,6 +876,7 @@ struct ReoptError {
 #[derive(Debug)]
 enum ApiError {
     BadRequest(String),
+    NotFound(String),
     Upstream(String),
 }
 
@@ -859,6 +885,11 @@ impl IntoResponse for ApiError {
         match self {
             Self::BadRequest(message) => (
                 StatusCode::BAD_REQUEST,
+                Json(ErrorResponse { error: message }),
+            )
+                .into_response(),
+            Self::NotFound(message) => (
+                StatusCode::NOT_FOUND,
                 Json(ErrorResponse { error: message }),
             )
                 .into_response(),
@@ -899,6 +930,11 @@ async fn main() -> anyhow::Result<()> {
             get(pairs_portfolio_plan),
         )
         .route("/v1/strategy/pairs/reoptimize", post(reoptimize))
+        .route("/v1/strategy/maintenance/latest", get(maintenance_latest))
+        .route(
+            "/v1/strategy/maintenance/artifact",
+            get(maintenance_artifact),
+        )
         .layer(cors)
         .with_state(state);
 
@@ -920,6 +956,8 @@ async fn main() -> anyhow::Result<()> {
         advisory_per_pair_cap = settings.advisory_per_pair_cap,
         champion_switch_min_delta = settings.champion_switch_min_delta,
         block_on_champion_drift = settings.block_on_champion_drift,
+        maintenance_report_path = %settings.maintenance_report_path,
+        maintenance_artifacts_root = %settings.maintenance_artifacts_root,
         "strategy-service started"
     );
 
@@ -1047,6 +1085,141 @@ fn spawn_reoptimize_worker(state: AppState) -> tokio::task::JoinHandle<()> {
 
 async fn health() -> Json<HealthResponse> {
     Json(HealthResponse { status: "ok" })
+}
+
+fn resolve_workspace_path(raw: &str) -> PathBuf {
+    let path = PathBuf::from(raw);
+    if path.is_absolute() {
+        path
+    } else {
+        Path::new("/workspace").join(path)
+    }
+}
+
+fn resolve_artifact_path(root: &Path, requested: &str) -> Result<PathBuf, ApiError> {
+    if requested.trim().is_empty() {
+        return Err(ApiError::BadRequest(
+            "artifact path is required".to_string(),
+        ));
+    }
+
+    let requested_path = PathBuf::from(requested);
+    if requested_path.is_absolute() {
+        return Err(ApiError::BadRequest(
+            "absolute artifact path is not allowed".to_string(),
+        ));
+    }
+
+    let canonical_root = root.canonicalize().map_err(|error| {
+        ApiError::Upstream(format!(
+            "unable to resolve artifact root '{}': {error}",
+            root.display()
+        ))
+    })?;
+    let candidate = canonical_root.join(requested_path);
+    let canonical_candidate = candidate
+        .canonicalize()
+        .map_err(|_| ApiError::NotFound(format!("artifact '{}' not found", candidate.display())))?;
+
+    if !canonical_candidate.starts_with(&canonical_root) {
+        return Err(ApiError::BadRequest(
+            "artifact path escapes configured root".to_string(),
+        ));
+    }
+    if !canonical_candidate.is_file() {
+        return Err(ApiError::NotFound(format!(
+            "artifact '{}' is not a file",
+            canonical_candidate.display()
+        )));
+    }
+
+    Ok(canonical_candidate)
+}
+
+fn content_type_for_path(path: &Path) -> &'static str {
+    match path.extension().and_then(|value| value.to_str()) {
+        Some("json") => "application/json",
+        Some("log" | "txt") => "text/plain; charset=utf-8",
+        Some("csv") => "text/csv; charset=utf-8",
+        _ => "application/octet-stream",
+    }
+}
+
+async fn maintenance_latest(State(state): State<AppState>) -> Json<MaintenanceLatestResponse> {
+    let report_path = resolve_workspace_path(&state.settings.maintenance_report_path);
+    let generated_at = Utc::now();
+    let artifact_download_route = "/v1/strategy/maintenance/artifact?path=".to_string();
+
+    let read_result = std::fs::read_to_string(&report_path);
+    let (available, report, reason) = match read_result {
+        Ok(raw) => match serde_json::from_str::<serde_json::Value>(&raw) {
+            Ok(parsed) => (true, Some(parsed), None),
+            Err(error) => (
+                false,
+                None,
+                Some(format!(
+                    "unable to parse maintenance report '{}': {error}",
+                    report_path.display()
+                )),
+            ),
+        },
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => (
+            false,
+            None,
+            Some(format!(
+                "maintenance report not found at '{}'",
+                report_path.display()
+            )),
+        ),
+        Err(error) => (
+            false,
+            None,
+            Some(format!(
+                "unable to read maintenance report '{}': {error}",
+                report_path.display()
+            )),
+        ),
+    };
+
+    Json(MaintenanceLatestResponse {
+        available,
+        generated_at,
+        report,
+        reason,
+        artifact_download_route,
+    })
+}
+
+async fn maintenance_artifact(
+    State(state): State<AppState>,
+    Query(query): Query<MaintenanceArtifactQuery>,
+) -> Result<Response, ApiError> {
+    let artifact_root = resolve_workspace_path(&state.settings.maintenance_artifacts_root);
+    let artifact_path = resolve_artifact_path(&artifact_root, &query.path)?;
+
+    let content = std::fs::read(&artifact_path).map_err(|error| {
+        ApiError::NotFound(format!(
+            "unable to read artifact '{}': {error}",
+            artifact_path.display()
+        ))
+    })?;
+    let filename = artifact_path
+        .file_name()
+        .and_then(|value| value.to_str())
+        .unwrap_or("artifact.bin");
+
+    let mut headers = HeaderMap::new();
+    headers.insert(
+        header::CONTENT_TYPE,
+        HeaderValue::from_static(content_type_for_path(&artifact_path)),
+    );
+    let disposition = format!("attachment; filename=\"{filename}\"");
+    let disposition_value = HeaderValue::from_str(&disposition).map_err(|error| {
+        ApiError::Upstream(format!("unable to set content disposition header: {error}"))
+    })?;
+    headers.insert(header::CONTENT_DISPOSITION, disposition_value);
+
+    Ok((StatusCode::OK, headers, content).into_response())
 }
 
 async fn pairs_cues(
@@ -1818,8 +1991,12 @@ fn parse_env_bool(key: &str, default: bool) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{decide_champion_transition, ChampionDecision, SelectedSignalRow};
+    use super::{
+        decide_champion_transition, resolve_artifact_path, ChampionDecision, SelectedSignalRow,
+    };
     use chrono::Utc;
+    use std::fs;
+    use std::path::PathBuf;
     use strategy_service::{
         CostGateDiagnostics, PairCue, PairEvaluationOutput, PortfolioHint, ShadowMlDiagnostics,
         VariantEvaluation,
@@ -1922,5 +2099,48 @@ mod tests {
         assert_eq!(transition.decision, ChampionDecision::KeepChampion);
         assert_eq!(transition.selected_variant, "ROBUST_Z");
         assert!(transition.score_delta < 0.25);
+    }
+
+    fn temp_dir(name: &str) -> PathBuf {
+        let mut path = std::env::temp_dir();
+        let stamp = Utc::now().timestamp_nanos_opt().unwrap_or_default();
+        path.push(format!("cryptopairs-strategy-{name}-{stamp}"));
+        fs::create_dir_all(&path).expect("create temp dir");
+        path
+    }
+
+    #[test]
+    fn resolve_artifact_path_accepts_file_under_root() {
+        let root = temp_dir("artifact-root-ok");
+        let nested = root.join("nested");
+        fs::create_dir_all(&nested).expect("create nested dir");
+        let target = nested.join("report.json");
+        fs::write(&target, b"{\"ok\":true}").expect("write report");
+
+        let resolved = resolve_artifact_path(&root, "nested/report.json").expect("resolve path");
+        assert_eq!(
+            resolved.canonicalize().expect("canonical target"),
+            target.canonicalize().expect("canonical resolved")
+        );
+
+        fs::remove_dir_all(&root).expect("cleanup root");
+    }
+
+    #[test]
+    fn resolve_artifact_path_rejects_escape() {
+        let root = temp_dir("artifact-root-escape");
+        let outside = temp_dir("artifact-outside");
+        let outside_file = outside.join("secret.json");
+        fs::write(&outside_file, b"{\"secret\":true}").expect("write outside file");
+
+        let requested = format!(
+            "../{}/secret.json",
+            outside.file_name().unwrap().to_string_lossy()
+        );
+        let result = resolve_artifact_path(&root, &requested);
+        assert!(result.is_err());
+
+        fs::remove_dir_all(&root).expect("cleanup root");
+        fs::remove_dir_all(&outside).expect("cleanup outside");
     }
 }
