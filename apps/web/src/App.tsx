@@ -174,6 +174,7 @@ const HOW_IT_WORKS_TABS: Array<{
 ];
 
 const TIMEFRAMES: Timeframe[] = ["1m", "15m", "1h"];
+const WEB_BUILD_STAMP = "2026-02-22-01";
 
 function analyticsRefreshMs(timeframe: Timeframe): number {
   if (timeframe === "1m") {
@@ -296,6 +297,115 @@ function formatPairLabel(pairId: string): string {
     .split("__")
     .map((instrument) => formatInstrumentLabel(instrument))
     .join("/");
+}
+
+function describeRationaleCode(code: string): string {
+  const mapping: Record<string, string> = {
+    BELOW_ENTRY_BAND: "Spread has not stretched far enough to trigger an entry.",
+    COST_GATE_BLOCKED: "Expected edge does not clear estimated fees, funding, and slippage.",
+    NEGATIVE_EXPECTED_EDGE: "Expected edge is negative after cost adjustments.",
+    NEGATIVE_EDGE: "Recent edge estimate is negative for this setup.",
+    HEDGE_RATIO_UNSTABLE: "Hedge ratio stability is weak, so pair balancing is less reliable.",
+    LOW_SAMPLE: "Recent sample size is limited, reducing confidence.",
+    CHAMPION_DRIFT: "Best-performing model selection is drifting.",
+    CHAMPION_DRIFT_BLOCKED: "Model drift guard is active, so entries are blocked.",
+    PAIR_NOT_IN_PORTFOLIO_PLAN: "Pair is currently outside the advisory portfolio plan.",
+    INSUFFICIENT_TRAINING_HISTORY: "Shadow ML history is still building and not used for approvals.",
+  };
+  return mapping[code] ?? code.replaceAll("_", " ").toLowerCase();
+}
+
+function explainPairActionability(
+  selected: StrategyPairsCuesResponse["cues"][number] | undefined
+): {
+  headline: string;
+  tone: "ok" | "bad" | "warn";
+  details: string[];
+  reasons: string[];
+} {
+  if (!selected) {
+    return {
+      headline: "No pair selected.",
+      tone: "warn",
+      details: ["Select a pair to view live entry blocking reasons."],
+      reasons: [],
+    };
+  }
+
+  const { cue, hedge_ratio_stability } = selected;
+  const mergedReasons = Array.from(new Set([...cue.rationale_codes, ...cue.cost_gate.rationale_codes]));
+
+  const details: string[] = [];
+  if (mergedReasons.includes("BELOW_ENTRY_BAND")) {
+    details.push(
+      `Current spread z-score is ${cue.spread_z.toFixed(2)}, inside the entry trigger at ±${cue.entry_band.toFixed(2)}.`
+    );
+  }
+  if (mergedReasons.includes("COST_GATE_BLOCKED") || !cue.cost_gate.pass) {
+    details.push(
+      `Net edge is ${formatSigned(cue.cost_gate.net_edge_bps)}bp after costs, so the cost gate remains blocked.`
+    );
+  }
+  if (mergedReasons.includes("HEDGE_RATIO_UNSTABLE")) {
+    details.push(
+      `Hedge ratio stability is ${(hedge_ratio_stability * 100).toFixed(1)}%, below preferred stability for neutral sizing.`
+    );
+  }
+  if (mergedReasons.includes("LOW_SAMPLE")) {
+    details.push("Recent setup history is limited, so confidence is intentionally reduced.");
+  }
+  if (mergedReasons.includes("CHAMPION_DRIFT_BLOCKED")) {
+    details.push("Variant drift guard is active until model selection stabilizes.");
+  }
+
+  if (!details.length) {
+    details.push(
+      cue.actionable
+        ? "All active gates for this cue are currently passing."
+        : "At least one strategy or safety gate is currently blocking entry."
+    );
+  }
+
+  if (cue.actionable) {
+    return {
+      headline: "Allowed: this pair currently passes entry, cost, and stability gates.",
+      tone: "ok",
+      details,
+      reasons: mergedReasons,
+    };
+  }
+
+  if (mergedReasons.includes("BELOW_ENTRY_BAND")) {
+    return {
+      headline: "Blocked for now: spread stretch is not yet at entry level.",
+      tone: "bad",
+      details,
+      reasons: mergedReasons,
+    };
+  }
+  if (mergedReasons.includes("COST_GATE_BLOCKED") || mergedReasons.includes("NEGATIVE_EXPECTED_EDGE")) {
+    return {
+      headline: "Blocked for now: expected edge does not clear trade costs.",
+      tone: "bad",
+      details,
+      reasons: mergedReasons,
+    };
+  }
+  if (mergedReasons.includes("HEDGE_RATIO_UNSTABLE")) {
+    return {
+      headline: "Blocked for now: hedge sizing is unstable for reliable spread neutrality.",
+      tone: "bad",
+      details,
+      reasons: mergedReasons,
+    };
+  }
+
+  return {
+    headline: "Blocked for now: one or more strategy gates are not satisfied.",
+    tone: "bad",
+    details,
+    reasons: mergedReasons,
+  };
 }
 
 function toneFromStatus(status?: string): "ok" | "warn" | "bad" {
@@ -1235,6 +1345,9 @@ function App(): JSX.Element {
             : "Fail-closed mode: entry actions blocked until all gates are safe"}
         </span>
         {headerMetricsError ? <span className="tone-warn">{headerMetricsError}</span> : null}
+        <span className="small-text" aria-hidden="true">
+          build {WEB_BUILD_STAMP}
+        </span>
       </footer>
     </div>
   );
@@ -1722,6 +1835,7 @@ function AnalyticsPage({
   error: string | null;
 }): JSX.Element {
   const selected = cues?.cues.find((entry) => entry.cue.pair_id === selectedPairId) ?? cues?.cues[0];
+  const actionabilityExplanation = explainPairActionability(selected);
 
   return (
     <div className="analytics-layout">
@@ -1779,43 +1893,72 @@ function AnalyticsPage({
         </SectionCard>
       </div>
 
-      <div className="analytics-chart-split">
-        <SectionCard
-          title="Hypothetical Equity Curve"
-          subtitle="Derived from live candles and current strategy bands"
-        >
-          <LineChart
-            values={equitySeries}
-            timestamps={equityTimestamps}
-            height={360}
-            title="Hypothetical equity (net of estimated costs)"
-            unavailableText={loading ? "Loading live candles..." : error ?? "No data"}
-          />
-        </SectionCard>
+      <div className="analytics-right-stack">
+        <div className="analytics-chart-split">
+          <SectionCard
+            title="Hypothetical Equity Curve"
+            subtitle="Derived from live candles and current strategy bands"
+          >
+            <LineChart
+              values={equitySeries}
+              timestamps={equityTimestamps}
+              height={360}
+              title="Hypothetical equity (net of estimated costs)"
+              unavailableText={loading ? "Loading live candles..." : error ?? "No data"}
+            />
+          </SectionCard>
+
+          <SectionCard
+            title="Historical Z-Score (Entries / Exits / Stops)"
+            subtitle="Derived from live spread history"
+          >
+            <LineChart
+              values={zSeries}
+              timestamps={zTimestamps}
+              markers={zMarkers}
+              thresholds={
+                selected
+                  ? [
+                      { value: 0, tone: "info" },
+                      { value: selected.cue.entry_band, tone: "warn" },
+                      { value: -selected.cue.entry_band, tone: "warn" },
+                      { value: selected.cue.stop_band, tone: "bad" },
+                      { value: -selected.cue.stop_band, tone: "bad" },
+                    ]
+                  : []
+              }
+              height={360}
+              title="Entry=green, Exit=amber, Stop=red"
+              unavailableText={loading ? "Loading live candles..." : error ?? "No data"}
+            />
+          </SectionCard>
+        </div>
 
         <SectionCard
-          title="Historical Z-Score (Entries / Exits / Stops)"
-          subtitle="Derived from live spread history"
+          title="Why This Pair Is Allowed / Blocked"
+          subtitle="Plain-language gate explanation for the selected pair"
+          className="analytics-explainer"
         >
-          <LineChart
-            values={zSeries}
-            timestamps={zTimestamps}
-            markers={zMarkers}
-            thresholds={
-              selected
-                ? [
-                    { value: 0, tone: "info" },
-                    { value: selected.cue.entry_band, tone: "warn" },
-                    { value: -selected.cue.entry_band, tone: "warn" },
-                    { value: selected.cue.stop_band, tone: "bad" },
-                    { value: -selected.cue.stop_band, tone: "bad" },
-                  ]
-                : []
-            }
-            height={360}
-            title="Entry=green, Exit=amber, Stop=red"
-            unavailableText={loading ? "Loading live candles..." : error ?? "No data"}
-          />
+          <div className={`status-pill ${actionabilityExplanation.tone === "ok" ? "ok" : "bad"}`}>
+            {actionabilityExplanation.headline}
+          </div>
+
+          <ul className="analytics-explainer-list">
+            {actionabilityExplanation.details.map((detail) => (
+              <li key={detail}>{detail}</li>
+            ))}
+          </ul>
+
+          {actionabilityExplanation.reasons.length ? (
+            <>
+              <h3>Gate reasons</h3>
+              <ul className="analytics-explainer-list">
+                {actionabilityExplanation.reasons.map((reason) => (
+                  <li key={reason}>{describeRationaleCode(reason)}</li>
+                ))}
+              </ul>
+            </>
+          ) : null}
         </SectionCard>
       </div>
     </div>
