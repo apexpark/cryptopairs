@@ -1103,7 +1103,7 @@ fn resolve_artifact_path(root: &Path, requested: &str) -> Result<PathBuf, ApiErr
         ));
     }
 
-    let requested_path = PathBuf::from(requested);
+    let requested_path = PathBuf::from(requested.trim());
     if requested_path.is_absolute() {
         return Err(ApiError::BadRequest(
             "absolute artifact path is not allowed".to_string(),
@@ -1116,10 +1116,49 @@ fn resolve_artifact_path(root: &Path, requested: &str) -> Result<PathBuf, ApiErr
             root.display()
         ))
     })?;
-    let candidate = canonical_root.join(requested_path);
-    let canonical_candidate = candidate
-        .canonicalize()
-        .map_err(|_| ApiError::NotFound(format!("artifact '{}' not found", candidate.display())))?;
+    let mut candidates: Vec<PathBuf> = vec![requested_path.clone()];
+    let workspace_root = Path::new("/workspace");
+    if let Ok(root_relative) = canonical_root.strip_prefix(workspace_root) {
+        if let Ok(stripped) = requested_path.strip_prefix(root_relative) {
+            candidates.push(stripped.to_path_buf());
+        }
+    }
+    if let Some(root_name) = canonical_root.file_name().and_then(|value| value.to_str()) {
+        let components: Vec<_> = requested_path
+            .components()
+            .map(|component| component.as_os_str().to_string_lossy().to_string())
+            .collect();
+        if let Some(index) = components.iter().position(|component| component == root_name) {
+            let stripped = components
+                .iter()
+                .skip(index + 1)
+                .fold(PathBuf::new(), |mut acc, component| {
+                    acc.push(component);
+                    acc
+                });
+            if !stripped.as_os_str().is_empty() {
+                candidates.push(stripped);
+            }
+        }
+    }
+
+    let mut canonical_candidate: Option<PathBuf> = None;
+    let mut last_candidate_path: Option<PathBuf> = None;
+    for candidate_relative in candidates {
+        if candidate_relative.as_os_str().is_empty() {
+            continue;
+        }
+        let candidate = canonical_root.join(&candidate_relative);
+        last_candidate_path = Some(candidate.clone());
+        if let Ok(found) = candidate.canonicalize() {
+            canonical_candidate = Some(found);
+            break;
+        }
+    }
+    let canonical_candidate = canonical_candidate.ok_or_else(|| {
+        let display_path = last_candidate_path.unwrap_or_else(|| canonical_root.join(&requested_path));
+        ApiError::NotFound(format!("artifact '{}' not found", display_path.display()))
+    })?;
 
     if !canonical_candidate.starts_with(&canonical_root) {
         return Err(ApiError::BadRequest(
@@ -2142,5 +2181,25 @@ mod tests {
 
         fs::remove_dir_all(&root).expect("cleanup root");
         fs::remove_dir_all(&outside).expect("cleanup outside");
+    }
+
+    #[test]
+    fn resolve_artifact_path_accepts_workspace_prefixed_path() {
+        let root = temp_dir("artifact-root-prefixed");
+        let nested = root.join("runs").join("example");
+        fs::create_dir_all(&nested).expect("create nested dir");
+        let target = nested.join("baseline_report.json");
+        fs::write(&target, b"{\"ok\":true}").expect("write report");
+
+        let root_name = root.file_name().expect("root name").to_string_lossy().to_string();
+        let requested = format!("{root_name}/runs/example/baseline_report.json");
+        let resolved =
+            resolve_artifact_path(&root, &requested).expect("resolve workspace-prefixed path");
+        assert_eq!(
+            resolved.canonicalize().expect("canonical target"),
+            target.canonicalize().expect("canonical resolved")
+        );
+
+        fs::remove_dir_all(&root).expect("cleanup root");
     }
 }
