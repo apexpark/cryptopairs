@@ -1,0 +1,39 @@
+{
+  "version": 1,
+  "updated_at": "2026-02-22T20:30:00Z",
+  "decision_thresholds": {
+    "min_actionable_ratio_delta": 0.0,
+    "min_cost_gate_pass_ratio_delta": 0.0,
+    "max_guardrail_block_ratio_delta": 0.03,
+    "max_shadow_disagreement_ratio_delta": 0.02,
+    "max_reopt_error_count": 0,
+    "allow_p1_alerts": false,
+    "allow_p2_alerts": true
+  },
+  "guardrail_codes": [
+    "COST_GATE_BLOCKED",
+    "CHAMPION_DRIFT_BLOCKED",
+    "NEGATIVE_EXPECTED_EDGE",
+    "NEGATIVE_EDGE"
+  ],
+  "profiles": {
+    "baseline": {
+      "STRATEGY_LOOKBACK_BARS_1M": 520,
+      "STRATEGY_LOOKBACK_BARS_15M": 720,
+      "STRATEGY_LOOKBACK_BARS_1H": 900
+    },
+    "candidate": {
+      "STRATEGY_LOOKBACK_BARS_1M": 700,
+      "STRATEGY_LOOKBACK_BARS_15M": 900,
+      "STRATEGY_LOOKBACK_BARS_1H": 1200
+    }
+  },
+  "analytics": {
+    "bars_by_timeframe": {
+      "1m": 600,
+      "15m": 500,
+      "1h": 420
+    },
+    "top_pairs_per_timeframe": 5
+  }
+}

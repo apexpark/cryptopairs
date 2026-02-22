@@ -46,6 +46,7 @@ If instructions conflict, use this order:
 - `docs/19-manual-trading-operator-ui-session.md`
 - `docs/20-alpha-delivery-control.md`
 - `docs/21-hosted-deployment-control.md`
+- `docs/22-strategy-tuning-control.md`
 - `docs/playbooks/backfill-runbook.md`
 - `docs/playbooks/incident-runbook.md`
 - `docs/playbooks/execution-operations-runbook.md`
@@ -55,6 +56,7 @@ If instructions conflict, use this order:
 - `docs/playbooks/hosted-deployment-runbook.md`
 - `plans/alpha_plan.json`
 - `plans/hosted_deployment_plan.json`
+- `plans/strategy_tuning_plan.json`
 - `infra/env/paper-mode.env.example`
 - `infra/env/live-mode.env.example`
 - `infra/env/hosted-mode.env.example`
