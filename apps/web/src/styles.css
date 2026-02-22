@@ -341,7 +341,6 @@ input {
 .analytics-maintenance {
   min-height: 0;
 }
-
 .analytics-explainer-list {
   margin: 8px 0 0 18px;
   padding: 0;
@@ -391,7 +390,6 @@ input {
 .maintenance-downloads a:hover {
   text-decoration: underline;
 }
-
 .panel-card {
   background: var(--panel);
   border: 1px solid var(--line-soft);

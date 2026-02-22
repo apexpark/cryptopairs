@@ -2003,7 +2003,6 @@ function AnalyticsPage({
             />
           </SectionCard>
         </div>
-
         <SectionCard
           title="Why This Pair Is Allowed / Blocked"
           subtitle="Plain-language gate explanation for the selected pair"
