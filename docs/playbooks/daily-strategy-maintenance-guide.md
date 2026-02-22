@@ -27,6 +27,8 @@ python3 tools/scripts/alpha_tracker.py --plan plans/strategy_tuning_plan.json su
 
 Follow the latest `next_action`. Do not start random side tasks first.
 
+If automation is enabled, first review the latest generated cycle report in Analytics (downloads panel), then continue with manual decision steps.
+
 ### Step 2: Confirm core services are up
 
 ```bash

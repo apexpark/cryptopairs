@@ -37,3 +37,4 @@ Current baseline contracts:
 - `specs/contracts/strategy_pairs_cost_gate_response.schema.json`
 - `specs/contracts/strategy_pairs_portfolio_plan_response.schema.json`
 - `specs/contracts/strategy_tuning_report.schema.json`
+- `specs/contracts/strategy_maintenance_latest_response.schema.json`

@@ -1,0 +1,73 @@
+{
+  "available": true,
+  "generated_at": "2026-02-23T05:15:03Z",
+  "report": {
+    "generated_at": "2026-02-23T05:15:02Z",
+    "run_id": "2026-02-23T05-15-02Z",
+    "status": "PASS",
+    "decision": "HOLD",
+    "decision_reasons": [
+      "Baseline comparison report not supplied."
+    ],
+    "policy_path": "infra/config/strategy_tuning_policy.json",
+    "env_file": "/opt/cryptopairs/.env.hosted",
+    "original_values": {
+      "STRATEGY_LOOKBACK_BARS_1M": 520,
+      "STRATEGY_LOOKBACK_BARS_15M": 720,
+      "STRATEGY_LOOKBACK_BARS_1H": 900
+    },
+    "baseline_values": {
+      "STRATEGY_LOOKBACK_BARS_1M": 520,
+      "STRATEGY_LOOKBACK_BARS_15M": 720,
+      "STRATEGY_LOOKBACK_BARS_1H": 900
+    },
+    "candidate_values": {
+      "STRATEGY_LOOKBACK_BARS_1M": 700,
+      "STRATEGY_LOOKBACK_BARS_15M": 900,
+      "STRATEGY_LOOKBACK_BARS_1H": 1200
+    },
+    "steps": {
+      "health": {
+        "pass": true
+      },
+      "baseline_report": {
+        "pass": true
+      },
+      "candidate_apply_dry_run": {
+        "pass": true
+      },
+      "candidate_apply_live": {
+        "pass": true
+      },
+      "candidate_report": {
+        "pass": true
+      },
+      "restore_original": {
+        "pass": true
+      }
+    },
+    "artifacts": {
+      "run_dir": "artifacts/strategy_tuning/runs/2026-02-23T05-15-02Z",
+      "baseline_report": "artifacts/strategy_tuning/runs/2026-02-23T05-15-02Z/baseline_report.json",
+      "candidate_apply_dry_run": "artifacts/strategy_tuning/runs/2026-02-23T05-15-02Z/candidate_apply_dry_run.json",
+      "candidate_apply_live": "artifacts/strategy_tuning/runs/2026-02-23T05-15-02Z/candidate_apply_live.json",
+      "candidate_report": "artifacts/strategy_tuning/runs/2026-02-23T05-15-02Z/candidate_report.json",
+      "restore_report": "artifacts/strategy_tuning/runs/2026-02-23T05-15-02Z/restore_original_report.json",
+      "decision_report": "artifacts/strategy_tuning/runs/2026-02-23T05-15-02Z/maintenance_decision.json",
+      "cycle_report": "artifacts/strategy_tuning/runs/2026-02-23T05-15-02Z/maintenance_cycle_report.json",
+      "latest_report": "artifacts/strategy_tuning/latest_maintenance_report.json"
+    },
+    "downloads": [
+      {
+        "label": "Decision Report",
+        "path": "artifacts/strategy_tuning/runs/2026-02-23T05-15-02Z/maintenance_decision.json"
+      },
+      {
+        "label": "Candidate Report",
+        "path": "artifacts/strategy_tuning/runs/2026-02-23T05-15-02Z/candidate_report.json"
+      }
+    ]
+  },
+  "reason": null,
+  "artifact_download_route": "/v1/strategy/maintenance/artifact?path="
+}

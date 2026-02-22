@@ -1,0 +1,40 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://apexpark.io/specs/contracts/strategy_maintenance_latest_response.schema.json",
+  "title": "StrategyMaintenanceLatestResponse",
+  "type": "object",
+  "required": [
+    "available",
+    "generated_at",
+    "report",
+    "reason",
+    "artifact_download_route"
+  ],
+  "properties": {
+    "available": {
+      "type": "boolean"
+    },
+    "generated_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "report": {
+      "type": [
+        "object",
+        "null"
+      ],
+      "description": "Most recent strategy maintenance cycle report payload."
+    },
+    "reason": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "artifact_download_route": {
+      "type": "string",
+      "description": "Route prefix used to download report artifacts by path query value."
+    }
+  },
+  "additionalProperties": false
+}

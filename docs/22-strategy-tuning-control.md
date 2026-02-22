@@ -8,8 +8,10 @@ Primary control artifacts:
 - `plans/strategy_tuning_plan.json`
 - `infra/config/strategy_tuning_policy.json`
 - `artifacts/strategy_tuning/*.json`
+- `artifacts/strategy_tuning/latest_maintenance_report.json`
 - `tools/scripts/strategy_tuning_report.py`
 - `tools/scripts/strategy_tuning_apply.py`
+- `tools/scripts/strategy_maintenance_cycle.py`
 
 ## Hard Control Rules
 
@@ -57,6 +59,7 @@ This follows `docs/17-verification-protocol.md` and `AGENTS.md`.
 ## Operational Cadence
 
 - Morning: capture candidate report, compare to baseline, evaluate decision.
+- Optional automation mode: run `strategy_maintenance_cycle.py` on cron and consume latest report from API/UI.
 - If `PROMOTE`, promote and refresh baseline snapshot.
 - If `REVERT`, revert profile and redeploy strategy-service.
 - If `HOLD`, keep current profile and collect another cycle.

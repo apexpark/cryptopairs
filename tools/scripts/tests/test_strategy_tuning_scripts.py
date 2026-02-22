@@ -8,6 +8,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 import strategy_tuning_apply as apply_script  # noqa: E402
+import strategy_maintenance_cycle as cycle_script  # noqa: E402
 import strategy_tuning_report as report_script  # noqa: E402
 
 
@@ -115,3 +116,46 @@ def test_profile_values_requires_all_keys() -> None:
     }
     resolved = apply_script.profile_values(policy, "baseline")
     assert resolved["STRATEGY_LOOKBACK_BARS_1H"] == 900
+
+
+def test_choose_restore_mode() -> None:
+    baseline = {
+        "STRATEGY_LOOKBACK_BARS_1M": 520,
+        "STRATEGY_LOOKBACK_BARS_15M": 720,
+        "STRATEGY_LOOKBACK_BARS_1H": 900,
+    }
+    candidate = {
+        "STRATEGY_LOOKBACK_BARS_1M": 700,
+        "STRATEGY_LOOKBACK_BARS_15M": 900,
+        "STRATEGY_LOOKBACK_BARS_1H": 1200,
+    }
+    custom = {
+        "STRATEGY_LOOKBACK_BARS_1M": 600,
+        "STRATEGY_LOOKBACK_BARS_15M": 850,
+        "STRATEGY_LOOKBACK_BARS_1H": 1000,
+    }
+
+    assert (
+        cycle_script.choose_restore_mode(
+            original_values=baseline,
+            baseline_values=baseline,
+            candidate_values=candidate,
+        )
+        == "revert"
+    )
+    assert (
+        cycle_script.choose_restore_mode(
+            original_values=candidate,
+            baseline_values=baseline,
+            candidate_values=candidate,
+        )
+        == "promote"
+    )
+    assert (
+        cycle_script.choose_restore_mode(
+            original_values=custom,
+            baseline_values=baseline,
+            candidate_values=candidate,
+        )
+        == "custom"
+    )

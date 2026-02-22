@@ -109,6 +109,26 @@ python3 tools/scripts/strategy_tuning_apply.py \
   --output-json artifacts/strategy_tuning/<apply-dryrun-report>.json
 ```
 
+## Automated Strategy Maintenance Cycle
+
+Run the full daily evaluation cycle (health checks, baseline, candidate apply dry/live, candidate report, and restore-original):
+
+```bash
+python3 tools/scripts/strategy_maintenance_cycle.py \
+  --env-file /opt/cryptopairs/.env.hosted \
+  --output-root artifacts/strategy_tuning/runs \
+  --latest-report artifacts/strategy_tuning/latest_maintenance_report.json
+```
+
+Install/update cron automation on hosted server:
+
+```bash
+bash scripts/install_strategy_maintenance_cron.sh \
+  --schedule "15 6 * * *" \
+  --repo-root /opt/cryptopairs \
+  --env-file /opt/cryptopairs/.env.hosted
+```
+
 ## Hosted Deployment Tracking
 
 Use the same tracker utility with the hosted deployment plan:
