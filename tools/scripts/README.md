@@ -79,6 +79,36 @@ python3 tools/scripts/fail_closed_readiness_check.py \
   --output-json artifacts/fail_closed_readiness_report.json
 ```
 
+## Strategy Tuning Reporter
+
+Generate a deterministic tuning report with policy checks and a decision:
+
+```bash
+python3 tools/scripts/strategy_tuning_report.py \
+  --profile candidate \
+  --compare-report artifacts/strategy_tuning/<baseline-report>.json \
+  --output-json artifacts/strategy_tuning/<candidate-report>.json
+```
+
+## Strategy Tuning Apply
+
+Apply lookback profile updates with env backup, deploy integration, and rollback on deploy failure:
+
+```bash
+python3 tools/scripts/strategy_tuning_apply.py \
+  --mode promote \
+  --output-json artifacts/strategy_tuning/<apply-report>.json
+```
+
+Dry-run:
+
+```bash
+python3 tools/scripts/strategy_tuning_apply.py \
+  --mode promote \
+  --dry-run \
+  --output-json artifacts/strategy_tuning/<apply-dryrun-report>.json
+```
+
 ## Hosted Deployment Tracking
 
 Use the same tracker utility with the hosted deployment plan:

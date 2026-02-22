@@ -5,6 +5,19 @@ This project follows SemVer as defined in `docs/02-versioning-and-releases.md`.
 
 ## Unreleased
 ### Added
+- Strategy tuning governance and interruption recovery package:
+  - `docs/22-strategy-tuning-control.md`
+  - `plans/strategy_tuning_plan.json`
+  - `infra/config/strategy_tuning_policy.json`
+  - `docs/playbooks/strategy-tuning-runbook.md`
+- Strategy tuning machine-readable reporting contract/example:
+  - `specs/contracts/strategy_tuning_report.schema.json`
+  - `specs/examples/strategy_tuning_report.example.json`
+- Strategy tuning automation scripts:
+  - `tools/scripts/strategy_tuning_report.py` (deterministic snapshot/compare/decision report)
+  - `tools/scripts/strategy_tuning_apply.py` (guarded promote/revert apply with env backup and rollback on deploy failure)
+- Strategy tuning script unit tests:
+  - `tools/scripts/tests/test_strategy_tuning_scripts.py`
 - Strategy module implementation spec derived from SSRN 151 Trading Strategies review: `docs/18-strategy-module-implementation-spec.md`.
 - Initial documentation suite and agent governance scaffolding.
 - Rust workspace foundation with:

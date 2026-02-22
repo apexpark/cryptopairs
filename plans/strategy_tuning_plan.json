@@ -1,7 +1,7 @@
 {
   "version": 1,
-  "updated_at": "2026-02-22T21:31:30Z",
-  "active_focus_id": 3,
+  "updated_at": "2026-02-22T21:40:30Z",
+  "active_focus_id": 8,
   "milestone": "Strategy Tuning Automation and Governance",
   "items": [
     {
@@ -39,7 +39,7 @@
     {
       "id": 3,
       "title": "Implement deterministic reporter (snapshot, compare, decision)",
-      "status": "IN_PROGRESS",
+      "status": "DONE",
       "priority": "NOW",
       "depends_on": [
         1,
@@ -47,15 +47,18 @@
       ],
       "owner": "codex",
       "requires_user": false,
-      "evidence": [],
+      "evidence": [
+        "tools/scripts/strategy_tuning_report.py"
+      ],
       "notes": [
-        "2026-02-22T21:31:30Z Started reporter implementation slice"
+        "2026-02-22T21:31:30Z Started reporter implementation slice",
+        "2026-02-22T21:39:05Z Implemented deterministic reporter with hosted snapshot/compare decision flow"
       ]
     },
     {
       "id": 4,
       "title": "Implement guarded promote/revert executor with backup and deploy integration",
-      "status": "PENDING",
+      "status": "DONE",
       "priority": "NOW",
       "depends_on": [
         1,
@@ -63,13 +66,17 @@
       ],
       "owner": "codex",
       "requires_user": false,
-      "evidence": [],
-      "notes": []
+      "evidence": [
+        "tools/scripts/strategy_tuning_apply.py"
+      ],
+      "notes": [
+        "2026-02-22T21:39:13Z Implemented guarded promote/revert apply script with backup and rollback"
+      ]
     },
     {
       "id": 5,
       "title": "Add unit tests for decision logic and env mutation behavior",
-      "status": "PENDING",
+      "status": "DONE",
       "priority": "NOW",
       "depends_on": [
         3,
@@ -77,13 +84,17 @@
       ],
       "owner": "codex",
       "requires_user": false,
-      "evidence": [],
-      "notes": []
+      "evidence": [
+        "tools/scripts/tests/test_strategy_tuning_scripts.py"
+      ],
+      "notes": [
+        "2026-02-22T21:39:19Z Added deterministic unit tests for decision logic and env mutation"
+      ]
     },
     {
       "id": 6,
       "title": "Publish strategy tuning runbook and script usage references",
-      "status": "PENDING",
+      "status": "DONE",
       "priority": "NEXT",
       "depends_on": [
         3,
@@ -91,13 +102,17 @@
       ],
       "owner": "codex",
       "requires_user": false,
-      "evidence": [],
-      "notes": []
+      "evidence": [
+        "docs/playbooks/strategy-tuning-runbook.md"
+      ],
+      "notes": [
+        "2026-02-22T21:39:26Z Published strategy tuning runbook and script README references"
+      ]
     },
     {
       "id": 7,
       "title": "Run deterministic local dry-run and produce baseline report artifact",
-      "status": "PENDING",
+      "status": "DONE",
       "priority": "NEXT",
       "depends_on": [
         3,
@@ -105,13 +120,17 @@
       ],
       "owner": "codex",
       "requires_user": false,
-      "evidence": [],
-      "notes": []
+      "evidence": [
+        "artifacts/strategy_tuning/2026-02-22T21-37-37Z-baseline.json"
+      ],
+      "notes": [
+        "2026-02-22T21:39:33Z Generated hosted baseline report artifact and comparison candidate report"
+      ]
     },
     {
       "id": 8,
       "title": "Finalize changelog/process update and handoff commands",
-      "status": "PENDING",
+      "status": "DONE",
       "priority": "NEXT",
       "depends_on": [
         6,
@@ -119,8 +138,13 @@
       ],
       "owner": "codex",
       "requires_user": false,
-      "evidence": [],
-      "notes": []
+      "evidence": [
+        "CHANGELOG.md"
+      ],
+      "notes": [
+        "2026-02-22T21:39:46Z Finalizing changelog and operator handoff commands",
+        "2026-02-22T21:40:23Z Completed changelog and operator handoff workflow"
+      ]
     }
   ],
   "sidetrack_queue": [],
@@ -144,6 +168,20 @@
       "focus_id": 3,
       "delta": "Completed schema/example slice and recovered tracker from race-condition corruption",
       "next_action": "Implement strategy_tuning_report.py with deterministic decision logic",
+      "blockers": []
+    },
+    {
+      "ts": "2026-02-22T21:39:53Z",
+      "focus_id": 8,
+      "delta": "Completed scripts, tests, runbook, and hosted baseline/candidate report generation",
+      "next_action": "Update changelog and provide final promote/revert command set",
+      "blockers": []
+    },
+    {
+      "ts": "2026-02-22T21:40:30Z",
+      "focus_id": 8,
+      "delta": "Completed strategy tuning automation sequence with tests, runbook, and hosted artifacts",
+      "next_action": "Monitor daily reports and adjust policy thresholds only with evidence",
       "blockers": []
     }
   ]

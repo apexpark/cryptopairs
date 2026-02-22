@@ -51,6 +51,7 @@ If instructions conflict, use this order:
 - `docs/playbooks/incident-runbook.md`
 - `docs/playbooks/execution-operations-runbook.md`
 - `docs/playbooks/observability-slo-runbook.md`
+- `docs/playbooks/strategy-tuning-runbook.md`
 - `docs/playbooks/secrets-lifecycle-runbook.md`
 - `docs/playbooks/fail-closed-recovery-runbook.md`
 - `docs/playbooks/hosted-deployment-runbook.md`
