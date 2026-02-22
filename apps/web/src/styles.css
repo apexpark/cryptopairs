@@ -284,6 +284,15 @@ input {
   min-height: 0;
 }
 
+.how-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1.8fr) minmax(280px, 1fr);
+  gap: 10px;
+  align-items: start;
+  min-height: 0;
+  height: 100%;
+}
+
 .split-grid {
   display: grid;
   grid-template-columns: 1fr 1fr;
@@ -592,9 +601,79 @@ button:disabled {
 
 .opportunities-panel,
 .analysis-panel,
-.execution-panel {
+.execution-panel,
+.how-main-panel {
   min-height: 0;
   max-height: 100%;
+}
+
+.how-main-panel {
+  display: grid;
+  grid-template-rows: auto 1fr;
+  gap: 8px;
+}
+
+.how-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.how-tab-button {
+  width: auto;
+  margin-top: 0;
+  padding: 8px 12px;
+  background: var(--button-bg);
+  color: var(--muted);
+  border: 1px solid var(--line);
+  font-size: 0.77rem;
+}
+
+.how-tab-button.active {
+  background: var(--nav-active);
+  color: var(--text);
+  border-color: var(--line-strong);
+}
+
+.how-tab-content {
+  border: 1px solid var(--line-soft);
+  border-radius: 8px;
+  background: var(--panel-2);
+  padding: 12px;
+  min-height: 0;
+  overflow: auto;
+}
+
+.how-tab-content h3 {
+  margin: 0 0 8px 0;
+}
+
+.how-tab-content p {
+  margin: 0 0 8px 0;
+  font-size: 0.79rem;
+  line-height: 1.45;
+  color: var(--text);
+}
+
+.how-tab-content ul {
+  margin: 4px 0 0 16px;
+  padding: 0;
+  display: grid;
+  gap: 6px;
+}
+
+.how-tab-content li {
+  font-size: 0.78rem;
+  color: var(--muted);
+}
+
+.how-steps {
+  margin: 0;
+  padding-left: 16px;
+  display: grid;
+  gap: 6px;
+  color: var(--text);
+  font-size: 0.79rem;
 }
 
 .analysis-panel {
@@ -650,7 +729,8 @@ button:disabled {
 
 @media (max-width: 1320px) {
   .trade-grid,
-  .split-grid {
+  .split-grid,
+  .how-layout {
     grid-template-columns: 1fr;
     grid-template-rows: auto;
   }

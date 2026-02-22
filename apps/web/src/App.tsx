@@ -51,7 +51,14 @@ import type {
 import logoDark from "./assets/logo-dark.png";
 import logoLight from "./assets/logo-light.png";
 
-type PageId = "trade" | "markets" | "analytics" | "portfolio" | "data-quality" | "settings";
+type PageId =
+  | "trade"
+  | "how-it-works"
+  | "markets"
+  | "analytics"
+  | "portfolio"
+  | "data-quality"
+  | "settings";
 
 type ThemeMode = "dark" | "light";
 
@@ -78,11 +85,92 @@ interface LegExecutionOutcome {
 
 const NAV_ITEMS: Array<{ id: PageId; label: string }> = [
   { id: "trade", label: "Trade" },
+  { id: "how-it-works", label: "How This Works" },
   { id: "markets", label: "Markets" },
   { id: "analytics", label: "Analytics" },
   { id: "portfolio", label: "Portfolio" },
   { id: "data-quality", label: "Data Quality" },
   { id: "settings", label: "Settings" },
+];
+
+type HowItWorksTabId = "pairs-trading" | "opportunity-engine" | "hedge-ratio" | "risks";
+
+const HOW_IT_WORKS_TABS: Array<{
+  id: HowItWorksTabId;
+  label: string;
+  title: string;
+  intro: string;
+  paragraphs: string[];
+  bullets: string[];
+}> = [
+  {
+    id: "pairs-trading",
+    label: "What Is Pairs Trading",
+    title: "What Is Pairs Trading",
+    intro:
+      "Pairs trading focuses on the relationship between two futures contracts, not a single market direction.",
+    paragraphs: [
+      "Think of two runners tied by a rope. They can separate for short periods, then pull back toward each other.",
+      "The platform measures that distance as a spread and flags unusual stretches as potential opportunities.",
+      "A spread trade opens opposite legs so your result is driven more by relationship movement than broad market trend.",
+    ],
+    bullets: [
+      "Long Spread: buy one leg and sell the other using model sizing.",
+      "Short Spread: reverse those legs when stretch is in the opposite direction.",
+      "Goal: capture spread convergence with controlled risk, not predict absolute price.",
+    ],
+  },
+  {
+    id: "opportunity-engine",
+    label: "Opportunity Engine",
+    title: "Opportunity Engine",
+    intro:
+      "The Opportunity Engine scans configured pairs and ranks potential setups on every cycle.",
+    paragraphs: [
+      "It evaluates multiple spread variants, not one fixed formula, then measures how far the spread is from recent normal behavior.",
+      "It applies cost and quality checks before a setup can be considered actionable, including fees, funding drag, slippage, and stability.",
+      "It then selects the best-performing variant from recent live behavior and publishes cue details for operator review.",
+    ],
+    bullets: [
+      "Inputs: spread signal, z-score stretch, regime, stability, and execution costs.",
+      "Output: direction hint, confidence, entry/exit/stop bands, and rationale tags.",
+      "Fail-safe: if quality or safety checks fail, cue remains non-actionable.",
+    ],
+  },
+  {
+    id: "hedge-ratio",
+    label: "Hedge Ratio",
+    title: "Hedge Ratio and Leg Sizing",
+    intro:
+      "The hedge ratio is the balance setting between the two legs that aims to neutralize shared market movement.",
+    paragraphs: [
+      "Its purpose is to isolate relative mispricing between the pair, so P&L is driven more by spread convergence or divergence and less by broad crypto direction.",
+      "When you set spread size, the system converts that into leg quantities using the current hedge ratio and contract constraints.",
+      "The ratio is recalculated over time as relationships evolve, so leg sizing adapts to new market structure.",
+    ],
+    bullets: [
+      "Example: 1.00 spread unit can become Long A 1.00 vs Short B 0.62.",
+      "Sizing is applied consistently for entry, add, reduce, and close actions.",
+      "If ratio stability degrades, the opportunity engine can downgrade or block entry.",
+    ],
+  },
+  {
+    id: "risks",
+    label: "Risks",
+    title: "Key Risks to Understand",
+    intro:
+      "Pairs trading reduces some directional exposure, but it does not remove risk.",
+    paragraphs: [
+      "Relationship risk: pairs can stop mean-reverting or shift into a new regime where historical behavior no longer applies.",
+      "Execution and cost risk: slippage, partial fills, fees, and funding can erase expected edge.",
+      "Data and model risk: stale or incomplete data can lead to poor cues, which is why integrity and reconciliation gates are enforced.",
+    ],
+    bullets: [
+      "Leverage and liquidation risk still apply if sizing is too aggressive.",
+      "Fail-closed mode blocks new entries when gates are unsafe.",
+      "Operator can still reduce or close open spread exposure during degraded conditions.",
+    ],
+  },
 ];
 
 const TIMEFRAMES: Timeframe[] = ["1m", "15m", "1h"];
@@ -982,6 +1070,10 @@ function App(): JSX.Element {
       );
     }
 
+    if (page === "how-it-works") {
+      return <HowThisWorksPage />;
+    }
+
     if (page === "markets") {
       return (
         <MarketsPage
@@ -1546,6 +1638,61 @@ function MarketsPage({
             </tbody>
           </table>
         </div>
+      </SectionCard>
+    </div>
+  );
+}
+
+function HowThisWorksPage(): JSX.Element {
+  const [activeTab, setActiveTab] = useState<HowItWorksTabId>("pairs-trading");
+  const tab = HOW_IT_WORKS_TABS.find((item) => item.id === activeTab) ?? HOW_IT_WORKS_TABS[0];
+
+  return (
+    <div className="how-layout">
+      <SectionCard
+        title="How This Works"
+        subtitle="Layman explainer for manual-first spread trading"
+        className="how-main-panel"
+      >
+        <div className="how-tabs">
+          {HOW_IT_WORKS_TABS.map((item) => (
+            <button
+              key={item.id}
+              type="button"
+              className={`how-tab-button ${item.id === activeTab ? "active" : ""}`}
+              onClick={() => setActiveTab(item.id)}
+            >
+              {item.label}
+            </button>
+          ))}
+        </div>
+
+        <div className="how-tab-content">
+          <h3>{tab.title}</h3>
+          <p>{tab.intro}</p>
+          {tab.paragraphs.map((paragraph) => (
+            <p key={paragraph}>{paragraph}</p>
+          ))}
+          <ul>
+            {tab.bullets.map((item) => (
+              <li key={item}>{item}</li>
+            ))}
+          </ul>
+        </div>
+      </SectionCard>
+
+      <SectionCard title="Operator Workflow" subtitle="How decisions are made in this UI">
+        <ol className="how-steps">
+          <li>Select timeframe and pair.</li>
+          <li>Review opportunity cues, z-score chart, and rationale tags.</li>
+          <li>Set stop method and value before any entry can be sent.</li>
+          <li>Arm live trading, then submit long or short spread entry manually.</li>
+          <li>Monitor gates continuously and reduce/close if conditions degrade.</li>
+        </ol>
+        <p className="small-text">
+          Manual-first mode: the system informs and enforces guardrails, while the operator
+          decides when to act.
+        </p>
       </SectionCard>
     </div>
   );
