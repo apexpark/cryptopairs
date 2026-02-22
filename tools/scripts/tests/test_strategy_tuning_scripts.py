@@ -159,3 +159,30 @@ def test_choose_restore_mode() -> None:
         )
         == "custom"
     )
+
+
+def test_human_action_recommendation_mapping() -> None:
+    assert cycle_script.human_action_recommendation("PROMOTE") == "PROMOTE"
+    assert cycle_script.human_action_recommendation("revert") == "REVERT"
+    assert cycle_script.human_action_recommendation("HOLD") == "LEAVE AS IS"
+
+
+def test_render_human_summary_contains_recommendation() -> None:
+    summary = cycle_script.render_human_summary(
+        generated_at="2026-02-22T23:41:28Z",
+        run_id="2026-02-22T23-41-28Z",
+        status="PASS",
+        decision="HOLD",
+        decision_reasons=["candidate report step failed"],
+        step_pass_summary={"health": True, "candidate_report": False},
+        artifacts={
+            "baseline_report": "artifacts/strategy_tuning/runs/example/baseline_report.json",
+            "decision_report": "artifacts/strategy_tuning/runs/example/maintenance_decision.json",
+            "cycle_report": "artifacts/strategy_tuning/runs/example/maintenance_cycle_report.json",
+        },
+    )
+
+    assert "Recommended operator action: LEAVE AS IS" in summary
+    assert "candidate report step failed" in summary
+    assert "- health: PASS" in summary
+    assert "- candidate_report: FAIL" in summary

@@ -12,6 +12,7 @@ Automated cycle scope:
 5. Candidate report generation with baseline comparison.
 6. Automatic restore back to original profile after evaluation.
 7. Publish latest cycle report for UI download links.
+8. Generate a human-readable maintenance summary (`maintenance_human_summary.md`).
 
 ## Key Files
 
@@ -57,6 +58,7 @@ Expected:
 1. A new run folder with baseline/candidate/apply reports.
 2. `latest_maintenance_report.json` updated.
 3. `decision` field present (`PROMOTE`, `HOLD`, or `REVERT`).
+4. `maintenance_human_summary.md` available in run artifacts and Analytics downloads.
 
 ## UI Validation
 
