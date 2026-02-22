@@ -199,6 +199,16 @@ export interface IntegrityHistoryResponse {
   }>;
 }
 
+export interface MarketMetricsResponse {
+  instrument: string;
+  server_time: string;
+  mark: number;
+  index: number;
+  change_24h_pct: number;
+  funding_rate: number;
+  open_interest: number;
+}
+
 export interface Candle {
   ts: string;
   open: number;

@@ -28,6 +28,7 @@ const api = vi.hoisted(() => ({
   fetchExecutionPortfolioPositions: vi.fn(),
   fetchIntegrityHistory: vi.fn(),
   fetchKillSwitchState: vi.fn(),
+  fetchMarketMetrics: vi.fn(),
   fetchOrderIntentHistory: vi.fn(),
   fetchReconcile: vi.fn(),
   fetchStrategyBacktest: vi.fn(),
@@ -306,6 +307,15 @@ beforeEach(() => {
       },
     ],
   });
+  api.fetchMarketMetrics.mockResolvedValue({
+    instrument: LEFT,
+    server_time: "2026-02-20T00:00:00Z",
+    mark: 67324.3,
+    index: 67317.8,
+    change_24h_pct: 0.84,
+    funding_rate: 0.0000021,
+    open_interest: 5278812,
+  });
 
   api.submitOrderIntent.mockResolvedValue({ decision: "BLOCKED" });
   api.dispatchOrderIntent.mockResolvedValue({ result: "REJECTED", reason: "not tested" });
@@ -325,11 +335,15 @@ describe("global timeframe switching", () => {
       expect(api.fetchStrategyCues).toHaveBeenCalledWith("1m", 20);
       expect(api.fetchStrategyLiveZ).toHaveBeenCalledWith("1m", PAIR_ID, 300);
       expect(api.fetchStrategyBacktest).toHaveBeenCalledWith("1m", PAIR_ID, 300);
+      expect(api.fetchMarketMetrics).toHaveBeenCalledWith(LEFT);
+      expect(api.fetchMarketMetrics).toHaveBeenCalledWith(RIGHT);
       expect(api.fetchExecutionPortfolioPositions).toHaveBeenCalledWith(
         "kraken_futures",
         "primary"
       );
     });
+    expect(screen.getByText("XBTUSD Position Size").parentElement).toHaveTextContent("+1.00");
+    expect(screen.getByText("ETHUSD Position Size").parentElement).toHaveTextContent("+0.85");
 
     selectTimeframe("15m");
 

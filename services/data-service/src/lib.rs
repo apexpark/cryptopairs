@@ -64,6 +64,7 @@ pub fn build_router(state: AppState) -> Router {
         .route("/health", get(health))
         .route("/v1/data/query", post(query_data))
         .route("/v1/integrity/history", get(integrity_history))
+        .route("/v1/market/metrics", get(market_metrics))
         .layer(cors)
         .with_state(state)
 }
@@ -229,6 +230,50 @@ async fn integrity_history(
         instrument: query.instrument,
         timeframe: timeframe.as_str().to_string(),
         rows: rows.into_iter().map(map_history_row).collect(),
+    }))
+}
+
+#[derive(Debug, serde::Deserialize)]
+struct MarketMetricsQuery {
+    instrument: String,
+}
+
+#[derive(Debug, Serialize)]
+struct MarketMetricsResponse {
+    instrument: String,
+    server_time: chrono::DateTime<chrono::Utc>,
+    mark: f64,
+    index: f64,
+    change_24h_pct: f64,
+    funding_rate: f64,
+    open_interest: f64,
+}
+
+async fn market_metrics(
+    State(state): State<AppState>,
+    Query(query): Query<MarketMetricsQuery>,
+) -> Result<Json<MarketMetricsResponse>, ApiError> {
+    let instrument = query.instrument.trim();
+    if instrument.is_empty() {
+        return Err(ApiError::SourceUnavailable(
+            "instrument query parameter is required".to_string(),
+        ));
+    }
+
+    let metrics = state
+        .adapter
+        .fetch_market_metrics(instrument)
+        .await
+        .map_err(|error| ApiError::SourceUnavailable(error.to_string()))?;
+
+    Ok(Json(MarketMetricsResponse {
+        instrument: metrics.instrument,
+        server_time: metrics.server_time,
+        mark: metrics.mark,
+        index: metrics.index,
+        change_24h_pct: metrics.change_24h_pct,
+        funding_rate: metrics.funding_rate,
+        open_interest: metrics.open_interest,
     }))
 }
 

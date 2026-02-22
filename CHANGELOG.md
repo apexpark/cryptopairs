@@ -24,6 +24,7 @@ This project follows SemVer as defined in `docs/02-versioning-and-releases.md`.
 - Integrity audit persistence to `data_quality_intervals` from API queries and worker backfills.
 - Bootstrap historical backfill CLI (`services/data-service/src/bin/bootstrap_backfill.rs`) for chunked full-history ingestion.
 - Integrity history API endpoint (`GET /v1/integrity/history`) backed by persisted quality intervals.
+- Market metrics API endpoint (`GET /v1/market/metrics?instrument=<symbol>`) backed by Kraken tickers.
 - Kraken WebSocket trade ingest worker (`services/data-service/src/ws_worker.rs`) with reconnect + live trade persistence.
 - Trade storage table initialization (`trades`) and repository insert path.
 - `account-service` reconciliation scheduler with persisted drift checks and a manual run endpoint (`POST /v1/account/reconcile/run`).
@@ -100,6 +101,9 @@ This project follows SemVer as defined in `docs/02-versioning-and-releases.md`.
   - Analytics page with hypothetical equity curve and historical z-score entry/exit/stop markers.
   - Data Quality page backed by integrity history diagnostics and fail-closed execution gate context.
   - Theme-aware PAIRS logos (dark/light) and global timeframe selector.
+  - Top header metrics (Mark/Index/24h/Funding/OI) now sourced from `data-service` live market metrics.
+  - Trade and Analytics charts now include timestamp x-axis labels.
+  - Data Quality integrity table now explicitly indicates latest-row windowing.
 - Execution handoff lifecycle slice (fail-closed by default):
   - New endpoint `GET /v1/execution/order-intent/history` for intent + lifecycle + dispatch audit retrieval.
   - New endpoint `POST /v1/execution/order-intent/dispatch` to progress `APPROVED` intents into submit states.
@@ -297,6 +301,8 @@ This project follows SemVer as defined in `docs/02-versioning-and-releases.md`.
 
 ### Fixed
 - Removed accidental duplicate spec/example files with `* 2.json` suffix.
+- Strategy marker generation no longer emits same-bar `entry` + `stop` overlaps in live z-score/backtest series,
+  preventing visual stop markers without a preceding visible entry.
 - Execution lifecycle transition matrix now permits watchdog-driven expiration from
   `ACKNOWLEDGED` and `PARTIALLY_FILLED` (`-> EXPIRED`).
 - Integrity false-negative gap detection when request bounds were unaligned to timeframe steps

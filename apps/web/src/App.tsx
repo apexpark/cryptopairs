@@ -11,6 +11,7 @@ import {
   fetchExecutionDecision,
   fetchIntegrityHistory,
   fetchKillSwitchState,
+  fetchMarketMetrics,
   fetchOrderIntentHistory,
   fetchReconcile,
   fetchStrategyBacktest,
@@ -36,6 +37,7 @@ import type {
   ExecutionAction,
   IntegrityHistoryResponse,
   KillSwitchState,
+  MarketMetricsResponse,
   OrderIntentHistoryResponse,
   ReconcileResponse,
   SpreadPosition,
@@ -49,7 +51,14 @@ import type {
 import logoDark from "./assets/logo-dark.png";
 import logoLight from "./assets/logo-light.png";
 
-type PageId = "trade" | "markets" | "analytics" | "portfolio" | "data-quality" | "settings";
+type PageId =
+  | "trade"
+  | "how-it-works"
+  | "markets"
+  | "analytics"
+  | "portfolio"
+  | "data-quality"
+  | "settings";
 
 type ThemeMode = "dark" | "light";
 
@@ -76,11 +85,92 @@ interface LegExecutionOutcome {
 
 const NAV_ITEMS: Array<{ id: PageId; label: string }> = [
   { id: "trade", label: "Trade" },
+  { id: "how-it-works", label: "How This Works" },
   { id: "markets", label: "Markets" },
   { id: "analytics", label: "Analytics" },
   { id: "portfolio", label: "Portfolio" },
   { id: "data-quality", label: "Data Quality" },
   { id: "settings", label: "Settings" },
+];
+
+type HowItWorksTabId = "pairs-trading" | "opportunity-engine" | "hedge-ratio" | "risks";
+
+const HOW_IT_WORKS_TABS: Array<{
+  id: HowItWorksTabId;
+  label: string;
+  title: string;
+  intro: string;
+  paragraphs: string[];
+  bullets: string[];
+}> = [
+  {
+    id: "pairs-trading",
+    label: "What Is Pairs Trading",
+    title: "What Is Pairs Trading",
+    intro:
+      "Pairs trading focuses on the relationship between two futures contracts, not a single market direction.",
+    paragraphs: [
+      "Think of two runners tied by a rope. They can separate for short periods, then pull back toward each other.",
+      "The platform measures that distance as a spread and flags unusual stretches as potential opportunities.",
+      "A spread trade opens opposite legs so your result is driven more by relationship movement than broad market trend.",
+    ],
+    bullets: [
+      "Long Spread: buy one leg and sell the other using model sizing.",
+      "Short Spread: reverse those legs when stretch is in the opposite direction.",
+      "Goal: capture spread convergence with controlled risk, not predict absolute price.",
+    ],
+  },
+  {
+    id: "opportunity-engine",
+    label: "Opportunity Engine",
+    title: "Opportunity Engine",
+    intro:
+      "The Opportunity Engine scans configured pairs and ranks potential setups on every cycle.",
+    paragraphs: [
+      "It evaluates multiple spread variants, not one fixed formula, then measures how far the spread is from recent normal behavior.",
+      "It applies cost and quality checks before a setup can be considered actionable, including fees, funding drag, slippage, and stability.",
+      "It then selects the best-performing variant from recent live behavior and publishes cue details for operator review.",
+    ],
+    bullets: [
+      "Inputs: spread signal, z-score stretch, regime, stability, and execution costs.",
+      "Output: direction hint, confidence, entry/exit/stop bands, and rationale tags.",
+      "Fail-safe: if quality or safety checks fail, cue remains non-actionable.",
+    ],
+  },
+  {
+    id: "hedge-ratio",
+    label: "Hedge Ratio",
+    title: "Hedge Ratio and Leg Sizing",
+    intro:
+      "The hedge ratio is the balance setting between the two legs that aims to neutralize shared market movement.",
+    paragraphs: [
+      "Its purpose is to isolate relative mispricing between the pair, so P&L is driven more by spread convergence or divergence and less by broad crypto direction.",
+      "When you set spread size, the system converts that into leg quantities using the current hedge ratio and contract constraints.",
+      "The ratio is recalculated over time as relationships evolve, so leg sizing adapts to new market structure.",
+    ],
+    bullets: [
+      "Example: 1.00 spread unit can become Long A 1.00 vs Short B 0.62.",
+      "Sizing is applied consistently for entry, add, reduce, and close actions.",
+      "If ratio stability degrades, the opportunity engine can downgrade or block entry.",
+    ],
+  },
+  {
+    id: "risks",
+    label: "Risks",
+    title: "Key Risks to Understand",
+    intro:
+      "Pairs trading reduces some directional exposure, but it does not remove risk.",
+    paragraphs: [
+      "Relationship risk: pairs can stop mean-reverting or shift into a new regime where historical behavior no longer applies.",
+      "Execution and cost risk: slippage, partial fills, fees, and funding can erase expected edge.",
+      "Data and model risk: stale or incomplete data can lead to poor cues, which is why integrity and reconciliation gates are enforced.",
+    ],
+    bullets: [
+      "Leverage and liquidation risk still apply if sizing is too aggressive.",
+      "Fail-closed mode blocks new entries when gates are unsafe.",
+      "Operator can still reduce or close open spread exposure during degraded conditions.",
+    ],
+  },
 ];
 
 const TIMEFRAMES: Timeframe[] = ["1m", "15m", "1h"];
@@ -133,6 +223,68 @@ function preferredTheme(): ThemeMode {
 function formatSigned(value: number, digits = 2): string {
   const abs = Math.abs(value).toFixed(digits);
   return `${value >= 0 ? "+" : "-"}${abs}`;
+}
+
+function formatMetricPrice(value: number | null | undefined): string {
+  if (value == null || !Number.isFinite(value)) {
+    return "--";
+  }
+  const abs = Math.abs(value);
+  if (abs >= 1_000) {
+    return value.toFixed(0);
+  }
+  if (abs >= 100) {
+    return value.toFixed(2);
+  }
+  if (abs >= 1) {
+    return value.toFixed(3);
+  }
+  return value.toFixed(6);
+}
+
+function formatMetricPercent(value: number | null | undefined): string {
+  if (value == null || !Number.isFinite(value)) {
+    return "--";
+  }
+  return `${value >= 0 ? "+" : ""}${value.toFixed(2)}%`;
+}
+
+function formatFundingRate(value: number | null | undefined): string {
+  if (value == null || !Number.isFinite(value)) {
+    return "--";
+  }
+  return `${(value * 100).toFixed(4)}% / hr`;
+}
+
+function formatSignedMetric(value: number | null | undefined, digits = 3): string {
+  if (value == null || !Number.isFinite(value)) {
+    return "--";
+  }
+  const abs = Math.abs(value).toFixed(digits);
+  return `${value >= 0 ? "+" : "-"}${abs}`;
+}
+
+function derivePairLotSizes(
+  hedgeRatio: number | null | undefined
+): { leftSize: number; rightSize: number } {
+  const sanitizedHedgeRatio =
+    hedgeRatio != null && Number.isFinite(hedgeRatio) && hedgeRatio > 0
+      ? Math.abs(hedgeRatio)
+      : 1;
+  return { leftSize: 1, rightSize: sanitizedHedgeRatio };
+}
+
+function formatOpenInterest(value: number | null | undefined): string {
+  if (value == null || !Number.isFinite(value)) {
+    return "--";
+  }
+  if (Math.abs(value) >= 1_000_000) {
+    return `${(value / 1_000_000).toFixed(1)}m`;
+  }
+  if (Math.abs(value) >= 1_000) {
+    return `${(value / 1_000).toFixed(1)}k`;
+  }
+  return value.toFixed(0);
 }
 
 function formatInstrumentLabel(instrument: string): string {
@@ -210,10 +362,15 @@ function App(): JSX.Element {
   const [rightIntegrity, setRightIntegrity] = useState<IntegrityHistoryResponse | null>(null);
 
   const [zSeries, setZSeries] = useState<number[]>([]);
+  const [zTimestamps, setZTimestamps] = useState<string[]>([]);
   const [equitySeries, setEquitySeries] = useState<number[]>([]);
+  const [equityTimestamps, setEquityTimestamps] = useState<string[]>([]);
   const [zMarkers, setZMarkers] = useState<ChartMarker[]>([]);
   const [analyticsError, setAnalyticsError] = useState<string | null>(null);
   const [analyticsLoading, setAnalyticsLoading] = useState(false);
+  const [headerLeftMetrics, setHeaderLeftMetrics] = useState<MarketMetricsResponse | null>(null);
+  const [headerRightMetrics, setHeaderRightMetrics] = useState<MarketMetricsResponse | null>(null);
+  const [headerMetricsError, setHeaderMetricsError] = useState<string | null>(null);
 
   const [stopMethod, setStopMethod] = useState<"Z-Score" | "Dollar" | "Percent">("Z-Score");
   const [stopValue, setStopValue] = useState<string>("3.2");
@@ -488,7 +645,9 @@ function App(): JSX.Element {
   useEffect(() => {
     if (!selectedCueRow) {
       setZSeries([]);
+      setZTimestamps([]);
       setEquitySeries([]);
+      setEquityTimestamps([]);
       setZMarkers([]);
       setAnalyticsError("No pair selected.");
       setAnalyticsLoading(false);
@@ -523,20 +682,26 @@ function App(): JSX.Element {
         if (liveZ.points.length < 20 || backtest.points.length < 20) {
           setAnalyticsError("Insufficient aligned data for analytics charts.");
           setZSeries([]);
+          setZTimestamps([]);
           setEquitySeries([]);
+          setEquityTimestamps([]);
           setZMarkers([]);
           return;
         }
 
         const zValues = liveZ.points.map((point) => point.z);
+        const zTimes = liveZ.points.map((point) => point.ts);
         const equity = backtest.points.map((point) => point.equity);
+        const equityTimes = backtest.points.map((point) => point.ts);
         const markers = liveZ.markers.filter((marker) =>
           marker.kind === "entry" || marker.kind === "exit" || marker.kind === "stop"
         );
 
         setZSeries(zValues);
+        setZTimestamps(zTimes);
         setZMarkers(markers);
         setEquitySeries(equity);
+        setEquityTimestamps(equityTimes);
         setAnalyticsError(null);
       } catch (error) {
         if (cancelled) {
@@ -565,6 +730,61 @@ function App(): JSX.Element {
       window.clearInterval(refreshIntervalId);
     };
   }, [selectedCueRow, timeframe]);
+
+  const headerLeftInstrument = selectedCueRow?.cue.left_instrument ?? "PF_XBTUSD";
+  const headerRightInstrument = selectedCueRow?.cue.right_instrument ?? "PF_ETHUSD";
+  const headerLeftLabel = formatInstrumentLabel(headerLeftInstrument);
+  const headerRightLabel = formatInstrumentLabel(headerRightInstrument);
+  const headerHedgeRatio = selectedCueRow?.hedge_ratio ?? 1;
+  const spreadPrice =
+    headerLeftMetrics && headerRightMetrics
+      ? headerLeftMetrics.mark - headerHedgeRatio * headerRightMetrics.mark
+      : null;
+  const spreadFundingRate =
+    headerLeftMetrics && headerRightMetrics
+      ? headerLeftMetrics.funding_rate - headerHedgeRatio * headerRightMetrics.funding_rate
+      : null;
+  const pairLotSizes = derivePairLotSizes(headerHedgeRatio);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    const refreshMetrics = async (): Promise<void> => {
+      try {
+        const [leftMetrics, rightMetrics] = await Promise.all([
+          fetchMarketMetrics(headerLeftInstrument),
+          fetchMarketMetrics(headerRightInstrument),
+        ]);
+        if (cancelled) {
+          return;
+        }
+        setHeaderLeftMetrics(leftMetrics);
+        setHeaderRightMetrics(rightMetrics);
+        setHeaderMetricsError(null);
+      } catch (error) {
+        if (cancelled) {
+          return;
+        }
+        setHeaderLeftMetrics(null);
+        setHeaderRightMetrics(null);
+        setHeaderMetricsError(
+          `Live metrics unavailable for ${headerLeftLabel}/${headerRightLabel}: ${
+            error instanceof Error ? error.message : String(error)
+          }`
+        );
+      }
+    };
+
+    void refreshMetrics();
+    const intervalId = window.setInterval(() => {
+      void refreshMetrics();
+    }, 15_000);
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(intervalId);
+    };
+  }, [headerLeftInstrument, headerRightInstrument, headerLeftLabel, headerRightLabel]);
 
   const addTimelineEvent = (pairId: string, event: TimelineEvent): void => {
     setTimelineByPair((prev) => {
@@ -815,6 +1035,7 @@ function App(): JSX.Element {
           selectedPairId={currentPairId}
           onSelectPair={setSelectedPairId}
           zSeries={zSeries}
+          zTimestamps={zTimestamps}
           zMarkers={zMarkers}
           analyticsError={analyticsError}
           currentPosition={currentPosition}
@@ -849,6 +1070,10 @@ function App(): JSX.Element {
       );
     }
 
+    if (page === "how-it-works") {
+      return <HowThisWorksPage />;
+    }
+
     if (page === "markets") {
       return (
         <MarketsPage
@@ -867,8 +1092,10 @@ function App(): JSX.Element {
           selectedPairId={currentPairId}
           onSelectPair={setSelectedPairId}
           zSeries={zSeries}
+          zTimestamps={zTimestamps}
           zMarkers={zMarkers}
           equitySeries={equitySeries}
+          equityTimestamps={equityTimestamps}
           loading={analyticsLoading}
           error={analyticsError}
         />
@@ -929,11 +1156,22 @@ function App(): JSX.Element {
         </div>
 
         <div className="metrics-row">
-          <Metric label="Mark" value="28.50" />
-          <Metric label="Index" value="28.53" />
-          <Metric label="24h" value="-2.81%" tone="bad" />
-          <Metric label="Funding" value="-0.0040% / hr" />
-          <Metric label="OI" value="69.6k" />
+          <Metric label={`${headerLeftLabel} Mark`} value={formatMetricPrice(headerLeftMetrics?.mark)} />
+          <Metric label={`${headerLeftLabel} Index`} value={formatMetricPrice(headerLeftMetrics?.index)} />
+          <Metric label={`${headerRightLabel} Mark`} value={formatMetricPrice(headerRightMetrics?.mark)} />
+          <Metric label={`${headerRightLabel} Index`} value={formatMetricPrice(headerRightMetrics?.index)} />
+          <Metric label="Net Spread Price" value={formatSignedMetric(spreadPrice, 3)} />
+          <Metric
+            label={`${headerLeftLabel} Position Size`}
+            value={formatSignedMetric(pairLotSizes.leftSize, 2)}
+            tone="neutral"
+          />
+          <Metric
+            label={`${headerRightLabel} Position Size`}
+            value={formatSignedMetric(pairLotSizes.rightSize, 2)}
+            tone="neutral"
+          />
+          <Metric label="Net Spread Funding" value={formatFundingRate(spreadFundingRate)} />
         </div>
 
         <div className="topbar-right">
@@ -996,6 +1234,7 @@ function App(): JSX.Element {
             ? "Trade gates healthy"
             : "Fail-closed mode: entry actions blocked until all gates are safe"}
         </span>
+        {headerMetricsError ? <span className="tone-warn">{headerMetricsError}</span> : null}
       </footer>
     </div>
   );
@@ -1043,6 +1282,7 @@ function TradePage(props: {
   selectedPairId: string;
   onSelectPair: (pairId: string) => void;
   zSeries: number[];
+  zTimestamps: string[];
   zMarkers: ChartMarker[];
   analyticsError: string | null;
   currentPosition: SpreadPosition;
@@ -1146,6 +1386,7 @@ function TradePage(props: {
       >
         <LineChart
           values={props.zSeries}
+          timestamps={props.zTimestamps}
           markers={props.zMarkers}
           thresholds={
             selectedCue
@@ -1402,13 +1643,70 @@ function MarketsPage({
   );
 }
 
+function HowThisWorksPage(): JSX.Element {
+  const [activeTab, setActiveTab] = useState<HowItWorksTabId>("pairs-trading");
+  const tab = HOW_IT_WORKS_TABS.find((item) => item.id === activeTab) ?? HOW_IT_WORKS_TABS[0];
+
+  return (
+    <div className="how-layout">
+      <SectionCard
+        title="How This Works"
+        subtitle="Layman explainer for manual-first spread trading"
+        className="how-main-panel"
+      >
+        <div className="how-tabs">
+          {HOW_IT_WORKS_TABS.map((item) => (
+            <button
+              key={item.id}
+              type="button"
+              className={`how-tab-button ${item.id === activeTab ? "active" : ""}`}
+              onClick={() => setActiveTab(item.id)}
+            >
+              {item.label}
+            </button>
+          ))}
+        </div>
+
+        <div className="how-tab-content">
+          <h3>{tab.title}</h3>
+          <p>{tab.intro}</p>
+          {tab.paragraphs.map((paragraph) => (
+            <p key={paragraph}>{paragraph}</p>
+          ))}
+          <ul>
+            {tab.bullets.map((item) => (
+              <li key={item}>{item}</li>
+            ))}
+          </ul>
+        </div>
+      </SectionCard>
+
+      <SectionCard title="Operator Workflow" subtitle="How decisions are made in this UI">
+        <ol className="how-steps">
+          <li>Select timeframe and pair.</li>
+          <li>Review opportunity cues, z-score chart, and rationale tags.</li>
+          <li>Set stop method and value before any entry can be sent.</li>
+          <li>Arm live trading, then submit long or short spread entry manually.</li>
+          <li>Monitor gates continuously and reduce/close if conditions degrade.</li>
+        </ol>
+        <p className="small-text">
+          Manual-first mode: the system informs and enforces guardrails, while the operator
+          decides when to act.
+        </p>
+      </SectionCard>
+    </div>
+  );
+}
+
 function AnalyticsPage({
   cues,
   selectedPairId,
   onSelectPair,
   zSeries,
+  zTimestamps,
   zMarkers,
   equitySeries,
+  equityTimestamps,
   loading,
   error,
 }: {
@@ -1416,8 +1714,10 @@ function AnalyticsPage({
   selectedPairId: string;
   onSelectPair: (value: string) => void;
   zSeries: number[];
+  zTimestamps: string[];
   zMarkers: ChartMarker[];
   equitySeries: number[];
+  equityTimestamps: string[];
   loading: boolean;
   error: string | null;
 }): JSX.Element {
@@ -1486,6 +1786,7 @@ function AnalyticsPage({
         >
           <LineChart
             values={equitySeries}
+            timestamps={equityTimestamps}
             height={360}
             title="Hypothetical equity (net of estimated costs)"
             unavailableText={loading ? "Loading live candles..." : error ?? "No data"}
@@ -1498,6 +1799,7 @@ function AnalyticsPage({
         >
           <LineChart
             values={zSeries}
+            timestamps={zTimestamps}
             markers={zMarkers}
             thresholds={
               selected
@@ -1663,35 +1965,41 @@ function IntegrityTable({
     checked_at: string;
   }>;
 }): JSX.Element {
+  const visibleRows = rows.slice(0, 8);
   return (
-    <div className="table-wrap">
-      <table>
-        <thead>
-          <tr>
-            <th>Checked</th>
-            <th>Status</th>
-            <th>Coverage</th>
-          </tr>
-        </thead>
-        <tbody>
-          {rows.length ? (
-            rows.slice(0, 8).map((row) => (
-              <tr key={`${row.checked_at}-${row.start_ts}`}>
-                <td>{new Date(row.checked_at).toLocaleTimeString()}</td>
-                <td className={`tone-${toneFromStatus(row.status)}`}>{row.status}</td>
-                <td>{row.coverage_pct.toFixed(2)}%</td>
-              </tr>
-            ))
-          ) : (
+    <>
+      <div className="table-wrap">
+        <table>
+          <thead>
             <tr>
-              <td colSpan={3} className="empty-text">
-                No live integrity rows available.
-              </td>
+              <th>Checked</th>
+              <th>Status</th>
+              <th>Coverage</th>
             </tr>
-          )}
-        </tbody>
-      </table>
-    </div>
+          </thead>
+          <tbody>
+            {rows.length ? (
+              visibleRows.map((row) => (
+                <tr key={`${row.checked_at}-${row.start_ts}`}>
+                  <td>{new Date(row.checked_at).toLocaleTimeString()}</td>
+                  <td className={`tone-${toneFromStatus(row.status)}`}>{row.status}</td>
+                  <td>{row.coverage_pct.toFixed(2)}%</td>
+                </tr>
+              ))
+            ) : (
+              <tr>
+                <td colSpan={3} className="empty-text">
+                  No live integrity rows available.
+                </td>
+              </tr>
+            )}
+          </tbody>
+        </table>
+      </div>
+      <p className="small-text">
+        Showing latest {visibleRows.length} checks (newest first) from {rows.length} stored rows.
+      </p>
+    </>
   );
 }
 

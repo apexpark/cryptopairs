@@ -1,5 +1,5 @@
 use async_trait::async_trait;
-use chrono::{TimeZone, Utc};
+use chrono::{DateTime, TimeZone, Utc};
 use common_types::{Candle, DataQueryRequest, Timeframe};
 use serde::Deserialize;
 use std::{collections::HashMap, path::Path};
@@ -16,10 +16,19 @@ pub enum AdapterError {
     Decode(String),
     #[error("invalid candle timestamp from kraken: {0}")]
     InvalidTimestamp(i64),
+    #[error("invalid server time from kraken tickers: {0}")]
+    InvalidServerTime(String),
     #[error("history bounds config error: {0}")]
     HistoryBounds(String),
     #[error("missing history bounds for symbol={symbol} timeframe={timeframe}")]
     MissingHistoryBounds { symbol: String, timeframe: String },
+    #[error("ticker not found for instrument={instrument}")]
+    TickerNotFound { instrument: String },
+    #[error("ticker missing required field for instrument={instrument}: {field}")]
+    MissingTickerField {
+        instrument: String,
+        field: &'static str,
+    },
     #[error(
         "request outside history bounds for symbol={symbol} timeframe={timeframe} requested=[{requested_start},{requested_end}] earliest={earliest_start}"
     )]
@@ -35,6 +44,18 @@ pub enum AdapterError {
 #[async_trait]
 pub trait MarketDataAdapter: Send + Sync {
     async fn fetch_candles(&self, request: &DataQueryRequest) -> Result<Vec<Candle>, AdapterError>;
+    async fn fetch_market_metrics(&self, instrument: &str) -> Result<MarketMetrics, AdapterError>;
+}
+
+#[derive(Debug, Clone)]
+pub struct MarketMetrics {
+    pub instrument: String,
+    pub server_time: DateTime<Utc>,
+    pub mark: f64,
+    pub index: f64,
+    pub change_24h_pct: f64,
+    pub funding_rate: f64,
+    pub open_interest: f64,
 }
 
 #[derive(Debug, Clone)]
@@ -267,11 +288,108 @@ impl MarketDataAdapter for KrakenFuturesRestClient {
             })
             .collect()
     }
+
+    async fn fetch_market_metrics(&self, instrument: &str) -> Result<MarketMetrics, AdapterError> {
+        let url = format!("{}/derivatives/api/v3/tickers", self.base_url);
+        let response = self
+            .client
+            .get(url)
+            .send()
+            .await
+            .map_err(|err| AdapterError::Request(err.to_string()))?;
+        let status = response.status().as_u16();
+        let body = response
+            .text()
+            .await
+            .map_err(|err| AdapterError::Decode(err.to_string()))?;
+        if status != 200 {
+            return Err(AdapterError::HttpStatus { status, body });
+        }
+
+        let payload: KrakenTickersResponse =
+            serde_json::from_str(&body).map_err(|err| AdapterError::Decode(err.to_string()))?;
+        let server_time = payload
+            .server_time
+            .parse::<DateTime<Utc>>()
+            .map_err(|_| AdapterError::InvalidServerTime(payload.server_time.clone()))?;
+
+        let ticker = payload
+            .tickers
+            .into_iter()
+            .find(|item| item.symbol.eq_ignore_ascii_case(instrument))
+            .ok_or_else(|| AdapterError::TickerNotFound {
+                instrument: instrument.to_string(),
+            })?;
+
+        let mark = ticker
+            .mark_price
+            .ok_or_else(|| AdapterError::MissingTickerField {
+                instrument: ticker.symbol.clone(),
+                field: "markPrice",
+            })?;
+        let index = ticker
+            .index_price
+            .ok_or_else(|| AdapterError::MissingTickerField {
+                instrument: ticker.symbol.clone(),
+                field: "indexPrice",
+            })?;
+        let change_24h_pct = ticker
+            .change_24h
+            .ok_or_else(|| AdapterError::MissingTickerField {
+                instrument: ticker.symbol.clone(),
+                field: "change24h",
+            })?;
+        let funding_rate = ticker
+            .funding_rate
+            .ok_or_else(|| AdapterError::MissingTickerField {
+                instrument: ticker.symbol.clone(),
+                field: "fundingRate",
+            })?;
+        let open_interest =
+            ticker
+                .open_interest
+                .ok_or_else(|| AdapterError::MissingTickerField {
+                    instrument: ticker.symbol.clone(),
+                    field: "openInterest",
+                })?;
+
+        Ok(MarketMetrics {
+            instrument: ticker.symbol,
+            server_time,
+            mark,
+            index,
+            change_24h_pct,
+            funding_rate,
+            open_interest,
+        })
+    }
 }
 
 #[derive(Debug, Deserialize)]
 struct KrakenChartsResponse {
     candles: Vec<KrakenRawCandle>,
+}
+
+#[derive(Debug, Deserialize)]
+struct KrakenTickersResponse {
+    #[serde(rename = "serverTime")]
+    server_time: String,
+    tickers: Vec<KrakenTicker>,
+}
+
+#[derive(Debug, Deserialize)]
+struct KrakenTicker {
+    symbol: String,
+    #[serde(rename = "markPrice")]
+    mark_price: Option<f64>,
+    #[serde(rename = "indexPrice")]
+    index_price: Option<f64>,
+    #[serde(rename = "change24h")]
+    change_24h: Option<f64>,
+    #[serde(rename = "fundingRate")]
+    funding_rate: Option<f64>,
+    #[serde(rename = "openInterest")]
+    open_interest: Option<f64>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -309,7 +427,10 @@ fn parse_number(value: &str) -> Result<f64, AdapterError> {
 
 #[cfg(test)]
 mod tests {
-    use super::{parse_number, KrakenFuturesRestClient, KrakenHistoryBounds};
+    use super::{
+        parse_number, KrakenFuturesRestClient, KrakenHistoryBounds, KrakenTicker,
+        KrakenTickersResponse,
+    };
     use chrono::{TimeZone, Utc};
     use common_types::{DataQueryRequest, Timeframe};
 
@@ -379,5 +500,36 @@ mod tests {
         assert!(error
             .to_string()
             .contains("request outside history bounds for symbol=PI_XBTUSD"));
+    }
+
+    #[test]
+    fn tickers_payload_parses_required_fields() {
+        let raw = r#"{
+          "result": "success",
+          "serverTime": "2026-02-20T05:24:16.241Z",
+          "tickers": [
+            {
+              "symbol": "PI_XBTUSD",
+              "markPrice": 67324.30,
+              "indexPrice": 67317.80,
+              "change24h": 0.84,
+              "fundingRate": 0.0000021,
+              "openInterest": 5278812.0
+            }
+          ]
+        }"#;
+        let payload: KrakenTickersResponse =
+            serde_json::from_str(raw).expect("tickers response should parse");
+        assert_eq!(payload.server_time, "2026-02-20T05:24:16.241Z");
+        let ticker: &KrakenTicker = payload
+            .tickers
+            .iter()
+            .find(|value| value.symbol == "PI_XBTUSD")
+            .expect("PI_XBTUSD ticker should be present");
+        assert_eq!(ticker.mark_price, Some(67324.30));
+        assert_eq!(ticker.index_price, Some(67317.80));
+        assert_eq!(ticker.change_24h, Some(0.84));
+        assert_eq!(ticker.funding_rate, Some(0.0000021));
+        assert_eq!(ticker.open_interest, Some(5_278_812.0));
     }
 }
