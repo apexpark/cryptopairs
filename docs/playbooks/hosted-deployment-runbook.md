@@ -35,6 +35,18 @@ python3 tools/scripts/alpha_tracker.py --plan plans/hosted_deployment_plan.json 
 python3 tools/scripts/alpha_tracker.py --plan plans/hosted_deployment_plan.json checkpoint --delta "<delta>" --next-action "<next>"
 ```
 
+```bash
+cd /opt/cryptopairs
+bash scripts/deploy.sh
+```
+
+Optional targeted deploy:
+
+```bash
+cd /opt/cryptopairs
+bash scripts/deploy.sh --services data-service,strategy-service
+```
+
 ## Validation Commands
 
 ```bash
