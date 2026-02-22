@@ -186,6 +186,42 @@ export interface StrategyPairsLiveZResponse {
   rationale_codes: string[];
 }
 
+export interface StrategyMaintenanceDownload {
+  label: string;
+  path: string;
+}
+
+export interface StrategyMaintenanceStepResult {
+  pass: boolean;
+  skipped?: boolean;
+  reason?: string;
+  [key: string]: unknown;
+}
+
+export interface StrategyMaintenanceCycleReport {
+  generated_at: string;
+  run_id: string;
+  status: "PASS" | "FAIL";
+  decision: "PROMOTE" | "HOLD" | "REVERT" | "UNKNOWN";
+  decision_reasons: string[];
+  policy_path: string;
+  env_file: string;
+  original_values: Record<string, number>;
+  baseline_values: Record<string, number>;
+  candidate_values: Record<string, number>;
+  steps: Record<string, StrategyMaintenanceStepResult>;
+  artifacts: Record<string, string>;
+  downloads: StrategyMaintenanceDownload[];
+}
+
+export interface StrategyMaintenanceLatestResponse {
+  available: boolean;
+  generated_at: string;
+  report: StrategyMaintenanceCycleReport | null;
+  reason: string | null;
+  artifact_download_route: string;
+}
+
 export interface IntegrityHistoryResponse {
   instrument: string;
   timeframe: Timeframe;

@@ -338,6 +338,9 @@ input {
   margin-top: 0;
 }
 
+.analytics-maintenance {
+  min-height: 0;
+}
 .analytics-explainer-list {
   margin: 8px 0 0 18px;
   padding: 0;
@@ -351,6 +354,42 @@ input {
   line-height: 1.35;
 }
 
+.maintenance-steps {
+  margin-top: 8px;
+  display: grid;
+  gap: 6px;
+}
+
+.maintenance-step-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 6px 8px;
+  border: 1px solid var(--line-soft);
+  border-radius: 8px;
+  background: var(--panel-2);
+  font-size: 0.75rem;
+}
+
+.maintenance-downloads {
+  margin: 8px 0 0 18px;
+  padding: 0;
+  display: grid;
+  gap: 6px;
+}
+
+.maintenance-downloads li {
+  font-size: 0.78rem;
+}
+
+.maintenance-downloads a {
+  color: var(--tone-info);
+  text-decoration: none;
+}
+
+.maintenance-downloads a:hover {
+  text-decoration: underline;
+}
 .panel-card {
   background: var(--panel);
   border: 1px solid var(--line-soft);

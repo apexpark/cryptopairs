@@ -6,6 +6,8 @@ import {
   latestLifecycleState,
 } from "./lib/orderLifecycle";
 import {
+  buildStrategyMaintenanceArtifactUrl,
+  fetchStrategyMaintenanceLatest,
   fetchExecutionPortfolioPositions,
   dispatchOrderIntent,
   fetchExecutionDecision,
@@ -43,6 +45,7 @@ import type {
   SpreadPosition,
   StrategyPairsCostGateResponse,
   StrategyPairsCuesResponse,
+  StrategyMaintenanceLatestResponse,
   StrategyPairsPortfolioPlanResponse,
   Timeframe,
   TimelineEvent,
@@ -174,7 +177,7 @@ const HOW_IT_WORKS_TABS: Array<{
 ];
 
 const TIMEFRAMES: Timeframe[] = ["1m", "15m", "1h"];
-const WEB_BUILD_STAMP = "2026-02-22-01";
+const WEB_BUILD_STAMP = "2026-02-23-02";
 
 function analyticsRefreshMs(timeframe: Timeframe): number {
   if (timeframe === "1m") {
@@ -418,6 +421,18 @@ function toneFromStatus(status?: string): "ok" | "warn" | "bad" {
   return "bad";
 }
 
+function formatMaintenanceStepLabel(stepKey: string): string {
+  const mapping: Record<string, string> = {
+    health: "Health checks",
+    baseline_report: "Baseline report",
+    candidate_apply_dry_run: "Candidate apply dry-run",
+    candidate_apply_live: "Candidate apply live",
+    candidate_report: "Candidate report",
+    restore_original: "Restore original profile",
+  };
+  return mapping[stepKey] ?? stepKey.replaceAll("_", " ");
+}
+
 function buildSpreadLegs(
   leftInstrument: string,
   rightInstrument: string,
@@ -481,6 +496,10 @@ function App(): JSX.Element {
   const [headerLeftMetrics, setHeaderLeftMetrics] = useState<MarketMetricsResponse | null>(null);
   const [headerRightMetrics, setHeaderRightMetrics] = useState<MarketMetricsResponse | null>(null);
   const [headerMetricsError, setHeaderMetricsError] = useState<string | null>(null);
+  const [maintenanceLatest, setMaintenanceLatest] =
+    useState<StrategyMaintenanceLatestResponse | null>(null);
+  const [maintenanceLoading, setMaintenanceLoading] = useState(false);
+  const [maintenanceError, setMaintenanceError] = useState<string | null>(null);
 
   const [stopMethod, setStopMethod] = useState<"Z-Score" | "Dollar" | "Percent">("Z-Score");
   const [stopValue, setStopValue] = useState<string>("3.2");
@@ -840,6 +859,46 @@ function App(): JSX.Element {
       window.clearInterval(refreshIntervalId);
     };
   }, [selectedCueRow, timeframe]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    const refreshMaintenanceReport = async (firstLoad = false): Promise<void> => {
+      if (firstLoad) {
+        setMaintenanceLoading(true);
+      }
+      try {
+        const response = await fetchStrategyMaintenanceLatest();
+        if (cancelled) {
+          return;
+        }
+        setMaintenanceLatest(response);
+        setMaintenanceError(null);
+      } catch (error) {
+        if (cancelled) {
+          return;
+        }
+        setMaintenanceLatest(null);
+        setMaintenanceError(
+          `Maintenance report unavailable: ${error instanceof Error ? error.message : String(error)}`
+        );
+      } finally {
+        if (!cancelled && firstLoad) {
+          setMaintenanceLoading(false);
+        }
+      }
+    };
+
+    void refreshMaintenanceReport(true);
+    const intervalId = window.setInterval(() => {
+      void refreshMaintenanceReport(false);
+    }, 60_000);
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(intervalId);
+    };
+  }, []);
 
   const headerLeftInstrument = selectedCueRow?.cue.left_instrument ?? "PF_XBTUSD";
   const headerRightInstrument = selectedCueRow?.cue.right_instrument ?? "PF_ETHUSD";
@@ -1208,6 +1267,9 @@ function App(): JSX.Element {
           equityTimestamps={equityTimestamps}
           loading={analyticsLoading}
           error={analyticsError}
+          maintenanceLatest={maintenanceLatest}
+          maintenanceLoading={maintenanceLoading}
+          maintenanceError={maintenanceError}
         />
       );
     }
@@ -1822,6 +1884,9 @@ function AnalyticsPage({
   equityTimestamps,
   loading,
   error,
+  maintenanceLatest,
+  maintenanceLoading,
+  maintenanceError,
 }: {
   cues: StrategyPairsCuesResponse | null;
   selectedPairId: string;
@@ -1833,9 +1898,14 @@ function AnalyticsPage({
   equityTimestamps: string[];
   loading: boolean;
   error: string | null;
+  maintenanceLatest: StrategyMaintenanceLatestResponse | null;
+  maintenanceLoading: boolean;
+  maintenanceError: string | null;
 }): JSX.Element {
   const selected = cues?.cues.find((entry) => entry.cue.pair_id === selectedPairId) ?? cues?.cues[0];
   const actionabilityExplanation = explainPairActionability(selected);
+  const maintenanceReport = maintenanceLatest?.report ?? null;
+  const maintenanceStepEntries = maintenanceReport ? Object.entries(maintenanceReport.steps) : [];
 
   return (
     <div className="analytics-layout">
@@ -1933,7 +2003,6 @@ function AnalyticsPage({
             />
           </SectionCard>
         </div>
-
         <SectionCard
           title="Why This Pair Is Allowed / Blocked"
           subtitle="Plain-language gate explanation for the selected pair"
@@ -1957,6 +2026,74 @@ function AnalyticsPage({
                   <li key={reason}>{describeRationaleCode(reason)}</li>
                 ))}
               </ul>
+            </>
+          ) : null}
+        </SectionCard>
+
+        <SectionCard
+          title="Automated Daily Maintenance"
+          subtitle="Scheduled health checks and strategy tuning decision reports"
+          className="analytics-maintenance"
+        >
+          {maintenanceLoading ? <p className="small-text">Loading maintenance report...</p> : null}
+          {maintenanceError ? <p className="tone-bad small-text">{maintenanceError}</p> : null}
+          {maintenanceLatest && !maintenanceLatest.available ? (
+            <p className="small-text">
+              {maintenanceLatest.reason ?? "No maintenance report is available yet."}
+            </p>
+          ) : null}
+
+          {maintenanceReport ? (
+            <>
+              <div className={`status-pill ${maintenanceReport.status === "PASS" ? "ok" : "bad"}`}>
+                Latest cycle: {maintenanceReport.status}
+              </div>
+              <p className="small-text">
+                Run: {maintenanceReport.run_id} at{" "}
+                {new Date(maintenanceReport.generated_at).toLocaleString()}
+              </p>
+              <p className="small-text">
+                Decision:{" "}
+                <span className={maintenanceReport.decision === "PROMOTE" ? "tone-ok" : "tone-warn"}>
+                  {maintenanceReport.decision}
+                </span>
+              </p>
+
+              {maintenanceReport.decision_reasons.length ? (
+                <ul className="analytics-explainer-list">
+                  {maintenanceReport.decision_reasons.map((reason) => (
+                    <li key={reason}>{reason}</li>
+                  ))}
+                </ul>
+              ) : null}
+
+              {maintenanceStepEntries.length ? (
+                <div className="maintenance-steps">
+                  {maintenanceStepEntries.map(([stepName, stepResult]) => (
+                    <div key={stepName} className="maintenance-step-row">
+                      <span>{formatMaintenanceStepLabel(stepName)}</span>
+                      <span className={stepResult.pass ? "tone-ok" : "tone-bad"}>
+                        {stepResult.pass ? "PASS" : "FAIL"}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              ) : null}
+
+              {maintenanceReport.downloads.length ? (
+                <>
+                  <h3>Downloads</h3>
+                  <ul className="maintenance-downloads">
+                    {maintenanceReport.downloads.map((item) => (
+                      <li key={`${item.label}-${item.path}`}>
+                        <a href={buildStrategyMaintenanceArtifactUrl(item.path)}>{item.label}</a>
+                      </li>
+                    ))}
+                  </ul>
+                </>
+              ) : (
+                <p className="small-text">No downloadable artifacts found for the latest run.</p>
+              )}
             </>
           ) : null}
         </SectionCard>

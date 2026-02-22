@@ -15,6 +15,7 @@ import type {
   StrategyPairsCostGateResponse,
   StrategyPairsCuesResponse,
   StrategyPairsLiveZResponse,
+  StrategyMaintenanceLatestResponse,
   StrategyPairsPortfolioPlanResponse,
   Timeframe,
 } from "../types";
@@ -78,6 +79,17 @@ export async function fetchStrategyLiveZ(
     pairId
   )}&points=${points}`;
   return parseJson<StrategyPairsLiveZResponse>(await fetch(url));
+}
+
+export async function fetchStrategyMaintenanceLatest(): Promise<StrategyMaintenanceLatestResponse> {
+  const url = `${STRATEGY_SERVICE_BASE_URL}/v1/strategy/maintenance/latest`;
+  return parseJson<StrategyMaintenanceLatestResponse>(await fetch(url));
+}
+
+export function buildStrategyMaintenanceArtifactUrl(path: string): string {
+  return `${STRATEGY_SERVICE_BASE_URL}/v1/strategy/maintenance/artifact?path=${encodeURIComponent(
+    path
+  )}`;
 }
 
 export async function fetchKillSwitchState(): Promise<KillSwitchState> {

@@ -79,6 +79,56 @@ python3 tools/scripts/fail_closed_readiness_check.py \
   --output-json artifacts/fail_closed_readiness_report.json
 ```
 
+## Strategy Tuning Reporter
+
+Generate a deterministic tuning report with policy checks and a decision:
+
+```bash
+python3 tools/scripts/strategy_tuning_report.py \
+  --profile candidate \
+  --compare-report artifacts/strategy_tuning/<baseline-report>.json \
+  --output-json artifacts/strategy_tuning/<candidate-report>.json
+```
+
+## Strategy Tuning Apply
+
+Apply lookback profile updates with env backup, deploy integration, and rollback on deploy failure:
+
+```bash
+python3 tools/scripts/strategy_tuning_apply.py \
+  --mode promote \
+  --output-json artifacts/strategy_tuning/<apply-report>.json
+```
+
+Dry-run:
+
+```bash
+python3 tools/scripts/strategy_tuning_apply.py \
+  --mode promote \
+  --dry-run \
+  --output-json artifacts/strategy_tuning/<apply-dryrun-report>.json
+```
+
+## Automated Strategy Maintenance Cycle
+
+Run the full daily evaluation cycle (health checks, baseline, candidate apply dry/live, candidate report, and restore-original):
+
+```bash
+python3 tools/scripts/strategy_maintenance_cycle.py \
+  --env-file /opt/cryptopairs/.env.hosted \
+  --output-root artifacts/strategy_tuning/runs \
+  --latest-report artifacts/strategy_tuning/latest_maintenance_report.json
+```
+
+Install/update cron automation on hosted server:
+
+```bash
+bash scripts/install_strategy_maintenance_cron.sh \
+  --schedule "15 6 * * *" \
+  --repo-root /opt/cryptopairs \
+  --env-file /opt/cryptopairs/.env.hosted
+```
+
 ## Hosted Deployment Tracking
 
 Use the same tracker utility with the hosted deployment plan:

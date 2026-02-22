@@ -1,0 +1,188 @@
+{
+  "version": 1,
+  "updated_at": "2026-02-22T21:40:30Z",
+  "active_focus_id": 8,
+  "milestone": "Strategy Tuning Automation and Governance",
+  "items": [
+    {
+      "id": 1,
+      "title": "Create strategy tuning control artifacts and freeze scope",
+      "status": "DONE",
+      "priority": "NOW",
+      "depends_on": [],
+      "owner": "codex",
+      "requires_user": false,
+      "evidence": [
+        "docs/22-strategy-tuning-control.md"
+      ],
+      "notes": [
+        "2026-02-22T21:28:37Z Initialized tuning control artifacts and policy scaffold"
+      ]
+    },
+    {
+      "id": 2,
+      "title": "Add strategy tuning report contract and example payload",
+      "status": "DONE",
+      "priority": "NOW",
+      "depends_on": [
+        1
+      ],
+      "owner": "codex",
+      "requires_user": false,
+      "evidence": [
+        "specs/contracts/strategy_tuning_report.schema.json"
+      ],
+      "notes": [
+        "2026-02-22T21:30:42Z Added strategy tuning report contract and example"
+      ]
+    },
+    {
+      "id": 3,
+      "title": "Implement deterministic reporter (snapshot, compare, decision)",
+      "status": "DONE",
+      "priority": "NOW",
+      "depends_on": [
+        1,
+        2
+      ],
+      "owner": "codex",
+      "requires_user": false,
+      "evidence": [
+        "tools/scripts/strategy_tuning_report.py"
+      ],
+      "notes": [
+        "2026-02-22T21:31:30Z Started reporter implementation slice",
+        "2026-02-22T21:39:05Z Implemented deterministic reporter with hosted snapshot/compare decision flow"
+      ]
+    },
+    {
+      "id": 4,
+      "title": "Implement guarded promote/revert executor with backup and deploy integration",
+      "status": "DONE",
+      "priority": "NOW",
+      "depends_on": [
+        1,
+        3
+      ],
+      "owner": "codex",
+      "requires_user": false,
+      "evidence": [
+        "tools/scripts/strategy_tuning_apply.py"
+      ],
+      "notes": [
+        "2026-02-22T21:39:13Z Implemented guarded promote/revert apply script with backup and rollback"
+      ]
+    },
+    {
+      "id": 5,
+      "title": "Add unit tests for decision logic and env mutation behavior",
+      "status": "DONE",
+      "priority": "NOW",
+      "depends_on": [
+        3,
+        4
+      ],
+      "owner": "codex",
+      "requires_user": false,
+      "evidence": [
+        "tools/scripts/tests/test_strategy_tuning_scripts.py"
+      ],
+      "notes": [
+        "2026-02-22T21:39:19Z Added deterministic unit tests for decision logic and env mutation"
+      ]
+    },
+    {
+      "id": 6,
+      "title": "Publish strategy tuning runbook and script usage references",
+      "status": "DONE",
+      "priority": "NEXT",
+      "depends_on": [
+        3,
+        4
+      ],
+      "owner": "codex",
+      "requires_user": false,
+      "evidence": [
+        "docs/playbooks/strategy-tuning-runbook.md"
+      ],
+      "notes": [
+        "2026-02-22T21:39:26Z Published strategy tuning runbook and script README references"
+      ]
+    },
+    {
+      "id": 7,
+      "title": "Run deterministic local dry-run and produce baseline report artifact",
+      "status": "DONE",
+      "priority": "NEXT",
+      "depends_on": [
+        3,
+        5
+      ],
+      "owner": "codex",
+      "requires_user": false,
+      "evidence": [
+        "artifacts/strategy_tuning/2026-02-22T21-37-37Z-baseline.json"
+      ],
+      "notes": [
+        "2026-02-22T21:39:33Z Generated hosted baseline report artifact and comparison candidate report"
+      ]
+    },
+    {
+      "id": 8,
+      "title": "Finalize changelog/process update and handoff commands",
+      "status": "DONE",
+      "priority": "NEXT",
+      "depends_on": [
+        6,
+        7
+      ],
+      "owner": "codex",
+      "requires_user": false,
+      "evidence": [
+        "CHANGELOG.md"
+      ],
+      "notes": [
+        "2026-02-22T21:39:46Z Finalizing changelog and operator handoff commands",
+        "2026-02-22T21:40:23Z Completed changelog and operator handoff workflow"
+      ]
+    }
+  ],
+  "sidetrack_queue": [],
+  "checkpoints": [
+    {
+      "ts": "2026-02-22T20:30:00Z",
+      "focus_id": 1,
+      "delta": "Initialized strategy tuning control plan and policy scaffolding",
+      "next_action": "Add machine-readable strategy tuning report contract and example",
+      "blockers": []
+    },
+    {
+      "ts": "2026-02-22T21:28:45Z",
+      "focus_id": 2,
+      "delta": "Completed control scaffolding and switched focus to contract slice",
+      "next_action": "Add strategy tuning report schema and example",
+      "blockers": []
+    },
+    {
+      "ts": "2026-02-22T21:31:30Z",
+      "focus_id": 3,
+      "delta": "Completed schema/example slice and recovered tracker from race-condition corruption",
+      "next_action": "Implement strategy_tuning_report.py with deterministic decision logic",
+      "blockers": []
+    },
+    {
+      "ts": "2026-02-22T21:39:53Z",
+      "focus_id": 8,
+      "delta": "Completed scripts, tests, runbook, and hosted baseline/candidate report generation",
+      "next_action": "Update changelog and provide final promote/revert command set",
+      "blockers": []
+    },
+    {
+      "ts": "2026-02-22T21:40:30Z",
+      "focus_id": 8,
+      "delta": "Completed strategy tuning automation sequence with tests, runbook, and hosted artifacts",
+      "next_action": "Monitor daily reports and adjust policy thresholds only with evidence",
+      "blockers": []
+    }
+  ]
+}
