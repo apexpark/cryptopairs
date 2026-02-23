@@ -13,6 +13,7 @@ Define secure handling of credentials, privileged actions, and operational acces
 5. `MUST` audit all privileged actions (orders, cancellations, config changes).
 6. `MUST` use TLS for all remote service communication.
 7. `MUST` redact secrets from logs and error payloads.
+8. `MUST` treat Docker socket mounts as privileged root-equivalent access and restrict to trusted operators/hosts only.
 
 ## Local Development Requirements
 
