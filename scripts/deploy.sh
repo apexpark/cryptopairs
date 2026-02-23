@@ -31,6 +31,10 @@ require_cmd() {
   command -v "$1" >/dev/null 2>&1 || die "Missing command: $1"
 }
 
+has_cmd() {
+  command -v "$1" >/dev/null 2>&1
+}
+
 assert_no_duplicate_keys() {
   local env_file="$1"
   local duplicates
@@ -98,8 +102,16 @@ while [[ $# -gt 0 ]]; do
 done
 
 require_cmd git
-require_cmd docker
 require_cmd curl
+
+COMPOSE_CMD=()
+if has_cmd docker && docker compose version >/dev/null 2>&1; then
+  COMPOSE_CMD=(docker compose)
+elif has_cmd docker-compose; then
+  COMPOSE_CMD=(docker-compose)
+else
+  die "Missing compose command: install Docker with 'docker compose' or 'docker-compose'"
+fi
 
 if [[ ! -f "$ENV_FILE" ]]; then
   die "Env file not found: $ENV_FILE"
@@ -133,10 +145,14 @@ if [[ "$DRY_RUN" == "false" ]]; then
 fi
 
 log "Deploying services via docker compose"
-run docker compose --profile app up -d --build --no-deps "${SERVICES[@]}"
+run "${COMPOSE_CMD[@]}" --profile app up -d --build --no-deps "${SERVICES[@]}"
 
 log "Container status"
-run docker ps --format 'table {{.Names}}\t{{.Status}}\t{{.Ports}}'
+if has_cmd docker; then
+  run docker ps --format 'table {{.Names}}\t{{.Status}}\t{{.Ports}}'
+else
+  run "${COMPOSE_CMD[@]}" ps
+fi
 
 local_health_check() {
   local url="$1"
