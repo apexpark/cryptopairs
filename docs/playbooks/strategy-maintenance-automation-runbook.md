@@ -31,6 +31,7 @@ Automated cycle scope:
 cd /opt/cryptopairs
 bash scripts/install_strategy_maintenance_cron.sh \
   --schedule "15 6 * * *" \
+  --timezone "Australia/Sydney" \
   --repo-root /opt/cryptopairs \
   --env-file /opt/cryptopairs/.env.hosted
 ```
@@ -90,6 +91,7 @@ Install with cron:
 cd /opt/cryptopairs
 bash scripts/install_strategy_maintenance_action_worker_cron.sh \
   --schedule "* * * * *" \
+  --timezone "Australia/Sydney" \
   --repo-root /opt/cryptopairs
 ```
 

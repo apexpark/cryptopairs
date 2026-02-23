@@ -57,8 +57,10 @@ This project follows SemVer as defined in `docs/02-versioning-and-releases.md`.
     - `specs/examples/strategy_pairs_opportunity_history_response.example.json`
     - `specs/contracts/strategy_pairs_opportunity_history_stats_response.schema.json`
     - `specs/examples/strategy_pairs_opportunity_history_stats_response.example.json`
-  - UI now provides 24h/72h/7d opportunity-history downloads (PASS/all) plus retention meter (days covered).
-  - Automated Daily Maintenance panel moved to dedicated `Maintenance` page in side navigation (under `Data Quality`).
+- UI now provides 24h/72h/7d opportunity-history downloads (PASS/all) plus retention meter (days covered).
+- Automated Daily Maintenance panel moved to dedicated `Maintenance` page in side navigation (under `Data Quality`).
+- Maintenance cron installer scripts now support explicit `CRON_TZ` timezone configuration (`--timezone`).
+- UI timestamp displays are now explicitly local-time formatted with timezone suffix.
 - Strategy module implementation spec derived from SSRN 151 Trading Strategies review: `docs/18-strategy-module-implementation-spec.md`.
 - Initial documentation suite and agent governance scaffolding.
 - Rust workspace foundation with:
