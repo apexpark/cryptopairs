@@ -2429,7 +2429,6 @@ mod tests {
 
         fs::remove_dir_all(&root).expect("cleanup root");
     }
-
     #[test]
     fn maintenance_action_parse_accepts_promote_and_revert() {
         assert!(matches!(
