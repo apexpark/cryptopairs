@@ -11,6 +11,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::time::{SystemTime, UNIX_EPOCH};
 use strategy_service::{
     annotate_with_shadow_model, apply_portfolio_plan_to_cues, build_portfolio_plan,
     compute_backtest_series, evaluate_cost_gate, evaluate_pair, train_shadow_model, BacktestConfig,
@@ -18,8 +19,6 @@ use strategy_service::{
     PortfolioPlan, Regime, ShadowModelTrainingRow, SignalVariant,
 };
 use tokio::net::TcpListener;
-use tokio::process::Command;
-use tokio::time::{timeout, Duration};
 use tokio_postgres::{types::ToSql, Client, NoTls};
 use tower_http::cors::{Any, CorsLayer};
 use tracing::info;
@@ -81,6 +80,7 @@ struct StrategySettings {
     maintenance_env_file_path: String,
     maintenance_deploy_script_path: String,
     maintenance_action_output_root: String,
+    maintenance_action_queue_root: String,
     maintenance_action_timeout_secs: u64,
     maintenance_action_skip_pull: bool,
 }
@@ -135,6 +135,8 @@ impl StrategySettings {
         let maintenance_action_output_root =
             std::env::var("STRATEGY_MAINTENANCE_ACTION_OUTPUT_ROOT")
                 .unwrap_or_else(|_| "artifacts/strategy_tuning/manual_actions".to_string());
+        let maintenance_action_queue_root = std::env::var("STRATEGY_MAINTENANCE_ACTION_QUEUE_ROOT")
+            .unwrap_or_else(|_| "artifacts/strategy_tuning/manual_action_queue".to_string());
         let maintenance_action_timeout_secs =
             parse_env_u64("STRATEGY_MAINTENANCE_ACTION_TIMEOUT_SECS", 300);
         let maintenance_action_skip_pull =
@@ -178,6 +180,7 @@ impl StrategySettings {
             maintenance_env_file_path,
             maintenance_deploy_script_path,
             maintenance_action_output_root,
+            maintenance_action_queue_root,
             maintenance_action_timeout_secs,
             maintenance_action_skip_pull,
         }
@@ -913,6 +916,23 @@ struct MaintenanceActionResponse {
     error: Option<String>,
 }
 
+#[derive(Debug, Serialize)]
+struct MaintenanceActionQueueItem {
+    request_id: String,
+    action: String,
+    mode: String,
+    operator_id: String,
+    queued_at: DateTime<Utc>,
+    apply_script_path: String,
+    policy_json_path: String,
+    env_file_path: String,
+    deploy_script_path: String,
+    services: String,
+    output_json_path: String,
+    skip_pull: bool,
+    timeout_secs: u64,
+}
+
 #[derive(Debug, Clone, Copy)]
 enum MaintenanceAction {
     Promote,
@@ -1040,6 +1060,7 @@ async fn main() -> anyhow::Result<()> {
         maintenance_env_file_path = %settings.maintenance_env_file_path,
         maintenance_deploy_script_path = %settings.maintenance_deploy_script_path,
         maintenance_action_output_root = %settings.maintenance_action_output_root,
+        maintenance_action_queue_root = %settings.maintenance_action_queue_root,
         maintenance_action_timeout_secs = settings.maintenance_action_timeout_secs,
         maintenance_action_skip_pull = settings.maintenance_action_skip_pull,
         "strategy-service started"
@@ -1275,6 +1296,49 @@ fn artifact_download_path(root: &Path, absolute_path: &Path) -> String {
     canonical_target.to_string_lossy().to_string()
 }
 
+fn write_json_atomic(path: &Path, value: &impl Serialize) -> Result<(), ApiError> {
+    let parent = path.parent().ok_or_else(|| {
+        ApiError::Upstream(format!(
+            "unable to resolve parent directory for '{}'",
+            path.display()
+        ))
+    })?;
+    std::fs::create_dir_all(parent).map_err(|error| {
+        ApiError::Upstream(format!(
+            "unable to create parent directory '{}': {error}",
+            parent.display()
+        ))
+    })?;
+
+    let nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_nanos())
+        .unwrap_or_default();
+    let tmp_name = format!(
+        ".{}.tmp.{nanos}",
+        path.file_name()
+            .and_then(|value| value.to_str())
+            .unwrap_or("queue-item")
+    );
+    let tmp_path = parent.join(tmp_name);
+    let payload = serde_json::to_vec_pretty(value).map_err(|error| {
+        ApiError::Upstream(format!("unable to serialize queue payload: {error}"))
+    })?;
+    std::fs::write(&tmp_path, payload).map_err(|error| {
+        ApiError::Upstream(format!(
+            "unable to write queue temp file '{}': {error}",
+            tmp_path.display()
+        ))
+    })?;
+    std::fs::rename(&tmp_path, path).map_err(|error| {
+        ApiError::Upstream(format!(
+            "unable to finalize queue file '{}': {error}",
+            path.display()
+        ))
+    })?;
+    Ok(())
+}
+
 fn content_type_for_path(path: &Path) -> &'static str {
     match path.extension().and_then(|value| value.to_str()) {
         Some("json") => "application/json",
@@ -1383,114 +1447,84 @@ async fn maintenance_action(
     let generated_at = Utc::now();
     let artifact_root = resolve_workspace_path(&state.settings.maintenance_artifacts_root);
     let output_root = resolve_workspace_path(&state.settings.maintenance_action_output_root);
+    let queue_root = resolve_workspace_path(&state.settings.maintenance_action_queue_root);
+    let queue_pending_dir = queue_root.join("pending");
+    let queue_processing_dir = queue_root.join("processing");
+    let queue_completed_dir = queue_root.join("completed");
+    let queue_failed_dir = queue_root.join("failed");
     std::fs::create_dir_all(&output_root).map_err(|error| {
         ApiError::Upstream(format!(
             "unable to create action output directory '{}': {error}",
             output_root.display()
         ))
     })?;
+    for directory in [
+        &queue_pending_dir,
+        &queue_processing_dir,
+        &queue_completed_dir,
+        &queue_failed_dir,
+    ] {
+        std::fs::create_dir_all(directory).map_err(|error| {
+            ApiError::Upstream(format!(
+                "unable to create maintenance queue directory '{}': {error}",
+                directory.display()
+            ))
+        })?;
+    }
 
     let stamp = generated_at.format("%Y-%m-%dT%H-%M-%SZ");
+    let request_id = format!("{}-{}", stamp, action.script_mode());
     let output_filename = format!("{}-{}-apply.json", stamp, action.script_mode());
     let output_path = output_root.join(output_filename);
+    let queue_filename = format!("{request_id}-request.json");
+    let queue_path = queue_pending_dir.join(queue_filename);
 
     let apply_script_path = resolve_workspace_path(&state.settings.maintenance_apply_script_path);
     let env_file_path = resolve_workspace_path(&state.settings.maintenance_env_file_path);
     let deploy_script_path = resolve_workspace_path(&state.settings.maintenance_deploy_script_path);
-
-    let mut command = Command::new("python3");
-    command.current_dir("/workspace");
-    command.arg(&apply_script_path);
-    command.arg("--mode").arg(action.script_mode());
-    command
-        .arg("--policy-json")
-        .arg("infra/config/strategy_tuning_policy.json");
-    command.arg("--env-file").arg(env_file_path.as_os_str());
-    command
-        .arg("--deploy-script")
-        .arg(deploy_script_path.as_os_str());
-    command.arg("--services").arg("strategy-service");
-    command.arg("--output-json").arg(output_path.as_os_str());
-    if state.settings.maintenance_action_skip_pull {
-        command.arg("--skip-pull");
-    } else {
-        command.arg("--no-skip-pull");
-    }
-
-    let action_timeout = Duration::from_secs(state.settings.maintenance_action_timeout_secs.max(1));
-    let command_output = timeout(action_timeout, command.output())
-        .await
-        .map_err(|_| {
-            ApiError::Upstream(format!(
-                "maintenance action timed out after {}s",
-                state.settings.maintenance_action_timeout_secs
-            ))
-        })?
-        .map_err(|error| {
-            ApiError::Upstream(format!("failed to execute maintenance action: {error}"))
-        })?;
-
-    let mut pass = command_output.status.success();
-    let mut error: Option<String> = None;
-    let mut report: Option<serde_json::Value> = None;
-    if output_path.exists() {
-        match std::fs::read_to_string(&output_path) {
-            Ok(raw) => match serde_json::from_str::<serde_json::Value>(&raw) {
-                Ok(parsed) => {
-                    if let Some(report_pass) = parsed.get("pass").and_then(|value| value.as_bool())
-                    {
-                        pass = report_pass;
-                    }
-                    report = Some(parsed);
-                }
-                Err(parse_error) => {
-                    error = Some(format!(
-                        "unable to parse action report '{}': {parse_error}",
-                        output_path.display()
-                    ));
-                }
-            },
-            Err(read_error) => {
-                error = Some(format!(
-                    "unable to read action report '{}': {read_error}",
-                    output_path.display()
-                ));
-            }
-        }
-    } else {
-        let stderr_tail = String::from_utf8_lossy(&command_output.stderr);
-        error = Some(format!(
-            "action report not produced at '{}'; stderr tail: {}",
-            output_path.display(),
-            stderr_tail
-        ));
-    }
-
-    if !command_output.status.success() && error.is_none() {
-        error = Some(format!(
-            "maintenance action command exited with code {:?}",
-            command_output.status.code()
-        ));
-    }
+    let queue_item = MaintenanceActionQueueItem {
+        request_id: request_id.clone(),
+        action: action.as_str().to_string(),
+        mode: action.script_mode().to_string(),
+        operator_id: operator_id.clone(),
+        queued_at: generated_at,
+        apply_script_path: apply_script_path.to_string_lossy().to_string(),
+        policy_json_path: "infra/config/strategy_tuning_policy.json".to_string(),
+        env_file_path: env_file_path.to_string_lossy().to_string(),
+        deploy_script_path: deploy_script_path.to_string_lossy().to_string(),
+        services: "strategy-service".to_string(),
+        output_json_path: output_path.to_string_lossy().to_string(),
+        skip_pull: state.settings.maintenance_action_skip_pull,
+        timeout_secs: state.settings.maintenance_action_timeout_secs.max(1),
+    };
+    write_json_atomic(&queue_path, &queue_item)?;
 
     let report_download_path = artifact_download_path(&artifact_root, &output_path);
+    let queue_download_path = artifact_download_path(&artifact_root, &queue_path);
+    let report = Some(serde_json::json!({
+        "status": "QUEUED",
+        "request_id": request_id,
+        "queue_request_path": queue_download_path,
+        "expected_report_path": report_download_path,
+        "queued_at": generated_at,
+    }));
     info!(
         action = action.as_str(),
         operator_id = %operator_id,
-        pass,
+        queue_path = %queue_path.display(),
         report_path = %report_download_path,
-        "maintenance action executed"
+        "maintenance action queued"
     );
 
     Ok(Json(MaintenanceActionResponse {
         accepted: true,
         action: action.as_str().to_string(),
         operator_id,
-        pass,
+        pass: true,
         generated_at,
         report_download_path,
         report,
-        error,
+        error: None,
     }))
 }
 

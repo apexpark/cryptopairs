@@ -6,10 +6,11 @@
   "generated_at": "2026-02-23T11:52:03Z",
   "report_download_path": "manual_actions/2026-02-23T11-52-03Z-promote-apply.json",
   "report": {
-    "generated_at": "2026-02-23T11:52:03Z",
-    "mode": "promote",
-    "profile": "candidate",
-    "pass": true
+    "status": "QUEUED",
+    "request_id": "2026-02-23T11-52-03Z-promote",
+    "queue_request_path": "manual_action_queue/pending/2026-02-23T11-52-03Z-promote-request.json",
+    "expected_report_path": "manual_actions/2026-02-23T11-52-03Z-promote-apply.json",
+    "queued_at": "2026-02-23T11:52:03Z"
   },
   "error": null
 }

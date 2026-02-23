@@ -39,6 +39,13 @@ This project follows SemVer as defined in `docs/02-versioning-and-releases.md`.
   - `scripts/deploy.sh` now supports configurable health-check retries for slow-start service restarts.
   - `strategy-service` runtime in `docker-compose.yml` now provisions Docker CLI and mounts the host Docker socket for promote/revert apply actions initiated from the Analytics UI.
   - Hosted deployment runbook documents validation and security constraints for privileged maintenance actions.
+- Host-side queued maintenance action execution:
+  - `POST /v1/strategy/maintenance/action` now enqueues promote/revert requests instead of executing deploy inline in strategy-service.
+  - Added host worker `tools/scripts/strategy_maintenance_action_worker.py` to process queued actions and execute `strategy_tuning_apply.py`.
+  - Added cron/systemd installer scripts:
+    - `scripts/install_strategy_maintenance_action_worker_cron.sh`
+    - `scripts/install_strategy_maintenance_action_worker_systemd.sh`
+  - Updated maintenance runbook and script README with queue/worker operations.
 - Strategy module implementation spec derived from SSRN 151 Trading Strategies review: `docs/18-strategy-module-implementation-spec.md`.
 - Initial documentation suite and agent governance scaffolding.
 - Rust workspace foundation with:
