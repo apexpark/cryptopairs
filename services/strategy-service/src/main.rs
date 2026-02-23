@@ -19,8 +19,8 @@ use strategy_service::{
 };
 use tokio::net::TcpListener;
 use tokio::process::Command;
-use tokio_postgres::{types::ToSql, Client, NoTls};
 use tokio::time::{timeout, Duration};
+use tokio_postgres::{types::ToSql, Client, NoTls};
 use tower_http::cors::{Any, CorsLayer};
 use tracing::info;
 
@@ -125,9 +125,8 @@ impl StrategySettings {
             });
         let maintenance_artifacts_root = std::env::var("STRATEGY_MAINTENANCE_ARTIFACT_ROOT")
             .unwrap_or_else(|_| "artifacts/strategy_tuning".to_string());
-        let maintenance_apply_script_path =
-            std::env::var("STRATEGY_MAINTENANCE_APPLY_SCRIPT_PATH")
-                .unwrap_or_else(|_| "tools/scripts/strategy_tuning_apply.py".to_string());
+        let maintenance_apply_script_path = std::env::var("STRATEGY_MAINTENANCE_APPLY_SCRIPT_PATH")
+            .unwrap_or_else(|_| "tools/scripts/strategy_tuning_apply.py".to_string());
         let maintenance_env_file_path = std::env::var("STRATEGY_MAINTENANCE_ENV_FILE_PATH")
             .unwrap_or_else(|_| ".env.hosted".to_string());
         let maintenance_deploy_script_path =
@@ -1013,10 +1012,7 @@ async fn main() -> anyhow::Result<()> {
             "/v1/strategy/maintenance/artifact",
             get(maintenance_artifact),
         )
-        .route(
-            "/v1/strategy/maintenance/action",
-            post(maintenance_action),
-        )
+        .route("/v1/strategy/maintenance/action", post(maintenance_action))
         .layer(cors)
         .with_state(state);
 
@@ -1216,14 +1212,18 @@ fn resolve_artifact_path(root: &Path, requested: &str) -> Result<PathBuf, ApiErr
             .components()
             .map(|component| component.as_os_str().to_string_lossy().to_string())
             .collect();
-        if let Some(index) = components.iter().position(|component| component == root_name) {
-            let stripped = components
-                .iter()
-                .skip(index + 1)
-                .fold(PathBuf::new(), |mut acc, component| {
-                    acc.push(component);
-                    acc
-                });
+        if let Some(index) = components
+            .iter()
+            .position(|component| component == root_name)
+        {
+            let stripped =
+                components
+                    .iter()
+                    .skip(index + 1)
+                    .fold(PathBuf::new(), |mut acc, component| {
+                        acc.push(component);
+                        acc
+                    });
             if !stripped.as_os_str().is_empty() {
                 candidates.push(stripped);
             }
@@ -1244,7 +1244,8 @@ fn resolve_artifact_path(root: &Path, requested: &str) -> Result<PathBuf, ApiErr
         }
     }
     let canonical_candidate = canonical_candidate.ok_or_else(|| {
-        let display_path = last_candidate_path.unwrap_or_else(|| canonical_root.join(&requested_path));
+        let display_path =
+            last_candidate_path.unwrap_or_else(|| canonical_root.join(&requested_path));
         ApiError::NotFound(format!("artifact '{}' not found", display_path.display()))
     })?;
 
@@ -1401,7 +1402,9 @@ async fn maintenance_action(
     command.current_dir("/workspace");
     command.arg(&apply_script_path);
     command.arg("--mode").arg(action.script_mode());
-    command.arg("--policy-json").arg("infra/config/strategy_tuning_policy.json");
+    command
+        .arg("--policy-json")
+        .arg("infra/config/strategy_tuning_policy.json");
     command.arg("--env-file").arg(env_file_path.as_os_str());
     command
         .arg("--deploy-script")
@@ -1423,7 +1426,9 @@ async fn maintenance_action(
                 state.settings.maintenance_action_timeout_secs
             ))
         })?
-        .map_err(|error| ApiError::Upstream(format!("failed to execute maintenance action: {error}")))?;
+        .map_err(|error| {
+            ApiError::Upstream(format!("failed to execute maintenance action: {error}"))
+        })?;
 
     let mut pass = command_output.status.success();
     let mut error: Option<String> = None;
@@ -1432,7 +1437,8 @@ async fn maintenance_action(
         match std::fs::read_to_string(&output_path) {
             Ok(raw) => match serde_json::from_str::<serde_json::Value>(&raw) {
                 Ok(parsed) => {
-                    if let Some(report_pass) = parsed.get("pass").and_then(|value| value.as_bool()) {
+                    if let Some(report_pass) = parsed.get("pass").and_then(|value| value.as_bool())
+                    {
                         pass = report_pass;
                     }
                     report = Some(parsed);
@@ -2258,8 +2264,8 @@ fn parse_env_bool(key: &str, default: bool) -> bool {
 #[cfg(test)]
 mod tests {
     use super::{
-        artifact_download_path, decide_champion_transition, resolve_artifact_path, ChampionDecision,
-        MaintenanceAction, SelectedSignalRow,
+        artifact_download_path, decide_champion_transition, resolve_artifact_path,
+        ChampionDecision, MaintenanceAction, SelectedSignalRow,
     };
     use chrono::Utc;
     use std::fs;
@@ -2418,7 +2424,11 @@ mod tests {
         let target = nested.join("baseline_report.json");
         fs::write(&target, b"{\"ok\":true}").expect("write report");
 
-        let root_name = root.file_name().expect("root name").to_string_lossy().to_string();
+        let root_name = root
+            .file_name()
+            .expect("root name")
+            .to_string_lossy()
+            .to_string();
         let requested = format!("{root_name}/runs/example/baseline_report.json");
         let resolved =
             resolve_artifact_path(&root, &requested).expect("resolve workspace-prefixed path");
