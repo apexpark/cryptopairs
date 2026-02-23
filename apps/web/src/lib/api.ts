@@ -19,6 +19,9 @@ import type {
   StrategyMaintenanceActionRequest,
   StrategyMaintenanceActionResponse,
   StrategyMaintenanceLatestResponse,
+  StrategyUiAuthStatusResponse,
+  StrategyUiAuthVerifyRequest,
+  StrategyUiAuthVerifyResponse,
   StrategyPairsPortfolioPlanResponse,
   Timeframe,
 } from "../types";
@@ -94,6 +97,24 @@ export async function runStrategyMaintenanceAction(
 ): Promise<StrategyMaintenanceActionResponse> {
   const url = `${STRATEGY_SERVICE_BASE_URL}/v1/strategy/maintenance/action`;
   return parseJson<StrategyMaintenanceActionResponse>(
+    await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    })
+  );
+}
+
+export async function fetchStrategyUiAuthStatus(): Promise<StrategyUiAuthStatusResponse> {
+  const url = `${STRATEGY_SERVICE_BASE_URL}/v1/strategy/ui-auth/status`;
+  return parseJson<StrategyUiAuthStatusResponse>(await fetch(url));
+}
+
+export async function verifyStrategyUiAccess(
+  payload: StrategyUiAuthVerifyRequest
+): Promise<StrategyUiAuthVerifyResponse> {
+  const url = `${STRATEGY_SERVICE_BASE_URL}/v1/strategy/ui-auth/verify`;
+  return parseJson<StrategyUiAuthVerifyResponse>(
     await fetch(url, {
       method: "POST",
       headers: { "Content-Type": "application/json" },

@@ -8,6 +8,8 @@ import {
 import {
   buildStrategyMaintenanceArtifactUrl,
   buildStrategyOpportunityHistoryUrl,
+  fetchStrategyUiAuthStatus,
+  verifyStrategyUiAccess,
   fetchStrategyOpportunityHistoryStats,
   fetchStrategyMaintenanceLatest,
   runStrategyMaintenanceAction,
@@ -589,6 +591,11 @@ function App(): JSX.Element {
   const [apiSecret, setApiSecret] = useState<string>("");
   const [apiPassphrase, setApiPassphrase] = useState<string>("");
   const [showApiSecrets, setShowApiSecrets] = useState<boolean>(false);
+  const [uiAuthLoading, setUiAuthLoading] = useState<boolean>(true);
+  const [uiAuthEnabled, setUiAuthEnabled] = useState<boolean>(false);
+  const [uiUnlocked, setUiUnlocked] = useState<boolean>(false);
+  const [uiPassword, setUiPassword] = useState<string>("");
+  const [uiAuthError, setUiAuthError] = useState<string | null>(null);
 
   const [cuesResponse, setCuesResponse] = useState<StrategyPairsCuesResponse | null>(null);
   const [costResponse, setCostResponse] = useState<StrategyPairsCostGateResponse | null>(null);
@@ -665,6 +672,44 @@ function App(): JSX.Element {
     (currentPairId ? positions[currentPairId] : undefined) ?? emptyPosition(nowIso());
   const currentTimeline = timelineByPair[currentPairId] ?? [];
   const currentIntentHistory = intentHistoryByPair[currentPairId] ?? [];
+  const uiAccessGranted = !uiAuthLoading && (!uiAuthEnabled || uiUnlocked);
+
+  useEffect(() => {
+    let cancelled = false;
+    const refreshUiAccessStatus = async (): Promise<void> => {
+      setUiAuthLoading(true);
+      try {
+        const status = await fetchStrategyUiAuthStatus();
+        if (cancelled) {
+          return;
+        }
+        const storedUnlock = window.sessionStorage.getItem("cp.ui.unlocked") === "true";
+        setUiAuthEnabled(status.enabled);
+        setUiUnlocked(!status.enabled || storedUnlock);
+        setUiAuthError(null);
+      } catch (error) {
+        if (cancelled) {
+          return;
+        }
+        setUiAuthEnabled(true);
+        setUiUnlocked(false);
+        setUiAuthError(
+          `Unable to verify access requirement: ${
+            error instanceof Error ? error.message : String(error)
+          }`
+        );
+      } finally {
+        if (!cancelled) {
+          setUiAuthLoading(false);
+        }
+      }
+    };
+
+    void refreshUiAccessStatus();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const stopValueNumber = Number.parseFloat(stopValue);
   const spreadSizeNumber = Number.parseFloat(spreadSize);
@@ -763,6 +808,9 @@ function App(): JSX.Element {
   };
 
   useEffect(() => {
+    if (!uiAccessGranted) {
+      return;
+    }
     let cancelled = false;
     let inFlight = false;
 
@@ -817,9 +865,12 @@ function App(): JSX.Element {
       cancelled = true;
       window.clearInterval(intervalId);
     };
-  }, [timeframe]);
+  }, [timeframe, uiAccessGranted]);
 
   useEffect(() => {
+    if (!uiAccessGranted) {
+      return;
+    }
     if (!selectedCueRow) {
       return;
     }
@@ -860,9 +911,12 @@ function App(): JSX.Element {
     return () => {
       cancelled = true;
     };
-  }, [selectedCueRow, timeframe, exchange, accountId]);
+  }, [selectedCueRow, timeframe, exchange, accountId, uiAccessGranted]);
 
   useEffect(() => {
+    if (!uiAccessGranted) {
+      return;
+    }
     let cancelled = false;
     void refreshPositions().catch(() => {
       if (!cancelled) {
@@ -881,9 +935,12 @@ function App(): JSX.Element {
       cancelled = true;
       window.clearInterval(intervalId);
     };
-  }, [exchange, accountId]);
+  }, [exchange, accountId, uiAccessGranted]);
 
   useEffect(() => {
+    if (!uiAccessGranted) {
+      return;
+    }
     if (!selectedCueRow) {
       return;
     }
@@ -911,9 +968,12 @@ function App(): JSX.Element {
     return () => {
       cancelled = true;
     };
-  }, [selectedCueRow, timeframe]);
+  }, [selectedCueRow, timeframe, uiAccessGranted]);
 
   useEffect(() => {
+    if (!uiAccessGranted) {
+      return;
+    }
     if (!selectedCueRow) {
       setZSeries([]);
       setZTimestamps([]);
@@ -1000,7 +1060,7 @@ function App(): JSX.Element {
       cancelled = true;
       window.clearInterval(refreshIntervalId);
     };
-  }, [selectedCueRow, timeframe]);
+  }, [selectedCueRow, timeframe, uiAccessGranted]);
 
   const refreshMaintenanceReport = useCallback(async (firstLoad = false): Promise<void> => {
     if (firstLoad) {
@@ -1023,6 +1083,9 @@ function App(): JSX.Element {
   }, []);
 
   useEffect(() => {
+    if (!uiAccessGranted) {
+      return;
+    }
     void refreshMaintenanceReport(true);
     const intervalId = window.setInterval(() => {
       void refreshMaintenanceReport(false);
@@ -1031,7 +1094,7 @@ function App(): JSX.Element {
     return () => {
       window.clearInterval(intervalId);
     };
-  }, [refreshMaintenanceReport]);
+  }, [refreshMaintenanceReport, uiAccessGranted]);
 
   const refreshHistoryStats = useCallback(async (firstLoad = false): Promise<void> => {
     if (firstLoad) {
@@ -1054,6 +1117,9 @@ function App(): JSX.Element {
   }, []);
 
   useEffect(() => {
+    if (!uiAccessGranted) {
+      return;
+    }
     void refreshHistoryStats(true);
     const intervalId = window.setInterval(() => {
       void refreshHistoryStats(false);
@@ -1062,7 +1128,7 @@ function App(): JSX.Element {
     return () => {
       window.clearInterval(intervalId);
     };
-  }, [refreshHistoryStats]);
+  }, [refreshHistoryStats, uiAccessGranted]);
 
   const executeMaintenanceAction = useCallback(
     async (action: "PROMOTE" | "REVERT"): Promise<StrategyMaintenanceActionResponse> => {
@@ -1117,6 +1183,9 @@ function App(): JSX.Element {
   const pairLotSizes = derivePairLotSizes(headerHedgeRatio);
 
   useEffect(() => {
+    if (!uiAccessGranted) {
+      return;
+    }
     let cancelled = false;
 
     const refreshMetrics = async (): Promise<void> => {
@@ -1154,7 +1223,13 @@ function App(): JSX.Element {
       cancelled = true;
       window.clearInterval(intervalId);
     };
-  }, [headerLeftInstrument, headerRightInstrument, headerLeftLabel, headerRightLabel]);
+  }, [
+    headerLeftInstrument,
+    headerRightInstrument,
+    headerLeftLabel,
+    headerRightLabel,
+    uiAccessGranted,
+  ]);
 
   const addTimelineEvent = (pairId: string, event: TimelineEvent): void => {
     setTimelineByPair((prev) => {
@@ -1394,8 +1469,70 @@ function App(): JSX.Element {
     }
   };
 
+  const unlockUiAccess = async (): Promise<void> => {
+    if (!uiAuthEnabled) {
+      setUiUnlocked(true);
+      return;
+    }
+    if (!uiPassword.trim().length) {
+      setUiAuthError("Password is required.");
+      return;
+    }
+    setUiAuthLoading(true);
+    setUiAuthError(null);
+    try {
+      const response = await verifyStrategyUiAccess({ password: uiPassword });
+      if (!response.ok) {
+        setUiAuthError("Invalid password.");
+        return;
+      }
+      setUiUnlocked(true);
+      window.sessionStorage.setItem("cp.ui.unlocked", "true");
+      setUiPassword("");
+    } catch (error) {
+      setUiAuthError(
+        `Unable to verify password: ${error instanceof Error ? error.message : String(error)}`
+      );
+    } finally {
+      setUiAuthLoading(false);
+    }
+  };
+
   const logoSrc = theme === "dark" ? logoDark : logoLight;
   const pageLabel = NAV_ITEMS.find((item) => item.id === page)?.label ?? "Trade";
+
+  if (!uiAccessGranted) {
+    return (
+      <div className="auth-screen">
+        <div className="auth-card">
+          <h1>Pairs Access</h1>
+          <p className="auth-subtitle">
+            {uiAuthLoading ? "Checking access policy..." : "Enter password to continue."}
+          </p>
+          {!uiAuthLoading ? (
+            <>
+              <input
+                type="password"
+                value={uiPassword}
+                onChange={(event) => setUiPassword(event.target.value)}
+                placeholder="Password"
+                autoFocus
+                onKeyDown={(event) => {
+                  if (event.key === "Enter") {
+                    void unlockUiAccess();
+                  }
+                }}
+              />
+              <button type="button" onClick={() => void unlockUiAccess()} disabled={uiAuthLoading}>
+                Unlock
+              </button>
+            </>
+          ) : null}
+          {uiAuthError ? <p className="small-text tone-bad">{uiAuthError}</p> : null}
+        </div>
+      </div>
+    );
+  }
 
   const content = (() => {
     if (page === "trade") {

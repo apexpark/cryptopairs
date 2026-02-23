@@ -54,6 +54,33 @@ window:
 bash scripts/deploy.sh --services strategy-service --health-retries 30 --health-sleep-secs 2
 ```
 
+## Web Password Gate (UI Login Box)
+
+The web app can require a password before loading any dashboard content.
+This is controlled by strategy-service env var `STRATEGY_UI_ACCESS_PASSWORD`.
+
+Set or rotate password on the server:
+
+```bash
+cd /opt/cryptopairs
+sed -i '/^STRATEGY_UI_ACCESS_PASSWORD=/d' .env.hosted
+echo 'STRATEGY_UI_ACCESS_PASSWORD=REPLACE_WITH_STRONG_PASSWORD' >> .env.hosted
+bash scripts/deploy.sh --skip-pull --services strategy-service
+```
+
+Validate endpoints:
+
+```bash
+curl -s http://127.0.0.1:8083/v1/strategy/ui-auth/status
+curl -i -s -X POST http://127.0.0.1:8083/v1/strategy/ui-auth/verify \
+  -H 'Content-Type: application/json' \
+  --data '{"password":"wrong"}'
+```
+
+Expected:
+1. Status returns `{"enabled":true}` when password is configured.
+2. Verify returns `401` for wrong password and `200 {"ok":true}` for correct password.
+
 ## One-Click Maintenance Actions (Promote / Revert)
 
 The strategy-service maintenance action endpoint can execute promote/revert deploys from the

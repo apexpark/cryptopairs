@@ -281,6 +281,18 @@ export interface StrategyMaintenanceActionResponse {
   error: string | null;
 }
 
+export interface StrategyUiAuthStatusResponse {
+  enabled: boolean;
+}
+
+export interface StrategyUiAuthVerifyRequest {
+  password: string;
+}
+
+export interface StrategyUiAuthVerifyResponse {
+  ok: boolean;
+}
+
 export interface IntegrityHistoryResponse {
   instrument: string;
   timeframe: Timeframe;

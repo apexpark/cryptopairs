@@ -83,6 +83,7 @@ struct StrategySettings {
     maintenance_action_queue_root: String,
     maintenance_action_timeout_secs: u64,
     maintenance_action_skip_pull: bool,
+    ui_access_password: String,
 }
 
 impl StrategySettings {
@@ -141,6 +142,8 @@ impl StrategySettings {
             parse_env_u64("STRATEGY_MAINTENANCE_ACTION_TIMEOUT_SECS", 300);
         let maintenance_action_skip_pull =
             parse_env_bool("STRATEGY_MAINTENANCE_ACTION_SKIP_PULL", true);
+        let ui_access_password =
+            std::env::var("STRATEGY_UI_ACCESS_PASSWORD").unwrap_or_else(|_| "".to_string());
 
         Self {
             bind_addr: format!("0.0.0.0:{port}"),
@@ -183,6 +186,7 @@ impl StrategySettings {
             maintenance_action_queue_root,
             maintenance_action_timeout_secs,
             maintenance_action_skip_pull,
+            ui_access_password,
         }
     }
 
@@ -208,6 +212,10 @@ impl StrategySettings {
             Timeframe::FifteenMinutes => self.max_half_life_bars_15m,
             Timeframe::OneHour => self.max_half_life_bars_1h,
         }
+    }
+
+    fn ui_access_enabled(&self) -> bool {
+        !self.ui_access_password.trim().is_empty()
     }
 }
 
@@ -919,6 +927,21 @@ struct MaintenanceActionRequest {
     confirm: bool,
 }
 
+#[derive(Debug, Deserialize)]
+struct UiAuthVerifyRequest {
+    password: String,
+}
+
+#[derive(Debug, Serialize)]
+struct UiAuthStatusResponse {
+    enabled: bool,
+}
+
+#[derive(Debug, Serialize)]
+struct UiAuthVerifyResponse {
+    ok: bool,
+}
+
 #[derive(Debug, Serialize)]
 struct HealthResponse {
     status: &'static str,
@@ -1183,6 +1206,7 @@ struct ReoptError {
 #[derive(Debug)]
 enum ApiError {
     BadRequest(String),
+    Unauthorized(String),
     NotFound(String),
     Upstream(String),
 }
@@ -1192,6 +1216,11 @@ impl IntoResponse for ApiError {
         match self {
             Self::BadRequest(message) => (
                 StatusCode::BAD_REQUEST,
+                Json(ErrorResponse { error: message }),
+            )
+                .into_response(),
+            Self::Unauthorized(message) => (
+                StatusCode::UNAUTHORIZED,
                 Json(ErrorResponse { error: message }),
             )
                 .into_response(),
@@ -1228,6 +1257,8 @@ async fn main() -> anyhow::Result<()> {
 
     let app = Router::new()
         .route("/health", get(health))
+        .route("/v1/strategy/ui-auth/status", get(ui_auth_status))
+        .route("/v1/strategy/ui-auth/verify", post(ui_auth_verify))
         .route("/v1/strategy/pairs/cues", get(pairs_cues))
         .route("/v1/strategy/pairs/backtest", get(pairs_backtest))
         .route("/v1/strategy/pairs/live-z", get(pairs_live_z))
@@ -1285,6 +1316,7 @@ async fn main() -> anyhow::Result<()> {
         maintenance_action_queue_root = %settings.maintenance_action_queue_root,
         maintenance_action_timeout_secs = settings.maintenance_action_timeout_secs,
         maintenance_action_skip_pull = settings.maintenance_action_skip_pull,
+        ui_access_enabled = settings.ui_access_enabled(),
         "strategy-service started"
     );
 
@@ -1424,6 +1456,26 @@ fn spawn_reoptimize_worker(state: AppState) -> tokio::task::JoinHandle<()> {
 
 async fn health() -> Json<HealthResponse> {
     Json(HealthResponse { status: "ok" })
+}
+
+async fn ui_auth_status(State(state): State<AppState>) -> Json<UiAuthStatusResponse> {
+    Json(UiAuthStatusResponse {
+        enabled: state.settings.ui_access_enabled(),
+    })
+}
+
+async fn ui_auth_verify(
+    State(state): State<AppState>,
+    Json(request): Json<UiAuthVerifyRequest>,
+) -> Result<Json<UiAuthVerifyResponse>, ApiError> {
+    let configured_password = state.settings.ui_access_password.trim();
+    if configured_password.is_empty() {
+        return Ok(Json(UiAuthVerifyResponse { ok: true }));
+    }
+    if request.password == configured_password {
+        return Ok(Json(UiAuthVerifyResponse { ok: true }));
+    }
+    Err(ApiError::Unauthorized("invalid password".to_string()))
 }
 
 fn resolve_workspace_path(raw: &str) -> PathBuf {

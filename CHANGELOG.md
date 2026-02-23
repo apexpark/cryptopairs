@@ -61,6 +61,12 @@ This project follows SemVer as defined in `docs/02-versioning-and-releases.md`.
 - Automated Daily Maintenance panel moved to dedicated `Maintenance` page in side navigation (under `Data Quality`).
 - Maintenance cron installer scripts now support explicit `CRON_TZ` timezone configuration (`--timezone`).
 - UI timestamp displays are now explicitly local-time formatted with timezone suffix.
+- UI password gate for hosted access:
+  - Added strategy-service endpoints:
+    - `GET /v1/strategy/ui-auth/status`
+    - `POST /v1/strategy/ui-auth/verify`
+  - Web app now presents a full-screen black password screen before loading dashboard content when `STRATEGY_UI_ACCESS_PASSWORD` is configured.
+  - Added `STRATEGY_UI_ACCESS_PASSWORD` to `.env.example` and hosted runbook instructions for server-side setup/rotation.
 - Trade and Analytics UI readability pass:
   - Added y-axis labels and threshold-value labels on z-score charts.
   - Increased chart axis text size and z-score marker dot size.
