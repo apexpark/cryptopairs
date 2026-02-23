@@ -46,6 +46,15 @@ This project follows SemVer as defined in `docs/02-versioning-and-releases.md`.
     - `scripts/install_strategy_maintenance_action_worker_cron.sh`
     - `scripts/install_strategy_maintenance_action_worker_systemd.sh`
   - Updated maintenance runbook and script README with queue/worker operations.
+- Opportunity history persistence and downloadable reporting:
+  - Added persistence table `strategy_opportunity_history` and per-tick writes from strategy reoptimize loops.
+  - Added APIs:
+    - `GET /v1/strategy/pairs/opportunity-history`
+    - `GET /v1/strategy/pairs/opportunity-history/download`
+  - Added history contract/example:
+    - `specs/contracts/strategy_pairs_opportunity_history_response.schema.json`
+    - `specs/examples/strategy_pairs_opportunity_history_response.example.json`
+  - Analytics panel now provides direct download links for last-12h PASS/all opportunity history.
 - Strategy module implementation spec derived from SSRN 151 Trading Strategies review: `docs/18-strategy-module-implementation-spec.md`.
 - Initial documentation suite and agent governance scaffolding.
 - Rust workspace foundation with:

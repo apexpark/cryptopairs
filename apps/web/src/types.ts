@@ -149,6 +149,30 @@ export interface StrategyPairsPortfolioPlanResponse {
   skipped: Array<{ pair_id: string; reason: string }>;
 }
 
+export interface StrategyPairsOpportunityHistoryResponse {
+  timeframe: Timeframe;
+  generated_at: string;
+  hours: number;
+  only_pass: boolean;
+  rows: Array<{
+    pair_id: string;
+    left_instrument: string;
+    right_instrument: string;
+    timeframe: Timeframe;
+    selected_variant: string;
+    regime: string;
+    direction_hint: DirectionHint;
+    spread_z: number;
+    opportunity_score: number;
+    net_edge_bps: number;
+    cost_gate_pass: boolean;
+    actionable: boolean;
+    rationale_codes: string[];
+    cost_gate_rationale_codes: string[];
+    evaluated_at: string;
+  }>;
+}
+
 export interface StrategyPairsBacktestResponse {
   timeframe: Timeframe;
   pair_id: string;
