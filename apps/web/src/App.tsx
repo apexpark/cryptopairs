@@ -641,23 +641,31 @@ function App(): JSX.Element {
 
   useEffect(() => {
     let cancelled = false;
-    setCoreLoading(true);
-    setCoreError(null);
+    let inFlight = false;
 
-    Promise.all([
-      fetchStrategyCues(timeframe, 20),
-      fetchStrategyCostGates(timeframe),
-      fetchStrategyPortfolioPlan(timeframe),
-    ])
-      .then(([cues, costs, plan]) => {
+    const runCoreRefresh = async (firstLoad = false): Promise<void> => {
+      if (cancelled || inFlight) {
+        return;
+      }
+      inFlight = true;
+      if (firstLoad) {
+        setCoreLoading(true);
+      }
+      setCoreError(null);
+
+      try {
+        const [cues, costs, plan] = await Promise.all([
+          fetchStrategyCues(timeframe, 20),
+          fetchStrategyCostGates(timeframe),
+          fetchStrategyPortfolioPlan(timeframe),
+        ]);
         if (cancelled) {
           return;
         }
         setCuesResponse(cues);
         setCostResponse(costs);
         setPlanResponse(plan);
-      })
-      .catch((error) => {
+      } catch (error) {
         if (cancelled) {
           return;
         }
@@ -669,15 +677,22 @@ function App(): JSX.Element {
         setCuesResponse(null);
         setCostResponse(null);
         setPlanResponse(null);
-      })
-      .finally(() => {
-        if (!cancelled) {
+      } finally {
+        if (!cancelled && firstLoad) {
           setCoreLoading(false);
         }
-      });
+        inFlight = false;
+      }
+    };
+
+    void runCoreRefresh(true);
+    const intervalId = window.setInterval(() => {
+      void runCoreRefresh(false);
+    }, analyticsRefreshMs(timeframe));
 
     return () => {
       cancelled = true;
+      window.clearInterval(intervalId);
     };
   }, [timeframe]);
 
