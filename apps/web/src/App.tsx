@@ -275,6 +275,37 @@ function formatSignedMetric(value: number | null | undefined, digits = 3): strin
   return `${value >= 0 ? "+" : "-"}${abs}`;
 }
 
+function formatLocalDateTime(value: string | number | Date): string {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return "--";
+  }
+  return new Intl.DateTimeFormat(undefined, {
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hour12: false,
+    timeZoneName: "short",
+  }).format(date);
+}
+
+function formatLocalTime(value: string | number | Date): string {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return "--";
+  }
+  return new Intl.DateTimeFormat(undefined, {
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hour12: false,
+    timeZoneName: "short",
+  }).format(date);
+}
+
 function derivePairLotSizes(
   hedgeRatio: number | null | undefined
 ): { leftSize: number; rightSize: number } {
@@ -1643,7 +1674,7 @@ function TradePage(props: {
           </p>
           <p>Total size: {props.currentPosition.totalSize.toFixed(2)} spread units</p>
           <p>Avg entry z-score: {props.currentPosition.avgEntryZ.toFixed(2)}</p>
-          <p>Updated: {new Date(props.currentPosition.updatedAt).toLocaleTimeString()}</p>
+          <p>Updated: {formatLocalTime(props.currentPosition.updatedAt)}</p>
           <p>Tracked intents: {props.intentHistory.length}</p>
           {props.intentHistory.slice(0, 2).map((history) => {
             const latestState = latestLifecycleState(history);
@@ -1703,7 +1734,7 @@ function TradePage(props: {
           {props.timeline.length ? (
             props.timeline.map((event, index) => (
               <p key={`${event.ts}-${index}`} className={`tone-${event.tone}`}>
-                {new Date(event.ts).toLocaleTimeString()} {event.text}
+                {formatLocalTime(event.ts)} {event.text}
               </p>
             ))
           ) : (
@@ -2200,11 +2231,11 @@ function MaintenancePage({
             <p>
               Range:{" "}
               {selectedStats.first_evaluated_at
-                ? new Date(selectedStats.first_evaluated_at).toLocaleString()
+                ? formatLocalDateTime(selectedStats.first_evaluated_at)
                 : "n/a"}{" "}
               to{" "}
               {selectedStats.last_evaluated_at
-                ? new Date(selectedStats.last_evaluated_at).toLocaleString()
+                ? formatLocalDateTime(selectedStats.last_evaluated_at)
                 : "n/a"}
             </p>
           </div>
@@ -2260,7 +2291,7 @@ function MaintenancePage({
               Latest cycle: {maintenanceReport.status}
             </div>
             <p className="small-text">
-              Run: {maintenanceReport.run_id} at {new Date(maintenanceReport.generated_at).toLocaleString()}
+              Run: {maintenanceReport.run_id} at {formatLocalDateTime(maintenanceReport.generated_at)}
             </p>
             <p className="small-text">
               Decision:{" "}
@@ -2500,7 +2531,7 @@ function IntegrityTable({
             {rows.length ? (
               visibleRows.map((row) => (
                 <tr key={`${row.checked_at}-${row.start_ts}`}>
-                  <td>{new Date(row.checked_at).toLocaleTimeString()}</td>
+                  <td>{formatLocalTime(row.checked_at)}</td>
                   <td className={`tone-${toneFromStatus(row.status)}`}>{row.status}</td>
                   <td>{row.coverage_pct.toFixed(2)}%</td>
                 </tr>
