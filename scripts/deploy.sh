@@ -157,7 +157,7 @@ if [[ "$DRY_RUN" == "false" ]]; then
 fi
 
 log "Deploying services via docker compose"
-run "${COMPOSE_CMD[@]}" --profile app up -d --build --no-deps "${SERVICES[@]}"
+run "${COMPOSE_CMD[@]}" --profile app up -d --build --force-recreate --no-deps "${SERVICES[@]}"
 
 log "Container status"
 if has_cmd docker; then
