@@ -17,9 +17,13 @@ Automated cycle scope:
 ## Key Files
 
 - `tools/scripts/strategy_maintenance_cycle.py`
+- `tools/scripts/strategy_maintenance_action_worker.py`
 - `scripts/install_strategy_maintenance_cron.sh`
+- `scripts/install_strategy_maintenance_action_worker_cron.sh`
+- `scripts/install_strategy_maintenance_action_worker_systemd.sh`
 - `artifacts/strategy_tuning/latest_maintenance_report.json`
 - `artifacts/strategy_tuning/runs/<run-id>/...`
+- `artifacts/strategy_tuning/manual_action_queue/{pending,processing,completed,failed}`
 
 ## One-Time Setup On Server
 
@@ -65,9 +69,41 @@ Expected:
 Analytics tab reads:
 - `GET /v1/strategy/maintenance/latest`
 - artifact downloads via `GET /v1/strategy/maintenance/artifact?path=...`
-- manual one-click actions via `POST /v1/strategy/maintenance/action`
+- manual one-click actions via `POST /v1/strategy/maintenance/action` (enqueue only)
 
 If available, report downloads appear in the Analytics panel.
+
+## Host Action Worker (Required For One-Click Promote/Revert)
+
+One-click actions enqueue requests; host worker executes them asynchronously.
+
+Install with cron:
+
+```bash
+cd /opt/cryptopairs
+bash scripts/install_strategy_maintenance_action_worker_cron.sh \
+  --schedule "* * * * *" \
+  --repo-root /opt/cryptopairs
+```
+
+Install with systemd timer:
+
+```bash
+cd /opt/cryptopairs
+bash scripts/install_strategy_maintenance_action_worker_systemd.sh \
+  --repo-root /opt/cryptopairs \
+  --interval-seconds 60
+```
+
+Manual one-shot worker run:
+
+```bash
+cd /opt/cryptopairs
+python3 tools/scripts/strategy_maintenance_action_worker.py \
+  --repo-root /opt/cryptopairs \
+  --queue-root artifacts/strategy_tuning/manual_action_queue \
+  --once
+```
 
 ## Fail-Closed Behavior
 

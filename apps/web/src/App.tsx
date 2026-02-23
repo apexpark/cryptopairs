@@ -905,10 +905,17 @@ function App(): JSX.Element {
           operator_id: operatorId,
           confirm: true,
         });
+        const queueStatus = String(response.report?.status ?? "").toUpperCase();
         if (response.pass) {
-          setMaintenanceActionMessage(
-            `${response.action} completed successfully. Action report is available for download.`
-          );
+          if (queueStatus === "QUEUED") {
+            setMaintenanceActionMessage(
+              `${response.action} queued successfully. Host worker will execute it shortly and publish the action report.`
+            );
+          } else {
+            setMaintenanceActionMessage(
+              `${response.action} completed successfully. Action report is available for download.`
+            );
+          }
         } else {
           setMaintenanceActionMessage(
             response.error ??
