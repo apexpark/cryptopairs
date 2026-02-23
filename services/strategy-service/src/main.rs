@@ -583,6 +583,41 @@ impl StrategyRepository {
             .collect())
     }
 
+    async fn fetch_opportunity_history_stats(
+        &self,
+        timeframe: Option<Timeframe>,
+    ) -> anyhow::Result<Vec<OpportunityHistoryStatsEntry>> {
+        let timeframe_filter = timeframe.map(|value| value.as_str().to_string());
+        let rows = self
+            .client
+            .query(
+                "SELECT timeframe,
+                        COUNT(*) AS rows,
+                        MIN(evaluated_at) AS first_evaluated_at,
+                        MAX(evaluated_at) AS last_evaluated_at
+                 FROM strategy_opportunity_history
+                 WHERE ($1::text IS NULL OR timeframe = $1)
+                 GROUP BY timeframe
+                 ORDER BY timeframe",
+                &[&timeframe_filter],
+            )
+            .await?;
+        Ok(rows
+            .into_iter()
+            .map(|row| {
+                let first: Option<DateTime<Utc>> = row.get(2);
+                let last: Option<DateTime<Utc>> = row.get(3);
+                OpportunityHistoryStatsEntry {
+                    timeframe: row.get(0),
+                    rows: row.get(1),
+                    first_evaluated_at: first,
+                    last_evaluated_at: last,
+                    days_covered: days_covered(first, last),
+                }
+            })
+            .collect())
+    }
+
     async fn upsert_selected_signal(
         &self,
         pair_id: &str,
@@ -863,6 +898,11 @@ struct OpportunityHistoryQuery {
 }
 
 #[derive(Debug, Deserialize)]
+struct OpportunityHistoryStatsQuery {
+    timeframe: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
 struct ReoptimizeRequest {
     timeframes: Option<Vec<String>>,
 }
@@ -1024,6 +1064,26 @@ struct OpportunityHistoryResponse {
     rows: Vec<OpportunityHistoryEntry>,
 }
 
+#[derive(Debug, Serialize, Clone)]
+struct OpportunityHistoryStatsEntry {
+    timeframe: String,
+    rows: i64,
+    first_evaluated_at: Option<DateTime<Utc>>,
+    last_evaluated_at: Option<DateTime<Utc>>,
+    days_covered: f64,
+}
+
+#[derive(Debug, Serialize)]
+struct OpportunityHistoryStatsResponse {
+    generated_at: DateTime<Utc>,
+    timeframe_filter: Option<String>,
+    total_rows: i64,
+    first_evaluated_at: Option<DateTime<Utc>>,
+    last_evaluated_at: Option<DateTime<Utc>>,
+    days_covered: f64,
+    by_timeframe: Vec<OpportunityHistoryStatsEntry>,
+}
+
 #[derive(Debug, Serialize)]
 struct ReoptimizeResponse {
     generated_at: DateTime<Utc>,
@@ -1179,6 +1239,10 @@ async fn main() -> anyhow::Result<()> {
         .route(
             "/v1/strategy/pairs/opportunity-history/download",
             get(pairs_opportunity_history_download),
+        )
+        .route(
+            "/v1/strategy/pairs/opportunity-history/stats",
+            get(pairs_opportunity_history_stats),
         )
         .route(
             "/v1/strategy/pairs/portfolio-plan",
@@ -1845,6 +1909,28 @@ fn parse_opportunity_history_window(
     Ok((timeframe, hours, only_pass, limit))
 }
 
+fn parse_opportunity_history_stats_timeframe(
+    query: &OpportunityHistoryStatsQuery,
+) -> Result<Option<Timeframe>, ApiError> {
+    let Some(raw_timeframe) = query.timeframe.as_ref() else {
+        return Ok(None);
+    };
+    let timeframe = Timeframe::parse(raw_timeframe).ok_or_else(|| {
+        ApiError::BadRequest("invalid timeframe; expected 1m, 15m, 1h".to_string())
+    })?;
+    Ok(Some(timeframe))
+}
+
+fn days_covered(first: Option<DateTime<Utc>>, last: Option<DateTime<Utc>>) -> f64 {
+    match (first, last) {
+        (Some(start), Some(end)) if end >= start => {
+            let seconds = (end - start).num_seconds() as f64;
+            (seconds / 86_400.0).max(0.0)
+        }
+        _ => 0.0,
+    }
+}
+
 async fn build_opportunity_history_response(
     state: &AppState,
     query: &OpportunityHistoryQuery,
@@ -1873,6 +1959,37 @@ async fn pairs_opportunity_history(
     Ok(Json(
         build_opportunity_history_response(&state, &query).await?,
     ))
+}
+
+async fn pairs_opportunity_history_stats(
+    State(state): State<AppState>,
+    Query(query): Query<OpportunityHistoryStatsQuery>,
+) -> Result<Json<OpportunityHistoryStatsResponse>, ApiError> {
+    let timeframe_filter = parse_opportunity_history_stats_timeframe(&query)?;
+    let by_timeframe = state
+        .repository
+        .fetch_opportunity_history_stats(timeframe_filter)
+        .await
+        .map_err(|error| ApiError::Upstream(error.to_string()))?;
+    let total_rows = by_timeframe.iter().map(|row| row.rows).sum::<i64>();
+    let first = by_timeframe
+        .iter()
+        .filter_map(|row| row.first_evaluated_at)
+        .min();
+    let last = by_timeframe
+        .iter()
+        .filter_map(|row| row.last_evaluated_at)
+        .max();
+
+    Ok(Json(OpportunityHistoryStatsResponse {
+        generated_at: Utc::now(),
+        timeframe_filter: timeframe_filter.map(|value| value.as_str().to_string()),
+        total_rows,
+        first_evaluated_at: first,
+        last_evaluated_at: last,
+        days_covered: days_covered(first, last),
+        by_timeframe,
+    }))
 }
 
 async fn pairs_opportunity_history_download(
@@ -2558,9 +2675,10 @@ fn parse_env_bool(key: &str, default: bool) -> bool {
 #[cfg(test)]
 mod tests {
     use super::{
-        artifact_download_path, decide_champion_transition, parse_opportunity_history_window,
+        artifact_download_path, days_covered, decide_champion_transition,
+        parse_opportunity_history_stats_timeframe, parse_opportunity_history_window,
         resolve_artifact_path, ChampionDecision, MaintenanceAction, OpportunityHistoryQuery,
-        SelectedSignalRow,
+        OpportunityHistoryStatsQuery, SelectedSignalRow,
     };
     use chrono::Utc;
     use std::fs;
@@ -2773,6 +2891,37 @@ mod tests {
         };
         let result = parse_opportunity_history_window(&query);
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn opportunity_history_stats_timeframe_optional_and_validates() {
+        let none_query = OpportunityHistoryStatsQuery { timeframe: None };
+        let parsed_none = parse_opportunity_history_stats_timeframe(&none_query)
+            .expect("parse optional timeframe");
+        assert!(parsed_none.is_none());
+
+        let valid_query = OpportunityHistoryStatsQuery {
+            timeframe: Some("15m".to_string()),
+        };
+        let parsed_valid = parse_opportunity_history_stats_timeframe(&valid_query)
+            .expect("parse valid timeframe")
+            .expect("timeframe present");
+        assert_eq!(parsed_valid.as_str(), "15m");
+
+        let invalid_query = OpportunityHistoryStatsQuery {
+            timeframe: Some("5m".to_string()),
+        };
+        assert!(parse_opportunity_history_stats_timeframe(&invalid_query).is_err());
+    }
+
+    #[test]
+    fn days_covered_handles_ranges_and_empty() {
+        let start = Utc::now();
+        let end = start + chrono::Duration::hours(36);
+        let covered = days_covered(Some(start), Some(end));
+        assert!((covered - 1.5).abs() < 1e-9);
+        assert_eq!(days_covered(None, Some(end)), 0.0);
+        assert_eq!(days_covered(Some(end), Some(start)), 0.0);
     }
 
     #[test]

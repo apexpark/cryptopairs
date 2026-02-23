@@ -51,10 +51,14 @@ This project follows SemVer as defined in `docs/02-versioning-and-releases.md`.
   - Added APIs:
     - `GET /v1/strategy/pairs/opportunity-history`
     - `GET /v1/strategy/pairs/opportunity-history/download`
+    - `GET /v1/strategy/pairs/opportunity-history/stats`
   - Added history contract/example:
     - `specs/contracts/strategy_pairs_opportunity_history_response.schema.json`
     - `specs/examples/strategy_pairs_opportunity_history_response.example.json`
-  - Analytics panel now provides direct download links for last-12h PASS/all opportunity history.
+    - `specs/contracts/strategy_pairs_opportunity_history_stats_response.schema.json`
+    - `specs/examples/strategy_pairs_opportunity_history_stats_response.example.json`
+  - UI now provides 24h/72h/7d opportunity-history downloads (PASS/all) plus retention meter (days covered).
+  - Automated Daily Maintenance panel moved to dedicated `Maintenance` page in side navigation (under `Data Quality`).
 - Strategy module implementation spec derived from SSRN 151 Trading Strategies review: `docs/18-strategy-module-implementation-spec.md`.
 - Initial documentation suite and agent governance scaffolding.
 - Rust workspace foundation with:

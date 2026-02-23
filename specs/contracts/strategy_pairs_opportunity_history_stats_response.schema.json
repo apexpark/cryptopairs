@@ -1,0 +1,48 @@
+{
+  "$id": "https://cryptopairs/specs/contracts/strategy_pairs_opportunity_history_stats_response.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "StrategyPairsOpportunityHistoryStatsResponse",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "generated_at",
+    "timeframe_filter",
+    "total_rows",
+    "first_evaluated_at",
+    "last_evaluated_at",
+    "days_covered",
+    "by_timeframe"
+  ],
+  "properties": {
+    "generated_at": { "type": "string", "format": "date-time" },
+    "timeframe_filter": {
+      "type": ["string", "null"],
+      "enum": ["1m", "15m", "1h", null]
+    },
+    "total_rows": { "type": "integer", "minimum": 0 },
+    "first_evaluated_at": { "type": ["string", "null"], "format": "date-time" },
+    "last_evaluated_at": { "type": ["string", "null"], "format": "date-time" },
+    "days_covered": { "type": "number", "minimum": 0 },
+    "by_timeframe": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "timeframe",
+          "rows",
+          "first_evaluated_at",
+          "last_evaluated_at",
+          "days_covered"
+        ],
+        "properties": {
+          "timeframe": { "type": "string", "enum": ["1m", "15m", "1h"] },
+          "rows": { "type": "integer", "minimum": 0 },
+          "first_evaluated_at": { "type": ["string", "null"], "format": "date-time" },
+          "last_evaluated_at": { "type": ["string", "null"], "format": "date-time" },
+          "days_covered": { "type": "number", "minimum": 0 }
+        }
+      }
+    }
+  }
+}

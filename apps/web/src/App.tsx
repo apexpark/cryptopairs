@@ -8,6 +8,7 @@ import {
 import {
   buildStrategyMaintenanceArtifactUrl,
   buildStrategyOpportunityHistoryUrl,
+  fetchStrategyOpportunityHistoryStats,
   fetchStrategyMaintenanceLatest,
   runStrategyMaintenanceAction,
   fetchExecutionPortfolioPositions,
@@ -47,6 +48,7 @@ import type {
   SpreadPosition,
   StrategyPairsCostGateResponse,
   StrategyPairsCuesResponse,
+  StrategyPairsOpportunityHistoryStatsResponse,
   StrategyMaintenanceActionResponse,
   StrategyMaintenanceLatestResponse,
   StrategyPairsPortfolioPlanResponse,
@@ -64,6 +66,7 @@ type PageId =
   | "analytics"
   | "portfolio"
   | "data-quality"
+  | "maintenance"
   | "settings";
 
 type ThemeMode = "dark" | "light";
@@ -96,6 +99,7 @@ const NAV_ITEMS: Array<{ id: PageId; label: string }> = [
   { id: "analytics", label: "Analytics" },
   { id: "portfolio", label: "Portfolio" },
   { id: "data-quality", label: "Data Quality" },
+  { id: "maintenance", label: "Maintenance" },
   { id: "settings", label: "Settings" },
 ];
 
@@ -505,6 +509,10 @@ function App(): JSX.Element {
   const [maintenanceError, setMaintenanceError] = useState<string | null>(null);
   const [maintenanceActionLoading, setMaintenanceActionLoading] = useState(false);
   const [maintenanceActionMessage, setMaintenanceActionMessage] = useState<string | null>(null);
+  const [historyStats, setHistoryStats] =
+    useState<StrategyPairsOpportunityHistoryStatsResponse | null>(null);
+  const [historyStatsLoading, setHistoryStatsLoading] = useState(false);
+  const [historyStatsError, setHistoryStatsError] = useState<string | null>(null);
 
   const [stopMethod, setStopMethod] = useState<"Z-Score" | "Dollar" | "Percent">("Z-Score");
   const [stopValue, setStopValue] = useState<string>("3.2");
@@ -911,6 +919,37 @@ function App(): JSX.Element {
     };
   }, [refreshMaintenanceReport]);
 
+  const refreshHistoryStats = useCallback(async (firstLoad = false): Promise<void> => {
+    if (firstLoad) {
+      setHistoryStatsLoading(true);
+    }
+    try {
+      const response = await fetchStrategyOpportunityHistoryStats();
+      setHistoryStats(response);
+      setHistoryStatsError(null);
+    } catch (error) {
+      setHistoryStats(null);
+      setHistoryStatsError(
+        `Opportunity history stats unavailable: ${error instanceof Error ? error.message : String(error)}`
+      );
+    } finally {
+      if (firstLoad) {
+        setHistoryStatsLoading(false);
+      }
+    }
+  }, []);
+
+  useEffect(() => {
+    void refreshHistoryStats(true);
+    const intervalId = window.setInterval(() => {
+      void refreshHistoryStats(false);
+    }, 60_000);
+
+    return () => {
+      window.clearInterval(intervalId);
+    };
+  }, [refreshHistoryStats]);
+
   const executeMaintenanceAction = useCallback(
     async (action: "PROMOTE" | "REVERT"): Promise<StrategyMaintenanceActionResponse> => {
       setMaintenanceActionLoading(true);
@@ -939,12 +978,13 @@ function App(): JSX.Element {
           );
         }
         await refreshMaintenanceReport(false);
+        await refreshHistoryStats(false);
         return response;
       } finally {
         setMaintenanceActionLoading(false);
       }
     },
-    [operatorId, refreshMaintenanceReport]
+    [operatorId, refreshMaintenanceReport, refreshHistoryStats]
   );
 
   const headerLeftInstrument = selectedCueRow?.cue.left_instrument ?? "PF_XBTUSD";
@@ -1305,7 +1345,6 @@ function App(): JSX.Element {
       return (
         <AnalyticsPage
           cues={cuesResponse}
-          timeframe={timeframe}
           selectedPairId={currentPairId}
           onSelectPair={setSelectedPairId}
           zSeries={zSeries}
@@ -1315,13 +1354,6 @@ function App(): JSX.Element {
           equityTimestamps={equityTimestamps}
           loading={analyticsLoading}
           error={analyticsError}
-          maintenanceLatest={maintenanceLatest}
-          maintenanceLoading={maintenanceLoading}
-          maintenanceError={maintenanceError}
-          maintenanceActionLoading={maintenanceActionLoading}
-          maintenanceActionMessage={maintenanceActionMessage}
-          operatorId={operatorId}
-          onRunMaintenanceAction={executeMaintenanceAction}
         />
       );
     }
@@ -1344,6 +1376,24 @@ function App(): JSX.Element {
           left={leftIntegrity}
           right={rightIntegrity}
           gateState={gateState}
+        />
+      );
+    }
+
+    if (page === "maintenance") {
+      return (
+        <MaintenancePage
+          timeframe={timeframe}
+          historyStats={historyStats}
+          historyStatsLoading={historyStatsLoading}
+          historyStatsError={historyStatsError}
+          maintenanceLatest={maintenanceLatest}
+          maintenanceLoading={maintenanceLoading}
+          maintenanceError={maintenanceError}
+          maintenanceActionLoading={maintenanceActionLoading}
+          maintenanceActionMessage={maintenanceActionMessage}
+          operatorId={operatorId}
+          onRunMaintenanceAction={executeMaintenanceAction}
         />
       );
     }
@@ -1927,7 +1977,6 @@ function HowThisWorksPage(): JSX.Element {
 
 function AnalyticsPage({
   cues,
-  timeframe,
   selectedPairId,
   onSelectPair,
   zSeries,
@@ -1937,16 +1986,8 @@ function AnalyticsPage({
   equityTimestamps,
   loading,
   error,
-  maintenanceLatest,
-  maintenanceLoading,
-  maintenanceError,
-  maintenanceActionLoading,
-  maintenanceActionMessage,
-  operatorId,
-  onRunMaintenanceAction,
 }: {
   cues: StrategyPairsCuesResponse | null;
-  timeframe: Timeframe;
   selectedPairId: string;
   onSelectPair: (value: string) => void;
   zSeries: number[];
@@ -1956,43 +1997,9 @@ function AnalyticsPage({
   equityTimestamps: string[];
   loading: boolean;
   error: string | null;
-  maintenanceLatest: StrategyMaintenanceLatestResponse | null;
-  maintenanceLoading: boolean;
-  maintenanceError: string | null;
-  maintenanceActionLoading: boolean;
-  maintenanceActionMessage: string | null;
-  operatorId: string;
-  onRunMaintenanceAction: (action: "PROMOTE" | "REVERT") => Promise<StrategyMaintenanceActionResponse>;
 }): JSX.Element {
   const selected = cues?.cues.find((entry) => entry.cue.pair_id === selectedPairId) ?? cues?.cues[0];
   const actionabilityExplanation = explainPairActionability(selected);
-  const historyTimeframe = selected?.cue.timeframe ?? timeframe;
-  const overnightPassHistoryUrl = buildStrategyOpportunityHistoryUrl(historyTimeframe, 12, true, 5000);
-  const overnightAllHistoryUrl = buildStrategyOpportunityHistoryUrl(historyTimeframe, 12, false, 5000);
-  const maintenanceReport = maintenanceLatest?.report ?? null;
-  const maintenanceStepEntries = maintenanceReport ? Object.entries(maintenanceReport.steps) : [];
-  const [maintenanceActionError, setMaintenanceActionError] = useState<string | null>(null);
-
-  const runMaintenanceAction = async (action: "PROMOTE" | "REVERT"): Promise<void> => {
-    if (!operatorId.trim().length) {
-      setMaintenanceActionError("Operator ID is required before running PROMOTE/REVERT.");
-      return;
-    }
-    const confirmation = window.confirm(
-      `${action} will apply strategy tuning values and redeploy strategy-service. Continue?`
-    );
-    if (!confirmation) {
-      return;
-    }
-    try {
-      setMaintenanceActionError(null);
-      await onRunMaintenanceAction(action);
-    } catch (error) {
-      setMaintenanceActionError(
-        `Unable to execute ${action}: ${error instanceof Error ? error.message : String(error)}`
-      );
-    }
-  };
 
   return (
     <div className="analytics-layout">
@@ -2117,115 +2124,219 @@ function AnalyticsPage({
           ) : null}
         </SectionCard>
 
-        <SectionCard
-          title="Automated Daily Maintenance"
-          subtitle="Scheduled health checks and strategy tuning decision reports"
-          className="analytics-maintenance"
-        >
-          {maintenanceLoading ? <p className="small-text">Loading maintenance report...</p> : null}
-          {maintenanceError ? <p className="tone-bad small-text">{maintenanceError}</p> : null}
-          {maintenanceLatest && !maintenanceLatest.available ? (
-            <p className="small-text">
-              {maintenanceLatest.reason ?? "No maintenance report is available yet."}
+      </div>
+    </div>
+  );
+}
+
+function MaintenancePage({
+  timeframe,
+  historyStats,
+  historyStatsLoading,
+  historyStatsError,
+  maintenanceLatest,
+  maintenanceLoading,
+  maintenanceError,
+  maintenanceActionLoading,
+  maintenanceActionMessage,
+  operatorId,
+  onRunMaintenanceAction,
+}: {
+  timeframe: Timeframe;
+  historyStats: StrategyPairsOpportunityHistoryStatsResponse | null;
+  historyStatsLoading: boolean;
+  historyStatsError: string | null;
+  maintenanceLatest: StrategyMaintenanceLatestResponse | null;
+  maintenanceLoading: boolean;
+  maintenanceError: string | null;
+  maintenanceActionLoading: boolean;
+  maintenanceActionMessage: string | null;
+  operatorId: string;
+  onRunMaintenanceAction: (action: "PROMOTE" | "REVERT") => Promise<StrategyMaintenanceActionResponse>;
+}): JSX.Element {
+  const maintenanceReport = maintenanceLatest?.report ?? null;
+  const maintenanceStepEntries = maintenanceReport ? Object.entries(maintenanceReport.steps) : [];
+  const [maintenanceActionError, setMaintenanceActionError] = useState<string | null>(null);
+  const downloadHours = [24, 72, 168];
+  const selectedStats =
+    historyStats?.by_timeframe.find((entry) => entry.timeframe === timeframe) ?? null;
+
+  const runMaintenanceAction = async (action: "PROMOTE" | "REVERT"): Promise<void> => {
+    if (!operatorId.trim().length) {
+      setMaintenanceActionError("Operator ID is required before running PROMOTE/REVERT.");
+      return;
+    }
+    const confirmation = window.confirm(
+      `${action} will apply strategy tuning values and redeploy strategy-service. Continue?`
+    );
+    if (!confirmation) {
+      return;
+    }
+    try {
+      setMaintenanceActionError(null);
+      await onRunMaintenanceAction(action);
+    } catch (error) {
+      setMaintenanceActionError(
+        `Unable to execute ${action}: ${error instanceof Error ? error.message : String(error)}`
+      );
+    }
+  };
+
+  return (
+    <div className="split-grid">
+      <SectionCard
+        title="Opportunity History Downloads"
+        subtitle="Quantify tradeable activity and export PASS/all events by timeframe window"
+      >
+        {historyStatsLoading ? <p className="small-text">Loading history meter...</p> : null}
+        {historyStatsError ? <p className="small-text tone-bad">{historyStatsError}</p> : null}
+        {selectedStats ? (
+          <div className="mini-card">
+            <h3>Retention Meter ({timeframe})</h3>
+            <p>
+              Days covered: <span className="tone-info">{selectedStats.days_covered.toFixed(2)}</span>
             </p>
-          ) : null}
+            <p>Total rows: {selectedStats.rows}</p>
+            <p>
+              Range:{" "}
+              {selectedStats.first_evaluated_at
+                ? new Date(selectedStats.first_evaluated_at).toLocaleString()
+                : "n/a"}{" "}
+              to{" "}
+              {selectedStats.last_evaluated_at
+                ? new Date(selectedStats.last_evaluated_at).toLocaleString()
+                : "n/a"}
+            </p>
+          </div>
+        ) : (
+          <p className="small-text">No history stats available yet for {timeframe}.</p>
+        )}
+        <div className="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Window</th>
+                <th>PASS Only</th>
+                <th>All Rows</th>
+              </tr>
+            </thead>
+            <tbody>
+              {downloadHours.map((hours) => (
+                <tr key={hours}>
+                  <td>{hours === 168 ? "7d" : `${hours}h`}</td>
+                  <td>
+                    <a href={buildStrategyOpportunityHistoryUrl(timeframe, hours, true, 5000)}>
+                      Download
+                    </a>
+                  </td>
+                  <td>
+                    <a href={buildStrategyOpportunityHistoryUrl(timeframe, hours, false, 5000)}>
+                      Download
+                    </a>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </SectionCard>
 
-          {maintenanceReport ? (
-            <>
-              <div className={`status-pill ${maintenanceReport.status === "PASS" ? "ok" : "bad"}`}>
-                Latest cycle: {maintenanceReport.status}
+      <SectionCard
+        title="Automated Daily Maintenance"
+        subtitle="Scheduled health checks and strategy tuning decision reports"
+        className="analytics-maintenance"
+      >
+        {maintenanceLoading ? <p className="small-text">Loading maintenance report...</p> : null}
+        {maintenanceError ? <p className="tone-bad small-text">{maintenanceError}</p> : null}
+        {maintenanceLatest && !maintenanceLatest.available ? (
+          <p className="small-text">
+            {maintenanceLatest.reason ?? "No maintenance report is available yet."}
+          </p>
+        ) : null}
+
+        {maintenanceReport ? (
+          <>
+            <div className={`status-pill ${maintenanceReport.status === "PASS" ? "ok" : "bad"}`}>
+              Latest cycle: {maintenanceReport.status}
+            </div>
+            <p className="small-text">
+              Run: {maintenanceReport.run_id} at {new Date(maintenanceReport.generated_at).toLocaleString()}
+            </p>
+            <p className="small-text">
+              Decision:{" "}
+              <span className={maintenanceReport.decision === "PROMOTE" ? "tone-ok" : "tone-warn"}>
+                {maintenanceReport.decision}
+              </span>
+            </p>
+            <p className="small-text">
+              Operator: <span className="tone-info">{operatorId || "unset"}</span>
+            </p>
+
+            <div className="maintenance-actions">
+              <button
+                type="button"
+                disabled={maintenanceActionLoading}
+                onClick={() => void runMaintenanceAction("PROMOTE")}
+              >
+                One-Click Promote
+              </button>
+              <button
+                type="button"
+                className="danger"
+                disabled={maintenanceActionLoading}
+                onClick={() => void runMaintenanceAction("REVERT")}
+              >
+                One-Click Revert
+              </button>
+            </div>
+            {maintenanceActionLoading ? (
+              <p className="small-text">Running maintenance action...</p>
+            ) : null}
+            {maintenanceActionMessage ? (
+              <p className="small-text tone-info">{maintenanceActionMessage}</p>
+            ) : null}
+            {maintenanceActionError ? (
+              <p className="small-text tone-bad">{maintenanceActionError}</p>
+            ) : null}
+
+            {maintenanceReport.decision_reasons.length ? (
+              <ul className="analytics-explainer-list">
+                {maintenanceReport.decision_reasons.map((reason) => (
+                  <li key={reason}>{reason}</li>
+                ))}
+              </ul>
+            ) : null}
+
+            {maintenanceStepEntries.length ? (
+              <div className="maintenance-steps">
+                {maintenanceStepEntries.map(([stepName, stepResult]) => (
+                  <div key={stepName} className="maintenance-step-row">
+                    <span>{formatMaintenanceStepLabel(stepName)}</span>
+                    <span className={stepResult.pass ? "tone-ok" : "tone-bad"}>
+                      {stepResult.pass ? "PASS" : "FAIL"}
+                    </span>
+                  </div>
+                ))}
               </div>
-              <p className="small-text">
-                Run: {maintenanceReport.run_id} at{" "}
-                {new Date(maintenanceReport.generated_at).toLocaleString()}
-              </p>
-              <p className="small-text">
-                Decision:{" "}
-                <span className={maintenanceReport.decision === "PROMOTE" ? "tone-ok" : "tone-warn"}>
-                  {maintenanceReport.decision}
-                </span>
-              </p>
-              <p className="small-text">
-                Operator: <span className="tone-info">{operatorId || "unset"}</span>
-              </p>
-              <p className="small-text">
-                Opportunity history:
-                {" "}
-                <a href={overnightPassHistoryUrl}>
-                  Download last 12h PASS rows ({historyTimeframe})
-                </a>
-                {" | "}
-                <a href={overnightAllHistoryUrl}>
-                  Download last 12h all rows ({historyTimeframe})
-                </a>
-              </p>
+            ) : null}
 
-              <div className="maintenance-actions">
-                <button
-                  type="button"
-                  disabled={maintenanceActionLoading}
-                  onClick={() => void runMaintenanceAction("PROMOTE")}
-                >
-                  One-Click Promote
-                </button>
-                <button
-                  type="button"
-                  className="danger"
-                  disabled={maintenanceActionLoading}
-                  onClick={() => void runMaintenanceAction("REVERT")}
-                >
-                  One-Click Revert
-                </button>
-              </div>
-              {maintenanceActionLoading ? (
-                <p className="small-text">Running maintenance action...</p>
-              ) : null}
-              {maintenanceActionMessage ? (
-                <p className="small-text tone-info">{maintenanceActionMessage}</p>
-              ) : null}
-              {maintenanceActionError ? (
-                <p className="small-text tone-bad">{maintenanceActionError}</p>
-              ) : null}
-
-              {maintenanceReport.decision_reasons.length ? (
-                <ul className="analytics-explainer-list">
-                  {maintenanceReport.decision_reasons.map((reason) => (
-                    <li key={reason}>{reason}</li>
+            {maintenanceReport.downloads.length ? (
+              <>
+                <h3>Downloads</h3>
+                <ul className="maintenance-downloads">
+                  {maintenanceReport.downloads.map((item) => (
+                    <li key={`${item.label}-${item.path}`}>
+                      <a href={buildStrategyMaintenanceArtifactUrl(item.path)}>{item.label}</a>
+                    </li>
                   ))}
                 </ul>
-              ) : null}
-
-              {maintenanceStepEntries.length ? (
-                <div className="maintenance-steps">
-                  {maintenanceStepEntries.map(([stepName, stepResult]) => (
-                    <div key={stepName} className="maintenance-step-row">
-                      <span>{formatMaintenanceStepLabel(stepName)}</span>
-                      <span className={stepResult.pass ? "tone-ok" : "tone-bad"}>
-                        {stepResult.pass ? "PASS" : "FAIL"}
-                      </span>
-                    </div>
-                  ))}
-                </div>
-              ) : null}
-
-              {maintenanceReport.downloads.length ? (
-                <>
-                  <h3>Downloads</h3>
-                  <ul className="maintenance-downloads">
-                    {maintenanceReport.downloads.map((item) => (
-                      <li key={`${item.label}-${item.path}`}>
-                        <a href={buildStrategyMaintenanceArtifactUrl(item.path)}>{item.label}</a>
-                      </li>
-                    ))}
-                  </ul>
-                </>
-              ) : (
-                <p className="small-text">No downloadable artifacts found for the latest run.</p>
-              )}
-            </>
-          ) : null}
-        </SectionCard>
-      </div>
+              </>
+            ) : (
+              <p className="small-text">No downloadable artifacts found for the latest run.</p>
+            )}
+          </>
+        ) : null}
+      </SectionCard>
     </div>
   );
 }
