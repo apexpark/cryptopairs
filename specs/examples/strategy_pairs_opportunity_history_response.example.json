@@ -1,0 +1,30 @@
+{
+  "timeframe": "1m",
+  "generated_at": "2026-02-23T08:00:00Z",
+  "hours": 12,
+  "only_pass": true,
+  "rows": [
+    {
+      "pair_id": "PF_XBTUSD__PF_ETHUSD",
+      "left_instrument": "PF_XBTUSD",
+      "right_instrument": "PF_ETHUSD",
+      "timeframe": "1m",
+      "selected_variant": "ROBUST_Z",
+      "regime": "CALM",
+      "direction_hint": "LONG_SPREAD",
+      "spread_z": -2.14,
+      "opportunity_score": 2.97,
+      "net_edge_bps": 0.84,
+      "cost_gate_pass": true,
+      "actionable": true,
+      "rationale_codes": [
+        "COST_PASS",
+        "HALF_LIFE_OK"
+      ],
+      "cost_gate_rationale_codes": [
+        "EDGE_CLEAR"
+      ],
+      "evaluated_at": "2026-02-23T07:59:00Z"
+    }
+  ]
+}

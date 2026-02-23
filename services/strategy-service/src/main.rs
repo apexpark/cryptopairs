@@ -342,6 +342,25 @@ impl StrategyRepository {
                     decision TEXT NOT NULL,
                     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
                     PRIMARY KEY (pair_id, timeframe, event_at)
+                 );
+                 CREATE TABLE IF NOT EXISTS strategy_opportunity_history (
+                    pair_id TEXT NOT NULL,
+                    timeframe TEXT NOT NULL,
+                    evaluated_at TIMESTAMPTZ NOT NULL,
+                    left_instrument TEXT NOT NULL,
+                    right_instrument TEXT NOT NULL,
+                    selected_variant TEXT NOT NULL,
+                    regime TEXT NOT NULL,
+                    direction_hint TEXT NOT NULL,
+                    spread_z DOUBLE PRECISION NOT NULL,
+                    opportunity_score DOUBLE PRECISION NOT NULL,
+                    net_edge_bps DOUBLE PRECISION NOT NULL,
+                    cost_gate_pass BOOLEAN NOT NULL,
+                    actionable BOOLEAN NOT NULL,
+                    rationale_codes TEXT NOT NULL DEFAULT '',
+                    cost_gate_rationale_codes TEXT NOT NULL DEFAULT '',
+                    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                    PRIMARY KEY (pair_id, timeframe, evaluated_at)
                  );",
             )
             .await?;
@@ -467,6 +486,101 @@ impl StrategyRepository {
         }
 
         Ok(summary)
+    }
+
+    async fn record_opportunity_history(
+        &self,
+        timeframe: Timeframe,
+        evaluation: &PairEvaluationOutput,
+    ) -> anyhow::Result<u64> {
+        let rationale_codes = evaluation.cue.rationale_codes.join("|");
+        let cost_gate_rationale_codes = evaluation.cue.cost_gate.rationale_codes.join("|");
+        let written = self
+            .client
+            .execute(
+                "INSERT INTO strategy_opportunity_history
+                 (pair_id, timeframe, evaluated_at, left_instrument, right_instrument, selected_variant, regime,
+                  direction_hint, spread_z, opportunity_score, net_edge_bps, cost_gate_pass, actionable,
+                  rationale_codes, cost_gate_rationale_codes)
+                 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
+                 ON CONFLICT (pair_id, timeframe, evaluated_at)
+                 DO UPDATE SET
+                    left_instrument = EXCLUDED.left_instrument,
+                    right_instrument = EXCLUDED.right_instrument,
+                    selected_variant = EXCLUDED.selected_variant,
+                    regime = EXCLUDED.regime,
+                    direction_hint = EXCLUDED.direction_hint,
+                    spread_z = EXCLUDED.spread_z,
+                    opportunity_score = EXCLUDED.opportunity_score,
+                    net_edge_bps = EXCLUDED.net_edge_bps,
+                    cost_gate_pass = EXCLUDED.cost_gate_pass,
+                    actionable = EXCLUDED.actionable,
+                    rationale_codes = EXCLUDED.rationale_codes,
+                    cost_gate_rationale_codes = EXCLUDED.cost_gate_rationale_codes",
+                &[
+                    &evaluation.cue.pair_id as &(dyn ToSql + Sync),
+                    &timeframe.as_str(),
+                    &evaluation.cue.evaluated_at,
+                    &evaluation.cue.left_instrument,
+                    &evaluation.cue.right_instrument,
+                    &evaluation.cue.selected_variant,
+                    &evaluation.cue.regime,
+                    &evaluation.cue.direction_hint,
+                    &evaluation.cue.spread_z,
+                    &evaluation.cue.opportunity_score,
+                    &evaluation.cue.cost_gate.net_edge_bps,
+                    &evaluation.cue.cost_gate.pass,
+                    &evaluation.cue.actionable,
+                    &rationale_codes,
+                    &cost_gate_rationale_codes,
+                ],
+            )
+            .await?;
+        Ok(written)
+    }
+
+    async fn fetch_opportunity_history(
+        &self,
+        timeframe: Timeframe,
+        since: DateTime<Utc>,
+        only_pass: bool,
+        limit: i64,
+    ) -> anyhow::Result<Vec<OpportunityHistoryEntry>> {
+        let rows = self
+            .client
+            .query(
+                "SELECT pair_id, left_instrument, right_instrument, timeframe, selected_variant, regime,
+                        direction_hint, spread_z, opportunity_score, net_edge_bps, cost_gate_pass, actionable,
+                        rationale_codes, cost_gate_rationale_codes, evaluated_at
+                 FROM strategy_opportunity_history
+                 WHERE timeframe=$1
+                   AND evaluated_at >= $2
+                   AND ($3 = FALSE OR (actionable = TRUE AND cost_gate_pass = TRUE))
+                 ORDER BY evaluated_at DESC
+                 LIMIT $4",
+                &[&timeframe.as_str(), &since, &only_pass, &limit],
+            )
+            .await?;
+        Ok(rows
+            .into_iter()
+            .map(|row| OpportunityHistoryEntry {
+                pair_id: row.get(0),
+                left_instrument: row.get(1),
+                right_instrument: row.get(2),
+                timeframe: row.get(3),
+                selected_variant: row.get(4),
+                regime: row.get(5),
+                direction_hint: row.get(6),
+                spread_z: row.get(7),
+                opportunity_score: row.get(8),
+                net_edge_bps: row.get(9),
+                cost_gate_pass: row.get(10),
+                actionable: row.get(11),
+                rationale_codes: split_codes(row.get::<usize, String>(12)),
+                cost_gate_rationale_codes: split_codes(row.get::<usize, String>(13)),
+                evaluated_at: row.get(14),
+            })
+            .collect())
     }
 
     async fn upsert_selected_signal(
@@ -741,6 +855,14 @@ struct LiveZQuery {
 }
 
 #[derive(Debug, Deserialize)]
+struct OpportunityHistoryQuery {
+    timeframe: String,
+    hours: Option<i64>,
+    only_pass: Option<bool>,
+    limit: Option<usize>,
+}
+
+#[derive(Debug, Deserialize)]
 struct ReoptimizeRequest {
     timeframes: Option<Vec<String>>,
 }
@@ -872,6 +994,34 @@ struct PortfolioPlanResponse {
     generated_at: DateTime<Utc>,
     plan: PortfolioPlan,
     skipped: Vec<SkippedPair>,
+}
+
+#[derive(Debug, Serialize)]
+struct OpportunityHistoryEntry {
+    pair_id: String,
+    left_instrument: String,
+    right_instrument: String,
+    timeframe: String,
+    selected_variant: String,
+    regime: String,
+    direction_hint: String,
+    spread_z: f64,
+    opportunity_score: f64,
+    net_edge_bps: f64,
+    cost_gate_pass: bool,
+    actionable: bool,
+    rationale_codes: Vec<String>,
+    cost_gate_rationale_codes: Vec<String>,
+    evaluated_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Serialize)]
+struct OpportunityHistoryResponse {
+    timeframe: String,
+    generated_at: DateTime<Utc>,
+    hours: i64,
+    only_pass: bool,
+    rows: Vec<OpportunityHistoryEntry>,
 }
 
 #[derive(Debug, Serialize)]
@@ -1023,6 +1173,14 @@ async fn main() -> anyhow::Result<()> {
         .route("/v1/strategy/pairs/live-z", get(pairs_live_z))
         .route("/v1/strategy/pairs/cost-gate", get(pairs_cost_gate))
         .route(
+            "/v1/strategy/pairs/opportunity-history",
+            get(pairs_opportunity_history),
+        )
+        .route(
+            "/v1/strategy/pairs/opportunity-history/download",
+            get(pairs_opportunity_history_download),
+        )
+        .route(
             "/v1/strategy/pairs/portfolio-plan",
             get(pairs_portfolio_plan),
         )
@@ -1164,6 +1322,18 @@ fn spawn_reoptimize_worker(state: AppState) -> tokio::task::JoinHandle<()> {
                             );
                         }
                     }
+                    if let Err(error) = state
+                        .repository
+                        .record_opportunity_history(*timeframe, &output)
+                        .await
+                    {
+                        tracing::warn!(
+                            pair_id = %output.cue.pair_id,
+                            timeframe = %timeframe.as_str(),
+                            error = %error,
+                            "failed to persist opportunity history row"
+                        );
+                    }
                 }
             }
 
@@ -1294,6 +1464,19 @@ fn artifact_download_path(root: &Path, absolute_path: &Path) -> String {
         return relative.to_string_lossy().to_string();
     }
     canonical_target.to_string_lossy().to_string()
+}
+
+fn split_codes(raw: String) -> Vec<String> {
+    raw.split('|')
+        .filter_map(|item| {
+            let trimmed = item.trim();
+            if trimmed.is_empty() {
+                None
+            } else {
+                Some(trimmed.to_string())
+            }
+        })
+        .collect()
 }
 
 fn write_json_atomic(path: &Path, value: &impl Serialize) -> Result<(), ApiError> {
@@ -1650,6 +1833,71 @@ async fn pairs_cost_gate(
     }))
 }
 
+fn parse_opportunity_history_window(
+    query: &OpportunityHistoryQuery,
+) -> Result<(Timeframe, i64, bool, i64), ApiError> {
+    let timeframe = Timeframe::parse(&query.timeframe).ok_or_else(|| {
+        ApiError::BadRequest("invalid timeframe; expected 1m, 15m, 1h".to_string())
+    })?;
+    let hours = query.hours.unwrap_or(12).clamp(1, 168);
+    let only_pass = query.only_pass.unwrap_or(true);
+    let limit = query.limit.unwrap_or(5_000).clamp(1, 20_000) as i64;
+    Ok((timeframe, hours, only_pass, limit))
+}
+
+async fn build_opportunity_history_response(
+    state: &AppState,
+    query: &OpportunityHistoryQuery,
+) -> Result<OpportunityHistoryResponse, ApiError> {
+    let (timeframe, hours, only_pass, limit) = parse_opportunity_history_window(query)?;
+    let since = Utc::now() - chrono::Duration::hours(hours);
+    let rows = state
+        .repository
+        .fetch_opportunity_history(timeframe, since, only_pass, limit)
+        .await
+        .map_err(|error| ApiError::Upstream(error.to_string()))?;
+
+    Ok(OpportunityHistoryResponse {
+        timeframe: timeframe.as_str().to_string(),
+        generated_at: Utc::now(),
+        hours,
+        only_pass,
+        rows,
+    })
+}
+
+async fn pairs_opportunity_history(
+    State(state): State<AppState>,
+    Query(query): Query<OpportunityHistoryQuery>,
+) -> Result<Json<OpportunityHistoryResponse>, ApiError> {
+    Ok(Json(
+        build_opportunity_history_response(&state, &query).await?,
+    ))
+}
+
+async fn pairs_opportunity_history_download(
+    State(state): State<AppState>,
+    Query(query): Query<OpportunityHistoryQuery>,
+) -> Result<Response, ApiError> {
+    let payload = build_opportunity_history_response(&state, &query).await?;
+    let mut headers = HeaderMap::new();
+    headers.insert(
+        header::CONTENT_TYPE,
+        HeaderValue::from_static("application/json"),
+    );
+    headers.insert(
+        header::CONTENT_DISPOSITION,
+        HeaderValue::from_str(&format!(
+            "attachment; filename=\"opportunity-history-{}-{}h.json\"",
+            payload.timeframe, payload.hours
+        ))
+        .map_err(|error| ApiError::Upstream(error.to_string()))?,
+    );
+    let body = serde_json::to_vec_pretty(&payload)
+        .map_err(|error| ApiError::Upstream(error.to_string()))?;
+    Ok((StatusCode::OK, headers, body).into_response())
+}
+
 async fn pairs_backtest(
     State(state): State<AppState>,
     Query(query): Query<BacktestQuery>,
@@ -1998,6 +2246,18 @@ async fn reoptimize(
                     timeframe: timeframe.as_str().to_string(),
                     error: format!("shadow model run persist failed: {error}"),
                 });
+                continue;
+            }
+            if let Err(error) = state
+                .repository
+                .record_opportunity_history(*timeframe, &output)
+                .await
+            {
+                errors.push(ReoptError {
+                    pair_id: output.cue.pair_id,
+                    timeframe: timeframe.as_str().to_string(),
+                    error: format!("opportunity history persist failed: {error}"),
+                });
             }
         }
     }
@@ -2298,8 +2558,9 @@ fn parse_env_bool(key: &str, default: bool) -> bool {
 #[cfg(test)]
 mod tests {
     use super::{
-        artifact_download_path, decide_champion_transition, resolve_artifact_path,
-        ChampionDecision, MaintenanceAction, SelectedSignalRow,
+        artifact_download_path, decide_champion_transition, parse_opportunity_history_window,
+        resolve_artifact_path, ChampionDecision, MaintenanceAction, OpportunityHistoryQuery,
+        SelectedSignalRow,
     };
     use chrono::Utc;
     use std::fs;
@@ -2484,6 +2745,34 @@ mod tests {
             Some(MaintenanceAction::Revert)
         ));
         assert!(MaintenanceAction::parse("hold").is_none());
+    }
+
+    #[test]
+    fn opportunity_history_window_defaults_and_bounds() {
+        let query = OpportunityHistoryQuery {
+            timeframe: "1m".to_string(),
+            hours: Some(999),
+            only_pass: None,
+            limit: Some(99_999),
+        };
+        let (timeframe, hours, only_pass, limit) =
+            parse_opportunity_history_window(&query).expect("parse history query");
+        assert_eq!(timeframe.as_str(), "1m");
+        assert_eq!(hours, 168);
+        assert!(only_pass);
+        assert_eq!(limit, 20_000);
+    }
+
+    #[test]
+    fn opportunity_history_window_rejects_invalid_timeframe() {
+        let query = OpportunityHistoryQuery {
+            timeframe: "5m".to_string(),
+            hours: Some(12),
+            only_pass: Some(true),
+            limit: Some(100),
+        };
+        let result = parse_opportunity_history_window(&query);
+        assert!(result.is_err());
     }
 
     #[test]

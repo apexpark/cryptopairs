@@ -1,0 +1,76 @@
+{
+  "$id": "https://cryptopairs/specs/contracts/strategy_pairs_opportunity_history_response.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "StrategyPairsOpportunityHistoryResponse",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["timeframe", "generated_at", "hours", "only_pass", "rows"],
+  "properties": {
+    "timeframe": {
+      "type": "string",
+      "enum": ["1m", "15m", "1h"]
+    },
+    "generated_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "hours": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 168
+    },
+    "only_pass": {
+      "type": "boolean"
+    },
+    "rows": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "pair_id",
+          "left_instrument",
+          "right_instrument",
+          "timeframe",
+          "selected_variant",
+          "regime",
+          "direction_hint",
+          "spread_z",
+          "opportunity_score",
+          "net_edge_bps",
+          "cost_gate_pass",
+          "actionable",
+          "rationale_codes",
+          "cost_gate_rationale_codes",
+          "evaluated_at"
+        ],
+        "properties": {
+          "pair_id": { "type": "string" },
+          "left_instrument": { "type": "string" },
+          "right_instrument": { "type": "string" },
+          "timeframe": { "type": "string", "enum": ["1m", "15m", "1h"] },
+          "selected_variant": { "type": "string" },
+          "regime": { "type": "string" },
+          "direction_hint": { "type": "string", "enum": ["LONG_SPREAD", "SHORT_SPREAD", "NONE"] },
+          "spread_z": { "type": "number" },
+          "opportunity_score": { "type": "number" },
+          "net_edge_bps": { "type": "number" },
+          "cost_gate_pass": { "type": "boolean" },
+          "actionable": { "type": "boolean" },
+          "rationale_codes": {
+            "type": "array",
+            "items": { "type": "string" }
+          },
+          "cost_gate_rationale_codes": {
+            "type": "array",
+            "items": { "type": "string" }
+          },
+          "evaluated_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      }
+    }
+  }
+}

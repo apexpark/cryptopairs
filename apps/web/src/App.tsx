@@ -7,6 +7,7 @@ import {
 } from "./lib/orderLifecycle";
 import {
   buildStrategyMaintenanceArtifactUrl,
+  buildStrategyOpportunityHistoryUrl,
   fetchStrategyMaintenanceLatest,
   runStrategyMaintenanceAction,
   fetchExecutionPortfolioPositions,
@@ -1304,6 +1305,7 @@ function App(): JSX.Element {
       return (
         <AnalyticsPage
           cues={cuesResponse}
+          timeframe={timeframe}
           selectedPairId={currentPairId}
           onSelectPair={setSelectedPairId}
           zSeries={zSeries}
@@ -1925,6 +1927,7 @@ function HowThisWorksPage(): JSX.Element {
 
 function AnalyticsPage({
   cues,
+  timeframe,
   selectedPairId,
   onSelectPair,
   zSeries,
@@ -1943,6 +1946,7 @@ function AnalyticsPage({
   onRunMaintenanceAction,
 }: {
   cues: StrategyPairsCuesResponse | null;
+  timeframe: Timeframe;
   selectedPairId: string;
   onSelectPair: (value: string) => void;
   zSeries: number[];
@@ -1962,6 +1966,9 @@ function AnalyticsPage({
 }): JSX.Element {
   const selected = cues?.cues.find((entry) => entry.cue.pair_id === selectedPairId) ?? cues?.cues[0];
   const actionabilityExplanation = explainPairActionability(selected);
+  const historyTimeframe = selected?.cue.timeframe ?? timeframe;
+  const overnightPassHistoryUrl = buildStrategyOpportunityHistoryUrl(historyTimeframe, 12, true, 5000);
+  const overnightAllHistoryUrl = buildStrategyOpportunityHistoryUrl(historyTimeframe, 12, false, 5000);
   const maintenanceReport = maintenanceLatest?.report ?? null;
   const maintenanceStepEntries = maintenanceReport ? Object.entries(maintenanceReport.steps) : [];
   const [maintenanceActionError, setMaintenanceActionError] = useState<string | null>(null);
@@ -2140,6 +2147,17 @@ function AnalyticsPage({
               </p>
               <p className="small-text">
                 Operator: <span className="tone-info">{operatorId || "unset"}</span>
+              </p>
+              <p className="small-text">
+                Opportunity history:
+                {" "}
+                <a href={overnightPassHistoryUrl}>
+                  Download last 12h PASS rows ({historyTimeframe})
+                </a>
+                {" | "}
+                <a href={overnightAllHistoryUrl}>
+                  Download last 12h all rows ({historyTimeframe})
+                </a>
               </p>
 
               <div className="maintenance-actions">

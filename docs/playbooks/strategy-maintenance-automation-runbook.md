@@ -70,6 +70,9 @@ Analytics tab reads:
 - `GET /v1/strategy/maintenance/latest`
 - artifact downloads via `GET /v1/strategy/maintenance/artifact?path=...`
 - manual one-click actions via `POST /v1/strategy/maintenance/action` (enqueue only)
+- opportunity history downloads via:
+  - `GET /v1/strategy/pairs/opportunity-history?timeframe=<1m|15m|1h>&hours=<n>&only_pass=<bool>&limit=<n>`
+  - `GET /v1/strategy/pairs/opportunity-history/download?timeframe=<1m|15m|1h>&hours=<n>&only_pass=<bool>&limit=<n>`
 
 If available, report downloads appear in the Analytics panel.
 

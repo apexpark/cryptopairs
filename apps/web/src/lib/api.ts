@@ -107,6 +107,17 @@ export function buildStrategyMaintenanceArtifactUrl(path: string): string {
   )}`;
 }
 
+export function buildStrategyOpportunityHistoryUrl(
+  timeframe: Timeframe,
+  hours = 12,
+  onlyPass = true,
+  limit = 5000
+): string {
+  return `${STRATEGY_SERVICE_BASE_URL}/v1/strategy/pairs/opportunity-history/download?timeframe=${encodeURIComponent(
+    timeframe
+  )}&hours=${hours}&only_pass=${onlyPass ? "true" : "false"}&limit=${limit}`;
+}
+
 export async function fetchKillSwitchState(): Promise<KillSwitchState> {
   const url = `${EXECUTION_SERVICE_BASE_URL}/v1/execution/kill-switch`;
   return parseJson<KillSwitchState>(await fetch(url));

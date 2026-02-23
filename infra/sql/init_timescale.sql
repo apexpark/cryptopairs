@@ -193,3 +193,23 @@ CREATE TABLE IF NOT EXISTS strategy_champion_drift_events (
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   PRIMARY KEY (pair_id, timeframe, event_at)
 );
+
+CREATE TABLE IF NOT EXISTS strategy_opportunity_history (
+  pair_id TEXT NOT NULL,
+  timeframe TEXT NOT NULL,
+  evaluated_at TIMESTAMPTZ NOT NULL,
+  left_instrument TEXT NOT NULL,
+  right_instrument TEXT NOT NULL,
+  selected_variant TEXT NOT NULL,
+  regime TEXT NOT NULL,
+  direction_hint TEXT NOT NULL,
+  spread_z DOUBLE PRECISION NOT NULL,
+  opportunity_score DOUBLE PRECISION NOT NULL,
+  net_edge_bps DOUBLE PRECISION NOT NULL,
+  cost_gate_pass BOOLEAN NOT NULL,
+  actionable BOOLEAN NOT NULL,
+  rationale_codes TEXT NOT NULL DEFAULT '',
+  cost_gate_rationale_codes TEXT NOT NULL DEFAULT '',
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  PRIMARY KEY (pair_id, timeframe, evaluated_at)
+);
