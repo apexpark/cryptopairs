@@ -65,6 +65,7 @@ Expected:
 Analytics tab reads:
 - `GET /v1/strategy/maintenance/latest`
 - artifact downloads via `GET /v1/strategy/maintenance/artifact?path=...`
+- manual one-click actions via `POST /v1/strategy/maintenance/action`
 
 If available, report downloads appear in the Analytics panel.
 

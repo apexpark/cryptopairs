@@ -25,9 +25,15 @@ This project follows SemVer as defined in `docs/02-versioning-and-releases.md`.
 - Strategy maintenance report API + UI integration:
   - `GET /v1/strategy/maintenance/latest`
   - `GET /v1/strategy/maintenance/artifact?path=...`
+  - `POST /v1/strategy/maintenance/action` (manual operator-triggered `PROMOTE` / `REVERT`)
   - Analytics tab panel with downloadable maintenance artifacts
   - `specs/contracts/strategy_maintenance_latest_response.schema.json`
   - `specs/examples/strategy_maintenance_latest_response.example.json`
+- Strategy maintenance one-click operator controls:
+  - Analytics panel buttons for `One-Click Promote` and `One-Click Revert`
+  - Human-readable action result surfaced in-panel
+  - `specs/contracts/strategy_maintenance_action_response.schema.json`
+  - `specs/examples/strategy_maintenance_action_response.example.json`
 - Strategy module implementation spec derived from SSRN 151 Trading Strategies review: `docs/18-strategy-module-implementation-spec.md`.
 - Initial documentation suite and agent governance scaffolding.
 - Rust workspace foundation with:

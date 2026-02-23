@@ -222,6 +222,23 @@ export interface StrategyMaintenanceLatestResponse {
   artifact_download_route: string;
 }
 
+export interface StrategyMaintenanceActionRequest {
+  action: "PROMOTE" | "REVERT";
+  operator_id: string;
+  confirm: boolean;
+}
+
+export interface StrategyMaintenanceActionResponse {
+  accepted: boolean;
+  action: "PROMOTE" | "REVERT";
+  operator_id: string;
+  pass: boolean;
+  generated_at: string;
+  report_download_path: string;
+  report: Record<string, unknown> | null;
+  error: string | null;
+}
+
 export interface IntegrityHistoryResponse {
   instrument: string;
   timeframe: Timeframe;

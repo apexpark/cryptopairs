@@ -18,7 +18,9 @@ use strategy_service::{
     PortfolioPlan, Regime, ShadowModelTrainingRow, SignalVariant,
 };
 use tokio::net::TcpListener;
+use tokio::process::Command;
 use tokio_postgres::{types::ToSql, Client, NoTls};
+use tokio::time::{timeout, Duration};
 use tower_http::cors::{Any, CorsLayer};
 use tracing::info;
 
@@ -75,6 +77,12 @@ struct StrategySettings {
     block_on_champion_drift: bool,
     maintenance_report_path: String,
     maintenance_artifacts_root: String,
+    maintenance_apply_script_path: String,
+    maintenance_env_file_path: String,
+    maintenance_deploy_script_path: String,
+    maintenance_action_output_root: String,
+    maintenance_action_timeout_secs: u64,
+    maintenance_action_skip_pull: bool,
 }
 
 impl StrategySettings {
@@ -117,6 +125,21 @@ impl StrategySettings {
             });
         let maintenance_artifacts_root = std::env::var("STRATEGY_MAINTENANCE_ARTIFACT_ROOT")
             .unwrap_or_else(|_| "artifacts/strategy_tuning".to_string());
+        let maintenance_apply_script_path =
+            std::env::var("STRATEGY_MAINTENANCE_APPLY_SCRIPT_PATH")
+                .unwrap_or_else(|_| "tools/scripts/strategy_tuning_apply.py".to_string());
+        let maintenance_env_file_path = std::env::var("STRATEGY_MAINTENANCE_ENV_FILE_PATH")
+            .unwrap_or_else(|_| ".env.hosted".to_string());
+        let maintenance_deploy_script_path =
+            std::env::var("STRATEGY_MAINTENANCE_DEPLOY_SCRIPT_PATH")
+                .unwrap_or_else(|_| "scripts/deploy.sh".to_string());
+        let maintenance_action_output_root =
+            std::env::var("STRATEGY_MAINTENANCE_ACTION_OUTPUT_ROOT")
+                .unwrap_or_else(|_| "artifacts/strategy_tuning/manual_actions".to_string());
+        let maintenance_action_timeout_secs =
+            parse_env_u64("STRATEGY_MAINTENANCE_ACTION_TIMEOUT_SECS", 300);
+        let maintenance_action_skip_pull =
+            parse_env_bool("STRATEGY_MAINTENANCE_ACTION_SKIP_PULL", true);
 
         Self {
             bind_addr: format!("0.0.0.0:{port}"),
@@ -152,6 +175,12 @@ impl StrategySettings {
             block_on_champion_drift,
             maintenance_report_path,
             maintenance_artifacts_root,
+            maintenance_apply_script_path,
+            maintenance_env_file_path,
+            maintenance_deploy_script_path,
+            maintenance_action_output_root,
+            maintenance_action_timeout_secs,
+            maintenance_action_skip_pull,
         }
     }
 
@@ -719,6 +748,13 @@ struct MaintenanceArtifactQuery {
     path: String,
 }
 
+#[derive(Debug, Deserialize)]
+struct MaintenanceActionRequest {
+    action: String,
+    operator_id: String,
+    confirm: bool,
+}
+
 #[derive(Debug, Serialize)]
 struct HealthResponse {
     status: &'static str,
@@ -867,6 +903,48 @@ struct MaintenanceLatestResponse {
 }
 
 #[derive(Debug, Serialize)]
+struct MaintenanceActionResponse {
+    accepted: bool,
+    action: String,
+    operator_id: String,
+    pass: bool,
+    generated_at: DateTime<Utc>,
+    report_download_path: String,
+    report: Option<serde_json::Value>,
+    error: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy)]
+enum MaintenanceAction {
+    Promote,
+    Revert,
+}
+
+impl MaintenanceAction {
+    fn parse(value: &str) -> Option<Self> {
+        match value.trim().to_uppercase().as_str() {
+            "PROMOTE" => Some(Self::Promote),
+            "REVERT" => Some(Self::Revert),
+            _ => None,
+        }
+    }
+
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Promote => "PROMOTE",
+            Self::Revert => "REVERT",
+        }
+    }
+
+    fn script_mode(self) -> &'static str {
+        match self {
+            Self::Promote => "promote",
+            Self::Revert => "revert",
+        }
+    }
+}
+
+#[derive(Debug, Serialize)]
 struct ReoptError {
     pair_id: String,
     timeframe: String,
@@ -935,6 +1013,10 @@ async fn main() -> anyhow::Result<()> {
             "/v1/strategy/maintenance/artifact",
             get(maintenance_artifact),
         )
+        .route(
+            "/v1/strategy/maintenance/action",
+            post(maintenance_action),
+        )
         .layer(cors)
         .with_state(state);
 
@@ -958,6 +1040,12 @@ async fn main() -> anyhow::Result<()> {
         block_on_champion_drift = settings.block_on_champion_drift,
         maintenance_report_path = %settings.maintenance_report_path,
         maintenance_artifacts_root = %settings.maintenance_artifacts_root,
+        maintenance_apply_script_path = %settings.maintenance_apply_script_path,
+        maintenance_env_file_path = %settings.maintenance_env_file_path,
+        maintenance_deploy_script_path = %settings.maintenance_deploy_script_path,
+        maintenance_action_output_root = %settings.maintenance_action_output_root,
+        maintenance_action_timeout_secs = settings.maintenance_action_timeout_secs,
+        maintenance_action_skip_pull = settings.maintenance_action_skip_pull,
         "strategy-service started"
     );
 
@@ -1175,6 +1263,17 @@ fn resolve_artifact_path(root: &Path, requested: &str) -> Result<PathBuf, ApiErr
     Ok(canonical_candidate)
 }
 
+fn artifact_download_path(root: &Path, absolute_path: &Path) -> String {
+    let canonical_root = root.canonicalize().unwrap_or_else(|_| root.to_path_buf());
+    let canonical_target = absolute_path
+        .canonicalize()
+        .unwrap_or_else(|_| absolute_path.to_path_buf());
+    if let Ok(relative) = canonical_target.strip_prefix(&canonical_root) {
+        return relative.to_string_lossy().to_string();
+    }
+    canonical_target.to_string_lossy().to_string()
+}
+
 fn content_type_for_path(path: &Path) -> &'static str {
     match path.extension().and_then(|value| value.to_str()) {
         Some("json") => "application/json",
@@ -1259,6 +1358,134 @@ async fn maintenance_artifact(
     headers.insert(header::CONTENT_DISPOSITION, disposition_value);
 
     Ok((StatusCode::OK, headers, content).into_response())
+}
+
+async fn maintenance_action(
+    State(state): State<AppState>,
+    Json(request): Json<MaintenanceActionRequest>,
+) -> Result<Json<MaintenanceActionResponse>, ApiError> {
+    let action = MaintenanceAction::parse(&request.action).ok_or_else(|| {
+        ApiError::BadRequest("invalid action; expected PROMOTE or REVERT".to_string())
+    })?;
+    let operator_id = request.operator_id.trim().to_string();
+    if operator_id.is_empty() {
+        return Err(ApiError::BadRequest(
+            "operator_id is required for maintenance actions".to_string(),
+        ));
+    }
+    if !request.confirm {
+        return Err(ApiError::BadRequest(
+            "confirm=true is required to run maintenance actions".to_string(),
+        ));
+    }
+
+    let generated_at = Utc::now();
+    let artifact_root = resolve_workspace_path(&state.settings.maintenance_artifacts_root);
+    let output_root = resolve_workspace_path(&state.settings.maintenance_action_output_root);
+    std::fs::create_dir_all(&output_root).map_err(|error| {
+        ApiError::Upstream(format!(
+            "unable to create action output directory '{}': {error}",
+            output_root.display()
+        ))
+    })?;
+
+    let stamp = generated_at.format("%Y-%m-%dT%H-%M-%SZ");
+    let output_filename = format!("{}-{}-apply.json", stamp, action.script_mode());
+    let output_path = output_root.join(output_filename);
+
+    let apply_script_path = resolve_workspace_path(&state.settings.maintenance_apply_script_path);
+    let env_file_path = resolve_workspace_path(&state.settings.maintenance_env_file_path);
+    let deploy_script_path = resolve_workspace_path(&state.settings.maintenance_deploy_script_path);
+
+    let mut command = Command::new("python3");
+    command.current_dir("/workspace");
+    command.arg(&apply_script_path);
+    command.arg("--mode").arg(action.script_mode());
+    command.arg("--policy-json").arg("infra/config/strategy_tuning_policy.json");
+    command.arg("--env-file").arg(env_file_path.as_os_str());
+    command
+        .arg("--deploy-script")
+        .arg(deploy_script_path.as_os_str());
+    command.arg("--services").arg("strategy-service");
+    command.arg("--output-json").arg(output_path.as_os_str());
+    if state.settings.maintenance_action_skip_pull {
+        command.arg("--skip-pull");
+    } else {
+        command.arg("--no-skip-pull");
+    }
+
+    let action_timeout = Duration::from_secs(state.settings.maintenance_action_timeout_secs.max(1));
+    let command_output = timeout(action_timeout, command.output())
+        .await
+        .map_err(|_| {
+            ApiError::Upstream(format!(
+                "maintenance action timed out after {}s",
+                state.settings.maintenance_action_timeout_secs
+            ))
+        })?
+        .map_err(|error| ApiError::Upstream(format!("failed to execute maintenance action: {error}")))?;
+
+    let mut pass = command_output.status.success();
+    let mut error: Option<String> = None;
+    let mut report: Option<serde_json::Value> = None;
+    if output_path.exists() {
+        match std::fs::read_to_string(&output_path) {
+            Ok(raw) => match serde_json::from_str::<serde_json::Value>(&raw) {
+                Ok(parsed) => {
+                    if let Some(report_pass) = parsed.get("pass").and_then(|value| value.as_bool()) {
+                        pass = report_pass;
+                    }
+                    report = Some(parsed);
+                }
+                Err(parse_error) => {
+                    error = Some(format!(
+                        "unable to parse action report '{}': {parse_error}",
+                        output_path.display()
+                    ));
+                }
+            },
+            Err(read_error) => {
+                error = Some(format!(
+                    "unable to read action report '{}': {read_error}",
+                    output_path.display()
+                ));
+            }
+        }
+    } else {
+        let stderr_tail = String::from_utf8_lossy(&command_output.stderr);
+        error = Some(format!(
+            "action report not produced at '{}'; stderr tail: {}",
+            output_path.display(),
+            stderr_tail
+        ));
+    }
+
+    if !command_output.status.success() && error.is_none() {
+        error = Some(format!(
+            "maintenance action command exited with code {:?}",
+            command_output.status.code()
+        ));
+    }
+
+    let report_download_path = artifact_download_path(&artifact_root, &output_path);
+    info!(
+        action = action.as_str(),
+        operator_id = %operator_id,
+        pass,
+        report_path = %report_download_path,
+        "maintenance action executed"
+    );
+
+    Ok(Json(MaintenanceActionResponse {
+        accepted: true,
+        action: action.as_str().to_string(),
+        operator_id,
+        pass,
+        generated_at,
+        report_download_path,
+        report,
+        error,
+    }))
 }
 
 async fn pairs_cues(
@@ -2031,7 +2258,8 @@ fn parse_env_bool(key: &str, default: bool) -> bool {
 #[cfg(test)]
 mod tests {
     use super::{
-        decide_champion_transition, resolve_artifact_path, ChampionDecision, SelectedSignalRow,
+        artifact_download_path, decide_champion_transition, resolve_artifact_path, ChampionDecision,
+        MaintenanceAction, SelectedSignalRow,
     };
     use chrono::Utc;
     use std::fs;
@@ -2198,6 +2426,32 @@ mod tests {
             resolved.canonicalize().expect("canonical target"),
             target.canonicalize().expect("canonical resolved")
         );
+
+        fs::remove_dir_all(&root).expect("cleanup root");
+    }
+    #[test]
+    fn maintenance_action_parse_accepts_promote_and_revert() {
+        assert!(matches!(
+            MaintenanceAction::parse("PROMOTE"),
+            Some(MaintenanceAction::Promote)
+        ));
+        assert!(matches!(
+            MaintenanceAction::parse("revert"),
+            Some(MaintenanceAction::Revert)
+        ));
+        assert!(MaintenanceAction::parse("hold").is_none());
+    }
+
+    #[test]
+    fn artifact_download_path_returns_path_relative_to_root() {
+        let root = temp_dir("artifact-download-root");
+        let nested = root.join("manual_actions");
+        fs::create_dir_all(&nested).expect("create nested dir");
+        let target = nested.join("example.json");
+        fs::write(&target, b"{\"ok\":true}").expect("write report");
+
+        let relative = artifact_download_path(&root, &target);
+        assert_eq!(relative, "manual_actions/example.json");
 
         fs::remove_dir_all(&root).expect("cleanup root");
     }

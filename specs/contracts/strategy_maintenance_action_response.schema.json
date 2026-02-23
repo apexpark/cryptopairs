@@ -1,0 +1,46 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://apexpark.io/specs/contracts/strategy_maintenance_action_response.schema.json",
+  "title": "StrategyMaintenanceActionResponse",
+  "type": "object",
+  "required": [
+    "accepted",
+    "action",
+    "operator_id",
+    "pass",
+    "generated_at",
+    "report_download_path",
+    "report",
+    "error"
+  ],
+  "properties": {
+    "accepted": {
+      "type": "boolean"
+    },
+    "action": {
+      "type": "string",
+      "enum": ["PROMOTE", "REVERT"]
+    },
+    "operator_id": {
+      "type": "string"
+    },
+    "pass": {
+      "type": "boolean"
+    },
+    "generated_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "report_download_path": {
+      "type": "string"
+    },
+    "report": {
+      "type": ["object", "null"],
+      "description": "Parsed JSON payload from the action apply report."
+    },
+    "error": {
+      "type": ["string", "null"]
+    }
+  },
+  "additionalProperties": false
+}
