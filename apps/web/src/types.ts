@@ -173,6 +173,24 @@ export interface StrategyPairsOpportunityHistoryResponse {
   }>;
 }
 
+export interface OpportunityHistoryStatsEntry {
+  timeframe: Timeframe;
+  rows: number;
+  first_evaluated_at: string | null;
+  last_evaluated_at: string | null;
+  days_covered: number;
+}
+
+export interface StrategyPairsOpportunityHistoryStatsResponse {
+  generated_at: string;
+  timeframe_filter: Timeframe | null;
+  total_rows: number;
+  first_evaluated_at: string | null;
+  last_evaluated_at: string | null;
+  days_covered: number;
+  by_timeframe: OpportunityHistoryStatsEntry[];
+}
+
 export interface StrategyPairsBacktestResponse {
   timeframe: Timeframe;
   pair_id: string;

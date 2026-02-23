@@ -73,6 +73,10 @@ Analytics tab reads:
 - opportunity history downloads via:
   - `GET /v1/strategy/pairs/opportunity-history?timeframe=<1m|15m|1h>&hours=<n>&only_pass=<bool>&limit=<n>`
   - `GET /v1/strategy/pairs/opportunity-history/download?timeframe=<1m|15m|1h>&hours=<n>&only_pass=<bool>&limit=<n>`
+ - opportunity history retention meter via:
+   - `GET /v1/strategy/pairs/opportunity-history/stats?timeframe=<optional:1m|15m|1h>`
+
+Maintenance controls and history downloads are available on the dedicated `Maintenance` page in the left nav (positioned under `Data Quality`).
 
 If available, report downloads appear in the Analytics panel.
 

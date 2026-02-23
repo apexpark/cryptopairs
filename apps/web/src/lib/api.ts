@@ -14,6 +14,7 @@ import type {
   StrategyPairsBacktestResponse,
   StrategyPairsCostGateResponse,
   StrategyPairsCuesResponse,
+  StrategyPairsOpportunityHistoryStatsResponse,
   StrategyPairsLiveZResponse,
   StrategyMaintenanceActionRequest,
   StrategyMaintenanceActionResponse,
@@ -116,6 +117,20 @@ export function buildStrategyOpportunityHistoryUrl(
   return `${STRATEGY_SERVICE_BASE_URL}/v1/strategy/pairs/opportunity-history/download?timeframe=${encodeURIComponent(
     timeframe
   )}&hours=${hours}&only_pass=${onlyPass ? "true" : "false"}&limit=${limit}`;
+}
+
+export async function fetchStrategyOpportunityHistoryStats(
+  timeframe?: Timeframe
+): Promise<StrategyPairsOpportunityHistoryStatsResponse> {
+  const params = new URLSearchParams();
+  if (timeframe) {
+    params.set("timeframe", timeframe);
+  }
+  const query = params.toString();
+  const url = `${STRATEGY_SERVICE_BASE_URL}/v1/strategy/pairs/opportunity-history/stats${
+    query ? `?${query}` : ""
+  }`;
+  return parseJson<StrategyPairsOpportunityHistoryStatsResponse>(await fetch(url));
 }
 
 export async function fetchKillSwitchState(): Promise<KillSwitchState> {
