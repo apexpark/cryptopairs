@@ -47,6 +47,31 @@ cd /opt/cryptopairs
 bash scripts/deploy.sh --services data-service,strategy-service
 ```
 
+## One-Click Maintenance Actions (Promote / Revert)
+
+The strategy-service maintenance action endpoint can execute promote/revert deploys from the
+Analytics UI. This requires strategy-service to control Docker on the host.
+
+Required runtime capabilities:
+1. Docker socket mounted into strategy-service:
+- `/var/run/docker.sock:/var/run/docker.sock`
+2. Docker CLI available in strategy-service container (`docker` + compose support).
+
+Validation command:
+```bash
+curl -i -s -X POST "http://127.0.0.1:8083/v1/strategy/maintenance/action" \
+  -H "Content-Type: application/json" \
+  --data '{"action":"PROMOTE","operator_id":"diag","confirm":false}'
+```
+
+Expected result:
+1. `400` with `confirm=true is required ...` means the endpoint is present.
+2. `404` means the running strategy-service build is missing maintenance action support.
+
+Security note:
+1. Docker socket access is privileged and should be limited to trusted single-tenant hosts.
+2. Keep API access restricted and monitor maintenance action artifacts for operator/audit review.
+
 ## Validation Commands
 
 ```bash

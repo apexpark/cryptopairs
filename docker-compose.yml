@@ -105,7 +105,12 @@ services:
     container_name: cryptopairs-strategy-service
     profiles: ["app"]
     working_dir: /workspace
-    command: ["bash", "-lc", "source /usr/local/cargo/env && cargo run -p strategy-service --bin strategy-service"]
+    command:
+      [
+        "bash",
+        "-lc",
+        "set -e; source /usr/local/cargo/env; if ! command -v docker >/dev/null 2>&1; then apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y docker.io docker-compose; fi; cargo run -p strategy-service --bin strategy-service",
+      ]
     environment:
       POSTGRES_URL: postgres://${POSTGRES_USER:-cryptopairs}:${POSTGRES_PASSWORD:-cryptopairs}@timescaledb:5432/${POSTGRES_DB:-cryptopairs}
       STRATEGY_SERVICE_PORT: 8083
@@ -136,6 +141,7 @@ services:
         condition: service_healthy
     volumes:
       - ./:/workspace
+      - /var/run/docker.sock:/var/run/docker.sock
 
 volumes:
   timescaledb-data:

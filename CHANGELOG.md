@@ -34,6 +34,10 @@ This project follows SemVer as defined in `docs/02-versioning-and-releases.md`.
   - Human-readable action result surfaced in-panel
   - `specs/contracts/strategy_maintenance_action_response.schema.json`
   - `specs/examples/strategy_maintenance_action_response.example.json`
+- One-click strategy maintenance action runtime support for hosted deployments:
+  - `scripts/deploy.sh` now supports `docker compose` and `docker-compose` command variants.
+  - `strategy-service` runtime in `docker-compose.yml` now provisions Docker CLI and mounts the host Docker socket for promote/revert apply actions initiated from the Analytics UI.
+  - Hosted deployment runbook documents validation and security constraints for privileged maintenance actions.
 - Strategy module implementation spec derived from SSRN 151 Trading Strategies review: `docs/18-strategy-module-implementation-spec.md`.
 - Initial documentation suite and agent governance scaffolding.
 - Rust workspace foundation with:
