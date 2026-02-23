@@ -47,6 +47,13 @@ cd /opt/cryptopairs
 bash scripts/deploy.sh --services data-service,strategy-service
 ```
 
+Slow-start services (for example strategy-service after recreate) may require a larger health
+window:
+
+```bash
+bash scripts/deploy.sh --services strategy-service --health-retries 30 --health-sleep-secs 2
+```
+
 ## One-Click Maintenance Actions (Promote / Revert)
 
 The strategy-service maintenance action endpoint can execute promote/revert deploys from the
