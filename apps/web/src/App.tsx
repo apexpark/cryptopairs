@@ -1,5 +1,5 @@
 import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import LineChart from "./components/LineChart";
 import {
   allAcceptedDispatchAcknowledged,
@@ -8,6 +8,7 @@ import {
 import {
   buildStrategyMaintenanceArtifactUrl,
   fetchStrategyMaintenanceLatest,
+  runStrategyMaintenanceAction,
   fetchExecutionPortfolioPositions,
   dispatchOrderIntent,
   fetchExecutionDecision,
@@ -45,6 +46,7 @@ import type {
   SpreadPosition,
   StrategyPairsCostGateResponse,
   StrategyPairsCuesResponse,
+  StrategyMaintenanceActionResponse,
   StrategyMaintenanceLatestResponse,
   StrategyPairsPortfolioPlanResponse,
   Timeframe,
@@ -500,6 +502,8 @@ function App(): JSX.Element {
     useState<StrategyMaintenanceLatestResponse | null>(null);
   const [maintenanceLoading, setMaintenanceLoading] = useState(false);
   const [maintenanceError, setMaintenanceError] = useState<string | null>(null);
+  const [maintenanceActionLoading, setMaintenanceActionLoading] = useState(false);
+  const [maintenanceActionMessage, setMaintenanceActionMessage] = useState<string | null>(null);
 
   const [stopMethod, setStopMethod] = useState<"Z-Score" | "Dollar" | "Percent">("Z-Score");
   const [stopValue, setStopValue] = useState<string>("3.2");
@@ -860,45 +864,65 @@ function App(): JSX.Element {
     };
   }, [selectedCueRow, timeframe]);
 
-  useEffect(() => {
-    let cancelled = false;
-
-    const refreshMaintenanceReport = async (firstLoad = false): Promise<void> => {
+  const refreshMaintenanceReport = useCallback(async (firstLoad = false): Promise<void> => {
+    if (firstLoad) {
+      setMaintenanceLoading(true);
+    }
+    try {
+      const response = await fetchStrategyMaintenanceLatest();
+      setMaintenanceLatest(response);
+      setMaintenanceError(null);
+    } catch (error) {
+      setMaintenanceLatest(null);
+      setMaintenanceError(
+        `Maintenance report unavailable: ${error instanceof Error ? error.message : String(error)}`
+      );
+    } finally {
       if (firstLoad) {
-        setMaintenanceLoading(true);
+        setMaintenanceLoading(false);
       }
-      try {
-        const response = await fetchStrategyMaintenanceLatest();
-        if (cancelled) {
-          return;
-        }
-        setMaintenanceLatest(response);
-        setMaintenanceError(null);
-      } catch (error) {
-        if (cancelled) {
-          return;
-        }
-        setMaintenanceLatest(null);
-        setMaintenanceError(
-          `Maintenance report unavailable: ${error instanceof Error ? error.message : String(error)}`
-        );
-      } finally {
-        if (!cancelled && firstLoad) {
-          setMaintenanceLoading(false);
-        }
-      }
-    };
+    }
+  }, []);
 
+  useEffect(() => {
     void refreshMaintenanceReport(true);
     const intervalId = window.setInterval(() => {
       void refreshMaintenanceReport(false);
     }, 60_000);
 
     return () => {
-      cancelled = true;
       window.clearInterval(intervalId);
     };
-  }, []);
+  }, [refreshMaintenanceReport]);
+
+  const executeMaintenanceAction = useCallback(
+    async (action: "PROMOTE" | "REVERT"): Promise<StrategyMaintenanceActionResponse> => {
+      setMaintenanceActionLoading(true);
+      setMaintenanceActionMessage(null);
+      try {
+        const response = await runStrategyMaintenanceAction({
+          action,
+          operator_id: operatorId,
+          confirm: true,
+        });
+        if (response.pass) {
+          setMaintenanceActionMessage(
+            `${response.action} completed successfully. Action report is available for download.`
+          );
+        } else {
+          setMaintenanceActionMessage(
+            response.error ??
+              `${response.action} completed with errors. Review the action report before retrying.`
+          );
+        }
+        await refreshMaintenanceReport(false);
+        return response;
+      } finally {
+        setMaintenanceActionLoading(false);
+      }
+    },
+    [operatorId, refreshMaintenanceReport]
+  );
 
   const headerLeftInstrument = selectedCueRow?.cue.left_instrument ?? "PF_XBTUSD";
   const headerRightInstrument = selectedCueRow?.cue.right_instrument ?? "PF_ETHUSD";
@@ -1270,6 +1294,10 @@ function App(): JSX.Element {
           maintenanceLatest={maintenanceLatest}
           maintenanceLoading={maintenanceLoading}
           maintenanceError={maintenanceError}
+          maintenanceActionLoading={maintenanceActionLoading}
+          maintenanceActionMessage={maintenanceActionMessage}
+          operatorId={operatorId}
+          onRunMaintenanceAction={executeMaintenanceAction}
         />
       );
     }
@@ -1887,6 +1915,10 @@ function AnalyticsPage({
   maintenanceLatest,
   maintenanceLoading,
   maintenanceError,
+  maintenanceActionLoading,
+  maintenanceActionMessage,
+  operatorId,
+  onRunMaintenanceAction,
 }: {
   cues: StrategyPairsCuesResponse | null;
   selectedPairId: string;
@@ -1901,11 +1933,37 @@ function AnalyticsPage({
   maintenanceLatest: StrategyMaintenanceLatestResponse | null;
   maintenanceLoading: boolean;
   maintenanceError: string | null;
+  maintenanceActionLoading: boolean;
+  maintenanceActionMessage: string | null;
+  operatorId: string;
+  onRunMaintenanceAction: (action: "PROMOTE" | "REVERT") => Promise<StrategyMaintenanceActionResponse>;
 }): JSX.Element {
   const selected = cues?.cues.find((entry) => entry.cue.pair_id === selectedPairId) ?? cues?.cues[0];
   const actionabilityExplanation = explainPairActionability(selected);
   const maintenanceReport = maintenanceLatest?.report ?? null;
   const maintenanceStepEntries = maintenanceReport ? Object.entries(maintenanceReport.steps) : [];
+  const [maintenanceActionError, setMaintenanceActionError] = useState<string | null>(null);
+
+  const runMaintenanceAction = async (action: "PROMOTE" | "REVERT"): Promise<void> => {
+    if (!operatorId.trim().length) {
+      setMaintenanceActionError("Operator ID is required before running PROMOTE/REVERT.");
+      return;
+    }
+    const confirmation = window.confirm(
+      `${action} will apply strategy tuning values and redeploy strategy-service. Continue?`
+    );
+    if (!confirmation) {
+      return;
+    }
+    try {
+      setMaintenanceActionError(null);
+      await onRunMaintenanceAction(action);
+    } catch (error) {
+      setMaintenanceActionError(
+        `Unable to execute ${action}: ${error instanceof Error ? error.message : String(error)}`
+      );
+    }
+  };
 
   return (
     <div className="analytics-layout">
@@ -2058,6 +2116,36 @@ function AnalyticsPage({
                   {maintenanceReport.decision}
                 </span>
               </p>
+              <p className="small-text">
+                Operator: <span className="tone-info">{operatorId || "unset"}</span>
+              </p>
+
+              <div className="maintenance-actions">
+                <button
+                  type="button"
+                  disabled={maintenanceActionLoading}
+                  onClick={() => void runMaintenanceAction("PROMOTE")}
+                >
+                  One-Click Promote
+                </button>
+                <button
+                  type="button"
+                  className="danger"
+                  disabled={maintenanceActionLoading}
+                  onClick={() => void runMaintenanceAction("REVERT")}
+                >
+                  One-Click Revert
+                </button>
+              </div>
+              {maintenanceActionLoading ? (
+                <p className="small-text">Running maintenance action...</p>
+              ) : null}
+              {maintenanceActionMessage ? (
+                <p className="small-text tone-info">{maintenanceActionMessage}</p>
+              ) : null}
+              {maintenanceActionError ? (
+                <p className="small-text tone-bad">{maintenanceActionError}</p>
+              ) : null}
 
               {maintenanceReport.decision_reasons.length ? (
                 <ul className="analytics-explainer-list">

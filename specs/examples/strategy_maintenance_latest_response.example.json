@@ -55,16 +55,21 @@
       "restore_report": "artifacts/strategy_tuning/runs/2026-02-23T05-15-02Z/restore_original_report.json",
       "decision_report": "artifacts/strategy_tuning/runs/2026-02-23T05-15-02Z/maintenance_decision.json",
       "cycle_report": "artifacts/strategy_tuning/runs/2026-02-23T05-15-02Z/maintenance_cycle_report.json",
+      "human_summary": "artifacts/strategy_tuning/runs/2026-02-23T05-15-02Z/maintenance_human_summary.md",
       "latest_report": "artifacts/strategy_tuning/latest_maintenance_report.json"
     },
     "downloads": [
       {
+        "label": "Human Summary",
+        "path": "runs/2026-02-23T05-15-02Z/maintenance_human_summary.md"
+      },
+      {
         "label": "Decision Report",
-        "path": "artifacts/strategy_tuning/runs/2026-02-23T05-15-02Z/maintenance_decision.json"
+        "path": "runs/2026-02-23T05-15-02Z/maintenance_decision.json"
       },
       {
         "label": "Candidate Report",
-        "path": "artifacts/strategy_tuning/runs/2026-02-23T05-15-02Z/candidate_report.json"
+        "path": "runs/2026-02-23T05-15-02Z/candidate_report.json"
       }
     ]
   },

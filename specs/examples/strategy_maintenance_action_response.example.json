@@ -1,0 +1,15 @@
+{
+  "accepted": true,
+  "action": "PROMOTE",
+  "operator_id": "operator-kevin",
+  "pass": true,
+  "generated_at": "2026-02-23T11:52:03Z",
+  "report_download_path": "manual_actions/2026-02-23T11-52-03Z-promote-apply.json",
+  "report": {
+    "generated_at": "2026-02-23T11:52:03Z",
+    "mode": "promote",
+    "profile": "candidate",
+    "pass": true
+  },
+  "error": null
+}

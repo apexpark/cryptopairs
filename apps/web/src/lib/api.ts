@@ -15,6 +15,8 @@ import type {
   StrategyPairsCostGateResponse,
   StrategyPairsCuesResponse,
   StrategyPairsLiveZResponse,
+  StrategyMaintenanceActionRequest,
+  StrategyMaintenanceActionResponse,
   StrategyMaintenanceLatestResponse,
   StrategyPairsPortfolioPlanResponse,
   Timeframe,
@@ -84,6 +86,19 @@ export async function fetchStrategyLiveZ(
 export async function fetchStrategyMaintenanceLatest(): Promise<StrategyMaintenanceLatestResponse> {
   const url = `${STRATEGY_SERVICE_BASE_URL}/v1/strategy/maintenance/latest`;
   return parseJson<StrategyMaintenanceLatestResponse>(await fetch(url));
+}
+
+export async function runStrategyMaintenanceAction(
+  payload: StrategyMaintenanceActionRequest
+): Promise<StrategyMaintenanceActionResponse> {
+  const url = `${STRATEGY_SERVICE_BASE_URL}/v1/strategy/maintenance/action`;
+  return parseJson<StrategyMaintenanceActionResponse>(
+    await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    })
+  );
 }
 
 export function buildStrategyMaintenanceArtifactUrl(path: string): string {
