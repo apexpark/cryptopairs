@@ -13,6 +13,8 @@ Options:
       --skip-pull           Skip git pull --ff-only
       --skip-public-health  Skip HTTPS public health check
       --public-health-url   Public health URL (default: https://api.apexpark.io/health)
+      --health-retries      Number of local health-check retries (default: 15)
+      --health-sleep-secs   Seconds between health-check retries (default: 2)
       --dry-run             Print commands without executing
   -h, --help                Show this help
 EOF
@@ -64,6 +66,8 @@ SKIP_PULL="false"
 SKIP_PUBLIC_HEALTH="false"
 PUBLIC_HEALTH_URL="https://api.apexpark.io/health"
 DRY_RUN="false"
+HEALTH_RETRIES=15
+HEALTH_SLEEP_SECS=2
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -85,6 +89,14 @@ while [[ $# -gt 0 ]]; do
       ;;
     --public-health-url)
       PUBLIC_HEALTH_URL="${2:-}"
+      shift 2
+      ;;
+    --health-retries)
+      HEALTH_RETRIES="${2:-}"
+      shift 2
+      ;;
+    --health-sleep-secs)
+      HEALTH_SLEEP_SECS="${2:-}"
       shift 2
       ;;
     --dry-run)
@@ -157,15 +169,23 @@ fi
 local_health_check() {
   local url="$1"
   local label="$2"
+  local attempt=1
   if [[ "$DRY_RUN" == "true" ]]; then
     log "DRY-RUN health check: $label -> $url"
     return 0
   fi
-  if curl -fsS "$url" >/dev/null; then
-    log "Health OK: $label"
-  else
-    die "Health FAILED: $label ($url)"
-  fi
+  while [[ "$attempt" -le "$HEALTH_RETRIES" ]]; do
+    if curl -fsS "$url" >/dev/null; then
+      log "Health OK: $label (attempt $attempt/$HEALTH_RETRIES)"
+      return 0
+    fi
+    if [[ "$attempt" -lt "$HEALTH_RETRIES" ]]; then
+      log "Health retry: $label failed (attempt $attempt/$HEALTH_RETRIES), sleeping ${HEALTH_SLEEP_SECS}s"
+      sleep "$HEALTH_SLEEP_SECS"
+    fi
+    attempt=$((attempt + 1))
+  done
+  die "Health FAILED after $HEALTH_RETRIES attempts: $label ($url)"
 }
 
 local_health_check "http://127.0.0.1:8080/health" "data-service"
