@@ -127,18 +127,16 @@ body {
 }
 
 .metrics-row {
-  display: flex;
+  display: grid;
+  grid-template-columns: repeat(4, minmax(118px, 1fr));
   align-items: stretch;
-  justify-content: flex-start;
-  gap: 12px;
-  overflow-x: auto;
-  padding-bottom: 2px;
+  gap: 8px 12px;
+  min-width: 0;
 }
 
 .metric {
-  min-width: 102px;
+  min-width: 0;
   text-align: left;
-  flex: 0 0 auto;
 }
 
 .metric-label {
@@ -612,7 +610,20 @@ button:disabled {
 
 .chart .x-axis-label {
   fill: var(--muted);
-  font-size: 10px;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.chart .y-axis-label {
+  fill: var(--muted);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.chart .threshold-label {
+  fill: color-mix(in srgb, var(--text) 85%, var(--muted));
+  font-size: 12px;
+  font-weight: 600;
 }
 
 .chart-empty {
@@ -796,12 +807,17 @@ button:disabled {
   }
 
   .metrics-row {
-    justify-content: flex-start;
-    overflow-x: auto;
+    grid-template-columns: repeat(4, minmax(108px, 1fr));
   }
 
   .topbar-right {
     justify-content: flex-end;
+  }
+}
+
+@media (max-width: 1200px) {
+  .metrics-row {
+    grid-template-columns: repeat(2, minmax(120px, 1fr));
   }
 }
 

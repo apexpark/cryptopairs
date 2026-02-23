@@ -103,7 +103,13 @@ const NAV_ITEMS: Array<{ id: PageId; label: string }> = [
   { id: "settings", label: "Settings" },
 ];
 
-type HowItWorksTabId = "pairs-trading" | "opportunity-engine" | "hedge-ratio" | "risks";
+type HowItWorksTabId =
+  | "pairs-trading"
+  | "opportunity-engine"
+  | "hedge-ratio"
+  | "risks"
+  | "definitions"
+  | "reoptimise";
 
 const HOW_IT_WORKS_TABS: Array<{
   id: HowItWorksTabId;
@@ -181,6 +187,39 @@ const HOW_IT_WORKS_TABS: Array<{
       "Operator can still reduce or close open spread exposure during degraded conditions.",
     ],
   },
+  {
+    id: "definitions",
+    label: "Definitions",
+    title: "Trading Terms Used In This UI",
+    intro: "These are the plain-language meanings of the key fields shown on the Trade and Analytics pages.",
+    paragraphs: [
+      "These terms are computed each cycle from live market and strategy data, then displayed as decision support.",
+      "They do not guarantee profit on their own; they describe the current setup quality and gating status.",
+    ],
+    bullets: [
+      "Z: how far the spread is from its recent normal level, measured in standard deviations.",
+      "Edge: estimated advantage after expected spread behavior, usually compared against costs in basis points.",
+      "Gate: a pass/block safety check (cost, data quality, reconcile, kill switch, and model guards).",
+      "Opportunity Score: ranked setup quality number combining stretch, regime fit, costs, and stability.",
+      "Cost Estimate: expected execution friction (fees, funding, slippage) in basis points.",
+    ],
+  },
+  {
+    id: "reoptimise",
+    label: "Reoptimise",
+    title: "Reoptimise and Shadow Model Fields",
+    intro: "These diagnostics explain how the strategy chooses its active variant and validates it with shadow models.",
+    paragraphs: [
+      "Reoptimisation continuously re-evaluates candidate spread variants and promotes the best recent performer when policy allows.",
+      "Shadow metrics are advisory checks that reduce model-drift risk before changes are promoted.",
+    ],
+    bullets: [
+      "Champion Variant: currently selected strategy variant used for cues and bands.",
+      "Shadow Agreement: whether shadow model preference matches the active champion choice.",
+      "Cost Gate: pass/block outcome after fees, funding, and slippage are netted from expected edge.",
+      "Shadow ML Precision: recent hit-rate quality of the shadow model on labeled outcomes.",
+    ],
+  },
 ];
 
 const TIMEFRAMES: Timeframe[] = ["1m", "15m", "1h"];
@@ -225,10 +264,7 @@ function usePersistentState<T>(key: string, fallback: T): [T, (updater: T | ((pr
 }
 
 function preferredTheme(): ThemeMode {
-  if (window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches) {
-    return "dark";
-  }
-  return "light";
+  return "dark";
 }
 
 function formatSigned(value: number, digits = 2): string {
@@ -273,6 +309,17 @@ function formatSignedMetric(value: number | null | undefined, digits = 3): strin
   }
   const abs = Math.abs(value).toFixed(digits);
   return `${value >= 0 ? "+" : "-"}${abs}`;
+}
+
+function formatUsdAxisValue(value: number): string {
+  const abs = Math.abs(value);
+  if (abs >= 1_000_000) {
+    return `${(value / 1_000_000).toFixed(2)}m USD`;
+  }
+  if (abs >= 1_000) {
+    return `${(value / 1_000).toFixed(1)}k USD`;
+  }
+  return `${value.toFixed(2)} USD`;
 }
 
 function formatLocalDateTime(value: string | number | Date): string {
@@ -338,6 +385,42 @@ function formatPairLabel(pairId: string): string {
     .split("__")
     .map((instrument) => formatInstrumentLabel(instrument))
     .join("/");
+}
+
+function marketMetricInstrumentCandidates(instrument: string): string[] {
+  const trimmed = instrument.trim();
+  if (!trimmed.length) {
+    return [];
+  }
+
+  const candidates = [trimmed];
+  if (trimmed.startsWith("PF_")) {
+    candidates.push(`PI_${trimmed.slice(3)}`);
+  } else if (trimmed.startsWith("PI_")) {
+    candidates.push(`PF_${trimmed.slice(3)}`);
+  } else {
+    candidates.push(`PI_${trimmed}`);
+    candidates.push(`PF_${trimmed}`);
+  }
+  return Array.from(new Set(candidates));
+}
+
+async function fetchMarketMetricsWithFallback(
+  instrument: string
+): Promise<MarketMetricsResponse> {
+  const candidates = marketMetricInstrumentCandidates(instrument);
+  let lastError: unknown = null;
+  for (const candidate of candidates) {
+    try {
+      return await fetchMarketMetrics(candidate);
+    } catch (error) {
+      lastError = error;
+    }
+  }
+  if (lastError instanceof Error) {
+    throw lastError;
+  }
+  throw new Error(`No market metrics available for ${instrument}`);
 }
 
 function describeRationaleCode(code: string): string {
@@ -1039,8 +1122,8 @@ function App(): JSX.Element {
     const refreshMetrics = async (): Promise<void> => {
       try {
         const [leftMetrics, rightMetrics] = await Promise.all([
-          fetchMarketMetrics(headerLeftInstrument),
-          fetchMarketMetrics(headerRightInstrument),
+          fetchMarketMetricsWithFallback(headerLeftInstrument),
+          fetchMarketMetricsWithFallback(headerRightInstrument),
         ]);
         if (cancelled) {
           return;
@@ -1710,6 +1793,9 @@ function TradePage(props: {
           title="Live spread z-score (entry / mean / stop)"
           unavailableText={props.analyticsError ?? "No live z-score data"}
           height={246}
+          yAxisFormatter={(value) => value.toFixed(2)}
+          showThresholdLabels
+          markerRadius={6}
         />
 
         <div className="chip-row">
@@ -1750,7 +1836,7 @@ function TradePage(props: {
       >
         <div className="execution-grid">
           <div className="execution-block stop-block">
-            <h3>1) Stop Configuration (Required)</h3>
+            <h3>Stop Configuration (Required)</h3>
             <label>
               Method
               <select
@@ -1790,7 +1876,7 @@ function TradePage(props: {
           </div>
 
           <div className="execution-block entry-block">
-            <h3>2) Entry / Add Exposure</h3>
+            <h3>Entry / Add Exposure</h3>
             <label>
               Spread size (units)
               <input
@@ -1834,7 +1920,7 @@ function TradePage(props: {
           </div>
 
           <div className="execution-block reduce-block">
-            <h3>3) Reduce / Close</h3>
+            <h3>Reduce / Close</h3>
             <button disabled={!props.canReduceExposure || props.submitting} onClick={() => execute("reduce-exposure")}>
               Reduce Exposure (partial)
             </button>
@@ -2097,9 +2183,11 @@ function AnalyticsPage({
             <LineChart
               values={equitySeries}
               timestamps={equityTimestamps}
-              height={360}
+              height={420}
               title="Hypothetical equity (net of estimated costs)"
               unavailableText={loading ? "Loading live candles..." : error ?? "No data"}
+              yAxisFormatter={formatUsdAxisValue}
+              valueScaleMode="trimmed"
             />
           </SectionCard>
 
@@ -2125,6 +2213,9 @@ function AnalyticsPage({
               height={360}
               title="Entry=green, Exit=amber, Stop=red"
               unavailableText={loading ? "Loading live candles..." : error ?? "No data"}
+              yAxisFormatter={(value) => value.toFixed(2)}
+              showThresholdLabels
+              markerRadius={6}
             />
           </SectionCard>
         </div>

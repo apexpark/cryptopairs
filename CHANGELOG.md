@@ -61,6 +61,15 @@ This project follows SemVer as defined in `docs/02-versioning-and-releases.md`.
 - Automated Daily Maintenance panel moved to dedicated `Maintenance` page in side navigation (under `Data Quality`).
 - Maintenance cron installer scripts now support explicit `CRON_TZ` timezone configuration (`--timezone`).
 - UI timestamp displays are now explicitly local-time formatted with timezone suffix.
+- Trade and Analytics UI readability pass:
+  - Added y-axis labels and threshold-value labels on z-score charts.
+  - Increased chart axis text size and z-score marker dot size.
+  - Added USD-formatted y-axis labels for equity charts and tightened equity chart scaling for better vertical space usage.
+  - Removed numeric prefixes from spread execution section titles.
+  - Added `Definitions` and `Reoptimise` tabs in `How This Works`.
+  - Set dark mode as the default first-load theme.
+  - Reworked top-header metrics layout to remove horizontal scrolling.
+  - Added PF/PI instrument-prefix fallback when fetching mark/index metrics to reduce `--` header values.
 - Strategy module implementation spec derived from SSRN 151 Trading Strategies review: `docs/18-strategy-module-implementation-spec.md`.
 - Initial documentation suite and agent governance scaffolding.
 - Rust workspace foundation with:
