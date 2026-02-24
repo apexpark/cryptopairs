@@ -185,11 +185,11 @@ body {
 
 .metric-label {
   color: var(--muted);
-  font-size: 0.8rem;
+  font-size: 0.48rem;
 }
 
 .metric-value {
-  font-size: 1rem;
+  font-size: 0.6rem;
   font-weight: 700;
 }
 
@@ -473,7 +473,7 @@ input {
 .panel-subtitle {
   margin: 4px 0 8px 0;
   color: var(--muted);
-  font-size: 0.86rem;
+  font-size: 0.52rem;
 }
 
 .table-wrap {
@@ -486,7 +486,7 @@ input {
 table {
   width: 100%;
   border-collapse: collapse;
-  font-size: 0.9rem;
+  font-size: 0.54rem;
 }
 
 thead th {
@@ -719,7 +719,7 @@ button:disabled {
 }
 
 .small-text {
-  font-size: 0.78rem;
+  font-size: 0.47rem;
   color: var(--muted);
 }
 
