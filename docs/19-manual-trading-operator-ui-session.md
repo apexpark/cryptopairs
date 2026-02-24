@@ -27,7 +27,11 @@ Lock a manual-first operator workflow that converts strategy cues into explicit 
 3. Right column: risk and safety rail cards (kill switch, integrity, reconcile, recent lifecycle events).
 
 ## API Surface Used
-- `GET /v1/strategy/pairs/cues?timeframe=...`
+- `GET /v1/strategy/pairs/cues?timeframe=...&taker_fee_bps=...` (optional fee override from Settings)
+- `GET /v1/strategy/pairs/cost-gate?timeframe=...&taker_fee_bps=...` (optional)
+- `GET /v1/strategy/pairs/portfolio-plan?timeframe=...&taker_fee_bps=...` (optional)
+- `GET /v1/strategy/pairs/backtest?timeframe=...&pair_id=...&taker_fee_bps=...` (optional)
+- `GET /v1/strategy/pairs/live-z?timeframe=...&pair_id=...&taker_fee_bps=...` (optional)
 - `GET /v1/execution/kill-switch`
 - `GET /v1/execution/decision?instrument=...&timeframe=...`
 - `POST /v1/execution/order-intent`

@@ -43,47 +43,75 @@ async function parseJson<T>(response: Response): Promise<T> {
   return (await response.json()) as T;
 }
 
+function withOptionalTakerFeeBps(params: URLSearchParams, takerFeeBps?: number): void {
+  if (takerFeeBps == null) {
+    return;
+  }
+  params.set("taker_fee_bps", takerFeeBps.toString());
+}
+
 export async function fetchStrategyCues(
   timeframe: Timeframe,
-  limit = 20
+  limit = 20,
+  takerFeeBps?: number
 ): Promise<StrategyPairsCuesResponse> {
-  const url = `${STRATEGY_SERVICE_BASE_URL}/v1/strategy/pairs/cues?timeframe=${timeframe}&limit=${limit}`;
+  const params = new URLSearchParams();
+  params.set("timeframe", timeframe);
+  params.set("limit", limit.toString());
+  withOptionalTakerFeeBps(params, takerFeeBps);
+  const url = `${STRATEGY_SERVICE_BASE_URL}/v1/strategy/pairs/cues?${params.toString()}`;
   return parseJson<StrategyPairsCuesResponse>(await fetch(url));
 }
 
 export async function fetchStrategyCostGates(
-  timeframe: Timeframe
+  timeframe: Timeframe,
+  takerFeeBps?: number
 ): Promise<StrategyPairsCostGateResponse> {
-  const url = `${STRATEGY_SERVICE_BASE_URL}/v1/strategy/pairs/cost-gate?timeframe=${timeframe}`;
+  const params = new URLSearchParams();
+  params.set("timeframe", timeframe);
+  withOptionalTakerFeeBps(params, takerFeeBps);
+  const url = `${STRATEGY_SERVICE_BASE_URL}/v1/strategy/pairs/cost-gate?${params.toString()}`;
   return parseJson<StrategyPairsCostGateResponse>(await fetch(url));
 }
 
 export async function fetchStrategyPortfolioPlan(
-  timeframe: Timeframe
+  timeframe: Timeframe,
+  takerFeeBps?: number
 ): Promise<StrategyPairsPortfolioPlanResponse> {
-  const url = `${STRATEGY_SERVICE_BASE_URL}/v1/strategy/pairs/portfolio-plan?timeframe=${timeframe}`;
+  const params = new URLSearchParams();
+  params.set("timeframe", timeframe);
+  withOptionalTakerFeeBps(params, takerFeeBps);
+  const url = `${STRATEGY_SERVICE_BASE_URL}/v1/strategy/pairs/portfolio-plan?${params.toString()}`;
   return parseJson<StrategyPairsPortfolioPlanResponse>(await fetch(url));
 }
 
 export async function fetchStrategyBacktest(
   timeframe: Timeframe,
   pairId: string,
-  bars = 300
+  bars = 300,
+  takerFeeBps?: number
 ): Promise<StrategyPairsBacktestResponse> {
-  const url = `${STRATEGY_SERVICE_BASE_URL}/v1/strategy/pairs/backtest?timeframe=${timeframe}&pair_id=${encodeURIComponent(
-    pairId
-  )}&bars=${bars}`;
+  const params = new URLSearchParams();
+  params.set("timeframe", timeframe);
+  params.set("pair_id", pairId);
+  params.set("bars", bars.toString());
+  withOptionalTakerFeeBps(params, takerFeeBps);
+  const url = `${STRATEGY_SERVICE_BASE_URL}/v1/strategy/pairs/backtest?${params.toString()}`;
   return parseJson<StrategyPairsBacktestResponse>(await fetch(url));
 }
 
 export async function fetchStrategyLiveZ(
   timeframe: Timeframe,
   pairId: string,
-  points = 300
+  points = 300,
+  takerFeeBps?: number
 ): Promise<StrategyPairsLiveZResponse> {
-  const url = `${STRATEGY_SERVICE_BASE_URL}/v1/strategy/pairs/live-z?timeframe=${timeframe}&pair_id=${encodeURIComponent(
-    pairId
-  )}&points=${points}`;
+  const params = new URLSearchParams();
+  params.set("timeframe", timeframe);
+  params.set("pair_id", pairId);
+  params.set("points", points.toString());
+  withOptionalTakerFeeBps(params, takerFeeBps);
+  const url = `${STRATEGY_SERVICE_BASE_URL}/v1/strategy/pairs/live-z?${params.toString()}`;
   return parseJson<StrategyPairsLiveZResponse>(await fetch(url));
 }
 

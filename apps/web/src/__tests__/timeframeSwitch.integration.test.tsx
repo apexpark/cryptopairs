@@ -23,6 +23,8 @@ vi.mock("@radix-ui/react-dropdown-menu", () => ({
 import App from "../App";
 
 const api = vi.hoisted(() => ({
+  buildStrategyMaintenanceArtifactUrl: vi.fn(),
+  buildStrategyOpportunityHistoryUrl: vi.fn(),
   dispatchOrderIntent: vi.fn(),
   fetchExecutionDecision: vi.fn(),
   fetchExecutionPortfolioPositions: vi.fn(),
@@ -31,12 +33,17 @@ const api = vi.hoisted(() => ({
   fetchMarketMetrics: vi.fn(),
   fetchOrderIntentHistory: vi.fn(),
   fetchReconcile: vi.fn(),
+  fetchStrategyMaintenanceLatest: vi.fn(),
   fetchStrategyBacktest: vi.fn(),
   fetchStrategyCostGates: vi.fn(),
   fetchStrategyCues: vi.fn(),
   fetchStrategyLiveZ: vi.fn(),
+  fetchStrategyOpportunityHistoryStats: vi.fn(),
   fetchStrategyPortfolioPlan: vi.fn(),
+  fetchStrategyUiAuthStatus: vi.fn(),
+  runStrategyMaintenanceAction: vi.fn(),
   submitOrderIntent: vi.fn(),
+  verifyStrategyUiAccess: vi.fn(),
 }));
 
 vi.mock("../lib/api", () => api);
@@ -247,6 +254,36 @@ function selectTimeframe(next: Timeframe): void {
 beforeEach(() => {
   window.localStorage.clear();
   vi.clearAllMocks();
+  api.buildStrategyMaintenanceArtifactUrl.mockImplementation((path: string) => path);
+  api.buildStrategyOpportunityHistoryUrl.mockImplementation(() => "history.json");
+  api.fetchStrategyUiAuthStatus.mockResolvedValue({ enabled: false });
+  api.verifyStrategyUiAccess.mockResolvedValue({ ok: true });
+  api.fetchStrategyMaintenanceLatest.mockResolvedValue({
+    available: false,
+    generated_at: "2026-02-20T00:00:00Z",
+    report: null,
+    reason: "none",
+    artifact_download_route: "/v1/strategy/maintenance/artifact",
+  });
+  api.fetchStrategyOpportunityHistoryStats.mockResolvedValue({
+    generated_at: "2026-02-20T00:00:00Z",
+    timeframe_filter: null,
+    total_rows: 0,
+    first_evaluated_at: null,
+    last_evaluated_at: null,
+    days_covered: 0,
+    by_timeframe: [],
+  });
+  api.runStrategyMaintenanceAction.mockResolvedValue({
+    accepted: true,
+    action: "PROMOTE",
+    operator_id: "operator-kevin",
+    pass: true,
+    generated_at: "2026-02-20T00:00:00Z",
+    report_download_path: "manual_actions/mock.json",
+    report: null,
+    error: null,
+  });
 
   api.fetchStrategyCues.mockImplementation(async (timeframe: Timeframe) =>
     buildCuesResponse(timeframe)
@@ -374,6 +411,27 @@ describe("global timeframe switching", () => {
       expect(api.fetchStrategyLiveZ).toHaveBeenCalledWith("1h", PAIR_ID, 220);
       expect(api.fetchStrategyBacktest).toHaveBeenCalledWith("1h", PAIR_ID, 220);
       expect(screen.getByRole("button", { name: /Timeframe: 1h/i })).toBeInTheDocument();
+    });
+  });
+
+  it("threads taker commission override to strategy queries when configured", async () => {
+    render(<App />);
+
+    await waitFor(() => {
+      expect(api.fetchStrategyCues).toHaveBeenCalledWith("1m", 20);
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "Settings" }));
+    fireEvent.change(screen.getByLabelText("Taker Commission"), {
+      target: { value: "0.10%" },
+    });
+
+    await waitFor(() => {
+      expect(api.fetchStrategyCues).toHaveBeenCalledWith("1m", 20, 10);
+      expect(api.fetchStrategyCostGates).toHaveBeenCalledWith("1m", 10);
+      expect(api.fetchStrategyPortfolioPlan).toHaveBeenCalledWith("1m", 10);
+      expect(api.fetchStrategyLiveZ).toHaveBeenCalledWith("1m", PAIR_ID, 300, 10);
+      expect(api.fetchStrategyBacktest).toHaveBeenCalledWith("1m", PAIR_ID, 300, 10);
     });
   });
 });

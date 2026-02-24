@@ -262,6 +262,7 @@ pub struct PairEvaluationInput {
     pub hold_bars: usize,
     pub max_half_life_bars: f64,
     pub funding_drag_bps: f64,
+    pub taker_fee_bps: f64,
     pub min_samples_target: usize,
 }
 
@@ -869,7 +870,7 @@ pub fn evaluate_pair(input: PairEvaluationInput) -> anyhow::Result<PairEvaluatio
         exit_band: input.exit_band,
         stop_band: input.stop_band,
         expected_hold_bars,
-        cost_estimate_bps: input.funding_drag_bps,
+        cost_estimate_bps: input.funding_drag_bps.max(0.0) + input.taker_fee_bps.max(0.0),
         actionable,
         rationale_codes: cue_rationale,
         cost_gate: CostGateDiagnostics::unavailable(vec!["NOT_EVALUATED".to_string()]),
@@ -1329,6 +1330,7 @@ mod tests {
             hold_bars: 12,
             max_half_life_bars: 120.0,
             funding_drag_bps: 0.6,
+            taker_fee_bps: 1.2,
             min_samples_target: 8,
         })
         .expect("pair evaluation should succeed");
@@ -1336,6 +1338,31 @@ mod tests {
         assert_eq!(result.variants.len(), 4);
         assert!(!result.cue.selected_variant.is_empty());
         assert!(result.cue.entry_band > result.cue.exit_band);
+    }
+
+    #[test]
+    fn evaluate_pair_cost_estimate_includes_taker_fee() {
+        let (timestamps, left, right) = synthetic_pair_series(260);
+        let result = evaluate_pair(PairEvaluationInput {
+            pair_id: "PI_XBTUSD__PI_ETHUSD".to_string(),
+            left_instrument: "PI_XBTUSD".to_string(),
+            right_instrument: "PI_ETHUSD".to_string(),
+            timeframe: Timeframe::OneMinute,
+            timestamps,
+            left_closes: left,
+            right_closes: right,
+            entry_band: 1.6,
+            exit_band: 0.5,
+            stop_band: 3.2,
+            hold_bars: 12,
+            max_half_life_bars: 120.0,
+            funding_drag_bps: 0.6,
+            taker_fee_bps: 1.2,
+            min_samples_target: 8,
+        })
+        .expect("pair evaluation should succeed");
+
+        assert!((result.cue.cost_estimate_bps - 1.8).abs() < 1e-9);
     }
 
     #[test]
@@ -1358,6 +1385,7 @@ mod tests {
             hold_bars: 8,
             max_half_life_bars: 10.0,
             funding_drag_bps: 0.5,
+            taker_fee_bps: 1.2,
             min_samples_target: 6,
         })
         .expect("pair evaluation should succeed");
@@ -1390,6 +1418,7 @@ mod tests {
             hold_bars: 10,
             max_half_life_bars: 120.0,
             funding_drag_bps: 0.6,
+            taker_fee_bps: 1.2,
             min_samples_target: 8,
         })
         .expect("pair evaluation should succeed");

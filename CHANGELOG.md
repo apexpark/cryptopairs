@@ -89,6 +89,10 @@ This project follows SemVer as defined in `docs/02-versioning-and-releases.md`.
   - Set dark mode as the default first-load theme.
   - Reworked top-header metrics layout to remove horizontal scrolling.
   - Added PF/PI instrument-prefix fallback when fetching mark/index metrics to reduce `--` header values.
+- Strategy fee override from UI settings:
+  - Added `Taker Commission` input in Settings (percent format, e.g. `0.10%`).
+  - Web app now threads optional `taker_fee_bps` to strategy endpoints (`cues`, `cost-gate`, `portfolio-plan`, `backtest`, `live-z`).
+  - Strategy-service now applies optional `taker_fee_bps` overrides in cost-gate and cost-estimate calculations while validating bounds fail-closed.
 - Strategy module implementation spec derived from SSRN 151 Trading Strategies review: `docs/18-strategy-module-implementation-spec.md`.
 - Initial documentation suite and agent governance scaffolding.
 - Rust workspace foundation with:
