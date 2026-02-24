@@ -1942,7 +1942,7 @@ function TradePage(props: {
           showThresholdLabels
           markerRadius={6}
           valueScaleMode="trimmed"
-          includeThresholdsInDomain={false}
+          includeThresholdsInDomain
         />
 
         <div className="chip-row">
@@ -2364,7 +2364,7 @@ function AnalyticsPage({
               showThresholdLabels
               markerRadius={6}
               valueScaleMode="trimmed"
-              includeThresholdsInDomain={false}
+              includeThresholdsInDomain
             />
           </SectionCard>
         </div>
