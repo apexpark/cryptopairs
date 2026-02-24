@@ -93,6 +93,15 @@ This project follows SemVer as defined in `docs/02-versioning-and-releases.md`.
   - Added `Taker Commission` input in Settings (percent format, e.g. `0.10%`).
   - Web app now threads optional `taker_fee_bps` to strategy endpoints (`cues`, `cost-gate`, `portfolio-plan`, `backtest`, `live-z`).
   - Strategy-service now applies optional `taker_fee_bps` overrides in cost-gate and cost-estimate calculations while validating bounds fail-closed.
+- Live sampled slippage gating and execution-aware quote handling:
+  - `data-service` market metrics now include `bid` and `ask`.
+  - Added `GET /v1/market/metrics/batch?instruments=...` for efficient quote polling.
+  - Added contract/example:
+    - `specs/contracts/data_market_metrics_batch_response.schema.json`
+    - `specs/examples/data_market_metrics_batch_response.example.json`
+  - `strategy-service` now maintains a 1s sampled slippage feed (EWMA) and blocks entry advisory gates when sampled data is warming/stale/unavailable (no heuristic fallback for entry gating).
+  - Cost-gate diagnostics now include rationale codes for sampled slippage source and feed health (`SLIPPAGE_SOURCE_SAMPLED`, `SLIPPAGE_DATA_WARMING`, `SLIPPAGE_DATA_STALE`, `SLIPPAGE_DATA_UNAVAILABLE`).
+  - Header spread display in web app now uses direction-aware executable quote pricing (bid/ask/index based) instead of mark-only spread.
 - Strategy module implementation spec derived from SSRN 151 Trading Strategies review: `docs/18-strategy-module-implementation-spec.md`.
 - Initial documentation suite and agent governance scaffolding.
 - Rust workspace foundation with:

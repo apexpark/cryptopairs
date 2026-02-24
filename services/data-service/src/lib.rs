@@ -15,8 +15,8 @@ use chrono::{TimeZone, Utc};
 use common_types::{DataQueryRequest, DataQueryResponse, Timeframe};
 use kraken_adapter::MarketDataAdapter;
 use repository::{IntegrityHistoryEntry, MarketDataRepository};
-use serde::Serialize;
-use std::sync::Arc;
+use serde::{Deserialize, Serialize};
+use std::{collections::HashSet, sync::Arc};
 use tower_http::cors::{Any, CorsLayer};
 use tracing::{info, warn};
 
@@ -65,6 +65,7 @@ pub fn build_router(state: AppState) -> Router {
         .route("/v1/data/query", post(query_data))
         .route("/v1/integrity/history", get(integrity_history))
         .route("/v1/market/metrics", get(market_metrics))
+        .route("/v1/market/metrics/batch", get(market_metrics_batch))
         .layer(cors)
         .with_state(state)
 }
@@ -238,15 +239,28 @@ struct MarketMetricsQuery {
     instrument: String,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Deserialize, Serialize, Clone)]
 struct MarketMetricsResponse {
     instrument: String,
     server_time: chrono::DateTime<chrono::Utc>,
+    bid: f64,
+    ask: f64,
     mark: f64,
     index: f64,
     change_24h_pct: f64,
     funding_rate: f64,
     open_interest: f64,
+}
+
+#[derive(Debug, Deserialize)]
+struct MarketMetricsBatchQuery {
+    instruments: String,
+}
+
+#[derive(Debug, Serialize)]
+struct MarketMetricsBatchResponse {
+    generated_at: chrono::DateTime<chrono::Utc>,
+    metrics: Vec<MarketMetricsResponse>,
 }
 
 async fn market_metrics(
@@ -269,11 +283,64 @@ async fn market_metrics(
     Ok(Json(MarketMetricsResponse {
         instrument: metrics.instrument,
         server_time: metrics.server_time,
+        bid: metrics.bid,
+        ask: metrics.ask,
         mark: metrics.mark,
         index: metrics.index,
         change_24h_pct: metrics.change_24h_pct,
         funding_rate: metrics.funding_rate,
         open_interest: metrics.open_interest,
+    }))
+}
+
+async fn market_metrics_batch(
+    State(state): State<AppState>,
+    Query(query): Query<MarketMetricsBatchQuery>,
+) -> Result<Json<MarketMetricsBatchResponse>, ApiError> {
+    let instruments = query
+        .instruments
+        .split(',')
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned)
+        .collect::<Vec<_>>();
+    if instruments.is_empty() {
+        return Err(ApiError::SourceUnavailable(
+            "instruments query parameter is required".to_string(),
+        ));
+    }
+
+    let mut dedupe = HashSet::new();
+    let mut normalized = Vec::with_capacity(instruments.len());
+    for instrument in instruments {
+        let key = instrument.to_uppercase();
+        if dedupe.insert(key) {
+            normalized.push(instrument);
+        }
+    }
+
+    let metrics = state
+        .adapter
+        .fetch_market_metrics_batch(&normalized)
+        .await
+        .map_err(|error| ApiError::SourceUnavailable(error.to_string()))?;
+
+    Ok(Json(MarketMetricsBatchResponse {
+        generated_at: Utc::now(),
+        metrics: metrics
+            .into_iter()
+            .map(|entry| MarketMetricsResponse {
+                instrument: entry.instrument,
+                server_time: entry.server_time,
+                bid: entry.bid,
+                ask: entry.ask,
+                mark: entry.mark,
+                index: entry.index,
+                change_24h_pct: entry.change_24h_pct,
+                funding_rate: entry.funding_rate,
+                open_interest: entry.open_interest,
+            })
+            .collect(),
     }))
 }
 

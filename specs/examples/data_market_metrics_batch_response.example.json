@@ -1,0 +1,27 @@
+{
+  "generated_at": "2026-02-24T01:10:00Z",
+  "metrics": [
+    {
+      "instrument": "PF_TAOUSD",
+      "server_time": "2026-02-24T01:10:00Z",
+      "bid": 171.58,
+      "ask": 171.61,
+      "mark": 171.59,
+      "index": 171.62,
+      "change_24h_pct": 1.76,
+      "funding_rate": -0.001412926090749943,
+      "open_interest": 3755.64
+    },
+    {
+      "instrument": "PF_HYPEUSD",
+      "server_time": "2026-02-24T01:10:00Z",
+      "bid": 12.31,
+      "ask": 12.33,
+      "mark": 12.32,
+      "index": 12.34,
+      "change_24h_pct": 0.81,
+      "funding_rate": -0.000405,
+      "open_interest": 1920.11
+    }
+  ]
+}

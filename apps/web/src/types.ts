@@ -309,6 +309,8 @@ export interface IntegrityHistoryResponse {
 export interface MarketMetricsResponse {
   instrument: string;
   server_time: string;
+  bid: number;
+  ask: number;
   mark: number;
   index: number;
   change_24h_pct: number;

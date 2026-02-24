@@ -132,6 +132,7 @@ pub struct CostGateInput {
     pub funding_bps: f64,
     pub spread_vol_bps: f64,
     pub spread_z: f64,
+    pub sampled_slippage_bps: Option<f64>,
     pub slippage_base_bps: f64,
     pub slippage_vol_multiplier: f64,
     pub slippage_z_multiplier: f64,
@@ -518,10 +519,14 @@ pub fn evaluate_cost_gate(input: CostGateInput) -> CostGateDiagnostics {
 
     let fee_bps = input.fee_bps.max(0.0);
     let funding_bps = input.funding_bps.max(0.0);
-    let slippage_bps = (input.slippage_base_bps.max(0.0)
-        + input.slippage_vol_multiplier.max(0.0) * input.spread_vol_bps.max(0.0)
-        + input.slippage_z_multiplier.max(0.0) * input.spread_z.abs())
-    .max(0.0);
+    let slippage_bps = if let Some(sampled) = input.sampled_slippage_bps {
+        sampled.max(0.0)
+    } else {
+        (input.slippage_base_bps.max(0.0)
+            + input.slippage_vol_multiplier.max(0.0) * input.spread_vol_bps.max(0.0)
+            + input.slippage_z_multiplier.max(0.0) * input.spread_z.abs())
+        .max(0.0)
+    };
 
     let net_edge_bps = expected_edge_bps - fee_bps - funding_bps - slippage_bps;
     let pass = net_edge_bps > input.min_net_edge_bps.max(0.0);
@@ -1448,6 +1453,7 @@ mod tests {
             funding_bps: 0.8,
             spread_vol_bps: 2.0,
             spread_z: 1.9,
+            sampled_slippage_bps: None,
             slippage_base_bps: 0.6,
             slippage_vol_multiplier: 0.5,
             slippage_z_multiplier: 0.2,
@@ -1459,6 +1465,24 @@ mod tests {
             .rationale_codes
             .iter()
             .any(|code| code == "COST_GATE_BLOCKED"));
+    }
+
+    #[test]
+    fn cost_gate_prefers_sampled_slippage_when_present() {
+        let diagnostics = evaluate_cost_gate(CostGateInput {
+            expected_edge_bps: 3.5,
+            fee_bps: 1.0,
+            funding_bps: 0.5,
+            spread_vol_bps: 9.0,
+            spread_z: 2.1,
+            sampled_slippage_bps: Some(0.6),
+            slippage_base_bps: 1.2,
+            slippage_vol_multiplier: 0.8,
+            slippage_z_multiplier: 0.5,
+            min_net_edge_bps: 0.0,
+        });
+        assert!(diagnostics.pass);
+        assert!((diagnostics.slippage_bps - 0.6).abs() < 1e-9);
     }
 
     #[test]

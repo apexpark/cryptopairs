@@ -7,6 +7,8 @@
   "required": [
     "instrument",
     "server_time",
+    "bid",
+    "ask",
     "mark",
     "index",
     "change_24h_pct",
@@ -20,6 +22,12 @@
     "server_time": {
       "type": "string",
       "format": "date-time"
+    },
+    "bid": {
+      "type": "number"
+    },
+    "ask": {
+      "type": "number"
     },
     "mark": {
       "type": "number"

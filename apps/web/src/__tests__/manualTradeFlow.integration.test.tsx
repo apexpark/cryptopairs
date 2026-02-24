@@ -269,6 +269,8 @@ beforeEach(() => {
   api.fetchMarketMetrics.mockResolvedValue({
     instrument: LEFT,
     server_time: "2026-02-20T00:00:00Z",
+    bid: 67324.1,
+    ask: 67324.5,
     mark: 67324.3,
     index: 67317.8,
     change_24h_pct: 0.84,
