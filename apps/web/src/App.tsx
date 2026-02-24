@@ -1937,7 +1937,7 @@ function TradePage(props: {
           }
           title="Live spread z-score (entry / mean / stop)"
           unavailableText={props.analyticsError ?? "No live z-score data"}
-          height={246}
+          height={492}
           yAxisFormatter={(value) => value.toFixed(2)}
           showThresholdLabels
           mirrorThresholdLabels
