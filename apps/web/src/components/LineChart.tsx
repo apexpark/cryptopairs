@@ -82,7 +82,7 @@ export default function LineChart({
 }: LineChartProps): JSX.Element {
   if (values.length < 2) {
     return (
-      <div className="chart chart-empty" style={{ minHeight: `${height}px` }}>
+      <div className="chart chart-empty" style={{ height: `${height}px` }}>
         {title ? <div className="chart-title">{title}</div> : null}
         <div className="empty-text">{unavailableText}</div>
       </div>
@@ -172,7 +172,7 @@ export default function LineChart({
     : [];
 
   return (
-    <div className="chart" style={{ minHeight: `${height}px` }}>
+    <div className="chart" style={{ height: `${height}px` }}>
       {title ? <div className="chart-title">{title}</div> : null}
       <svg viewBox={`0 0 ${width} ${height}`} preserveAspectRatio="none">
         <g className="grid">

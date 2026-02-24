@@ -316,12 +316,24 @@ function formatSignedMetric(value: number | null | undefined, digits = 3): strin
 function formatUsdAxisValue(value: number): string {
   const abs = Math.abs(value);
   if (abs >= 1_000_000) {
-    return `${(value / 1_000_000).toFixed(2)}m USD`;
+    return `$${(value / 1_000_000).toFixed(2)}m`;
   }
   if (abs >= 1_000) {
-    return `${(value / 1_000).toFixed(1)}k USD`;
+    return `$${(value / 1_000).toFixed(1)}k`;
   }
-  return `${value.toFixed(2)} USD`;
+  return `$${value.toFixed(2)}`;
+}
+
+function scaleEquityForDisplay(
+  values: number[],
+  baseUsd = 100,
+  deltaMultiplier = 110
+): number[] {
+  if (!values.length) {
+    return values;
+  }
+  const anchor = values[0];
+  return values.map((value) => baseUsd + (value - anchor) * deltaMultiplier);
 }
 
 function formatLocalDateTime(value: string | number | Date): string {
@@ -2265,6 +2277,10 @@ function AnalyticsPage({
 }): JSX.Element {
   const selected = cues?.cues.find((entry) => entry.cue.pair_id === selectedPairId) ?? cues?.cues[0];
   const actionabilityExplanation = explainPairActionability(selected);
+  const displayEquitySeries = useMemo(
+    () => scaleEquityForDisplay(equitySeries, 100, 110),
+    [equitySeries]
+  );
 
   return (
     <div className="analytics-layout">
@@ -2329,10 +2345,10 @@ function AnalyticsPage({
             subtitle="Derived from live candles and current strategy bands"
           >
             <LineChart
-              values={equitySeries}
+              values={displayEquitySeries}
               timestamps={equityTimestamps}
               height={420}
-              title="Hypothetical equity (net of estimated costs)"
+              title="Hypothetical equity (base $100, 110x scaled deltas)"
               unavailableText={loading ? "Loading live candles..." : error ?? "No data"}
               yAxisFormatter={formatUsdAxisValue}
               valueScaleMode="trimmed"
@@ -2358,7 +2374,7 @@ function AnalyticsPage({
                     ]
                   : []
               }
-              height={360}
+              height={420}
               title="Entry=green, Exit=amber, Stop=red"
               unavailableText={loading ? "Loading live candles..." : error ?? "No data"}
               yAxisFormatter={(value) => value.toFixed(2)}
