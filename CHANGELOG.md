@@ -79,6 +79,7 @@ This project follows SemVer as defined in `docs/02-versioning-and-releases.md`.
   - Added y-axis labels and threshold-value labels on z-score charts.
   - Added live current z-score label on the Trade chart right-hand side (updates each data refresh) and positioned it to the right of the latest dot for readability.
   - Increased chart axis text size and z-score marker dot size.
+  - Applied a larger Inter-first typography scale across topbar metrics, tables, cards, controls, and chart labels to better match Kraken Pro text hierarchy.
   - Added USD-formatted y-axis labels for equity charts and tightened equity chart scaling for better vertical space usage.
   - Removed numeric prefixes from spread execution section titles.
   - Added `Definitions` and `Reoptimise` tabs in `How This Works`.

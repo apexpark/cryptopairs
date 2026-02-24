@@ -33,7 +33,7 @@ body,
 }
 
 body {
-  font-family: "Avenir Next", "SF Pro Text", "Segoe UI", Helvetica, sans-serif;
+  font-family: "Inter", "Avenir Next", "SF Pro Text", "Segoe UI", Helvetica, sans-serif;
   background: linear-gradient(180deg, var(--bg-grad-1), var(--bg-grad-2));
   color: var(--text);
 }
@@ -60,13 +60,15 @@ body {
 .auth-card h1 {
   margin: 0;
   color: #f2f4f7;
-  font-size: 1.25rem;
+  font-size: 1.35rem;
+  font-weight: 700;
 }
 
 .auth-subtitle {
   margin: 0;
   color: #a7adbb;
-  font-size: 0.9rem;
+  font-size: 0.98rem;
+  line-height: 1.35;
 }
 
 .auth-card input {
@@ -75,7 +77,7 @@ body {
   color: #f2f4f7;
   border-radius: 8px;
   padding: 10px 12px;
-  font-size: 0.9rem;
+  font-size: 0.95rem;
 }
 
 .app.dark {
@@ -130,7 +132,7 @@ body {
   border: 1px solid var(--line-strong);
   border-radius: 10px;
   padding: 8px 12px;
-  font-size: 0.78rem;
+  font-size: 0.86rem;
   font-weight: 600;
   background: var(--panel-2);
 }
@@ -162,7 +164,7 @@ body {
 
 .topbar-left h1 {
   margin: 0;
-  font-size: 1.85rem;
+  font-size: 2rem;
   font-weight: 700;
   white-space: nowrap;
   color: var(--text);
@@ -183,12 +185,12 @@ body {
 
 .metric-label {
   color: var(--muted);
-  font-size: 0.72rem;
+  font-size: 0.8rem;
 }
 
 .metric-value {
-  font-size: 0.86rem;
-  font-weight: 600;
+  font-size: 1rem;
+  font-weight: 700;
 }
 
 .topbar-right {
@@ -212,7 +214,7 @@ input {
 .theme-toggle,
 .timeframe-button {
   padding: 7px 10px;
-  font-size: 0.78rem;
+  font-size: 0.85rem;
   font-weight: 600;
   cursor: pointer;
 }
@@ -237,7 +239,7 @@ input {
   justify-content: space-between;
   padding: 7px 10px;
   border-radius: 6px;
-  font-size: 0.8rem;
+  font-size: 0.86rem;
   color: var(--muted);
   cursor: pointer;
   user-select: none;
@@ -279,6 +281,7 @@ input {
   padding: 10px 12px;
   background: transparent;
   color: var(--muted);
+  font-size: 0.9rem;
   font-weight: 600;
   cursor: pointer;
 }
@@ -312,7 +315,7 @@ input {
   display: flex;
   justify-content: space-between;
   gap: 12px;
-  font-size: 0.75rem;
+  font-size: 0.84rem;
   color: var(--muted);
 }
 
@@ -391,7 +394,7 @@ input {
 
 .analytics-explainer-list li {
   color: var(--muted);
-  font-size: 0.78rem;
+  font-size: 0.86rem;
   line-height: 1.35;
 }
 
@@ -409,7 +412,7 @@ input {
   border: 1px solid var(--line-soft);
   border-radius: 8px;
   background: var(--panel-2);
-  font-size: 0.75rem;
+  font-size: 0.84rem;
 }
 
 .maintenance-downloads {
@@ -420,7 +423,7 @@ input {
 }
 
 .maintenance-downloads li {
-  font-size: 0.78rem;
+  font-size: 0.86rem;
 }
 
 .maintenance-downloads a {
@@ -458,19 +461,19 @@ input {
 
 .panel-card h2 {
   margin: 0;
-  font-size: 1.35rem;
+  font-size: 1.5rem;
   line-height: 1.2;
 }
 
 .panel-card h3 {
   margin: 6px 0;
-  font-size: 1rem;
+  font-size: 1.08rem;
 }
 
 .panel-subtitle {
   margin: 4px 0 8px 0;
   color: var(--muted);
-  font-size: 0.78rem;
+  font-size: 0.86rem;
 }
 
 .table-wrap {
@@ -483,7 +486,7 @@ input {
 table {
   width: 100%;
   border-collapse: collapse;
-  font-size: 0.78rem;
+  font-size: 0.9rem;
 }
 
 thead th {
@@ -519,7 +522,7 @@ tbody tr.selected-row {
   border: 1px solid var(--line);
   background: var(--chip-bg);
   padding: 4px 9px;
-  font-size: 0.72rem;
+  font-size: 0.8rem;
   color: var(--muted);
 }
 
@@ -542,7 +545,7 @@ tbody tr.selected-row {
 .mini-card p,
 .message-box {
   margin: 4px 0;
-  font-size: 0.75rem;
+  font-size: 0.84rem;
 }
 
 .execution-block {
@@ -555,7 +558,7 @@ tbody tr.selected-row {
 
 .execution-block h3 {
   margin: 0 0 6px 0;
-  font-size: 0.9rem;
+  font-size: 1rem;
 }
 
 label {
@@ -563,7 +566,7 @@ label {
   flex-direction: column;
   gap: 4px;
   color: var(--muted);
-  font-size: 0.73rem;
+  font-size: 0.82rem;
   margin-bottom: 4px;
 }
 
@@ -571,7 +574,7 @@ input,
 select {
   width: 100%;
   padding: 6px 8px;
-  font-size: 0.76rem;
+  font-size: 0.88rem;
   outline: none;
 }
 
@@ -585,7 +588,7 @@ button {
   width: 100%;
   padding: 7px 10px;
   margin-top: 5px;
-  font-size: 0.77rem;
+  font-size: 0.9rem;
   font-weight: 600;
   cursor: pointer;
   background: color-mix(in srgb, var(--tone-ok) 65%, #ffffff 0%);
@@ -607,7 +610,7 @@ button:disabled {
   border: 1px solid var(--line-soft);
   border-radius: 999px;
   padding: 6px 10px;
-  font-size: 0.73rem;
+  font-size: 0.82rem;
   background: var(--chip-bg);
   margin: 4px 0;
 }
@@ -640,7 +643,7 @@ button:disabled {
 
 .chart-title {
   color: var(--muted);
-  font-size: 0.74rem;
+  font-size: 0.84rem;
   margin: 2px 2px 6px 2px;
 }
 
@@ -659,25 +662,25 @@ button:disabled {
 
 .chart .x-axis-label {
   fill: var(--muted);
-  font-size: 12px;
+  font-size: 13px;
   font-weight: 600;
 }
 
 .chart .y-axis-label {
   fill: var(--muted);
-  font-size: 12px;
+  font-size: 13px;
   font-weight: 600;
 }
 
 .chart .threshold-label {
   fill: color-mix(in srgb, var(--text) 85%, var(--muted));
-  font-size: 12px;
+  font-size: 13px;
   font-weight: 600;
 }
 
 .chart .current-value-label {
   fill: var(--tone-info);
-  font-size: 12px;
+  font-size: 13px;
   font-weight: 700;
   paint-order: stroke;
   stroke: color-mix(in srgb, var(--panel-2) 92%, transparent);
@@ -694,7 +697,7 @@ button:disabled {
 
 .empty-text {
   color: var(--muted);
-  font-size: 0.78rem;
+  font-size: 0.9rem;
 }
 
 .stat-row {
@@ -707,16 +710,16 @@ button:disabled {
 
 .stat-label {
   color: var(--muted);
-  font-size: 0.73rem;
+  font-size: 0.82rem;
 }
 
 .stat-value {
-  font-size: 0.9rem;
+  font-size: 1rem;
   font-weight: 700;
 }
 
 .small-text {
-  font-size: 0.7rem;
+  font-size: 0.78rem;
   color: var(--muted);
 }
 
@@ -774,7 +777,7 @@ button:disabled {
   background: var(--button-bg);
   color: var(--muted);
   border: 1px solid var(--line);
-  font-size: 0.77rem;
+  font-size: 0.86rem;
 }
 
 .how-tab-button.active {
@@ -798,7 +801,7 @@ button:disabled {
 
 .how-tab-content p {
   margin: 0 0 8px 0;
-  font-size: 0.79rem;
+  font-size: 0.88rem;
   line-height: 1.45;
   color: var(--text);
 }
@@ -811,7 +814,7 @@ button:disabled {
 }
 
 .how-tab-content li {
-  font-size: 0.78rem;
+  font-size: 0.86rem;
   color: var(--muted);
 }
 
@@ -821,7 +824,7 @@ button:disabled {
   display: grid;
   gap: 6px;
   color: var(--text);
-  font-size: 0.79rem;
+  font-size: 0.88rem;
 }
 
 .analysis-panel {
