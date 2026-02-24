@@ -275,6 +275,22 @@ function formatSigned(value: number, digits = 2): string {
   return `${value >= 0 ? "+" : "-"}${abs}`;
 }
 
+function parseCommissionPercentToBps(raw: string): number | null {
+  const trimmed = raw.trim();
+  if (!trimmed.length) {
+    return null;
+  }
+  const normalized = trimmed.endsWith("%") ? trimmed.slice(0, -1).trim() : trimmed;
+  if (!normalized.length) {
+    return null;
+  }
+  const percentValue = Number.parseFloat(normalized);
+  if (!Number.isFinite(percentValue) || percentValue < 0) {
+    return null;
+  }
+  return percentValue * 100;
+}
+
 function formatMetricPrice(value: number | null | undefined): string {
   if (value == null || !Number.isFinite(value)) {
     return "--";
@@ -634,6 +650,10 @@ function App(): JSX.Element {
   const [exchange, setExchange] = usePersistentState<string>("cp.exchange", "kraken_futures");
   const [accountId, setAccountId] = usePersistentState<string>("cp.account_id", "primary");
   const [operatorId, setOperatorId] = usePersistentState<string>("cp.operator", "operator-kevin");
+  const [takerCommissionPct, setTakerCommissionPct] = usePersistentState<string>(
+    "cp.taker_commission_pct",
+    ""
+  );
   const [apiKey, setApiKey] = useState<string>("");
   const [apiSecret, setApiSecret] = useState<string>("");
   const [apiPassphrase, setApiPassphrase] = useState<string>("");
@@ -782,6 +802,10 @@ function App(): JSX.Element {
 
   const stopValueNumber = Number.parseFloat(stopValue);
   const spreadSizeNumber = Number.parseFloat(spreadSize);
+  const takerFeeBpsOverride = useMemo(
+    () => parseCommissionPercentToBps(takerCommissionPct),
+    [takerCommissionPct]
+  );
 
   const stopConfigured = isStopConfigured(stopMethod, stopValueNumber);
   const gateState = useMemo(
@@ -894,10 +918,22 @@ function App(): JSX.Element {
       setCoreError(null);
 
       try {
+        const cuesRequest =
+          takerFeeBpsOverride == null
+            ? fetchStrategyCues(timeframe, 20)
+            : fetchStrategyCues(timeframe, 20, takerFeeBpsOverride);
+        const costGatesRequest =
+          takerFeeBpsOverride == null
+            ? fetchStrategyCostGates(timeframe)
+            : fetchStrategyCostGates(timeframe, takerFeeBpsOverride);
+        const planRequest =
+          takerFeeBpsOverride == null
+            ? fetchStrategyPortfolioPlan(timeframe)
+            : fetchStrategyPortfolioPlan(timeframe, takerFeeBpsOverride);
         const [cues, costs, plan] = await Promise.all([
-          fetchStrategyCues(timeframe, 20),
-          fetchStrategyCostGates(timeframe),
-          fetchStrategyPortfolioPlan(timeframe),
+          cuesRequest,
+          costGatesRequest,
+          planRequest,
         ]);
         if (cancelled) {
           return;
@@ -934,7 +970,7 @@ function App(): JSX.Element {
       cancelled = true;
       window.clearInterval(intervalId);
     };
-  }, [timeframe, uiAccessGranted]);
+  }, [timeframe, uiAccessGranted, takerFeeBpsOverride]);
 
   useEffect(() => {
     if (!uiAccessGranted) {
@@ -1070,9 +1106,27 @@ function App(): JSX.Element {
       const bars = timeframe === "1m" ? 300 : timeframe === "15m" ? 280 : 220;
 
       try {
+        const liveZRequest =
+          takerFeeBpsOverride == null
+            ? fetchStrategyLiveZ(timeframe, selectedCueRow.cue.pair_id, bars)
+            : fetchStrategyLiveZ(
+                timeframe,
+                selectedCueRow.cue.pair_id,
+                bars,
+                takerFeeBpsOverride
+              );
+        const backtestRequest =
+          takerFeeBpsOverride == null
+            ? fetchStrategyBacktest(timeframe, selectedCueRow.cue.pair_id, bars)
+            : fetchStrategyBacktest(
+                timeframe,
+                selectedCueRow.cue.pair_id,
+                bars,
+                takerFeeBpsOverride
+              );
         const [liveZ, backtest] = await Promise.all([
-          fetchStrategyLiveZ(timeframe, selectedCueRow.cue.pair_id, bars),
-          fetchStrategyBacktest(timeframe, selectedCueRow.cue.pair_id, bars),
+          liveZRequest,
+          backtestRequest,
         ]);
 
         if (cancelled) {
@@ -1129,7 +1183,7 @@ function App(): JSX.Element {
       cancelled = true;
       window.clearInterval(refreshIntervalId);
     };
-  }, [selectedCueRow, timeframe, uiAccessGranted]);
+  }, [selectedCueRow, timeframe, uiAccessGranted, takerFeeBpsOverride]);
 
   const refreshMaintenanceReport = useCallback(async (firstLoad = false): Promise<void> => {
     if (firstLoad) {
@@ -1736,6 +1790,9 @@ function App(): JSX.Element {
         exchange={exchange}
         accountId={accountId}
         operatorId={operatorId}
+        takerCommissionPct={takerCommissionPct}
+        setTakerCommissionPct={setTakerCommissionPct}
+        effectiveTakerFeeBps={takerFeeBpsOverride}
         apiKey={apiKey}
         apiSecret={apiSecret}
         apiPassphrase={apiPassphrase}
@@ -2896,6 +2953,9 @@ function SettingsPage({
   exchange,
   accountId,
   operatorId,
+  takerCommissionPct,
+  setTakerCommissionPct,
+  effectiveTakerFeeBps,
   apiKey,
   apiSecret,
   apiPassphrase,
@@ -2914,6 +2974,9 @@ function SettingsPage({
   exchange: string;
   accountId: string;
   operatorId: string;
+  takerCommissionPct: string;
+  setTakerCommissionPct: (value: string) => void;
+  effectiveTakerFeeBps: number | null;
   apiKey: string;
   apiSecret: string;
   apiPassphrase: string;
@@ -2952,6 +3015,28 @@ function SettingsPage({
           Default Operator ID
           <input value={operatorId} onChange={(event) => setOperatorId(event.target.value)} />
         </label>
+
+        <label>
+          Taker Commission
+          <input
+            value={takerCommissionPct}
+            onChange={(event) => setTakerCommissionPct(event.target.value)}
+            placeholder="0.10%"
+          />
+        </label>
+
+        <p className="small-text">
+          Percent used in strategy fee calculations (example: <code>0.10%</code>).
+        </p>
+        {effectiveTakerFeeBps == null ? (
+          <p className="small-text tone-warn">
+            Invalid commission format. Using backend default fee settings.
+          </p>
+        ) : (
+          <p className="small-text">
+            Effective fee override: {effectiveTakerFeeBps.toFixed(2)} bps.
+          </p>
+        )}
 
         <div className="mini-card">
           <h3>Current global timeframe</h3>

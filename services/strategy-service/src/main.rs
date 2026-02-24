@@ -885,6 +885,7 @@ struct CuesQuery {
     timeframe: String,
     limit: Option<usize>,
     include_advisory: Option<bool>,
+    taker_fee_bps: Option<f64>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -892,6 +893,7 @@ struct BacktestQuery {
     timeframe: String,
     pair_id: String,
     bars: Option<usize>,
+    taker_fee_bps: Option<f64>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -899,6 +901,7 @@ struct LiveZQuery {
     timeframe: String,
     pair_id: String,
     points: Option<usize>,
+    taker_fee_bps: Option<f64>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -1368,9 +1371,13 @@ fn spawn_reoptimize_worker(state: AppState) -> tokio::task::JoinHandle<()> {
             let mut portfolio_advice_unavailable = 0usize;
 
             for timeframe in &state.settings.timeframes {
-                let (outputs, skipped, plan) =
-                    evaluate_timeframe_outputs(&state, *timeframe, state.settings.advisory_enabled)
-                        .await;
+                let (outputs, skipped, plan) = evaluate_timeframe_outputs(
+                    &state,
+                    *timeframe,
+                    state.settings.advisory_enabled,
+                    state.settings.trading_fee_bps,
+                )
+                .await;
                 pairs_processed += state.settings.pairs.len();
                 if plan.status == "AVAILABLE" {
                     portfolio_advice_available += 1;
@@ -1900,8 +1907,9 @@ async fn pairs_cues(
     let include_advisory = query
         .include_advisory
         .unwrap_or(state.settings.advisory_enabled);
+    let taker_fee_bps = resolve_taker_fee_bps(query.taker_fee_bps, state.settings.trading_fee_bps)?;
     let (mut outputs, skipped, portfolio_plan) =
-        evaluate_timeframe_outputs(&state, timeframe, include_advisory).await;
+        evaluate_timeframe_outputs(&state, timeframe, include_advisory, taker_fee_bps).await;
 
     let mut cues = vec![];
     for output in outputs.drain(..) {
@@ -1983,8 +1991,14 @@ async fn pairs_cost_gate(
     let timeframe = Timeframe::parse(&query.timeframe).ok_or_else(|| {
         ApiError::BadRequest("invalid timeframe; expected 1m, 15m, 1h".to_string())
     })?;
-    let (outputs, skipped, _plan) =
-        evaluate_timeframe_outputs(&state, timeframe, state.settings.advisory_enabled).await;
+    let taker_fee_bps = resolve_taker_fee_bps(query.taker_fee_bps, state.settings.trading_fee_bps)?;
+    let (outputs, skipped, _plan) = evaluate_timeframe_outputs(
+        &state,
+        timeframe,
+        state.settings.advisory_enabled,
+        taker_fee_bps,
+    )
+    .await;
 
     let gates = outputs
         .into_iter()
@@ -2009,6 +2023,16 @@ async fn pairs_cost_gate(
         gates,
         skipped,
     }))
+}
+
+fn resolve_taker_fee_bps(override_value: Option<f64>, default_value: f64) -> Result<f64, ApiError> {
+    match override_value {
+        Some(value) if value.is_finite() && (0.0..=10_000.0).contains(&value) => Ok(value),
+        Some(_) => Err(ApiError::BadRequest(
+            "invalid taker_fee_bps; expected finite value in range [0, 10000]".to_string(),
+        )),
+        None => Ok(default_value.max(0.0)),
+    }
 }
 
 fn parse_opportunity_history_window(
@@ -2176,10 +2200,16 @@ async fn pairs_backtest(
     let left_closes = &left_closes[start_idx..];
     let right_closes = &right_closes[start_idx..];
 
-    let output =
-        evaluate_pair_for_timeframe(&state, pair, timeframe, state.settings.advisory_enabled)
-            .await
-            .map_err(|error| ApiError::Upstream(error.to_string()))?;
+    let taker_fee_bps = resolve_taker_fee_bps(query.taker_fee_bps, state.settings.trading_fee_bps)?;
+    let output = evaluate_pair_for_timeframe(
+        &state,
+        pair,
+        timeframe,
+        state.settings.advisory_enabled,
+        taker_fee_bps,
+    )
+    .await
+    .map_err(|error| ApiError::Upstream(error.to_string()))?;
 
     let series = compute_backtest_series(
         timestamps,
@@ -2291,10 +2321,16 @@ async fn pairs_live_z(
     let left_closes = &left_closes[start_idx..];
     let right_closes = &right_closes[start_idx..];
 
-    let output =
-        evaluate_pair_for_timeframe(&state, pair, timeframe, state.settings.advisory_enabled)
-            .await
-            .map_err(|error| ApiError::Upstream(error.to_string()))?;
+    let taker_fee_bps = resolve_taker_fee_bps(query.taker_fee_bps, state.settings.trading_fee_bps)?;
+    let output = evaluate_pair_for_timeframe(
+        &state,
+        pair,
+        timeframe,
+        state.settings.advisory_enabled,
+        taker_fee_bps,
+    )
+    .await
+    .map_err(|error| ApiError::Upstream(error.to_string()))?;
     let series = compute_backtest_series(
         timestamps,
         left_closes,
@@ -2361,8 +2397,9 @@ async fn pairs_portfolio_plan(
     let include_advisory = query
         .include_advisory
         .unwrap_or(state.settings.advisory_enabled);
+    let taker_fee_bps = resolve_taker_fee_bps(query.taker_fee_bps, state.settings.trading_fee_bps)?;
     let (_outputs, skipped, plan) =
-        evaluate_timeframe_outputs(&state, timeframe, include_advisory).await;
+        evaluate_timeframe_outputs(&state, timeframe, include_advisory, taker_fee_bps).await;
 
     Ok(Json(PortfolioPlanResponse {
         timeframe: timeframe.as_str().to_string(),
@@ -2414,8 +2451,13 @@ async fn reoptimize(
     let mut errors = vec![];
 
     for timeframe in &requested_timeframes {
-        let (outputs, skipped, plan) =
-            evaluate_timeframe_outputs(&state, *timeframe, state.settings.advisory_enabled).await;
+        let (outputs, skipped, plan) = evaluate_timeframe_outputs(
+            &state,
+            *timeframe,
+            state.settings.advisory_enabled,
+            state.settings.trading_fee_bps,
+        )
+        .await;
         pairs_processed += state.settings.pairs.len();
         if plan.status == "AVAILABLE" {
             portfolio_advice_available += 1;
@@ -2522,6 +2564,7 @@ async fn evaluate_pair_for_timeframe(
     pair: &PairSpec,
     timeframe: Timeframe,
     advisory_enabled: bool,
+    taker_fee_bps: f64,
 ) -> anyhow::Result<PairEvaluationOutput> {
     let lookback = state.settings.lookback_bars(timeframe) as i64;
     let left = state
@@ -2557,6 +2600,7 @@ async fn evaluate_pair_for_timeframe(
         hold_bars: state.settings.hold_bars(timeframe),
         max_half_life_bars: state.settings.max_half_life_bars(timeframe),
         funding_drag_bps: state.settings.funding_drag_bps,
+        taker_fee_bps,
         min_samples_target: state.settings.min_samples_target,
     })?;
 
@@ -2601,8 +2645,8 @@ async fn evaluate_pair_for_timeframe(
     if advisory_enabled {
         let cost_gate = evaluate_cost_gate(CostGateInput {
             expected_edge_bps: output.cue.opportunity_score.max(0.0),
-            fee_bps: state.settings.trading_fee_bps,
-            funding_bps: output.cue.cost_estimate_bps.max(0.0),
+            fee_bps: taker_fee_bps,
+            funding_bps: state.settings.funding_drag_bps.max(0.0),
             spread_vol_bps: output.spread_vol_bps.max(0.0),
             spread_z: output.cue.spread_z,
             slippage_base_bps: state.settings.slippage_base_bps,
@@ -2639,12 +2683,15 @@ async fn evaluate_timeframe_outputs(
     state: &AppState,
     timeframe: Timeframe,
     advisory_enabled: bool,
+    taker_fee_bps: f64,
 ) -> (Vec<PairEvaluationOutput>, Vec<SkippedPair>, PortfolioPlan) {
     let mut outputs = vec![];
     let mut skipped = vec![];
 
     for pair in &state.settings.pairs {
-        match evaluate_pair_for_timeframe(state, pair, timeframe, advisory_enabled).await {
+        match evaluate_pair_for_timeframe(state, pair, timeframe, advisory_enabled, taker_fee_bps)
+            .await
+        {
             Ok(output) => outputs.push(output),
             Err(error) => skipped.push(SkippedPair {
                 pair_id: pair.pair_id(),
@@ -2791,8 +2838,8 @@ mod tests {
     use super::{
         artifact_download_path, days_covered, decide_champion_transition,
         parse_opportunity_history_stats_timeframe, parse_opportunity_history_window,
-        resolve_artifact_path, ChampionDecision, MaintenanceAction, OpportunityHistoryQuery,
-        OpportunityHistoryStatsQuery, SelectedSignalRow,
+        resolve_artifact_path, resolve_taker_fee_bps, ChampionDecision, MaintenanceAction,
+        OpportunityHistoryQuery, OpportunityHistoryStatsQuery, SelectedSignalRow,
     };
     use chrono::Utc;
     use std::fs;
@@ -3050,5 +3097,24 @@ mod tests {
         assert_eq!(relative, "manual_actions/example.json");
 
         fs::remove_dir_all(&root).expect("cleanup root");
+    }
+
+    #[test]
+    fn resolve_taker_fee_bps_uses_default_when_unset() {
+        let resolved = resolve_taker_fee_bps(None, 1.2).expect("resolve default fee");
+        assert!((resolved - 1.2).abs() < 1e-9);
+    }
+
+    #[test]
+    fn resolve_taker_fee_bps_accepts_valid_override() {
+        let resolved = resolve_taker_fee_bps(Some(10.0), 1.2).expect("resolve override fee");
+        assert!((resolved - 10.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn resolve_taker_fee_bps_rejects_invalid_values() {
+        assert!(resolve_taker_fee_bps(Some(-0.1), 1.2).is_err());
+        assert!(resolve_taker_fee_bps(Some(10_000.1), 1.2).is_err());
+        assert!(resolve_taker_fee_bps(Some(f64::NAN), 1.2).is_err());
     }
 }
