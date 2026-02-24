@@ -5,6 +5,7 @@ import {
   allAcceptedDispatchAcknowledged,
   latestLifecycleState,
 } from "./lib/orderLifecycle";
+import { buildActiveTradeAnchor, buildExecutionMarkers } from "./lib/chartMarkers";
 import {
   buildStrategyMaintenanceArtifactUrl,
   buildStrategyOpportunityHistoryUrl,
@@ -718,6 +719,28 @@ function App(): JSX.Element {
     (currentPairId ? positions[currentPairId] : undefined) ?? emptyPosition(nowIso());
   const currentTimeline = timelineByPair[currentPairId] ?? [];
   const currentIntentHistory = intentHistoryByPair[currentPairId] ?? [];
+  const persistentExecutionMarkers = useMemo(
+    () =>
+      buildExecutionMarkers({
+        zValues: zSeries,
+        zTimestamps,
+        histories: currentIntentHistory,
+      }),
+    [zSeries, zTimestamps, currentIntentHistory]
+  );
+  const tradeChartMarkers = useMemo(
+    () => [...zMarkers, ...persistentExecutionMarkers],
+    [zMarkers, persistentExecutionMarkers]
+  );
+  const activeTradeAnchor = useMemo(
+    () =>
+      buildActiveTradeAnchor({
+        currentPosition,
+        zValues: zSeries,
+        histories: currentIntentHistory,
+      }),
+    [currentPosition, zSeries, currentIntentHistory]
+  );
   const uiAccessGranted = !uiAuthLoading && (!uiAuthEnabled || uiUnlocked);
 
   useEffect(() => {
@@ -1597,10 +1620,11 @@ function App(): JSX.Element {
           onSelectPair={setSelectedPairId}
           zSeries={zSeries}
           zTimestamps={zTimestamps}
-          zMarkers={zMarkers}
+          zMarkers={tradeChartMarkers}
           analyticsError={analyticsError}
           currentPosition={currentPosition}
           intentHistory={currentIntentHistory}
+          activeTradeAnchor={activeTradeAnchor}
           timeline={currentTimeline}
           stopMethod={stopMethod}
           stopValue={stopValue}
@@ -1871,6 +1895,7 @@ function TradePage(props: {
   analyticsError: string | null;
   currentPosition: SpreadPosition;
   intentHistory: OrderIntentHistoryResponse[];
+  activeTradeAnchor: { entryAt: string; entryZ: number; currentZ: number; deltaZ: number } | null;
   timeline: TimelineEvent[];
   stopMethod: "Z-Score" | "Dollar" | "Percent";
   stopValue: string;
@@ -1952,6 +1977,14 @@ function TradePage(props: {
           <p>Total size: {props.currentPosition.totalSize.toFixed(2)} spread units</p>
           <p>Avg entry z-score: {props.currentPosition.avgEntryZ.toFixed(2)}</p>
           <p>Updated: {formatLocalTime(props.currentPosition.updatedAt)}</p>
+          {props.activeTradeAnchor ? (
+            <p className="tone-info">
+              Active trade anchor: entry {props.activeTradeAnchor.entryZ.toFixed(2)} at{" "}
+              {formatLocalTime(props.activeTradeAnchor.entryAt)} | current{" "}
+              {props.activeTradeAnchor.currentZ.toFixed(2)} | ΔZ{" "}
+              {formatSigned(props.activeTradeAnchor.deltaZ, 2)}
+            </p>
+          ) : null}
           <p>Tracked intents: {props.intentHistory.length}</p>
           {props.intentHistory.slice(0, 2).map((history) => {
             const latestState = latestLifecycleState(history);
@@ -1996,6 +2029,11 @@ function TradePage(props: {
           showLatestValueLabel
           latestValueLabelFormatter={(value) => `Z ${value.toFixed(2)}`}
         />
+
+        <div className="chip-row">
+          <span className="chip">Signal dots: entry/exit/stop (recomputed)</span>
+          <span className="chip tone-info">Execution dots: persist from executed intents</span>
+        </div>
 
         <div className="chip-row">
           {selectedCue?.cue.rationale_codes.length ? (
