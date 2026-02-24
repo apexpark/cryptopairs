@@ -18,6 +18,7 @@ interface LineChartProps {
   markerRadius?: number;
   yTickCount?: number;
   valueScaleMode?: "full" | "trimmed";
+  includeThresholdsInDomain?: boolean;
 }
 
 function markerColor(kind: ChartMarker["kind"]): string {
@@ -75,6 +76,7 @@ export default function LineChart({
   markerRadius = 4,
   yTickCount = 7,
   valueScaleMode = "full",
+  includeThresholdsInDomain = true,
 }: LineChartProps): JSX.Element {
   if (values.length < 2) {
     return (
@@ -93,8 +95,11 @@ export default function LineChart({
   const bottomPadding = hasTimestampAxis ? 40 : 24;
   const chartBottom = height - bottomPadding;
   const thresholdValues = thresholds.map((item) => item.value);
-  const fullMin = Math.min(...values, ...thresholdValues);
-  const fullMax = Math.max(...values, ...thresholdValues);
+  const domainValues = includeThresholdsInDomain
+    ? [...values, ...thresholdValues]
+    : values;
+  const fullMin = Math.min(...domainValues);
+  const fullMax = Math.max(...domainValues);
 
   let domainMin = fullMin;
   let domainMax = fullMax;
@@ -102,8 +107,14 @@ export default function LineChart({
     const sorted = [...values].sort((left, right) => left - right);
     const trimmedMin = percentile(sorted, 0.03);
     const trimmedMax = percentile(sorted, 0.97);
-    const candidateMin = thresholdValues.length ? Math.min(trimmedMin, ...thresholdValues) : trimmedMin;
-    const candidateMax = thresholdValues.length ? Math.max(trimmedMax, ...thresholdValues) : trimmedMax;
+    const candidateMin =
+      includeThresholdsInDomain && thresholdValues.length
+        ? Math.min(trimmedMin, ...thresholdValues)
+        : trimmedMin;
+    const candidateMax =
+      includeThresholdsInDomain && thresholdValues.length
+        ? Math.max(trimmedMax, ...thresholdValues)
+        : trimmedMax;
     const fullSpan = Math.max(fullMax - fullMin, 1e-6);
     const candidateSpan = Math.max(candidateMax - candidateMin, 1e-6);
     if (candidateSpan / fullSpan >= 0.2) {
