@@ -490,6 +490,14 @@ function describeRationaleCode(code: string): string {
     CHAMPION_DRIFT_BLOCKED: "Model drift guard is active, so entries are blocked.",
     PAIR_NOT_IN_PORTFOLIO_PLAN: "Pair is currently outside the advisory portfolio plan.",
     INSUFFICIENT_TRAINING_HISTORY: "Shadow ML history is still building and not used for approvals.",
+    SLIPPAGE_SOURCE_SAMPLED:
+      "Cost gate uses live sampled slippage estimates from bid/ask/index quotes.",
+    SLIPPAGE_DATA_WARMING:
+      "Live slippage feed is still warming up; entry remains blocked until enough samples are collected.",
+    SLIPPAGE_DATA_STALE:
+      "Live slippage feed is stale; entry remains blocked until fresh quotes are restored.",
+    SLIPPAGE_DATA_UNAVAILABLE:
+      "Live slippage feed is unavailable; entry remains blocked in fail-closed mode.",
   };
   return mapping[code] ?? code.replaceAll("_", " ").toLowerCase();
 }
@@ -1295,9 +1303,25 @@ function App(): JSX.Element {
   const headerLeftLabel = formatInstrumentLabel(headerLeftInstrument);
   const headerRightLabel = formatInstrumentLabel(headerRightInstrument);
   const headerHedgeRatio = selectedCueRow?.hedge_ratio ?? 1;
+  const directionHint = selectedCueRow?.cue.direction_hint ?? "NONE";
+  const leftBid = headerLeftMetrics?.bid ?? headerLeftMetrics?.mark ?? null;
+  const leftAsk = headerLeftMetrics?.ask ?? headerLeftMetrics?.mark ?? null;
+  const rightBid = headerRightMetrics?.bid ?? headerRightMetrics?.mark ?? null;
+  const rightAsk = headerRightMetrics?.ask ?? headerRightMetrics?.mark ?? null;
+  const leftIndex = headerLeftMetrics?.index ?? headerLeftMetrics?.mark ?? null;
+  const rightIndex = headerRightMetrics?.index ?? headerRightMetrics?.mark ?? null;
   const spreadPrice =
-    headerLeftMetrics && headerRightMetrics
-      ? headerLeftMetrics.mark - headerHedgeRatio * headerRightMetrics.mark
+    leftBid != null &&
+    leftAsk != null &&
+    rightBid != null &&
+    rightAsk != null &&
+    leftIndex != null &&
+    rightIndex != null
+      ? directionHint === "LONG_SPREAD"
+        ? leftAsk - headerHedgeRatio * rightBid
+        : directionHint === "SHORT_SPREAD"
+          ? leftBid - headerHedgeRatio * rightAsk
+          : leftIndex - headerHedgeRatio * rightIndex
       : null;
   const spreadFundingRate =
     headerLeftMetrics && headerRightMetrics

@@ -8,7 +8,7 @@ use axum::{
 use chrono::{DateTime, Utc};
 use common_types::Timeframe;
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -19,6 +19,7 @@ use strategy_service::{
     PortfolioPlan, Regime, ShadowModelTrainingRow, SignalVariant,
 };
 use tokio::net::TcpListener;
+use tokio::sync::RwLock;
 use tokio_postgres::{types::ToSql, Client, NoTls};
 use tower_http::cors::{Any, CorsLayer};
 use tracing::info;
@@ -27,6 +28,8 @@ use tracing::info;
 struct AppState {
     repository: Arc<StrategyRepository>,
     settings: Arc<StrategySettings>,
+    http_client: reqwest::Client,
+    sampled_slippage: Arc<SampledSlippageStore>,
 }
 
 #[derive(Debug, Clone)]
@@ -69,6 +72,10 @@ struct StrategySettings {
     slippage_base_bps: f64,
     slippage_vol_multiplier: f64,
     slippage_z_multiplier: f64,
+    sampled_slippage_interval_ms: u64,
+    sampled_slippage_warmup_secs: u64,
+    sampled_slippage_stale_secs: u64,
+    sampled_slippage_ewma_alpha: f64,
     min_net_edge_bps: f64,
     advisory_gross_cap: f64,
     advisory_per_pair_cap: f64,
@@ -117,6 +124,13 @@ impl StrategySettings {
         let slippage_base_bps = parse_env_f64("STRATEGY_SLIPPAGE_BASE_BPS", 0.8);
         let slippage_vol_multiplier = parse_env_f64("STRATEGY_SLIPPAGE_VOL_MULTIPLIER", 0.45);
         let slippage_z_multiplier = parse_env_f64("STRATEGY_SLIPPAGE_Z_MULTIPLIER", 0.20);
+        let sampled_slippage_interval_ms =
+            parse_env_u64("STRATEGY_SAMPLED_SLIPPAGE_INTERVAL_MS", 1000);
+        let sampled_slippage_warmup_secs =
+            parse_env_u64("STRATEGY_SAMPLED_SLIPPAGE_WARMUP_SECS", 300);
+        let sampled_slippage_stale_secs = parse_env_u64("STRATEGY_SAMPLED_SLIPPAGE_STALE_SECS", 20);
+        let sampled_slippage_ewma_alpha =
+            parse_env_f64("STRATEGY_SAMPLED_SLIPPAGE_EWMA_ALPHA", 0.2).clamp(0.01, 1.0);
         let min_net_edge_bps = parse_env_f64("STRATEGY_MIN_NET_EDGE_BPS", 0.0);
         let advisory_gross_cap = parse_env_f64("STRATEGY_ADVISORY_GROSS_CAP", 1.0);
         let advisory_per_pair_cap = parse_env_f64("STRATEGY_ADVISORY_PER_PAIR_CAP", 0.35);
@@ -175,6 +189,10 @@ impl StrategySettings {
             slippage_base_bps,
             slippage_vol_multiplier,
             slippage_z_multiplier,
+            sampled_slippage_interval_ms,
+            sampled_slippage_warmup_secs,
+            sampled_slippage_stale_secs,
+            sampled_slippage_ewma_alpha,
             min_net_edge_bps,
             advisory_gross_cap,
             advisory_per_pair_cap,
@@ -968,11 +986,279 @@ struct ErrorResponse {
 struct StrategyMarketMetricsResponse {
     instrument: String,
     server_time: DateTime<Utc>,
+    bid: f64,
+    ask: f64,
     mark: f64,
     index: f64,
     change_24h_pct: f64,
     funding_rate: f64,
     open_interest: f64,
+}
+
+#[derive(Debug, Deserialize)]
+struct StrategyMarketMetricsBatchResponse {
+    generated_at: DateTime<Utc>,
+    metrics: Vec<StrategyMarketMetricsResponse>,
+}
+
+#[derive(Debug, Clone)]
+struct PairSlippageConfig {
+    key: String,
+    left_instrument: String,
+    right_instrument: String,
+}
+
+#[derive(Debug, Clone)]
+struct PairSlippageState {
+    long_slippage_ewma_bps: f64,
+    short_slippage_ewma_bps: f64,
+    sample_count: usize,
+    last_sample_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SampledSlippageStatus {
+    Healthy,
+    Warming,
+    Stale,
+    Down,
+}
+
+impl SampledSlippageStatus {
+    fn rationale_code(self) -> Option<&'static str> {
+        match self {
+            Self::Healthy => None,
+            Self::Warming => Some("SLIPPAGE_DATA_WARMING"),
+            Self::Stale => Some("SLIPPAGE_DATA_STALE"),
+            Self::Down => Some("SLIPPAGE_DATA_UNAVAILABLE"),
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+struct PairSlippageSnapshot {
+    status: SampledSlippageStatus,
+    selected_slippage_bps: f64,
+}
+
+#[derive(Debug)]
+struct SampledSlippageStore {
+    pair_configs: Vec<PairSlippageConfig>,
+    instruments: Vec<String>,
+    states: RwLock<HashMap<String, PairSlippageState>>,
+    hedge_ratios: RwLock<HashMap<String, f64>>,
+    poll_error: RwLock<Option<String>>,
+    ewma_alpha: f64,
+    warmup_samples: usize,
+    stale_after: chrono::Duration,
+}
+
+impl SampledSlippageStore {
+    fn new(settings: &StrategySettings) -> Self {
+        let mut pair_configs = vec![];
+        let mut instruments = HashSet::new();
+        for timeframe in &settings.timeframes {
+            for pair in &settings.pairs {
+                let pair_id = pair.pair_id();
+                let key = Self::pair_key(&pair_id, *timeframe);
+                pair_configs.push(PairSlippageConfig {
+                    key,
+                    left_instrument: pair.left.to_uppercase(),
+                    right_instrument: pair.right.to_uppercase(),
+                });
+                instruments.insert(pair.left.to_uppercase());
+                instruments.insert(pair.right.to_uppercase());
+            }
+        }
+
+        let interval_ms = settings.sampled_slippage_interval_ms.max(250);
+        let warmup_samples = ((settings.sampled_slippage_warmup_secs.max(1) * 1000)
+            .div_ceil(interval_ms))
+        .max(1) as usize;
+        let stale_after_secs = settings.sampled_slippage_stale_secs.max(1);
+
+        Self {
+            pair_configs,
+            instruments: instruments.into_iter().collect(),
+            states: RwLock::new(HashMap::new()),
+            hedge_ratios: RwLock::new(HashMap::new()),
+            poll_error: RwLock::new(None),
+            ewma_alpha: settings.sampled_slippage_ewma_alpha.clamp(0.01, 1.0),
+            warmup_samples,
+            stale_after: chrono::Duration::seconds(stale_after_secs as i64),
+        }
+    }
+
+    fn pair_key(pair_id: &str, timeframe: Timeframe) -> String {
+        format!("{pair_id}|{}", timeframe.as_str())
+    }
+
+    fn instruments_csv(&self) -> String {
+        self.instruments.join(",")
+    }
+
+    async fn set_poll_error(&self, error: String) {
+        *self.poll_error.write().await = Some(error);
+    }
+
+    async fn clear_poll_error(&self) {
+        *self.poll_error.write().await = None;
+    }
+
+    async fn update_hedge_ratio(&self, pair_id: &str, timeframe: Timeframe, hedge_ratio: f64) {
+        if !hedge_ratio.is_finite() {
+            return;
+        }
+        self.hedge_ratios
+            .write()
+            .await
+            .insert(Self::pair_key(pair_id, timeframe), hedge_ratio);
+    }
+
+    async fn ingest_quotes(
+        &self,
+        quotes: &HashMap<String, StrategyMarketMetricsResponse>,
+        sampled_at: DateTime<Utc>,
+    ) -> usize {
+        let hedge_ratios = self.hedge_ratios.read().await.clone();
+        let mut states = self.states.write().await;
+        let mut updated = 0usize;
+
+        for config in &self.pair_configs {
+            let Some(left) = quotes.get(&config.left_instrument) else {
+                continue;
+            };
+            let Some(right) = quotes.get(&config.right_instrument) else {
+                continue;
+            };
+            let hedge_ratio = *hedge_ratios.get(&config.key).unwrap_or(&1.0);
+            let Some((long_slippage_bps, short_slippage_bps)) =
+                compute_pair_slippage_sample_bps(left, right, hedge_ratio)
+            else {
+                continue;
+            };
+
+            let state = states
+                .entry(config.key.clone())
+                .or_insert(PairSlippageState {
+                    long_slippage_ewma_bps: long_slippage_bps,
+                    short_slippage_ewma_bps: short_slippage_bps,
+                    sample_count: 0,
+                    last_sample_at: sampled_at,
+                });
+            if state.sample_count == 0 {
+                state.long_slippage_ewma_bps = long_slippage_bps;
+                state.short_slippage_ewma_bps = short_slippage_bps;
+            } else {
+                state.long_slippage_ewma_bps = (self.ewma_alpha * long_slippage_bps)
+                    + ((1.0 - self.ewma_alpha) * state.long_slippage_ewma_bps);
+                state.short_slippage_ewma_bps = (self.ewma_alpha * short_slippage_bps)
+                    + ((1.0 - self.ewma_alpha) * state.short_slippage_ewma_bps);
+            }
+            state.sample_count += 1;
+            state.last_sample_at = sampled_at;
+            updated += 1;
+        }
+
+        updated
+    }
+
+    async fn snapshot_for(
+        &self,
+        pair_id: &str,
+        timeframe: Timeframe,
+        direction_hint: &str,
+    ) -> PairSlippageSnapshot {
+        let key = Self::pair_key(pair_id, timeframe);
+        let maybe_state = self.states.read().await.get(&key).cloned();
+        let poll_error = self.poll_error.read().await.clone();
+
+        let Some(state) = maybe_state else {
+            if let Some(error) = poll_error {
+                tracing::warn!(
+                    pair_id = %pair_id,
+                    timeframe = %timeframe.as_str(),
+                    error = %error,
+                    "sampled slippage unavailable"
+                );
+            }
+            return PairSlippageSnapshot {
+                status: SampledSlippageStatus::Down,
+                selected_slippage_bps: 0.0,
+            };
+        };
+
+        let age = Utc::now().signed_duration_since(state.last_sample_at);
+        let status = if age > self.stale_after {
+            SampledSlippageStatus::Stale
+        } else if state.sample_count < self.warmup_samples {
+            SampledSlippageStatus::Warming
+        } else {
+            SampledSlippageStatus::Healthy
+        };
+        let selected_slippage_bps = match direction_hint {
+            "LONG_SPREAD" => state.long_slippage_ewma_bps,
+            "SHORT_SPREAD" => state.short_slippage_ewma_bps,
+            _ => state
+                .long_slippage_ewma_bps
+                .max(state.short_slippage_ewma_bps),
+        };
+
+        PairSlippageSnapshot {
+            status,
+            selected_slippage_bps,
+        }
+    }
+}
+
+fn compute_pair_slippage_sample_bps(
+    left: &StrategyMarketMetricsResponse,
+    right: &StrategyMarketMetricsResponse,
+    hedge_ratio: f64,
+) -> Option<(f64, f64)> {
+    let values = [
+        left.bid,
+        left.ask,
+        left.index,
+        right.bid,
+        right.ask,
+        right.index,
+        hedge_ratio,
+    ];
+    if values.iter().any(|value| !value.is_finite()) {
+        return None;
+    }
+    if left.bid <= 0.0
+        || left.ask <= 0.0
+        || left.index <= 0.0
+        || right.bid <= 0.0
+        || right.ask <= 0.0
+        || right.index <= 0.0
+    {
+        return None;
+    }
+    if left.ask < left.bid || right.ask < right.bid {
+        return None;
+    }
+
+    let ratio = hedge_ratio.abs().max(1e-9);
+    let gross_notional = left.index.abs() + (ratio * right.index.abs());
+    if gross_notional <= 0.0 {
+        return None;
+    }
+
+    let long_leg_cost =
+        (left.ask - left.index).max(0.0) + ratio * (right.index - right.bid).max(0.0);
+    let short_leg_cost =
+        (left.index - left.bid).max(0.0) + ratio * (right.ask - right.index).max(0.0);
+    let long_bps = (long_leg_cost / gross_notional) * 10_000.0;
+    let short_bps = (short_leg_cost / gross_notional) * 10_000.0;
+
+    if long_bps.is_finite() && short_bps.is_finite() {
+        Some((long_bps.max(0.0), short_bps.max(0.0)))
+    } else {
+        None
+    }
 }
 
 #[derive(Debug, Serialize)]
@@ -1267,11 +1553,16 @@ async fn main() -> anyhow::Result<()> {
 
     let settings = Arc::new(StrategySettings::from_env());
     let repository = Arc::new(StrategyRepository::connect(&settings.postgres_url).await?);
+    let http_client = reqwest::Client::new();
+    let sampled_slippage = Arc::new(SampledSlippageStore::new(&settings));
     let state = AppState {
         repository,
         settings: settings.clone(),
+        http_client,
+        sampled_slippage,
     };
 
+    let _slippage_worker = spawn_sampled_slippage_worker(state.clone());
     let _worker = spawn_reoptimize_worker(state.clone());
     let cors = CorsLayer::new()
         .allow_origin(Any)
@@ -1327,6 +1618,10 @@ async fn main() -> anyhow::Result<()> {
         shadow_ml_training_limit = settings.shadow_ml_training_limit,
         trading_fee_bps = settings.trading_fee_bps,
         min_net_edge_bps = settings.min_net_edge_bps,
+        sampled_slippage_interval_ms = settings.sampled_slippage_interval_ms,
+        sampled_slippage_warmup_secs = settings.sampled_slippage_warmup_secs,
+        sampled_slippage_stale_secs = settings.sampled_slippage_stale_secs,
+        sampled_slippage_ewma_alpha = settings.sampled_slippage_ewma_alpha,
         advisory_enabled = settings.advisory_enabled,
         advisory_gross_cap = settings.advisory_gross_cap,
         advisory_per_pair_cap = settings.advisory_per_pair_cap,
@@ -1347,6 +1642,59 @@ async fn main() -> anyhow::Result<()> {
 
     axum::serve(listener, app).await?;
     Ok(())
+}
+
+fn spawn_sampled_slippage_worker(state: AppState) -> tokio::task::JoinHandle<()> {
+    tokio::spawn(async move {
+        let interval_ms = state.settings.sampled_slippage_interval_ms.max(250);
+        let mut interval = tokio::time::interval(std::time::Duration::from_millis(interval_ms));
+        loop {
+            interval.tick().await;
+            match refresh_sampled_slippage(&state).await {
+                Ok(_updated_pairs) => state.sampled_slippage.clear_poll_error().await,
+                Err(error) => {
+                    state
+                        .sampled_slippage
+                        .set_poll_error(error.to_string())
+                        .await;
+                    tracing::warn!(error = %error, "sampled slippage refresh failed");
+                }
+            }
+        }
+    })
+}
+
+async fn refresh_sampled_slippage(state: &AppState) -> anyhow::Result<usize> {
+    let instruments = state.sampled_slippage.instruments_csv();
+    if instruments.is_empty() {
+        return Ok(0);
+    }
+    let upstream_base = state.settings.data_service_url.trim_end_matches('/');
+    let upstream_url = reqwest::Url::parse_with_params(
+        &format!("{upstream_base}/v1/market/metrics/batch"),
+        &[("instruments", instruments.as_str())],
+    )?;
+
+    let response = state.http_client.get(upstream_url.clone()).send().await?;
+    if !response.status().is_success() {
+        let status = response.status();
+        let body = response.text().await.unwrap_or_default();
+        anyhow::bail!(
+            "sampled slippage upstream status={} body={}",
+            status.as_u16(),
+            body
+        );
+    }
+    let payload: StrategyMarketMetricsBatchResponse = response.json().await?;
+    let sampled_at = payload.generated_at;
+    let mut quotes = HashMap::new();
+    for metric in payload.metrics {
+        quotes.insert(metric.instrument.to_uppercase(), metric);
+    }
+    Ok(state
+        .sampled_slippage
+        .ingest_quotes(&quotes, sampled_at)
+        .await)
 }
 
 fn spawn_reoptimize_worker(state: AppState) -> tokio::task::JoinHandle<()> {
@@ -2642,34 +2990,68 @@ async fn evaluate_pair_for_timeframe(
         );
     }
 
-    if advisory_enabled {
-        let cost_gate = evaluate_cost_gate(CostGateInput {
-            expected_edge_bps: output.cue.opportunity_score.max(0.0),
-            fee_bps: taker_fee_bps,
-            funding_bps: state.settings.funding_drag_bps.max(0.0),
-            spread_vol_bps: output.spread_vol_bps.max(0.0),
-            spread_z: output.cue.spread_z,
-            slippage_base_bps: state.settings.slippage_base_bps,
-            slippage_vol_multiplier: state.settings.slippage_vol_multiplier,
-            slippage_z_multiplier: state.settings.slippage_z_multiplier,
-            min_net_edge_bps: state.settings.min_net_edge_bps,
-        });
+    state
+        .sampled_slippage
+        .update_hedge_ratio(&output.cue.pair_id, timeframe, output.hedge_ratio)
+        .await;
 
-        if !cost_gate.pass {
-            output.cue.actionable = false;
-            if !output
-                .cue
+    if advisory_enabled {
+        let sampled = state
+            .sampled_slippage
+            .snapshot_for(&output.cue.pair_id, timeframe, &output.cue.direction_hint)
+            .await;
+        if sampled.status == SampledSlippageStatus::Healthy {
+            let mut cost_gate = evaluate_cost_gate(CostGateInput {
+                expected_edge_bps: output.cue.opportunity_score.max(0.0),
+                fee_bps: taker_fee_bps,
+                funding_bps: state.settings.funding_drag_bps.max(0.0),
+                spread_vol_bps: output.spread_vol_bps.max(0.0),
+                spread_z: output.cue.spread_z,
+                sampled_slippage_bps: Some(sampled.selected_slippage_bps),
+                slippage_base_bps: state.settings.slippage_base_bps,
+                slippage_vol_multiplier: state.settings.slippage_vol_multiplier,
+                slippage_z_multiplier: state.settings.slippage_z_multiplier,
+                min_net_edge_bps: state.settings.min_net_edge_bps,
+            });
+            cost_gate
                 .rationale_codes
-                .iter()
-                .any(|code| code == "COST_GATE_BLOCKED")
-            {
-                output
+                .push("SLIPPAGE_SOURCE_SAMPLED".to_string());
+
+            if !cost_gate.pass {
+                output.cue.actionable = false;
+                if !output
                     .cue
                     .rationale_codes
-                    .push("COST_GATE_BLOCKED".to_string());
+                    .iter()
+                    .any(|code| code == "COST_GATE_BLOCKED")
+                {
+                    output
+                        .cue
+                        .rationale_codes
+                        .push("COST_GATE_BLOCKED".to_string());
+                }
+            }
+            output.cue.cost_gate = cost_gate;
+        } else {
+            output.cue.actionable = false;
+            if let Some(reason_code) = sampled.status.rationale_code() {
+                if !output
+                    .cue
+                    .rationale_codes
+                    .iter()
+                    .any(|code| code == reason_code)
+                {
+                    output.cue.rationale_codes.push(reason_code.to_string());
+                }
+                output.cue.cost_gate = strategy_service::CostGateDiagnostics::unavailable(vec![
+                    reason_code.to_string(),
+                ]);
+            } else {
+                output.cue.cost_gate = strategy_service::CostGateDiagnostics::unavailable(vec![
+                    "SLIPPAGE_DATA_UNAVAILABLE".to_string(),
+                ]);
             }
         }
-        output.cue.cost_gate = cost_gate;
     } else {
         output.cue.cost_gate = strategy_service::CostGateDiagnostics::unavailable(vec![
             "ADVISORY_DISABLED".to_string(),
@@ -2836,10 +3218,11 @@ fn parse_env_bool(key: &str, default: bool) -> bool {
 #[cfg(test)]
 mod tests {
     use super::{
-        artifact_download_path, days_covered, decide_champion_transition,
-        parse_opportunity_history_stats_timeframe, parse_opportunity_history_window,
-        resolve_artifact_path, resolve_taker_fee_bps, ChampionDecision, MaintenanceAction,
-        OpportunityHistoryQuery, OpportunityHistoryStatsQuery, SelectedSignalRow,
+        artifact_download_path, compute_pair_slippage_sample_bps, days_covered,
+        decide_champion_transition, parse_opportunity_history_stats_timeframe,
+        parse_opportunity_history_window, resolve_artifact_path, resolve_taker_fee_bps,
+        ChampionDecision, MaintenanceAction, OpportunityHistoryQuery, OpportunityHistoryStatsQuery,
+        SampledSlippageStatus, SelectedSignalRow, StrategyMarketMetricsResponse,
     };
     use chrono::Utc;
     use std::fs;
@@ -3116,5 +3499,80 @@ mod tests {
         assert!(resolve_taker_fee_bps(Some(-0.1), 1.2).is_err());
         assert!(resolve_taker_fee_bps(Some(10_000.1), 1.2).is_err());
         assert!(resolve_taker_fee_bps(Some(f64::NAN), 1.2).is_err());
+    }
+
+    #[test]
+    fn sampled_slippage_math_uses_bid_ask_index_and_hedge_ratio() {
+        let left = StrategyMarketMetricsResponse {
+            instrument: "PF_LEFT".to_string(),
+            server_time: Utc::now(),
+            bid: 99.8,
+            ask: 100.2,
+            mark: 100.0,
+            index: 100.0,
+            change_24h_pct: 0.0,
+            funding_rate: 0.0,
+            open_interest: 0.0,
+        };
+        let right = StrategyMarketMetricsResponse {
+            instrument: "PF_RIGHT".to_string(),
+            server_time: Utc::now(),
+            bid: 49.9,
+            ask: 50.1,
+            mark: 50.0,
+            index: 50.0,
+            change_24h_pct: 0.0,
+            funding_rate: 0.0,
+            open_interest: 0.0,
+        };
+
+        let (long_bps, short_bps) =
+            compute_pair_slippage_sample_bps(&left, &right, 1.0).expect("slippage sample");
+        assert!(long_bps > 0.0);
+        assert!(short_bps > 0.0);
+    }
+
+    #[test]
+    fn sampled_slippage_math_rejects_crossed_quotes() {
+        let left = StrategyMarketMetricsResponse {
+            instrument: "PF_LEFT".to_string(),
+            server_time: Utc::now(),
+            bid: 100.2,
+            ask: 100.1,
+            mark: 100.1,
+            index: 100.1,
+            change_24h_pct: 0.0,
+            funding_rate: 0.0,
+            open_interest: 0.0,
+        };
+        let right = StrategyMarketMetricsResponse {
+            instrument: "PF_RIGHT".to_string(),
+            server_time: Utc::now(),
+            bid: 49.9,
+            ask: 50.1,
+            mark: 50.0,
+            index: 50.0,
+            change_24h_pct: 0.0,
+            funding_rate: 0.0,
+            open_interest: 0.0,
+        };
+        assert!(compute_pair_slippage_sample_bps(&left, &right, 1.0).is_none());
+    }
+
+    #[test]
+    fn sampled_slippage_status_maps_to_fail_closed_codes() {
+        assert_eq!(
+            SampledSlippageStatus::Warming.rationale_code(),
+            Some("SLIPPAGE_DATA_WARMING")
+        );
+        assert_eq!(
+            SampledSlippageStatus::Stale.rationale_code(),
+            Some("SLIPPAGE_DATA_STALE")
+        );
+        assert_eq!(
+            SampledSlippageStatus::Down.rationale_code(),
+            Some("SLIPPAGE_DATA_UNAVAILABLE")
+        );
+        assert_eq!(SampledSlippageStatus::Healthy.rationale_code(), None);
     }
 }

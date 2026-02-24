@@ -2,7 +2,10 @@ use async_trait::async_trait;
 use chrono::{DateTime, TimeZone, Utc};
 use common_types::{Candle, DataQueryRequest, Timeframe};
 use serde::Deserialize;
-use std::{collections::HashMap, path::Path};
+use std::{
+    collections::{HashMap, HashSet},
+    path::Path,
+};
 use thiserror::Error;
 use tracing::warn;
 
@@ -45,12 +48,18 @@ pub enum AdapterError {
 pub trait MarketDataAdapter: Send + Sync {
     async fn fetch_candles(&self, request: &DataQueryRequest) -> Result<Vec<Candle>, AdapterError>;
     async fn fetch_market_metrics(&self, instrument: &str) -> Result<MarketMetrics, AdapterError>;
+    async fn fetch_market_metrics_batch(
+        &self,
+        instruments: &[String],
+    ) -> Result<Vec<MarketMetrics>, AdapterError>;
 }
 
 #[derive(Debug, Clone)]
 pub struct MarketMetrics {
     pub instrument: String,
     pub server_time: DateTime<Utc>,
+    pub bid: f64,
+    pub ask: f64,
     pub mark: f64,
     pub index: f64,
     pub change_24h_pct: f64,
@@ -230,6 +239,26 @@ impl KrakenFuturesRestClient {
 
         Ok((bounded_start, bounded_end))
     }
+
+    async fn fetch_tickers_payload(&self) -> Result<KrakenTickersResponse, AdapterError> {
+        let url = format!("{}/derivatives/api/v3/tickers", self.base_url);
+        let response = self
+            .client
+            .get(url)
+            .send()
+            .await
+            .map_err(|err| AdapterError::Request(err.to_string()))?;
+        let status = response.status().as_u16();
+        let body = response
+            .text()
+            .await
+            .map_err(|err| AdapterError::Decode(err.to_string()))?;
+        if status != 200 {
+            return Err(AdapterError::HttpStatus { status, body });
+        }
+
+        serde_json::from_str(&body).map_err(|err| AdapterError::Decode(err.to_string()))
+    }
 }
 
 impl Default for KrakenFuturesRestClient {
@@ -290,78 +319,86 @@ impl MarketDataAdapter for KrakenFuturesRestClient {
     }
 
     async fn fetch_market_metrics(&self, instrument: &str) -> Result<MarketMetrics, AdapterError> {
-        let url = format!("{}/derivatives/api/v3/tickers", self.base_url);
-        let response = self
-            .client
-            .get(url)
-            .send()
-            .await
-            .map_err(|err| AdapterError::Request(err.to_string()))?;
-        let status = response.status().as_u16();
-        let body = response
-            .text()
-            .await
-            .map_err(|err| AdapterError::Decode(err.to_string()))?;
-        if status != 200 {
-            return Err(AdapterError::HttpStatus { status, body });
+        let mut metrics = self
+            .fetch_market_metrics_batch(&[instrument.to_string()])
+            .await?;
+        metrics.pop().ok_or_else(|| AdapterError::TickerNotFound {
+            instrument: instrument.to_string(),
+        })
+    }
+
+    async fn fetch_market_metrics_batch(
+        &self,
+        instruments: &[String],
+    ) -> Result<Vec<MarketMetrics>, AdapterError> {
+        if instruments.is_empty() {
+            return Ok(vec![]);
         }
 
-        let payload: KrakenTickersResponse =
-            serde_json::from_str(&body).map_err(|err| AdapterError::Decode(err.to_string()))?;
+        let payload = self.fetch_tickers_payload().await?;
         let server_time = payload
             .server_time
             .parse::<DateTime<Utc>>()
             .map_err(|_| AdapterError::InvalidServerTime(payload.server_time.clone()))?;
+        let requested = instruments
+            .iter()
+            .map(|instrument| instrument.trim().to_uppercase())
+            .collect::<HashSet<_>>();
+        let mut by_symbol = HashMap::new();
 
-        let ticker = payload
-            .tickers
-            .into_iter()
-            .find(|item| item.symbol.eq_ignore_ascii_case(instrument))
-            .ok_or_else(|| AdapterError::TickerNotFound {
-                instrument: instrument.to_string(),
-            })?;
+        for ticker in payload.tickers {
+            if !requested.contains(&ticker.symbol.to_uppercase()) {
+                continue;
+            }
+            let symbol = ticker.symbol.clone();
+            let (
+                Some(bid),
+                Some(ask),
+                Some(mark),
+                Some(index),
+                Some(change_24h_pct),
+                Some(funding_rate),
+                Some(open_interest),
+            ) = (
+                ticker.bid,
+                ticker.ask,
+                ticker.mark_price,
+                ticker.index_price,
+                ticker.change_24h,
+                ticker.funding_rate,
+                ticker.open_interest,
+            )
+            else {
+                warn!(
+                    instrument = %symbol,
+                    "skipping ticker with missing required market metrics fields"
+                );
+                continue;
+            };
+            by_symbol.insert(
+                symbol.to_uppercase(),
+                MarketMetrics {
+                    instrument: symbol,
+                    server_time: server_time.clone(),
+                    bid,
+                    ask,
+                    mark,
+                    index,
+                    change_24h_pct,
+                    funding_rate,
+                    open_interest,
+                },
+            );
+        }
 
-        let mark = ticker
-            .mark_price
-            .ok_or_else(|| AdapterError::MissingTickerField {
-                instrument: ticker.symbol.clone(),
-                field: "markPrice",
-            })?;
-        let index = ticker
-            .index_price
-            .ok_or_else(|| AdapterError::MissingTickerField {
-                instrument: ticker.symbol.clone(),
-                field: "indexPrice",
-            })?;
-        let change_24h_pct = ticker
-            .change_24h
-            .ok_or_else(|| AdapterError::MissingTickerField {
-                instrument: ticker.symbol.clone(),
-                field: "change24h",
-            })?;
-        let funding_rate = ticker
-            .funding_rate
-            .ok_or_else(|| AdapterError::MissingTickerField {
-                instrument: ticker.symbol.clone(),
-                field: "fundingRate",
-            })?;
-        let open_interest =
-            ticker
-                .open_interest
-                .ok_or_else(|| AdapterError::MissingTickerField {
-                    instrument: ticker.symbol.clone(),
-                    field: "openInterest",
-                })?;
-
-        Ok(MarketMetrics {
-            instrument: ticker.symbol,
-            server_time,
-            mark,
-            index,
-            change_24h_pct,
-            funding_rate,
-            open_interest,
-        })
+        let mut result = Vec::with_capacity(instruments.len());
+        for instrument in instruments {
+            let key = instrument.trim().to_uppercase();
+            if let Some(metric) = by_symbol.remove(&key) {
+                result.push(metric);
+            }
+        }
+        Ok(result)
     }
 }
 
@@ -380,6 +417,8 @@ struct KrakenTickersResponse {
 #[derive(Debug, Deserialize)]
 struct KrakenTicker {
     symbol: String,
+    bid: Option<f64>,
+    ask: Option<f64>,
     #[serde(rename = "markPrice")]
     mark_price: Option<f64>,
     #[serde(rename = "indexPrice")]
@@ -510,6 +549,8 @@ mod tests {
           "tickers": [
             {
               "symbol": "PI_XBTUSD",
+              "bid": 67324.1,
+              "ask": 67324.5,
               "markPrice": 67324.30,
               "indexPrice": 67317.80,
               "change24h": 0.84,
@@ -526,6 +567,8 @@ mod tests {
             .iter()
             .find(|value| value.symbol == "PI_XBTUSD")
             .expect("PI_XBTUSD ticker should be present");
+        assert_eq!(ticker.bid, Some(67324.1));
+        assert_eq!(ticker.ask, Some(67324.5));
         assert_eq!(ticker.mark_price, Some(67324.30));
         assert_eq!(ticker.index_price, Some(67317.80));
         assert_eq!(ticker.change_24h, Some(0.84));
