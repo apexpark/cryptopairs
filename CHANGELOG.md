@@ -72,6 +72,9 @@ This project follows SemVer as defined in `docs/02-versioning-and-releases.md`.
   - Web app market metric fetches now use strategy-service market metrics endpoint.
   - Header market metrics now update per instrument independently (partial failures no longer blank both legs).
   - Z-score charts now use dynamic domain scaling based on observed series values so the plotted line uses more panel space.
+  - Dashboard viewport-fit improvements:
+    - Content shell now scrolls internally instead of clipping lower content on shorter laptop viewports.
+    - Trade/Analytics chart heights now adapt to viewport height with bounded min/max values for consistent laptop-to-4K rendering.
 - Trade and Analytics UI readability pass:
   - Added y-axis labels and threshold-value labels on z-score charts.
   - Increased chart axis text size and z-score marker dot size.
