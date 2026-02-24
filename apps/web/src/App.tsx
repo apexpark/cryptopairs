@@ -40,6 +40,7 @@ import {
 } from "./lib/tradeGuards";
 import type {
   ChartMarker,
+  BacktestExitMode,
   DispatchIntentResponse,
   DirectionHint,
   ExecutionAction,
@@ -654,6 +655,10 @@ function App(): JSX.Element {
   const [theme, setTheme] = usePersistentState<ThemeMode>("cp.theme", preferredTheme());
   const [page, setPage] = useState<PageId>("trade");
   const [timeframe, setTimeframe] = usePersistentState<Timeframe>("cp.timeframe", "1m");
+  const [backtestExitMode, setBacktestExitMode] = usePersistentState<BacktestExitMode>(
+    "cp.backtest_exit_mode",
+    "mean_revert"
+  );
 
   const [exchange, setExchange] = usePersistentState<string>("cp.exchange", "kraken_futures");
   const [accountId, setAccountId] = usePersistentState<string>("cp.account_id", "primary");
@@ -1116,21 +1121,35 @@ function App(): JSX.Element {
       try {
         const liveZRequest =
           takerFeeBpsOverride == null
-            ? fetchStrategyLiveZ(timeframe, selectedCueRow.cue.pair_id, bars)
+            ? fetchStrategyLiveZ(
+                timeframe,
+                selectedCueRow.cue.pair_id,
+                bars,
+                undefined,
+                backtestExitMode
+              )
             : fetchStrategyLiveZ(
                 timeframe,
                 selectedCueRow.cue.pair_id,
                 bars,
-                takerFeeBpsOverride
+                takerFeeBpsOverride,
+                backtestExitMode
               );
         const backtestRequest =
           takerFeeBpsOverride == null
-            ? fetchStrategyBacktest(timeframe, selectedCueRow.cue.pair_id, bars)
+            ? fetchStrategyBacktest(
+                timeframe,
+                selectedCueRow.cue.pair_id,
+                bars,
+                undefined,
+                backtestExitMode
+              )
             : fetchStrategyBacktest(
                 timeframe,
                 selectedCueRow.cue.pair_id,
                 bars,
-                takerFeeBpsOverride
+                takerFeeBpsOverride,
+                backtestExitMode
               );
         const [liveZ, backtest] = await Promise.all([
           liveZRequest,
@@ -1191,7 +1210,7 @@ function App(): JSX.Element {
       cancelled = true;
       window.clearInterval(refreshIntervalId);
     };
-  }, [selectedCueRow, timeframe, uiAccessGranted, takerFeeBpsOverride]);
+  }, [selectedCueRow, timeframe, uiAccessGranted, takerFeeBpsOverride, backtestExitMode]);
 
   const refreshMaintenanceReport = useCallback(async (firstLoad = false): Promise<void> => {
     if (firstLoad) {
@@ -1817,6 +1836,8 @@ function App(): JSX.Element {
         takerCommissionPct={takerCommissionPct}
         setTakerCommissionPct={setTakerCommissionPct}
         effectiveTakerFeeBps={takerFeeBpsOverride}
+        backtestExitMode={backtestExitMode}
+        setBacktestExitMode={setBacktestExitMode}
         apiKey={apiKey}
         apiSecret={apiSecret}
         apiPassphrase={apiPassphrase}
@@ -2980,6 +3001,8 @@ function SettingsPage({
   takerCommissionPct,
   setTakerCommissionPct,
   effectiveTakerFeeBps,
+  backtestExitMode,
+  setBacktestExitMode,
   apiKey,
   apiSecret,
   apiPassphrase,
@@ -3001,6 +3024,8 @@ function SettingsPage({
   takerCommissionPct: string;
   setTakerCommissionPct: (value: string) => void;
   effectiveTakerFeeBps: number | null;
+  backtestExitMode: BacktestExitMode;
+  setBacktestExitMode: (value: BacktestExitMode) => void;
   apiKey: string;
   apiSecret: string;
   apiPassphrase: string;
@@ -3061,6 +3086,20 @@ function SettingsPage({
             Effective fee override: {effectiveTakerFeeBps.toFixed(2)} bps.
           </p>
         )}
+
+        <label>
+          Backtest Exit Mode
+          <select
+            value={backtestExitMode}
+            onChange={(event) => setBacktestExitMode(event.target.value as BacktestExitMode)}
+          >
+            <option value="mean_revert">Mean Revert Exit</option>
+            <option value="opposite_extreme">Opposite Extreme Exit</option>
+          </select>
+        </label>
+        <p className="small-text">
+          Controls analytics backtest/live-z marker logic. Live trade execution logic is unchanged.
+        </p>
 
         <div className="mini-card">
           <h3>Current global timeframe</h3>

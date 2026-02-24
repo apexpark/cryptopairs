@@ -15,8 +15,8 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use strategy_service::{
     annotate_with_shadow_model, apply_portfolio_plan_to_cues, build_portfolio_plan,
     compute_backtest_series, evaluate_cost_gate, evaluate_pair, train_shadow_model, BacktestConfig,
-    CandidateSetDiagnostics, CostGateInput, PairCue, PairEvaluationInput, PairEvaluationOutput,
-    PortfolioPlan, Regime, ShadowModelTrainingRow, SignalVariant,
+    BacktestExitMode, CandidateSetDiagnostics, CostGateInput, PairCue, PairEvaluationInput,
+    PairEvaluationOutput, PortfolioPlan, Regime, ShadowModelTrainingRow, SignalVariant,
 };
 use tokio::net::TcpListener;
 use tokio::sync::RwLock;
@@ -912,6 +912,7 @@ struct BacktestQuery {
     pair_id: String,
     bars: Option<usize>,
     taker_fee_bps: Option<f64>,
+    exit_mode: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -920,6 +921,7 @@ struct LiveZQuery {
     pair_id: String,
     points: Option<usize>,
     taker_fee_bps: Option<f64>,
+    exit_mode: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -1298,6 +1300,7 @@ struct BacktestResponse {
     timeframe: String,
     pair_id: String,
     generated_at: DateTime<Utc>,
+    exit_mode: String,
     left_instrument: String,
     right_instrument: String,
     selected_variant: String,
@@ -1322,6 +1325,7 @@ struct LiveZResponse {
     timeframe: String,
     pair_id: String,
     generated_at: DateTime<Utc>,
+    exit_mode: String,
     entry_band: f64,
     exit_band: f64,
     stop_band: f64,
@@ -2383,6 +2387,17 @@ fn resolve_taker_fee_bps(override_value: Option<f64>, default_value: f64) -> Res
     }
 }
 
+fn parse_backtest_exit_mode(raw: Option<&str>) -> Result<BacktestExitMode, ApiError> {
+    match raw {
+        None => Ok(BacktestExitMode::MeanRevert),
+        Some(value) => BacktestExitMode::parse(value).ok_or_else(|| {
+            ApiError::BadRequest(
+                "invalid exit_mode; expected mean_revert or opposite_extreme".to_string(),
+            )
+        }),
+    }
+}
+
 fn parse_opportunity_history_window(
     query: &OpportunityHistoryQuery,
 ) -> Result<(Timeframe, i64, bool, i64), ApiError> {
@@ -2508,6 +2523,7 @@ async fn pairs_backtest(
     let timeframe = Timeframe::parse(&query.timeframe).ok_or_else(|| {
         ApiError::BadRequest("invalid timeframe; expected 1m, 15m, 1h".to_string())
     })?;
+    let exit_mode = parse_backtest_exit_mode(query.exit_mode.as_deref())?;
     let bars = query.bars.unwrap_or(300).clamp(120, 2_000);
     let Some(pair) = state
         .settings
@@ -2569,6 +2585,7 @@ async fn pairs_backtest(
             exit_band: output.cue.exit_band,
             stop_band: output.cue.stop_band,
             round_trip_cost_bps: output.cue.cost_estimate_bps,
+            exit_mode,
         },
     );
 
@@ -2583,6 +2600,7 @@ async fn pairs_backtest(
     tracing::info!(
         pair_id = %query.pair_id,
         timeframe = %timeframe.as_str(),
+        exit_mode = %exit_mode.as_str(),
         bars,
         points = series.points.len(),
         markers = series.markers.len(),
@@ -2593,6 +2611,7 @@ async fn pairs_backtest(
         timeframe: timeframe.as_str().to_string(),
         pair_id: query.pair_id,
         generated_at: Utc::now(),
+        exit_mode: exit_mode.as_str().to_string(),
         left_instrument: output.cue.left_instrument,
         right_instrument: output.cue.right_instrument,
         selected_variant: output.cue.selected_variant,
@@ -2629,6 +2648,7 @@ async fn pairs_live_z(
     let timeframe = Timeframe::parse(&query.timeframe).ok_or_else(|| {
         ApiError::BadRequest("invalid timeframe; expected 1m, 15m, 1h".to_string())
     })?;
+    let exit_mode = parse_backtest_exit_mode(query.exit_mode.as_deref())?;
     let points = query.points.unwrap_or(300).clamp(120, 2_000);
     let Some(pair) = state
         .settings
@@ -2689,6 +2709,7 @@ async fn pairs_live_z(
             exit_band: output.cue.exit_band,
             stop_band: output.cue.stop_band,
             round_trip_cost_bps: output.cue.cost_estimate_bps,
+            exit_mode,
         },
     );
     if series.points.is_empty() {
@@ -2702,6 +2723,7 @@ async fn pairs_live_z(
     tracing::info!(
         pair_id = %query.pair_id,
         timeframe = %timeframe.as_str(),
+        exit_mode = %exit_mode.as_str(),
         points = series.points.len(),
         markers = series.markers.len(),
         "strategy live z-series generated"
@@ -2711,6 +2733,7 @@ async fn pairs_live_z(
         timeframe: timeframe.as_str().to_string(),
         pair_id: query.pair_id,
         generated_at: Utc::now(),
+        exit_mode: exit_mode.as_str().to_string(),
         entry_band: output.cue.entry_band,
         exit_band: output.cue.exit_band,
         stop_band: output.cue.stop_band,
@@ -3219,10 +3242,11 @@ fn parse_env_bool(key: &str, default: bool) -> bool {
 mod tests {
     use super::{
         artifact_download_path, compute_pair_slippage_sample_bps, days_covered,
-        decide_champion_transition, parse_opportunity_history_stats_timeframe,
-        parse_opportunity_history_window, resolve_artifact_path, resolve_taker_fee_bps,
-        ChampionDecision, MaintenanceAction, OpportunityHistoryQuery, OpportunityHistoryStatsQuery,
-        SampledSlippageStatus, SelectedSignalRow, StrategyMarketMetricsResponse,
+        decide_champion_transition, parse_backtest_exit_mode,
+        parse_opportunity_history_stats_timeframe, parse_opportunity_history_window,
+        resolve_artifact_path, resolve_taker_fee_bps, ChampionDecision, MaintenanceAction,
+        OpportunityHistoryQuery, OpportunityHistoryStatsQuery, SampledSlippageStatus,
+        SelectedSignalRow, StrategyMarketMetricsResponse,
     };
     use chrono::Utc;
     use std::fs;
@@ -3499,6 +3523,28 @@ mod tests {
         assert!(resolve_taker_fee_bps(Some(-0.1), 1.2).is_err());
         assert!(resolve_taker_fee_bps(Some(10_000.1), 1.2).is_err());
         assert!(resolve_taker_fee_bps(Some(f64::NAN), 1.2).is_err());
+    }
+
+    #[test]
+    fn parse_backtest_exit_mode_defaults_to_mean_revert() {
+        let parsed = parse_backtest_exit_mode(None).expect("parse default exit mode");
+        assert_eq!(parsed.as_str(), "mean_revert");
+    }
+
+    #[test]
+    fn parse_backtest_exit_mode_accepts_supported_values() {
+        let mean_revert =
+            parse_backtest_exit_mode(Some("mean_revert")).expect("parse mean_revert exit mode");
+        assert_eq!(mean_revert.as_str(), "mean_revert");
+
+        let opposite_extreme = parse_backtest_exit_mode(Some("opposite_extreme"))
+            .expect("parse opposite_extreme exit mode");
+        assert_eq!(opposite_extreme.as_str(), "opposite_extreme");
+    }
+
+    #[test]
+    fn parse_backtest_exit_mode_rejects_invalid_values() {
+        assert!(parse_backtest_exit_mode(Some("hold_to_expiry")).is_err());
     }
 
     #[test]

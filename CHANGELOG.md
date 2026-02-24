@@ -93,6 +93,12 @@ This project follows SemVer as defined in `docs/02-versioning-and-releases.md`.
   - Added `Taker Commission` input in Settings (percent format, e.g. `0.10%`).
   - Web app now threads optional `taker_fee_bps` to strategy endpoints (`cues`, `cost-gate`, `portfolio-plan`, `backtest`, `live-z`).
   - Strategy-service now applies optional `taker_fee_bps` overrides in cost-gate and cost-estimate calculations while validating bounds fail-closed.
+- Configurable backtest exit behavior for analytics:
+  - Added optional `exit_mode` query parameter (`mean_revert` or `opposite_extreme`) to:
+    - `GET /v1/strategy/pairs/backtest`
+    - `GET /v1/strategy/pairs/live-z`
+  - Responses now echo `exit_mode` for auditability.
+  - Settings tab now includes `Backtest Exit Mode` selector to drive analytics chart computation mode.
 - Live sampled slippage gating and execution-aware quote handling:
   - `data-service` market metrics now include `bid` and `ask`.
   - Added `GET /v1/market/metrics/batch?instruments=...` for efficient quote polling.

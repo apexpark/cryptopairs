@@ -8,6 +8,7 @@
     "timeframe",
     "pair_id",
     "generated_at",
+    "exit_mode",
     "entry_band",
     "exit_band",
     "stop_band",
@@ -27,6 +28,10 @@
     "generated_at": {
       "type": "string",
       "format": "date-time"
+    },
+    "exit_mode": {
+      "type": "string",
+      "enum": ["mean_revert", "opposite_extreme"]
     },
     "entry_band": {
       "type": "number"
