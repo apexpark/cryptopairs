@@ -23,6 +23,7 @@ import type {
   StrategyUiAuthVerifyRequest,
   StrategyUiAuthVerifyResponse,
   StrategyPairsPortfolioPlanResponse,
+  BacktestExitMode,
   Timeframe,
 } from "../types";
 
@@ -89,13 +90,17 @@ export async function fetchStrategyBacktest(
   timeframe: Timeframe,
   pairId: string,
   bars = 300,
-  takerFeeBps?: number
+  takerFeeBps?: number,
+  exitMode?: BacktestExitMode
 ): Promise<StrategyPairsBacktestResponse> {
   const params = new URLSearchParams();
   params.set("timeframe", timeframe);
   params.set("pair_id", pairId);
   params.set("bars", bars.toString());
   withOptionalTakerFeeBps(params, takerFeeBps);
+  if (exitMode) {
+    params.set("exit_mode", exitMode);
+  }
   const url = `${STRATEGY_SERVICE_BASE_URL}/v1/strategy/pairs/backtest?${params.toString()}`;
   return parseJson<StrategyPairsBacktestResponse>(await fetch(url));
 }
@@ -104,13 +109,17 @@ export async function fetchStrategyLiveZ(
   timeframe: Timeframe,
   pairId: string,
   points = 300,
-  takerFeeBps?: number
+  takerFeeBps?: number,
+  exitMode?: BacktestExitMode
 ): Promise<StrategyPairsLiveZResponse> {
   const params = new URLSearchParams();
   params.set("timeframe", timeframe);
   params.set("pair_id", pairId);
   params.set("points", points.toString());
   withOptionalTakerFeeBps(params, takerFeeBps);
+  if (exitMode) {
+    params.set("exit_mode", exitMode);
+  }
   const url = `${STRATEGY_SERVICE_BASE_URL}/v1/strategy/pairs/live-z?${params.toString()}`;
   return parseJson<StrategyPairsLiveZResponse>(await fetch(url));
 }

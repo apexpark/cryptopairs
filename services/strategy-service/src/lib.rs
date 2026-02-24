@@ -296,6 +296,29 @@ pub struct BacktestSeries {
     pub markers: Vec<BacktestMarker>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BacktestExitMode {
+    MeanRevert,
+    OppositeExtreme,
+}
+
+impl BacktestExitMode {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::MeanRevert => "mean_revert",
+            Self::OppositeExtreme => "opposite_extreme",
+        }
+    }
+
+    pub fn parse(raw: &str) -> Option<Self> {
+        match raw.trim().to_ascii_lowercase().as_str() {
+            "mean_revert" => Some(Self::MeanRevert),
+            "opposite_extreme" => Some(Self::OppositeExtreme),
+            _ => None,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy)]
 pub struct BacktestConfig {
     pub hedge_ratio: f64,
@@ -303,6 +326,7 @@ pub struct BacktestConfig {
     pub exit_band: f64,
     pub stop_band: f64,
     pub round_trip_cost_bps: f64,
+    pub exit_mode: BacktestExitMode,
 }
 
 #[derive(Debug, Clone)]
@@ -970,13 +994,22 @@ pub fn compute_backtest_series(
                     index: points.len(),
                     kind: "stop".to_string(),
                 });
-            } else if z.abs() <= config.exit_band {
-                position = 0;
-                equity *= 1.0 - round_trip_cost;
-                markers.push(BacktestMarker {
-                    index: points.len(),
-                    kind: "exit".to_string(),
-                });
+            } else {
+                let should_exit = match config.exit_mode {
+                    BacktestExitMode::MeanRevert => z.abs() <= config.exit_band,
+                    BacktestExitMode::OppositeExtreme => {
+                        (position == 1 && z >= config.entry_band)
+                            || (position == -1 && z <= -config.entry_band)
+                    }
+                };
+                if should_exit {
+                    position = 0;
+                    equity *= 1.0 - round_trip_cost;
+                    markers.push(BacktestMarker {
+                        index: points.len(),
+                        kind: "exit".to_string(),
+                    });
+                }
             }
         }
 
@@ -1311,9 +1344,9 @@ fn median(values: &[f64]) -> f64 {
 mod tests {
     use super::{
         annotate_with_shadow_model, build_portfolio_plan, compute_backtest_series,
-        evaluate_cost_gate, evaluate_pair, train_shadow_model, BacktestConfig, CostGateDiagnostics,
-        CostGateInput, DirectionHint, PairCue, PairEvaluationInput, PortfolioHint, Regime,
-        ShadowMlDiagnostics, ShadowModelTrainingRow, SignalVariant,
+        evaluate_cost_gate, evaluate_pair, train_shadow_model, BacktestConfig, BacktestExitMode,
+        CostGateDiagnostics, CostGateInput, DirectionHint, PairCue, PairEvaluationInput,
+        PortfolioHint, Regime, ShadowMlDiagnostics, ShadowModelTrainingRow, SignalVariant,
     };
     use chrono::{Duration, Utc};
     use common_types::Timeframe;
@@ -1532,6 +1565,7 @@ mod tests {
                 exit_band: 0.6,
                 stop_band: 3.2,
                 round_trip_cost_bps: 2.0,
+                exit_mode: BacktestExitMode::MeanRevert,
             },
         );
         assert!(series.points.len() > 200);
@@ -1553,6 +1587,7 @@ mod tests {
                 exit_band: 0.6,
                 stop_band: 3.2,
                 round_trip_cost_bps: 0.0,
+                exit_mode: BacktestExitMode::MeanRevert,
             },
         );
         assert!(series.points.is_empty());
@@ -1576,6 +1611,7 @@ mod tests {
                 exit_band: 0.2,
                 stop_band: 1.2,
                 round_trip_cost_bps: 0.0,
+                exit_mode: BacktestExitMode::MeanRevert,
             },
         );
 
@@ -1587,6 +1623,73 @@ mod tests {
                 marker.index
             );
         }
+    }
+
+    #[test]
+    fn backtest_exit_mode_opposite_extreme_holds_longer_than_mean_revert() {
+        let spread = vec![
+            0.0, 1.8, 2.2, 1.5, 0.4, 0.1, -0.2, -1.2, -1.8, -2.1, -1.0, 0.2, 1.3, 1.9,
+        ];
+        let (timestamps, left, right) = synthetic_spread_path(&spread);
+
+        let mean_revert = compute_backtest_series(
+            &timestamps,
+            &left,
+            &right,
+            BacktestConfig {
+                hedge_ratio: 1.0,
+                entry_band: 1.0,
+                exit_band: 0.25,
+                stop_band: 4.0,
+                round_trip_cost_bps: 0.0,
+                exit_mode: BacktestExitMode::MeanRevert,
+            },
+        );
+        let opposite_extreme = compute_backtest_series(
+            &timestamps,
+            &left,
+            &right,
+            BacktestConfig {
+                hedge_ratio: 1.0,
+                entry_band: 1.0,
+                exit_band: 0.25,
+                stop_band: 4.0,
+                round_trip_cost_bps: 0.0,
+                exit_mode: BacktestExitMode::OppositeExtreme,
+            },
+        );
+
+        let mean_entry = mean_revert
+            .markers
+            .iter()
+            .find(|marker| marker.kind == "entry")
+            .expect("mean-revert entry")
+            .index;
+        let mean_exit = mean_revert
+            .markers
+            .iter()
+            .find(|marker| marker.kind == "exit")
+            .expect("mean-revert exit")
+            .index;
+        let opposite_entry = opposite_extreme
+            .markers
+            .iter()
+            .find(|marker| marker.kind == "entry")
+            .expect("opposite entry")
+            .index;
+        let opposite_exit = opposite_extreme
+            .markers
+            .iter()
+            .find(|marker| marker.kind == "exit")
+            .expect("opposite exit")
+            .index;
+
+        assert!(mean_exit > mean_entry);
+        assert!(opposite_exit > opposite_entry);
+        assert!(
+            opposite_exit > mean_exit,
+            "opposite-extreme exit should occur later than mean-revert exit"
+        );
     }
 
     fn synthetic_pair_series(n: usize) -> (Vec<chrono::DateTime<Utc>>, Vec<f64>, Vec<f64>) {
@@ -1608,6 +1711,19 @@ mod tests {
             left.push(left_log.exp());
         }
 
+        (timestamps, left, right)
+    }
+
+    fn synthetic_spread_path(spread: &[f64]) -> (Vec<chrono::DateTime<Utc>>, Vec<f64>, Vec<f64>) {
+        let start = Utc::now() - Duration::minutes(spread.len() as i64);
+        let mut timestamps = Vec::with_capacity(spread.len());
+        let mut left = Vec::with_capacity(spread.len());
+        let mut right = Vec::with_capacity(spread.len());
+        for (idx, value) in spread.iter().enumerate() {
+            timestamps.push(start + Duration::minutes(idx as i64));
+            right.push(100.0);
+            left.push(100.0 * value.exp());
+        }
         (timestamps, left, right)
     }
 

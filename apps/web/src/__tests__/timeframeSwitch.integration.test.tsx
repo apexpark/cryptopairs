@@ -372,8 +372,20 @@ describe("global timeframe switching", () => {
 
     await waitFor(() => {
       expect(api.fetchStrategyCues).toHaveBeenCalledWith("1m", 20);
-      expect(api.fetchStrategyLiveZ).toHaveBeenCalledWith("1m", PAIR_ID, 300);
-      expect(api.fetchStrategyBacktest).toHaveBeenCalledWith("1m", PAIR_ID, 300);
+      expect(api.fetchStrategyLiveZ).toHaveBeenCalledWith(
+        "1m",
+        PAIR_ID,
+        300,
+        undefined,
+        "mean_revert"
+      );
+      expect(api.fetchStrategyBacktest).toHaveBeenCalledWith(
+        "1m",
+        PAIR_ID,
+        300,
+        undefined,
+        "mean_revert"
+      );
       expect(api.fetchMarketMetrics).toHaveBeenCalledWith(LEFT);
       expect(api.fetchMarketMetrics).toHaveBeenCalledWith(RIGHT);
       expect(api.fetchExecutionPortfolioPositions).toHaveBeenCalledWith(
@@ -394,8 +406,20 @@ describe("global timeframe switching", () => {
       expect(api.fetchExecutionDecision).toHaveBeenCalledWith(RIGHT, "15m");
       expect(api.fetchIntegrityHistory).toHaveBeenCalledWith(LEFT, "15m", 50);
       expect(api.fetchIntegrityHistory).toHaveBeenCalledWith(RIGHT, "15m", 50);
-      expect(api.fetchStrategyLiveZ).toHaveBeenCalledWith("15m", PAIR_ID, 280);
-      expect(api.fetchStrategyBacktest).toHaveBeenCalledWith("15m", PAIR_ID, 280);
+      expect(api.fetchStrategyLiveZ).toHaveBeenCalledWith(
+        "15m",
+        PAIR_ID,
+        280,
+        undefined,
+        "mean_revert"
+      );
+      expect(api.fetchStrategyBacktest).toHaveBeenCalledWith(
+        "15m",
+        PAIR_ID,
+        280,
+        undefined,
+        "mean_revert"
+      );
       expect(screen.getByRole("button", { name: /Timeframe: 15m/i })).toBeInTheDocument();
     });
   });
@@ -404,14 +428,32 @@ describe("global timeframe switching", () => {
     render(<App />);
 
     await waitFor(() => {
-      expect(api.fetchStrategyLiveZ).toHaveBeenCalledWith("1m", PAIR_ID, 300);
+      expect(api.fetchStrategyLiveZ).toHaveBeenCalledWith(
+        "1m",
+        PAIR_ID,
+        300,
+        undefined,
+        "mean_revert"
+      );
     });
 
     selectTimeframe("1h");
 
     await waitFor(() => {
-      expect(api.fetchStrategyLiveZ).toHaveBeenCalledWith("1h", PAIR_ID, 220);
-      expect(api.fetchStrategyBacktest).toHaveBeenCalledWith("1h", PAIR_ID, 220);
+      expect(api.fetchStrategyLiveZ).toHaveBeenCalledWith(
+        "1h",
+        PAIR_ID,
+        220,
+        undefined,
+        "mean_revert"
+      );
+      expect(api.fetchStrategyBacktest).toHaveBeenCalledWith(
+        "1h",
+        PAIR_ID,
+        220,
+        undefined,
+        "mean_revert"
+      );
       expect(screen.getByRole("button", { name: /Timeframe: 1h/i })).toBeInTheDocument();
     });
   });
@@ -432,8 +474,14 @@ describe("global timeframe switching", () => {
       expect(api.fetchStrategyCues).toHaveBeenCalledWith("1m", 20, 10);
       expect(api.fetchStrategyCostGates).toHaveBeenCalledWith("1m", 10);
       expect(api.fetchStrategyPortfolioPlan).toHaveBeenCalledWith("1m", 10);
-      expect(api.fetchStrategyLiveZ).toHaveBeenCalledWith("1m", PAIR_ID, 300, 10);
-      expect(api.fetchStrategyBacktest).toHaveBeenCalledWith("1m", PAIR_ID, 300, 10);
+      expect(api.fetchStrategyLiveZ).toHaveBeenCalledWith("1m", PAIR_ID, 300, 10, "mean_revert");
+      expect(api.fetchStrategyBacktest).toHaveBeenCalledWith(
+        "1m",
+        PAIR_ID,
+        300,
+        10,
+        "mean_revert"
+      );
     });
   });
 });

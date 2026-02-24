@@ -1,4 +1,5 @@
 export type Timeframe = "1m" | "15m" | "1h";
+export type BacktestExitMode = "mean_revert" | "opposite_extreme";
 
 export type DirectionHint = "LONG_SPREAD" | "SHORT_SPREAD" | "NONE";
 
@@ -195,6 +196,7 @@ export interface StrategyPairsBacktestResponse {
   timeframe: Timeframe;
   pair_id: string;
   generated_at: string;
+  exit_mode: BacktestExitMode;
   left_instrument: string;
   right_instrument: string;
   selected_variant: string;
@@ -216,6 +218,7 @@ export interface StrategyPairsLiveZResponse {
   timeframe: Timeframe;
   pair_id: string;
   generated_at: string;
+  exit_mode: BacktestExitMode;
   entry_band: number;
   exit_band: number;
   stop_band: number;

@@ -2,6 +2,7 @@
   "timeframe": "1m",
   "pair_id": "PI_XBTUSD__PI_ETHUSD",
   "generated_at": "2026-02-20T01:45:00Z",
+  "exit_mode": "mean_revert",
   "entry_band": 1.8,
   "exit_band": 0.6,
   "stop_band": 3.2,
