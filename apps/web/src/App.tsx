@@ -1940,6 +1940,7 @@ function TradePage(props: {
           height={246}
           yAxisFormatter={(value) => value.toFixed(2)}
           showThresholdLabels
+          mirrorThresholdLabels
           markerRadius={6}
           valueScaleMode="trimmed"
           includeThresholdsInDomain
@@ -2362,6 +2363,7 @@ function AnalyticsPage({
               unavailableText={loading ? "Loading live candles..." : error ?? "No data"}
               yAxisFormatter={(value) => value.toFixed(2)}
               showThresholdLabels
+              mirrorThresholdLabels
               markerRadius={6}
               valueScaleMode="trimmed"
               includeThresholdsInDomain
