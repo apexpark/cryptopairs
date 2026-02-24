@@ -367,6 +367,30 @@ function formatLocalTime(value: string | number | Date): string {
   }).format(date);
 }
 
+function clampNumber(value: number, min: number, max: number): number {
+  return Math.min(max, Math.max(min, value));
+}
+
+function useViewportHeightPx(): number {
+  const [height, setHeight] = useState<number>(() => {
+    if (typeof window === "undefined") {
+      return 900;
+    }
+    return window.innerHeight;
+  });
+
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+    const onResize = (): void => setHeight(window.innerHeight);
+    window.addEventListener("resize", onResize);
+    return () => window.removeEventListener("resize", onResize);
+  }, []);
+
+  return height;
+}
+
 function derivePairLotSizes(
   hedgeRatio: number | null | undefined
 ): { leftSize: number; rightSize: number } {
@@ -592,6 +616,16 @@ function nowIso(): string {
 }
 
 function App(): JSX.Element {
+  const viewportHeightPx = useViewportHeightPx();
+  const tradeZChartHeight = useMemo(
+    () => Math.round(clampNumber(viewportHeightPx * 0.44, 340, 560)),
+    [viewportHeightPx]
+  );
+  const analyticsChartHeight = useMemo(
+    () => Math.round(clampNumber(viewportHeightPx * 0.4, 320, 520)),
+    [viewportHeightPx]
+  );
+
   const [theme, setTheme] = usePersistentState<ThemeMode>("cp.theme", preferredTheme());
   const [page, setPage] = useState<PageId>("trade");
   const [timeframe, setTimeframe] = usePersistentState<Timeframe>("cp.timeframe", "1m");
@@ -1592,6 +1626,7 @@ function App(): JSX.Element {
           gateError={gateError}
           tradeMessage={tradeMessage}
           submitting={submitting}
+          zChartHeight={tradeZChartHeight}
           onCommand={executeTradeCommand}
         />
       );
@@ -1625,6 +1660,7 @@ function App(): JSX.Element {
           equityTimestamps={equityTimestamps}
           loading={analyticsLoading}
           error={analyticsError}
+          chartHeight={analyticsChartHeight}
         />
       );
     }
@@ -1860,6 +1896,7 @@ function TradePage(props: {
   gateError: string | null;
   tradeMessage: string;
   submitting: boolean;
+  zChartHeight: number;
   onCommand: (command: TradeCommand) => Promise<void>;
 }): JSX.Element {
   const selectedCue =
@@ -1949,7 +1986,7 @@ function TradePage(props: {
           }
           title="Live spread z-score (entry / mean / stop)"
           unavailableText={props.analyticsError ?? "No live z-score data"}
-          height={492}
+          height={props.zChartHeight}
           yAxisFormatter={(value) => value.toFixed(2)}
           showThresholdLabels
           mirrorThresholdLabels
@@ -2263,6 +2300,7 @@ function AnalyticsPage({
   equityTimestamps,
   loading,
   error,
+  chartHeight,
 }: {
   cues: StrategyPairsCuesResponse | null;
   selectedPairId: string;
@@ -2274,6 +2312,7 @@ function AnalyticsPage({
   equityTimestamps: string[];
   loading: boolean;
   error: string | null;
+  chartHeight: number;
 }): JSX.Element {
   const selected = cues?.cues.find((entry) => entry.cue.pair_id === selectedPairId) ?? cues?.cues[0];
   const actionabilityExplanation = explainPairActionability(selected);
@@ -2347,7 +2386,7 @@ function AnalyticsPage({
             <LineChart
               values={displayEquitySeries}
               timestamps={equityTimestamps}
-              height={420}
+              height={chartHeight}
               title="Hypothetical equity (base $100, 110x scaled deltas)"
               unavailableText={loading ? "Loading live candles..." : error ?? "No data"}
               yAxisFormatter={formatUsdAxisValue}
@@ -2374,7 +2413,7 @@ function AnalyticsPage({
                     ]
                   : []
               }
-              height={420}
+              height={chartHeight}
               title="Entry=green, Exit=amber, Stop=red"
               unavailableText={loading ? "Loading live candles..." : error ?? "No data"}
               yAxisFormatter={(value) => value.toFixed(2)}
