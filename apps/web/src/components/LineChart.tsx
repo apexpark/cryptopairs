@@ -238,9 +238,9 @@ export default function LineChart({
             <circle cx={latestX} cy={latestY} r={3.5} fill="var(--tone-info)" />
             <text
               className="current-value-label"
-              x={width - rightPadding - 8}
+              x={latestX + 8}
               y={latestLabelY}
-              textAnchor="end"
+              textAnchor="start"
             >
               {latestValueLabelFormatter(latestValue)}
             </text>
