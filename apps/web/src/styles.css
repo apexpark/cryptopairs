@@ -675,6 +675,16 @@ button:disabled {
   font-weight: 600;
 }
 
+.chart .current-value-label {
+  fill: var(--tone-info);
+  font-size: 12px;
+  font-weight: 700;
+  paint-order: stroke;
+  stroke: color-mix(in srgb, var(--panel-2) 92%, transparent);
+  stroke-width: 3px;
+  stroke-linejoin: round;
+}
+
 .chart-empty {
   display: flex;
   flex-direction: column;
