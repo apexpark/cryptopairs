@@ -90,9 +90,9 @@ export default function LineChart({
   const width = 1000;
   const leftPadding = 74;
   const rightPadding = showThresholdLabels ? 82 : 24;
-  const topPadding = 18;
+  const topPadding = 10;
   const hasTimestampAxis = timestamps.length === values.length && values.length >= 2;
-  const bottomPadding = hasTimestampAxis ? 40 : 24;
+  const bottomPadding = hasTimestampAxis ? 28 : 18;
   const chartBottom = height - bottomPadding;
   const thresholdValues = thresholds.map((item) => item.value);
   const domainValues = includeThresholdsInDomain

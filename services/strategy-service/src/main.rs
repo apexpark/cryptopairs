@@ -45,6 +45,7 @@ impl PairSpec {
 struct StrategySettings {
     bind_addr: String,
     postgres_url: String,
+    data_service_url: String,
     pairs: Vec<PairSpec>,
     timeframes: Vec<Timeframe>,
     entry_band: f64,
@@ -92,6 +93,8 @@ impl StrategySettings {
         let postgres_url = std::env::var("POSTGRES_URL").unwrap_or_else(|_| {
             "postgres://cryptopairs:cryptopairs@127.0.0.1:5432/cryptopairs".to_string()
         });
+        let data_service_url = std::env::var("STRATEGY_DATA_SERVICE_URL")
+            .unwrap_or_else(|_| "http://data-service:8080".to_string());
 
         let pairs_raw =
             std::env::var("STRATEGY_PAIRS").unwrap_or_else(|_| {
@@ -148,6 +151,7 @@ impl StrategySettings {
         Self {
             bind_addr: format!("0.0.0.0:{port}"),
             postgres_url,
+            data_service_url,
             pairs,
             timeframes,
             entry_band,
@@ -932,6 +936,11 @@ struct UiAuthVerifyRequest {
     password: String,
 }
 
+#[derive(Debug, Deserialize)]
+struct StrategyMarketMetricsQuery {
+    instrument: String,
+}
+
 #[derive(Debug, Serialize)]
 struct UiAuthStatusResponse {
     enabled: bool,
@@ -950,6 +959,17 @@ struct HealthResponse {
 #[derive(Debug, Serialize)]
 struct ErrorResponse {
     error: String,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+struct StrategyMarketMetricsResponse {
+    instrument: String,
+    server_time: DateTime<Utc>,
+    mark: f64,
+    index: f64,
+    change_24h_pct: f64,
+    funding_rate: f64,
+    open_interest: f64,
 }
 
 #[derive(Debug, Serialize)]
@@ -1259,6 +1279,7 @@ async fn main() -> anyhow::Result<()> {
         .route("/health", get(health))
         .route("/v1/strategy/ui-auth/status", get(ui_auth_status))
         .route("/v1/strategy/ui-auth/verify", post(ui_auth_verify))
+        .route("/v1/strategy/market/metrics", get(strategy_market_metrics))
         .route("/v1/strategy/pairs/cues", get(pairs_cues))
         .route("/v1/strategy/pairs/backtest", get(pairs_backtest))
         .route("/v1/strategy/pairs/live-z", get(pairs_live_z))
@@ -1292,6 +1313,7 @@ async fn main() -> anyhow::Result<()> {
     let listener = TcpListener::bind(&settings.bind_addr).await?;
     info!(
         bind_addr = %settings.bind_addr,
+        data_service_url = %settings.data_service_url,
         pairs = ?settings.pairs.iter().map(|p| p.pair_id()).collect::<Vec<_>>(),
         timeframes = ?settings.timeframes.iter().map(|t| t.as_str()).collect::<Vec<_>>(),
         entry_band = settings.entry_band,
@@ -1476,6 +1498,46 @@ async fn ui_auth_verify(
         return Ok(Json(UiAuthVerifyResponse { ok: true }));
     }
     Err(ApiError::Unauthorized("invalid password".to_string()))
+}
+
+async fn strategy_market_metrics(
+    State(state): State<AppState>,
+    Query(query): Query<StrategyMarketMetricsQuery>,
+) -> Result<Json<StrategyMarketMetricsResponse>, ApiError> {
+    let instrument = query.instrument.trim();
+    if instrument.is_empty() {
+        return Err(ApiError::BadRequest(
+            "instrument query parameter is required".to_string(),
+        ));
+    }
+
+    let upstream_base = state.settings.data_service_url.trim_end_matches('/');
+    let upstream_url = reqwest::Url::parse_with_params(
+        &format!("{upstream_base}/v1/market/metrics"),
+        &[("instrument", instrument)],
+    )
+    .map_err(|error| ApiError::Upstream(format!("invalid upstream metrics url: {error}")))?;
+
+    let response = reqwest::get(upstream_url.clone()).await.map_err(|error| {
+        ApiError::Upstream(format!("market metrics upstream request failed: {error}"))
+    })?;
+
+    if !response.status().is_success() {
+        let status = response.status();
+        let body = response.text().await.unwrap_or_default();
+        return Err(ApiError::Upstream(format!(
+            "market metrics upstream status={} body={}",
+            status.as_u16(),
+            body
+        )));
+    }
+
+    let payload: StrategyMarketMetricsResponse = response
+        .json()
+        .await
+        .map_err(|error| ApiError::Upstream(format!("market metrics decode failed: {error}")))?;
+
+    Ok(Json(payload))
 }
 
 fn resolve_workspace_path(raw: &str) -> PathBuf {
