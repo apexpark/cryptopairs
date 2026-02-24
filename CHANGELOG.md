@@ -67,6 +67,11 @@ This project follows SemVer as defined in `docs/02-versioning-and-releases.md`.
     - `POST /v1/strategy/ui-auth/verify`
   - Web app now presents a full-screen black password screen before loading dashboard content when `STRATEGY_UI_ACCESS_PASSWORD` is configured.
   - Added `STRATEGY_UI_ACCESS_PASSWORD` to `.env.example` and hosted runbook instructions for server-side setup/rotation.
+- Header metric and chart scaling refinements:
+  - Added `GET /v1/strategy/market/metrics?instrument=<symbol>` as a strategy-service proxy to data-service market metrics for hosted deployments where `/data/v1/market/metrics` is not exposed by the public API gateway.
+  - Web app market metric fetches now use strategy-service market metrics endpoint.
+  - Header market metrics now update per instrument independently (partial failures no longer blank both legs).
+  - Z-score charts now use dynamic domain scaling based on observed series values so the plotted line uses more panel space.
 - Trade and Analytics UI readability pass:
   - Added y-axis labels and threshold-value labels on z-score charts.
   - Increased chart axis text size and z-score marker dot size.

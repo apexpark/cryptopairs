@@ -259,7 +259,7 @@ export async function fetchIntegrityHistory(
 export async function fetchMarketMetrics(
   instrument: string
 ): Promise<MarketMetricsResponse> {
-  const url = `${DATA_SERVICE_BASE_URL}/v1/market/metrics?instrument=${encodeURIComponent(
+  const url = `${STRATEGY_SERVICE_BASE_URL}/v1/strategy/market/metrics?instrument=${encodeURIComponent(
     instrument
   )}`;
   return parseJson<MarketMetricsResponse>(await fetch(url));

@@ -1189,29 +1189,37 @@ function App(): JSX.Element {
     let cancelled = false;
 
     const refreshMetrics = async (): Promise<void> => {
-      try {
-        const [leftMetrics, rightMetrics] = await Promise.all([
-          fetchMarketMetricsWithFallback(headerLeftInstrument),
-          fetchMarketMetricsWithFallback(headerRightInstrument),
-        ]);
-        if (cancelled) {
-          return;
-        }
-        setHeaderLeftMetrics(leftMetrics);
-        setHeaderRightMetrics(rightMetrics);
-        setHeaderMetricsError(null);
-      } catch (error) {
-        if (cancelled) {
-          return;
-        }
-        setHeaderLeftMetrics(null);
-        setHeaderRightMetrics(null);
-        setHeaderMetricsError(
-          `Live metrics unavailable for ${headerLeftLabel}/${headerRightLabel}: ${
-            error instanceof Error ? error.message : String(error)
+      const [leftResult, rightResult] = await Promise.allSettled([
+        fetchMarketMetricsWithFallback(headerLeftInstrument),
+        fetchMarketMetricsWithFallback(headerRightInstrument),
+      ]);
+      if (cancelled) {
+        return;
+      }
+
+      const nextLeft = leftResult.status === "fulfilled" ? leftResult.value : null;
+      const nextRight = rightResult.status === "fulfilled" ? rightResult.value : null;
+      setHeaderLeftMetrics(nextLeft);
+      setHeaderRightMetrics(nextRight);
+
+      const errors: string[] = [];
+      if (leftResult.status === "rejected") {
+        errors.push(
+          `${headerLeftLabel}: ${
+            leftResult.reason instanceof Error ? leftResult.reason.message : String(leftResult.reason)
           }`
         );
       }
+      if (rightResult.status === "rejected") {
+        errors.push(
+          `${headerRightLabel}: ${
+            rightResult.reason instanceof Error
+              ? rightResult.reason.message
+              : String(rightResult.reason)
+          }`
+        );
+      }
+      setHeaderMetricsError(errors.length ? `Live metrics partial failure: ${errors.join(" | ")}` : null);
     };
 
     void refreshMetrics();
@@ -1933,6 +1941,8 @@ function TradePage(props: {
           yAxisFormatter={(value) => value.toFixed(2)}
           showThresholdLabels
           markerRadius={6}
+          valueScaleMode="trimmed"
+          includeThresholdsInDomain={false}
         />
 
         <div className="chip-row">
@@ -2353,6 +2363,8 @@ function AnalyticsPage({
               yAxisFormatter={(value) => value.toFixed(2)}
               showThresholdLabels
               markerRadius={6}
+              valueScaleMode="trimmed"
+              includeThresholdsInDomain={false}
             />
           </SectionCard>
         </div>
