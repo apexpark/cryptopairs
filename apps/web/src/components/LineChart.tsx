@@ -31,7 +31,27 @@ function markerColor(kind: ChartMarker["kind"]): string {
   if (kind === "exit") {
     return "var(--tone-warn)";
   }
+  if (kind === "execution-entry") {
+    return "var(--tone-info)";
+  }
+  if (kind === "execution-exit") {
+    return "var(--tone-execution-exit, #b38cff)";
+  }
   return "var(--tone-bad)";
+}
+
+function markerStrokeColor(kind: ChartMarker["kind"]): string {
+  if (kind === "execution-entry" || kind === "execution-exit") {
+    return "var(--panel-2)";
+  }
+  return "none";
+}
+
+function markerRadiusForKind(kind: ChartMarker["kind"], defaultRadius: number): number {
+  if (kind === "execution-entry" || kind === "execution-exit") {
+    return defaultRadius + 1.5;
+  }
+  return defaultRadius;
 }
 
 function thresholdColor(tone: Threshold["tone"]): string {
@@ -254,8 +274,10 @@ export default function LineChart({
               key={`${marker.kind}-${marker.index}-${index}`}
               cx={mapX(marker.index)}
               cy={mapY(values[marker.index])}
-              r={markerRadius}
+              r={markerRadiusForKind(marker.kind, markerRadius)}
               fill={markerColor(marker.kind)}
+              stroke={markerStrokeColor(marker.kind)}
+              strokeWidth={marker.kind.startsWith("execution-") ? 1.5 : 0}
             />
           ))}
 

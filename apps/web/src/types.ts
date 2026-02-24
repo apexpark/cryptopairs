@@ -507,5 +507,5 @@ export interface SpreadSeriesPoint {
 
 export interface ChartMarker {
   index: number;
-  kind: "entry" | "exit" | "stop";
+  kind: "entry" | "exit" | "stop" | "execution-entry" | "execution-exit";
 }
