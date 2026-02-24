@@ -20,6 +20,8 @@ interface LineChartProps {
   valueScaleMode?: "full" | "trimmed";
   includeThresholdsInDomain?: boolean;
   mirrorThresholdLabels?: boolean;
+  showLatestValueLabel?: boolean;
+  latestValueLabelFormatter?: (value: number) => string;
 }
 
 function markerColor(kind: ChartMarker["kind"]): string {
@@ -79,6 +81,8 @@ export default function LineChart({
   valueScaleMode = "full",
   includeThresholdsInDomain = true,
   mirrorThresholdLabels = false,
+  showLatestValueLabel = false,
+  latestValueLabelFormatter = (value) => value.toFixed(2),
 }: LineChartProps): JSX.Element {
   if (values.length < 2) {
     return (
@@ -134,6 +138,11 @@ export default function LineChart({
   };
 
   const points = values.map((value, index) => `${mapX(index)},${mapY(value)}`).join(" ");
+  const latestValueIndex = values.length - 1;
+  const latestValue = values[latestValueIndex];
+  const latestX = mapX(latestValueIndex);
+  const latestY = mapY(latestValue);
+  const latestLabelY = clamp(latestY + 4, topPadding + 10, chartBottom - 4);
   const horizontalGridCount = Math.max(yTickCount, 3);
   const thresholdMirrorTicks = Array.from(new Set(thresholdValues))
     .sort((left, right) => right - left)
@@ -223,6 +232,20 @@ export default function LineChart({
         })}
 
         <polyline fill="none" stroke="var(--tone-info)" strokeWidth={2} points={points} />
+
+        {showLatestValueLabel ? (
+          <>
+            <circle cx={latestX} cy={latestY} r={3.5} fill="var(--tone-info)" />
+            <text
+              className="current-value-label"
+              x={width - rightPadding - 8}
+              y={latestLabelY}
+              textAnchor="end"
+            >
+              {latestValueLabelFormatter(latestValue)}
+            </text>
+          </>
+        ) : null}
 
         {markers
           .filter((marker) => marker.index >= 0 && marker.index < values.length)

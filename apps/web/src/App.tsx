@@ -1993,6 +1993,8 @@ function TradePage(props: {
           markerRadius={6}
           valueScaleMode="trimmed"
           includeThresholdsInDomain
+          showLatestValueLabel
+          latestValueLabelFormatter={(value) => `Z ${value.toFixed(2)}`}
         />
 
         <div className="chip-row">

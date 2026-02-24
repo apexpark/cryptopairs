@@ -77,6 +77,7 @@ This project follows SemVer as defined in `docs/02-versioning-and-releases.md`.
     - Trade/Analytics chart heights now adapt to viewport height with bounded min/max values for consistent laptop-to-4K rendering.
 - Trade and Analytics UI readability pass:
   - Added y-axis labels and threshold-value labels on z-score charts.
+  - Added live current z-score label on the Trade chart right-hand side (updates each data refresh).
   - Increased chart axis text size and z-score marker dot size.
   - Added USD-formatted y-axis labels for equity charts and tightened equity chart scaling for better vertical space usage.
   - Removed numeric prefixes from spread execution section titles.
