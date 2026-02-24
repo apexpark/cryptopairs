@@ -19,6 +19,7 @@ interface LineChartProps {
   yTickCount?: number;
   valueScaleMode?: "full" | "trimmed";
   includeThresholdsInDomain?: boolean;
+  mirrorThresholdLabels?: boolean;
 }
 
 function markerColor(kind: ChartMarker["kind"]): string {
@@ -77,10 +78,11 @@ export default function LineChart({
   yTickCount = 7,
   valueScaleMode = "full",
   includeThresholdsInDomain = true,
+  mirrorThresholdLabels = false,
 }: LineChartProps): JSX.Element {
   if (values.length < 2) {
     return (
-      <div className="chart chart-empty" style={{ minHeight: `${height}px` }}>
+      <div className="chart chart-empty" style={{ height: `${height}px` }}>
         {title ? <div className="chart-title">{title}</div> : null}
         <div className="empty-text">{unavailableText}</div>
       </div>
@@ -133,12 +135,18 @@ export default function LineChart({
 
   const points = values.map((value, index) => `${mapX(index)},${mapY(value)}`).join(" ");
   const horizontalGridCount = Math.max(yTickCount, 3);
-  const yAxisTicks = Array.from({ length: horizontalGridCount }).map((_, index) => {
-    const ratio = index / (horizontalGridCount - 1);
-    const y = topPadding + ratio * (chartBottom - topPadding);
-    const value = domainMax - ratio * span;
-    return { y, value };
-  });
+  const thresholdMirrorTicks = Array.from(new Set(thresholdValues))
+    .sort((left, right) => right - left)
+    .map((value) => ({ y: mapY(value), value }));
+  const yAxisTicks =
+    mirrorThresholdLabels && thresholdMirrorTicks.length
+      ? thresholdMirrorTicks
+      : Array.from({ length: horizontalGridCount }).map((_, index) => {
+          const ratio = index / (horizontalGridCount - 1);
+          const y = topPadding + ratio * (chartBottom - topPadding);
+          const value = domainMax - ratio * span;
+          return { y, value };
+        });
   const axisTickIndexes = Array.from(new Set([0, Math.floor((values.length - 1) / 2), values.length - 1]));
   const xAxisLabels = hasTimestampAxis
     ? axisTickIndexes.map((index) => {
@@ -164,7 +172,7 @@ export default function LineChart({
     : [];
 
   return (
-    <div className="chart" style={{ minHeight: `${height}px` }}>
+    <div className="chart" style={{ height: `${height}px` }}>
       {title ? <div className="chart-title">{title}</div> : null}
       <svg viewBox={`0 0 ${width} ${height}`} preserveAspectRatio="none">
         <g className="grid">
