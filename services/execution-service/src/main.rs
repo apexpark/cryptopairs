@@ -260,12 +260,8 @@ impl KrakenLiveClient {
         let nonce = Utc::now().timestamp_millis().to_string();
         let post_data = String::new();
         let uri_component = build_uri_component(&self.order_status_path, &[(query_key, order_id)]);
-        let authent = sign_kraken_futures_payload(
-            &post_data,
-            &nonce,
-            &uri_component,
-            &self.api_secret_b64,
-        )?;
+        let authent =
+            sign_kraken_futures_payload(&post_data, &nonce, &uri_component, &self.api_secret_b64)?;
         let url = format!("{}{}", self.base_url, uri_component);
 
         let mut headers = HeaderMap::new();
@@ -3370,8 +3366,7 @@ mod tests {
         derive_order_status_transition, fold_spread_positions, is_snapshot_stale,
         is_terminal_state, parse_ingest_target_state, parse_kraken_open_orders_response,
         parse_kraken_order_status_response, parse_kraken_submit_response, resolve_secret_value,
-        safe_ratio,
-        sign_kraken_futures_payload, validate_manual_controls, ApiError, DispatchMode,
+        safe_ratio, sign_kraken_futures_payload, validate_manual_controls, ApiError, DispatchMode,
         ExecutionObservabilityMetricsRaw, ExecutionObservabilityThresholds, KrakenOpenOrder,
         KrakenStatusOrder, SpreadLedgerEvent,
     };
