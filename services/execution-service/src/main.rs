@@ -259,13 +259,14 @@ impl KrakenLiveClient {
     ) -> Result<Option<KrakenStatusOrder>, String> {
         let nonce = Utc::now().timestamp_millis().to_string();
         let post_data = String::new();
+        let uri_component = build_uri_component(&self.order_status_path, &[(query_key, order_id)]);
         let authent = sign_kraken_futures_payload(
             &post_data,
             &nonce,
-            &self.order_status_path,
+            &uri_component,
             &self.api_secret_b64,
         )?;
-        let url = format!("{}{}", self.base_url, self.order_status_path);
+        let url = format!("{}{}", self.base_url, uri_component);
 
         let mut headers = HeaderMap::new();
         headers.insert(
@@ -290,7 +291,6 @@ impl KrakenLiveClient {
             .http_client
             .get(url)
             .headers(headers)
-            .query(&[(query_key, order_id)])
             .send()
             .await
             .map_err(|error| format!("kraken order status request failed: {error}"))?;
@@ -310,13 +310,32 @@ impl KrakenLiveClient {
     }
 }
 
+fn build_uri_component(endpoint_path: &str, query_pairs: &[(&str, &str)]) -> String {
+    if query_pairs.is_empty() {
+        return endpoint_path.to_string();
+    }
+
+    let query = query_pairs
+        .iter()
+        .map(|(key, value)| {
+            format!(
+                "{}={}",
+                urlencoding::encode(key),
+                urlencoding::encode(value)
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("&");
+    format!("{endpoint_path}?{query}")
+}
+
 fn sign_kraken_futures_payload(
     post_data: &str,
     nonce: &str,
-    endpoint_path: &str,
+    uri_component: &str,
     api_secret_b64: &str,
 ) -> Result<String, String> {
-    let sha_input = format!("{post_data}{nonce}{endpoint_path}");
+    let sha_input = format!("{post_data}{nonce}{uri_component}");
     let sha_digest = Sha256::digest(sha_input.as_bytes());
     let encoded_post_data = urlencoding::encode(post_data).into_owned();
 
@@ -3347,10 +3366,11 @@ fn map_order_intent(record: OrderIntentRecord) -> OrderIntentResponse {
 #[cfg(test)]
 mod tests {
     use super::{
-        build_execution_alerts, derive_open_order_transition, derive_order_status_transition,
-        fold_spread_positions, is_snapshot_stale, is_terminal_state, parse_ingest_target_state,
-        parse_kraken_open_orders_response, parse_kraken_order_status_response,
-        parse_kraken_submit_response, resolve_secret_value, safe_ratio,
+        build_execution_alerts, build_uri_component, derive_open_order_transition,
+        derive_order_status_transition, fold_spread_positions, is_snapshot_stale,
+        is_terminal_state, parse_ingest_target_state, parse_kraken_open_orders_response,
+        parse_kraken_order_status_response, parse_kraken_submit_response, resolve_secret_value,
+        safe_ratio,
         sign_kraken_futures_payload, validate_manual_controls, ApiError, DispatchMode,
         ExecutionObservabilityMetricsRaw, ExecutionObservabilityThresholds, KrakenOpenOrder,
         KrakenStatusOrder, SpreadLedgerEvent,
@@ -3423,6 +3443,37 @@ mod tests {
         )
         .expect("signature should be generated");
         assert!(!signature.is_empty());
+    }
+
+    #[test]
+    fn build_uri_component_encodes_query_pairs() {
+        let uri_component = build_uri_component(
+            "/derivatives/api/v3/orders/status",
+            &[("orderId", "abc 123"), ("batch", "x/y")],
+        );
+        assert_eq!(
+            uri_component,
+            "/derivatives/api/v3/orders/status?orderId=abc%20123&batch=x%2Fy"
+        );
+    }
+
+    #[test]
+    fn kraken_signing_changes_with_uri_component() {
+        let without_query = sign_kraken_futures_payload(
+            "",
+            "1739938400000",
+            "/derivatives/api/v3/orders/status",
+            "dGVzdF9zZWNyZXQ=",
+        )
+        .expect("signature should be generated");
+        let with_query = sign_kraken_futures_payload(
+            "",
+            "1739938400000",
+            "/derivatives/api/v3/orders/status?orderId=abc%20123",
+            "dGVzdF9zZWNyZXQ=",
+        )
+        .expect("signature should be generated");
+        assert_ne!(without_query, with_query);
     }
 
     #[test]
