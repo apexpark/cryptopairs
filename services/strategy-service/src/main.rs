@@ -15,8 +15,9 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use strategy_service::{
     annotate_with_shadow_model, apply_portfolio_plan_to_cues, build_portfolio_plan,
     compute_backtest_series, evaluate_cost_gate, evaluate_pair, train_shadow_model, BacktestConfig,
-    BacktestExitMode, CandidateSetDiagnostics, CostGateInput, PairCue, PairEvaluationInput,
-    PairEvaluationOutput, PortfolioPlan, Regime, ShadowModelTrainingRow, SignalVariant,
+    BacktestExitMode, CandidateSetDiagnostics, CostGateInput, FundingModel, PairCue,
+    PairEvaluationInput, PairEvaluationOutput, PortfolioPlan, Regime, ShadowModelTrainingRow,
+    SignalVariant,
 };
 use tokio::net::TcpListener;
 use tokio::sync::RwLock;
@@ -77,6 +78,11 @@ struct StrategySettings {
     sampled_slippage_stale_secs: u64,
     sampled_slippage_ewma_alpha: f64,
     min_net_edge_bps: f64,
+    dynamic_funding_enabled: bool,
+    funding_interval_secs: u64,
+    funding_phase_offset_secs: i64,
+    funding_rate_bps_multiplier: f64,
+    funding_positive_rate_means_longs_pay: bool,
     advisory_gross_cap: f64,
     advisory_per_pair_cap: f64,
     advisory_enabled: bool,
@@ -132,6 +138,13 @@ impl StrategySettings {
         let sampled_slippage_ewma_alpha =
             parse_env_f64("STRATEGY_SAMPLED_SLIPPAGE_EWMA_ALPHA", 0.2).clamp(0.01, 1.0);
         let min_net_edge_bps = parse_env_f64("STRATEGY_MIN_NET_EDGE_BPS", 0.0);
+        let dynamic_funding_enabled = parse_env_bool("STRATEGY_DYNAMIC_FUNDING_ENABLED", true);
+        let funding_interval_secs = parse_env_u64("STRATEGY_FUNDING_INTERVAL_SECS", 3600).max(1);
+        let funding_phase_offset_secs = parse_env_i64("STRATEGY_FUNDING_PHASE_OFFSET_SECS", 0);
+        let funding_rate_bps_multiplier =
+            parse_env_f64("STRATEGY_FUNDING_RATE_BPS_MULTIPLIER", 10_000.0).max(1.0);
+        let funding_positive_rate_means_longs_pay =
+            parse_env_bool("STRATEGY_FUNDING_POSITIVE_RATE_MEANS_LONGS_PAY", true);
         let advisory_gross_cap = parse_env_f64("STRATEGY_ADVISORY_GROSS_CAP", 1.0);
         let advisory_per_pair_cap = parse_env_f64("STRATEGY_ADVISORY_PER_PAIR_CAP", 0.35);
         let advisory_enabled = parse_env_bool("STRATEGY_ADVISORY_ENABLED", true);
@@ -194,6 +207,11 @@ impl StrategySettings {
             sampled_slippage_stale_secs,
             sampled_slippage_ewma_alpha,
             min_net_edge_bps,
+            dynamic_funding_enabled,
+            funding_interval_secs,
+            funding_phase_offset_secs,
+            funding_rate_bps_multiplier,
+            funding_positive_rate_means_longs_pay,
             advisory_gross_cap,
             advisory_per_pair_cap,
             advisory_enabled,
@@ -1014,6 +1032,9 @@ struct PairSlippageConfig {
 struct PairSlippageState {
     long_slippage_ewma_bps: f64,
     short_slippage_ewma_bps: f64,
+    long_funding_bps_per_event: f64,
+    short_funding_bps_per_event: f64,
+    funding_available: bool,
     sample_count: usize,
     last_sample_at: DateTime<Utc>,
 }
@@ -1041,6 +1062,7 @@ impl SampledSlippageStatus {
 struct PairSlippageSnapshot {
     status: SampledSlippageStatus,
     selected_slippage_bps: f64,
+    selected_funding_bps_per_event: Option<f64>,
 }
 
 #[derive(Debug)]
@@ -1053,6 +1075,8 @@ struct SampledSlippageStore {
     ewma_alpha: f64,
     warmup_samples: usize,
     stale_after: chrono::Duration,
+    funding_rate_bps_multiplier: f64,
+    funding_positive_rate_means_longs_pay: bool,
 }
 
 impl SampledSlippageStore {
@@ -1088,6 +1112,8 @@ impl SampledSlippageStore {
             ewma_alpha: settings.sampled_slippage_ewma_alpha.clamp(0.01, 1.0),
             warmup_samples,
             stale_after: chrono::Duration::seconds(stale_after_secs as i64),
+            funding_rate_bps_multiplier: settings.funding_rate_bps_multiplier.max(1.0),
+            funding_positive_rate_means_longs_pay: settings.funding_positive_rate_means_longs_pay,
         }
     }
 
@@ -1139,12 +1165,22 @@ impl SampledSlippageStore {
             else {
                 continue;
             };
+            let funding_sample = compute_pair_funding_bps_per_event(
+                left,
+                right,
+                hedge_ratio,
+                self.funding_rate_bps_multiplier,
+                self.funding_positive_rate_means_longs_pay,
+            );
 
             let state = states
                 .entry(config.key.clone())
                 .or_insert(PairSlippageState {
                     long_slippage_ewma_bps: long_slippage_bps,
                     short_slippage_ewma_bps: short_slippage_bps,
+                    long_funding_bps_per_event: funding_sample.map(|value| value.0).unwrap_or(0.0),
+                    short_funding_bps_per_event: funding_sample.map(|value| value.1).unwrap_or(0.0),
+                    funding_available: funding_sample.is_some(),
                     sample_count: 0,
                     last_sample_at: sampled_at,
                 });
@@ -1156,6 +1192,14 @@ impl SampledSlippageStore {
                     + ((1.0 - self.ewma_alpha) * state.long_slippage_ewma_bps);
                 state.short_slippage_ewma_bps = (self.ewma_alpha * short_slippage_bps)
                     + ((1.0 - self.ewma_alpha) * state.short_slippage_ewma_bps);
+            }
+            if let Some((long_funding_bps_per_event, short_funding_bps_per_event)) = funding_sample
+            {
+                state.long_funding_bps_per_event = long_funding_bps_per_event;
+                state.short_funding_bps_per_event = short_funding_bps_per_event;
+                state.funding_available = true;
+            } else {
+                state.funding_available = false;
             }
             state.sample_count += 1;
             state.last_sample_at = sampled_at;
@@ -1187,6 +1231,7 @@ impl SampledSlippageStore {
             return PairSlippageSnapshot {
                 status: SampledSlippageStatus::Down,
                 selected_slippage_bps: 0.0,
+                selected_funding_bps_per_event: None,
             };
         };
 
@@ -1205,10 +1250,23 @@ impl SampledSlippageStore {
                 .long_slippage_ewma_bps
                 .max(state.short_slippage_ewma_bps),
         };
+        let selected_funding_bps_per_event = if state.funding_available {
+            Some(match direction_hint {
+                "LONG_SPREAD" => state.long_funding_bps_per_event,
+                "SHORT_SPREAD" => state.short_funding_bps_per_event,
+                _ => state
+                    .long_funding_bps_per_event
+                    .abs()
+                    .max(state.short_funding_bps_per_event.abs()),
+            })
+        } else {
+            None
+        };
 
         PairSlippageSnapshot {
             status,
             selected_slippage_bps,
+            selected_funding_bps_per_event,
         }
     }
 }
@@ -1261,6 +1319,139 @@ fn compute_pair_slippage_sample_bps(
     } else {
         None
     }
+}
+
+fn compute_pair_funding_bps_per_event(
+    left: &StrategyMarketMetricsResponse,
+    right: &StrategyMarketMetricsResponse,
+    hedge_ratio: f64,
+    funding_rate_bps_multiplier: f64,
+    positive_rate_means_longs_pay: bool,
+) -> Option<(f64, f64)> {
+    let values = [
+        left.funding_rate,
+        right.funding_rate,
+        left.index,
+        right.index,
+        hedge_ratio,
+        funding_rate_bps_multiplier,
+    ];
+    if values.iter().any(|value| !value.is_finite()) {
+        return None;
+    }
+    if left.index <= 0.0 || right.index <= 0.0 || funding_rate_bps_multiplier <= 0.0 {
+        return None;
+    }
+
+    let ratio = hedge_ratio.abs().max(1e-9);
+    let left_notional = left.index.abs();
+    let right_notional = ratio * right.index.abs();
+    let gross_notional = left_notional + right_notional;
+    if gross_notional <= 0.0 {
+        return None;
+    }
+    let left_weight = left_notional / gross_notional;
+    let right_weight = right_notional / gross_notional;
+
+    let sign = if positive_rate_means_longs_pay {
+        1.0
+    } else {
+        -1.0
+    };
+    let left_long_cost_bps = sign * left.funding_rate * funding_rate_bps_multiplier;
+    let right_long_cost_bps = sign * right.funding_rate * funding_rate_bps_multiplier;
+    let left_short_cost_bps = -left_long_cost_bps;
+    let right_short_cost_bps = -right_long_cost_bps;
+
+    let long_spread_bps_per_event =
+        (left_weight * left_long_cost_bps) + (right_weight * right_short_cost_bps);
+    let short_spread_bps_per_event =
+        (left_weight * left_short_cost_bps) + (right_weight * right_long_cost_bps);
+    if !long_spread_bps_per_event.is_finite() || !short_spread_bps_per_event.is_finite() {
+        return None;
+    }
+    Some((long_spread_bps_per_event, short_spread_bps_per_event))
+}
+
+fn expected_funding_events_crossed(
+    evaluated_at: DateTime<Utc>,
+    expected_hold_bars: i64,
+    timeframe: Timeframe,
+    funding_interval_secs: u64,
+    funding_phase_offset_secs: i64,
+) -> u32 {
+    if expected_hold_bars <= 0 {
+        return 0;
+    }
+    let hold_secs = expected_hold_bars.saturating_mul(timeframe.step_seconds());
+    if hold_secs <= 0 {
+        return 0;
+    }
+    let interval_secs = funding_interval_secs.max(1) as i64;
+    let phase = funding_phase_offset_secs.rem_euclid(interval_secs);
+    let elapsed_in_interval = (evaluated_at.timestamp() - phase).rem_euclid(interval_secs);
+    let secs_to_next = if elapsed_in_interval == 0 {
+        interval_secs
+    } else {
+        interval_secs - elapsed_in_interval
+    };
+    if hold_secs < secs_to_next {
+        return 0;
+    }
+    let remainder = hold_secs - secs_to_next;
+    (1 + (remainder / interval_secs)) as u32
+}
+
+#[derive(Debug, Clone, Copy)]
+struct FundingCostEstimate {
+    model: FundingModel,
+    events: u32,
+    bps_per_event: f64,
+    total_bps: f64,
+}
+
+fn resolve_funding_cost_estimate(
+    settings: &StrategySettings,
+    output: &PairEvaluationOutput,
+    timeframe: Timeframe,
+    sampled: &PairSlippageSnapshot,
+) -> Result<FundingCostEstimate, &'static str> {
+    if !settings.dynamic_funding_enabled {
+        let total_bps = settings.funding_drag_bps.max(0.0);
+        return Ok(FundingCostEstimate {
+            model: FundingModel::Static,
+            events: 0,
+            bps_per_event: total_bps,
+            total_bps,
+        });
+    }
+
+    let events = expected_funding_events_crossed(
+        output.cue.evaluated_at,
+        output.cue.expected_hold_bars,
+        timeframe,
+        settings.funding_interval_secs,
+        settings.funding_phase_offset_secs,
+    );
+    if events == 0 {
+        let bps_per_event = sampled.selected_funding_bps_per_event.unwrap_or(0.0);
+        return Ok(FundingCostEstimate {
+            model: FundingModel::Dynamic,
+            events,
+            bps_per_event,
+            total_bps: 0.0,
+        });
+    }
+
+    let Some(bps_per_event) = sampled.selected_funding_bps_per_event else {
+        return Err("FUNDING_DATA_UNAVAILABLE");
+    };
+    Ok(FundingCostEstimate {
+        model: FundingModel::Dynamic,
+        events,
+        bps_per_event,
+        total_bps: bps_per_event * (events as f64),
+    })
 }
 
 #[derive(Debug, Serialize)]
@@ -1349,6 +1540,9 @@ struct CostGatePair {
     timeframe: String,
     expected_edge_bps: f64,
     fee_bps: f64,
+    funding_model: String,
+    funding_events: u32,
+    funding_bps_per_event: f64,
     funding_bps: f64,
     slippage_bps: f64,
     net_edge_bps: f64,
@@ -1626,6 +1820,11 @@ async fn main() -> anyhow::Result<()> {
         sampled_slippage_warmup_secs = settings.sampled_slippage_warmup_secs,
         sampled_slippage_stale_secs = settings.sampled_slippage_stale_secs,
         sampled_slippage_ewma_alpha = settings.sampled_slippage_ewma_alpha,
+        dynamic_funding_enabled = settings.dynamic_funding_enabled,
+        funding_interval_secs = settings.funding_interval_secs,
+        funding_phase_offset_secs = settings.funding_phase_offset_secs,
+        funding_rate_bps_multiplier = settings.funding_rate_bps_multiplier,
+        funding_positive_rate_means_longs_pay = settings.funding_positive_rate_means_longs_pay,
         advisory_enabled = settings.advisory_enabled,
         advisory_gross_cap = settings.advisory_gross_cap,
         advisory_per_pair_cap = settings.advisory_per_pair_cap,
@@ -2361,6 +2560,9 @@ async fn pairs_cost_gate(
             timeframe: output.cue.timeframe,
             expected_edge_bps: output.cue.cost_gate.expected_edge_bps,
             fee_bps: output.cue.cost_gate.fee_bps,
+            funding_model: output.cue.cost_gate.funding_model,
+            funding_events: output.cue.cost_gate.funding_events,
+            funding_bps_per_event: output.cue.cost_gate.funding_bps_per_event,
             funding_bps: output.cue.cost_gate.funding_bps,
             slippage_bps: output.cue.cost_gate.slippage_bps,
             net_edge_bps: output.cue.cost_gate.net_edge_bps,
@@ -3024,10 +3226,37 @@ async fn evaluate_pair_for_timeframe(
             .snapshot_for(&output.cue.pair_id, timeframe, &output.cue.direction_hint)
             .await;
         if sampled.status == SampledSlippageStatus::Healthy {
+            let funding_estimate = match resolve_funding_cost_estimate(
+                &state.settings,
+                &output,
+                timeframe,
+                &sampled,
+            ) {
+                Ok(estimate) => estimate,
+                Err(reason_code) => {
+                    output.cue.actionable = false;
+                    if !output
+                        .cue
+                        .rationale_codes
+                        .iter()
+                        .any(|code| code == reason_code)
+                    {
+                        output.cue.rationale_codes.push(reason_code.to_string());
+                    }
+                    output.cue.cost_gate =
+                        strategy_service::CostGateDiagnostics::unavailable(vec![
+                            reason_code.to_string()
+                        ]);
+                    return Ok(output);
+                }
+            };
             let mut cost_gate = evaluate_cost_gate(CostGateInput {
                 expected_edge_bps: output.cue.opportunity_score.max(0.0),
                 fee_bps: taker_fee_bps,
-                funding_bps: state.settings.funding_drag_bps.max(0.0),
+                funding_model: funding_estimate.model,
+                funding_events: funding_estimate.events,
+                funding_bps_per_event: funding_estimate.bps_per_event,
+                funding_bps: funding_estimate.total_bps,
                 spread_vol_bps: output.spread_vol_bps.max(0.0),
                 spread_z: output.cue.spread_z,
                 sampled_slippage_bps: Some(sampled.selected_slippage_bps),
@@ -3039,6 +3268,20 @@ async fn evaluate_pair_for_timeframe(
             cost_gate
                 .rationale_codes
                 .push("SLIPPAGE_SOURCE_SAMPLED".to_string());
+            if funding_estimate.model == FundingModel::Dynamic {
+                cost_gate
+                    .rationale_codes
+                    .push("FUNDING_MODEL_DYNAMIC".to_string());
+                if funding_estimate.events == 0 {
+                    cost_gate
+                        .rationale_codes
+                        .push("FUNDING_WINDOW_NO_EVENT".to_string());
+                }
+            } else {
+                cost_gate
+                    .rationale_codes
+                    .push("FUNDING_MODEL_STATIC".to_string());
+            }
 
             if !cost_gate.pass {
                 output.cue.actionable = false;
@@ -3054,6 +3297,8 @@ async fn evaluate_pair_for_timeframe(
                         .push("COST_GATE_BLOCKED".to_string());
                 }
             }
+            output.cue.cost_estimate_bps =
+                (cost_gate.fee_bps + cost_gate.funding_bps + cost_gate.slippage_bps).max(0.0);
             output.cue.cost_gate = cost_gate;
         } else {
             output.cue.actionable = false;
@@ -3228,6 +3473,13 @@ fn parse_env_u64(key: &str, default: u64) -> u64 {
         .unwrap_or(default)
 }
 
+fn parse_env_i64(key: &str, default: i64) -> i64 {
+    std::env::var(key)
+        .ok()
+        .and_then(|value| value.parse::<i64>().ok())
+        .unwrap_or(default)
+}
+
 fn parse_env_bool(key: &str, default: bool) -> bool {
     std::env::var(key)
         .ok()
@@ -3241,14 +3493,16 @@ fn parse_env_bool(key: &str, default: bool) -> bool {
 #[cfg(test)]
 mod tests {
     use super::{
-        artifact_download_path, compute_pair_slippage_sample_bps, days_covered,
-        decide_champion_transition, parse_backtest_exit_mode,
+        artifact_download_path, compute_pair_funding_bps_per_event,
+        compute_pair_slippage_sample_bps, days_covered, decide_champion_transition,
+        expected_funding_events_crossed, parse_backtest_exit_mode,
         parse_opportunity_history_stats_timeframe, parse_opportunity_history_window,
         resolve_artifact_path, resolve_taker_fee_bps, ChampionDecision, MaintenanceAction,
         OpportunityHistoryQuery, OpportunityHistoryStatsQuery, SampledSlippageStatus,
         SelectedSignalRow, StrategyMarketMetricsResponse,
     };
     use chrono::Utc;
+    use common_types::Timeframe;
     use std::fs;
     use std::path::PathBuf;
     use strategy_service::{
@@ -3620,5 +3874,52 @@ mod tests {
             Some("SLIPPAGE_DATA_UNAVAILABLE")
         );
         assert_eq!(SampledSlippageStatus::Healthy.rationale_code(), None);
+    }
+
+    #[test]
+    fn funding_sample_math_nets_to_zero_when_leg_rates_offset() {
+        let left = StrategyMarketMetricsResponse {
+            instrument: "PF_LEFT".to_string(),
+            server_time: Utc::now(),
+            bid: 99.9,
+            ask: 100.1,
+            mark: 100.0,
+            index: 100.0,
+            change_24h_pct: 0.0,
+            funding_rate: 0.0001,
+            open_interest: 0.0,
+        };
+        let right = StrategyMarketMetricsResponse {
+            instrument: "PF_RIGHT".to_string(),
+            server_time: Utc::now(),
+            bid: 99.9,
+            ask: 100.1,
+            mark: 100.0,
+            index: 100.0,
+            change_24h_pct: 0.0,
+            funding_rate: 0.0001,
+            open_interest: 0.0,
+        };
+        let (long_spread, short_spread) =
+            compute_pair_funding_bps_per_event(&left, &right, 1.0, 10_000.0, true)
+                .expect("funding sample should compute");
+        assert!(long_spread.abs() < 1e-9);
+        assert!(short_spread.abs() < 1e-9);
+    }
+
+    #[test]
+    fn expected_funding_events_respects_time_to_next_boundary() {
+        let evaluated_at = chrono::DateTime::parse_from_rfc3339("2026-02-24T00:10:00Z")
+            .expect("parse timestamp")
+            .with_timezone(&Utc);
+        let no_event =
+            expected_funding_events_crossed(evaluated_at, 30, Timeframe::OneMinute, 3600, 0);
+        let one_event =
+            expected_funding_events_crossed(evaluated_at, 60, Timeframe::OneMinute, 3600, 0);
+        let two_events =
+            expected_funding_events_crossed(evaluated_at, 130, Timeframe::OneMinute, 3600, 0);
+        assert_eq!(no_event, 0);
+        assert_eq!(one_event, 1);
+        assert_eq!(two_events, 2);
     }
 }

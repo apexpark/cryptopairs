@@ -53,8 +53,8 @@ Hard constraint:
 3. Cost and viability gate
 - Compute expected edge net of:
   - taker/maker fee assumptions,
-  - funding drag estimate,
-  - slippage model from recent trade/candle volatility and turnover.
+  - funding impact estimate (directional, event-aware),
+  - slippage model from sampled executable quotes (fail-closed if required samples unavailable).
 - If net edge <= 0, cue becomes non-actionable.
 
 4. Portfolio construction layer (decision support)
@@ -87,6 +87,7 @@ Deliverables:
 - Feature structs for residualized signals and cost model inputs.
 - Deterministic portfolio optimization module behind strategy-service internals.
 - Config keys for fees, slippage multipliers, and exposure caps.
+- Config keys for dynamic funding cadence and sign conventions.
 
 Acceptance criteria:
 - Unit tests for feature math and optimizer constraints.
@@ -133,6 +134,7 @@ Acceptance criteria:
 - Fields:
   - `pair_id`, `timeframe`
   - `expected_edge_bps`, `fee_bps`, `funding_bps`, `slippage_bps`, `net_edge_bps`
+  - `funding_model`, `funding_events`, `funding_bps_per_event`
   - `pass`
   - `rationale_codes[]`
 
