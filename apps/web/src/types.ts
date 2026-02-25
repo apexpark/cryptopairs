@@ -7,6 +7,9 @@ export interface CostGate {
   status: "AVAILABLE" | "UNAVAILABLE";
   expected_edge_bps: number;
   fee_bps: number;
+  funding_model: "STATIC" | "DYNAMIC";
+  funding_events: number;
+  funding_bps_per_event: number;
   funding_bps: number;
   slippage_bps: number;
   net_edge_bps: number;
@@ -120,6 +123,9 @@ export interface StrategyPairsCostGateResponse {
     timeframe: Timeframe;
     expected_edge_bps: number;
     fee_bps: number;
+    funding_model: "STATIC" | "DYNAMIC";
+    funding_events: number;
+    funding_bps_per_event: number;
     funding_bps: number;
     slippage_bps: number;
     net_edge_bps: number;

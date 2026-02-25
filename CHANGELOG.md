@@ -108,6 +108,12 @@ This project follows SemVer as defined in `docs/02-versioning-and-releases.md`.
   - `strategy-service` now maintains a 1s sampled slippage feed (EWMA) and blocks entry advisory gates when sampled data is warming/stale/unavailable (no heuristic fallback for entry gating).
   - Cost-gate diagnostics now include rationale codes for sampled slippage source and feed health (`SLIPPAGE_SOURCE_SAMPLED`, `SLIPPAGE_DATA_WARMING`, `SLIPPAGE_DATA_STALE`, `SLIPPAGE_DATA_UNAVAILABLE`).
   - Header spread display in web app now uses direction-aware executable quote pricing (bid/ask/index based) instead of mark-only spread.
+- Dynamic funding impact modeling for cost-gate decisions:
+  - `strategy-service` now computes spread funding as directional per-event bps from live leg funding rates and hedge-ratio/index notional weights.
+  - Funding impact is now event-aware: expected hold duration is mapped to projected funding events crossed (`STRATEGY_FUNDING_INTERVAL_SECS`, `STRATEGY_FUNDING_PHASE_OFFSET_SECS`).
+  - Entry advisory fails closed with `FUNDING_DATA_UNAVAILABLE` when projected funding events are non-zero and live funding samples are unavailable.
+  - Static funding drag remains available only when dynamic funding is disabled (`STRATEGY_DYNAMIC_FUNDING_ENABLED=false`).
+  - Cost-gate diagnostics now expose `funding_model`, `funding_events`, and `funding_bps_per_event` in cues and cost-gate APIs.
 - Kraken private-auth hardening for execution order-status lookups:
   - `execution-service` now signs the exact URL-encoded URI component (`path?query`) used on wire for private status requests.
   - Reduces risk of auth mismatch under Kraken’s encoded-URI signing enforcement updates.

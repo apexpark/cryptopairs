@@ -83,6 +83,21 @@ impl DirectionHint {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+pub enum FundingModel {
+    Static,
+    Dynamic,
+}
+
+impl FundingModel {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Static => "STATIC",
+            Self::Dynamic => "DYNAMIC",
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub struct VariantEvaluation {
     pub variant: String,
@@ -103,6 +118,9 @@ pub struct CostGateDiagnostics {
     pub status: String,
     pub expected_edge_bps: f64,
     pub fee_bps: f64,
+    pub funding_model: String,
+    pub funding_events: u32,
+    pub funding_bps_per_event: f64,
     pub funding_bps: f64,
     pub slippage_bps: f64,
     pub net_edge_bps: f64,
@@ -116,6 +134,9 @@ impl CostGateDiagnostics {
             status: "UNAVAILABLE".to_string(),
             expected_edge_bps: 0.0,
             fee_bps: 0.0,
+            funding_model: FundingModel::Static.as_str().to_string(),
+            funding_events: 0,
+            funding_bps_per_event: 0.0,
             funding_bps: 0.0,
             slippage_bps: 0.0,
             net_edge_bps: 0.0,
@@ -129,6 +150,9 @@ impl CostGateDiagnostics {
 pub struct CostGateInput {
     pub expected_edge_bps: f64,
     pub fee_bps: f64,
+    pub funding_model: FundingModel,
+    pub funding_events: u32,
+    pub funding_bps_per_event: f64,
     pub funding_bps: f64,
     pub spread_vol_bps: f64,
     pub spread_z: f64,
@@ -542,7 +566,18 @@ pub fn evaluate_cost_gate(input: CostGateInput) -> CostGateDiagnostics {
     }
 
     let fee_bps = input.fee_bps.max(0.0);
-    let funding_bps = input.funding_bps.max(0.0);
+    let funding_bps_per_event = if input.funding_bps_per_event.is_finite() {
+        input.funding_bps_per_event
+    } else {
+        rationale_codes.push("INVALID_FUNDING_INPUT".to_string());
+        0.0
+    };
+    let funding_bps = if input.funding_bps.is_finite() {
+        input.funding_bps
+    } else {
+        rationale_codes.push("INVALID_FUNDING_INPUT".to_string());
+        0.0
+    };
     let slippage_bps = if let Some(sampled) = input.sampled_slippage_bps {
         sampled.max(0.0)
     } else {
@@ -562,6 +597,9 @@ pub fn evaluate_cost_gate(input: CostGateInput) -> CostGateDiagnostics {
         status: "AVAILABLE".to_string(),
         expected_edge_bps,
         fee_bps,
+        funding_model: input.funding_model.as_str().to_string(),
+        funding_events: input.funding_events,
+        funding_bps_per_event,
         funding_bps,
         slippage_bps,
         net_edge_bps,
@@ -1345,8 +1383,9 @@ mod tests {
     use super::{
         annotate_with_shadow_model, build_portfolio_plan, compute_backtest_series,
         evaluate_cost_gate, evaluate_pair, train_shadow_model, BacktestConfig, BacktestExitMode,
-        CostGateDiagnostics, CostGateInput, DirectionHint, PairCue, PairEvaluationInput,
-        PortfolioHint, Regime, ShadowMlDiagnostics, ShadowModelTrainingRow, SignalVariant,
+        CostGateDiagnostics, CostGateInput, DirectionHint, FundingModel, PairCue,
+        PairEvaluationInput, PortfolioHint, Regime, ShadowMlDiagnostics, ShadowModelTrainingRow,
+        SignalVariant,
     };
     use chrono::{Duration, Utc};
     use common_types::Timeframe;
@@ -1483,6 +1522,9 @@ mod tests {
         let diagnostics = evaluate_cost_gate(CostGateInput {
             expected_edge_bps: 2.4,
             fee_bps: 1.0,
+            funding_model: FundingModel::Dynamic,
+            funding_events: 1,
+            funding_bps_per_event: 0.8,
             funding_bps: 0.8,
             spread_vol_bps: 2.0,
             spread_z: 1.9,
@@ -1505,6 +1547,9 @@ mod tests {
         let diagnostics = evaluate_cost_gate(CostGateInput {
             expected_edge_bps: 3.5,
             fee_bps: 1.0,
+            funding_model: FundingModel::Dynamic,
+            funding_events: 1,
+            funding_bps_per_event: 0.5,
             funding_bps: 0.5,
             spread_vol_bps: 9.0,
             spread_z: 2.1,
@@ -1801,6 +1846,9 @@ mod tests {
                 status: "AVAILABLE".to_string(),
                 expected_edge_bps: opportunity_score,
                 fee_bps: 0.8,
+                funding_model: FundingModel::Dynamic.as_str().to_string(),
+                funding_events: 1,
+                funding_bps_per_event: 0.6,
                 funding_bps: 0.6,
                 slippage_bps: 0.5,
                 net_edge_bps,
