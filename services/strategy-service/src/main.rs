@@ -1715,6 +1715,49 @@ fn expected_funding_events_crossed(
     (1 + (remainder / interval_secs)) as u32
 }
 
+fn expected_hold_hours(expected_hold_bars: i64, timeframe: Timeframe) -> f64 {
+    if expected_hold_bars <= 0 {
+        return 0.0;
+    }
+    let hold_secs = expected_hold_bars.saturating_mul(timeframe.step_seconds());
+    if hold_secs <= 0 {
+        return 0.0;
+    }
+    (hold_secs as f64) / 3600.0
+}
+
+fn funding_bps_per_hour_from_event_bps(
+    funding_bps_per_event: f64,
+    funding_interval_secs: u64,
+) -> f64 {
+    if !funding_bps_per_event.is_finite() {
+        return 0.0;
+    }
+    let interval_hours = (funding_interval_secs.max(1) as f64) / 3600.0;
+    if interval_hours <= 0.0 {
+        return 0.0;
+    }
+    funding_bps_per_event / interval_hours
+}
+
+fn project_continuous_funding_bps(
+    funding_bps_per_event: f64,
+    expected_hold_bars: i64,
+    timeframe: Timeframe,
+    funding_interval_secs: u64,
+) -> f64 {
+    let hold_hours = expected_hold_hours(expected_hold_bars, timeframe);
+    if hold_hours <= 0.0 {
+        return 0.0;
+    }
+    let funding_bps_per_hour =
+        funding_bps_per_hour_from_event_bps(funding_bps_per_event, funding_interval_secs);
+    if !funding_bps_per_hour.is_finite() {
+        return 0.0;
+    }
+    funding_bps_per_hour * hold_hours
+}
+
 #[derive(Debug, Clone, Copy)]
 struct FundingCostEstimate {
     model: FundingModel,
@@ -1739,6 +1782,7 @@ fn resolve_funding_cost_estimate(
         });
     }
 
+    let hold_hours = expected_hold_hours(output.cue.expected_hold_bars, timeframe);
     let events = expected_funding_events_crossed(
         output.cue.evaluated_at,
         output.cue.expected_hold_bars,
@@ -1746,7 +1790,7 @@ fn resolve_funding_cost_estimate(
         settings.funding_interval_secs,
         settings.funding_phase_offset_secs,
     );
-    if events == 0 {
+    if hold_hours <= 0.0 {
         let bps_per_event = sampled.selected_funding_bps_per_event.unwrap_or(0.0);
         return Ok(FundingCostEstimate {
             model: FundingModel::Dynamic,
@@ -1759,11 +1803,17 @@ fn resolve_funding_cost_estimate(
     let Some(bps_per_event) = sampled.selected_funding_bps_per_event else {
         return Err("FUNDING_DATA_UNAVAILABLE");
     };
+    let total_bps = project_continuous_funding_bps(
+        bps_per_event,
+        output.cue.expected_hold_bars,
+        timeframe,
+        settings.funding_interval_secs,
+    );
     Ok(FundingCostEstimate {
         model: FundingModel::Dynamic,
         events,
         bps_per_event,
-        total_bps: bps_per_event * (events as f64),
+        total_bps,
     })
 }
 
@@ -3642,10 +3692,13 @@ async fn evaluate_pair_for_timeframe(
                 cost_gate
                     .rationale_codes
                     .push("FUNDING_MODEL_DYNAMIC".to_string());
+                cost_gate
+                    .rationale_codes
+                    .push("FUNDING_CONTINUOUS_ACCRUAL".to_string());
                 if funding_estimate.events == 0 {
                     cost_gate
                         .rationale_codes
-                        .push("FUNDING_WINDOW_NO_EVENT".to_string());
+                        .push("FUNDING_WINDOW_NO_SETTLEMENT".to_string());
                 }
             } else {
                 cost_gate
@@ -3867,10 +3920,10 @@ mod tests {
         compute_pair_funding_bps_per_event, compute_pair_slippage_sample_bps, days_covered,
         decide_champion_transition, expected_funding_events_crossed, normalize_funding_rate,
         parse_backtest_exit_mode, parse_opportunity_history_stats_timeframe,
-        parse_opportunity_history_window, resolve_artifact_path, resolve_taker_fee_bps,
-        ChampionDecision, FundingRateInputMode, MaintenanceAction, OpportunityHistoryQuery,
-        OpportunityHistoryStatsQuery, SampledSlippageStatus, SelectedSignalRow,
-        StrategyMarketMetricsResponse,
+        parse_opportunity_history_window, project_continuous_funding_bps, resolve_artifact_path,
+        resolve_taker_fee_bps, ChampionDecision, FundingRateInputMode, MaintenanceAction,
+        OpportunityHistoryQuery, OpportunityHistoryStatsQuery, SampledSlippageStatus,
+        SelectedSignalRow, StrategyMarketMetricsResponse,
     };
     use chrono::Utc;
     use common_types::Timeframe;
@@ -4360,5 +4413,23 @@ mod tests {
         assert_eq!(no_event, 0);
         assert_eq!(one_event, 1);
         assert_eq!(two_events, 2);
+    }
+
+    #[test]
+    fn continuous_funding_projection_scales_for_sub_hour_holds() {
+        let projected = project_continuous_funding_bps(0.6, 30, Timeframe::OneMinute, 3600);
+        assert!((projected - 0.3).abs() < 1e-9);
+    }
+
+    #[test]
+    fn continuous_funding_projection_scales_for_multi_hour_holds() {
+        let projected = project_continuous_funding_bps(0.6, 130, Timeframe::OneMinute, 3600);
+        assert!((projected - 1.3).abs() < 1e-9);
+    }
+
+    #[test]
+    fn continuous_funding_projection_respects_funding_interval() {
+        let projected = project_continuous_funding_bps(0.3, 120, Timeframe::OneMinute, 1800);
+        assert!((projected - 1.2).abs() < 1e-9);
     }
 }
