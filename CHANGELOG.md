@@ -119,6 +119,8 @@ This project follows SemVer as defined in `docs/02-versioning-and-releases.md`.
   - Entry advisory fails closed with `FUNDING_DATA_UNAVAILABLE` when projected funding events are non-zero and live funding samples are unavailable.
   - Static funding drag remains available only when dynamic funding is disabled (`STRATEGY_DYNAMIC_FUNDING_ENABLED=false`).
   - Cost-gate diagnostics now expose `funding_model`, `funding_events`, and `funding_bps_per_event` in cues and cost-gate APIs.
+  - Added configurable funding-rate input normalization mode (`STRATEGY_FUNDING_RATE_INPUT_MODE=fraction|percent|auto`, default `percent`) so strategy math and header market-metrics proxy can normalize exchange funding-rate units consistently.
+  - Top-header net spread funding is now rendered as normalized `bps/hr` using explicit funding interval conversion (`funding_interval_secs`) instead of raw `% / hr` formatting.
 - Kraken private-auth hardening for execution order-status lookups:
   - `execution-service` now signs the exact URL-encoded URI component (`path?query`) used on wire for private status requests.
   - Reduces risk of auth mismatch under Kraken’s encoded-URI signing enforcement updates.
