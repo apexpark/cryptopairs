@@ -77,6 +77,9 @@ struct StrategySettings {
     sampled_slippage_warmup_secs: u64,
     sampled_slippage_stale_secs: u64,
     sampled_slippage_ewma_alpha: f64,
+    sampled_slippage_state_path: String,
+    sampled_slippage_persist_secs: u64,
+    sampled_slippage_bootstrap_max_deviation_bps: f64,
     min_net_edge_bps: f64,
     dynamic_funding_enabled: bool,
     funding_interval_secs: u64,
@@ -137,6 +140,12 @@ impl StrategySettings {
         let sampled_slippage_stale_secs = parse_env_u64("STRATEGY_SAMPLED_SLIPPAGE_STALE_SECS", 20);
         let sampled_slippage_ewma_alpha =
             parse_env_f64("STRATEGY_SAMPLED_SLIPPAGE_EWMA_ALPHA", 0.2).clamp(0.01, 1.0);
+        let sampled_slippage_state_path = std::env::var("STRATEGY_SAMPLED_SLIPPAGE_STATE_PATH")
+            .unwrap_or_else(|_| "artifacts/runtime/sampled_slippage_state.json".to_string());
+        let sampled_slippage_persist_secs =
+            parse_env_u64("STRATEGY_SAMPLED_SLIPPAGE_PERSIST_SECS", 5).max(1);
+        let sampled_slippage_bootstrap_max_deviation_bps =
+            parse_env_f64("STRATEGY_SAMPLED_SLIPPAGE_BOOTSTRAP_MAX_DEVIATION_BPS", 3.0).max(0.0);
         let min_net_edge_bps = parse_env_f64("STRATEGY_MIN_NET_EDGE_BPS", 0.0);
         let dynamic_funding_enabled = parse_env_bool("STRATEGY_DYNAMIC_FUNDING_ENABLED", true);
         let funding_interval_secs = parse_env_u64("STRATEGY_FUNDING_INTERVAL_SECS", 3600).max(1);
@@ -206,6 +215,9 @@ impl StrategySettings {
             sampled_slippage_warmup_secs,
             sampled_slippage_stale_secs,
             sampled_slippage_ewma_alpha,
+            sampled_slippage_state_path,
+            sampled_slippage_persist_secs,
+            sampled_slippage_bootstrap_max_deviation_bps,
             min_net_edge_bps,
             dynamic_funding_enabled,
             funding_interval_secs,
@@ -1028,6 +1040,13 @@ struct PairSlippageConfig {
     right_instrument: String,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+enum SampledSlippageSource {
+    Live,
+    Bootstrapped,
+}
+
 #[derive(Debug, Clone)]
 struct PairSlippageState {
     long_slippage_ewma_bps: f64,
@@ -1037,6 +1056,7 @@ struct PairSlippageState {
     funding_available: bool,
     sample_count: usize,
     last_sample_at: DateTime<Utc>,
+    source: SampledSlippageSource,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1063,6 +1083,56 @@ struct PairSlippageSnapshot {
     status: SampledSlippageStatus,
     selected_slippage_bps: f64,
     selected_funding_bps_per_event: Option<f64>,
+    source: Option<SampledSlippageSource>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct SampledSlippageCheckpointEntry {
+    key: String,
+    long_slippage_ewma_bps: f64,
+    short_slippage_ewma_bps: f64,
+    long_funding_bps_per_event: f64,
+    short_funding_bps_per_event: f64,
+    funding_available: bool,
+    sample_count: usize,
+    last_sample_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct SampledSlippageCheckpoint {
+    generated_at: DateTime<Utc>,
+    entries: Vec<SampledSlippageCheckpointEntry>,
+}
+
+fn bootstrap_snapshot_is_fresh(
+    sample_ts: DateTime<Utc>,
+    now: DateTime<Utc>,
+    stale_after: chrono::Duration,
+) -> bool {
+    let max_age_secs = stale_after.num_seconds().saturating_mul(2).max(1);
+    let max_age = chrono::Duration::seconds(max_age_secs);
+    let age = now.signed_duration_since(sample_ts);
+    age >= chrono::Duration::zero() && age <= max_age
+}
+
+fn bootstrap_deviation_exceeds_threshold(
+    previous_long_bps: f64,
+    previous_short_bps: f64,
+    first_live_long_bps: f64,
+    first_live_short_bps: f64,
+    threshold_bps: f64,
+) -> bool {
+    if !previous_long_bps.is_finite()
+        || !previous_short_bps.is_finite()
+        || !first_live_long_bps.is_finite()
+        || !first_live_short_bps.is_finite()
+        || !threshold_bps.is_finite()
+    {
+        return true;
+    }
+    let threshold = threshold_bps.max(0.0);
+    (first_live_long_bps - previous_long_bps).abs() > threshold
+        || (first_live_short_bps - previous_short_bps).abs() > threshold
 }
 
 #[derive(Debug)]
@@ -1075,6 +1145,10 @@ struct SampledSlippageStore {
     ewma_alpha: f64,
     warmup_samples: usize,
     stale_after: chrono::Duration,
+    persist_path: PathBuf,
+    persist_interval: chrono::Duration,
+    bootstrap_max_deviation_bps: f64,
+    last_persist_at: RwLock<Option<DateTime<Utc>>>,
     funding_rate_bps_multiplier: f64,
     funding_positive_rate_means_longs_pay: bool,
 }
@@ -1102,6 +1176,7 @@ impl SampledSlippageStore {
             .div_ceil(interval_ms))
         .max(1) as usize;
         let stale_after_secs = settings.sampled_slippage_stale_secs.max(1);
+        let persist_secs = settings.sampled_slippage_persist_secs.max(1);
 
         Self {
             pair_configs,
@@ -1112,6 +1187,10 @@ impl SampledSlippageStore {
             ewma_alpha: settings.sampled_slippage_ewma_alpha.clamp(0.01, 1.0),
             warmup_samples,
             stale_after: chrono::Duration::seconds(stale_after_secs as i64),
+            persist_path: PathBuf::from(&settings.sampled_slippage_state_path),
+            persist_interval: chrono::Duration::seconds(persist_secs as i64),
+            bootstrap_max_deviation_bps: settings.sampled_slippage_bootstrap_max_deviation_bps,
+            last_persist_at: RwLock::new(None),
             funding_rate_bps_multiplier: settings.funding_rate_bps_multiplier.max(1.0),
             funding_positive_rate_means_longs_pay: settings.funding_positive_rate_means_longs_pay,
         }
@@ -1123,6 +1202,138 @@ impl SampledSlippageStore {
 
     fn instruments_csv(&self) -> String {
         self.instruments.join(",")
+    }
+
+    async fn hydrate_from_disk(&self) -> anyhow::Result<usize> {
+        let raw = match std::fs::read(&self.persist_path) {
+            Ok(bytes) => bytes,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(0),
+            Err(error) => {
+                anyhow::bail!(
+                    "failed reading sampled slippage checkpoint '{}': {}",
+                    self.persist_path.display(),
+                    error
+                );
+            }
+        };
+        let checkpoint: SampledSlippageCheckpoint =
+            serde_json::from_slice(&raw).map_err(|error| {
+                anyhow::anyhow!(
+                    "failed parsing sampled slippage checkpoint '{}': {}",
+                    self.persist_path.display(),
+                    error
+                )
+            })?;
+
+        let valid_keys: HashSet<String> = self
+            .pair_configs
+            .iter()
+            .map(|config| config.key.clone())
+            .collect();
+        let now = Utc::now();
+        let mut states = self.states.write().await;
+        let mut hydrated = 0usize;
+        for entry in checkpoint.entries {
+            if !valid_keys.contains(&entry.key) {
+                continue;
+            }
+            if !bootstrap_snapshot_is_fresh(entry.last_sample_at, now, self.stale_after) {
+                continue;
+            }
+            states.insert(
+                entry.key,
+                PairSlippageState {
+                    long_slippage_ewma_bps: entry.long_slippage_ewma_bps.max(0.0),
+                    short_slippage_ewma_bps: entry.short_slippage_ewma_bps.max(0.0),
+                    long_funding_bps_per_event: entry.long_funding_bps_per_event,
+                    short_funding_bps_per_event: entry.short_funding_bps_per_event,
+                    funding_available: entry.funding_available,
+                    sample_count: self.warmup_samples.max(entry.sample_count),
+                    last_sample_at: entry.last_sample_at,
+                    source: SampledSlippageSource::Bootstrapped,
+                },
+            );
+            hydrated += 1;
+        }
+
+        if hydrated > 0 {
+            *self.last_persist_at.write().await = Some(now);
+        }
+        Ok(hydrated)
+    }
+
+    async fn persist_snapshot_if_due(&self, snapshot_time: DateTime<Utc>) -> anyhow::Result<bool> {
+        let should_persist = {
+            let last_persist = *self.last_persist_at.read().await;
+            match last_persist {
+                Some(previous) => {
+                    snapshot_time.signed_duration_since(previous) >= self.persist_interval
+                }
+                None => true,
+            }
+        };
+        if !should_persist {
+            return Ok(false);
+        }
+
+        let entries = {
+            let states = self.states.read().await;
+            states
+                .iter()
+                .map(|(key, value)| SampledSlippageCheckpointEntry {
+                    key: key.clone(),
+                    long_slippage_ewma_bps: value.long_slippage_ewma_bps,
+                    short_slippage_ewma_bps: value.short_slippage_ewma_bps,
+                    long_funding_bps_per_event: value.long_funding_bps_per_event,
+                    short_funding_bps_per_event: value.short_funding_bps_per_event,
+                    funding_available: value.funding_available,
+                    sample_count: value.sample_count,
+                    last_sample_at: value.last_sample_at,
+                })
+                .collect::<Vec<_>>()
+        };
+        if entries.is_empty() {
+            return Ok(false);
+        }
+
+        let checkpoint = SampledSlippageCheckpoint {
+            generated_at: snapshot_time,
+            entries,
+        };
+        let payload = serde_json::to_vec_pretty(&checkpoint).map_err(|error| {
+            anyhow::anyhow!(
+                "failed serializing sampled slippage checkpoint '{}': {}",
+                self.persist_path.display(),
+                error
+            )
+        })?;
+
+        if let Some(parent) = self.persist_path.parent() {
+            std::fs::create_dir_all(parent).map_err(|error| {
+                anyhow::anyhow!(
+                    "failed creating checkpoint directory '{}': {}",
+                    parent.display(),
+                    error
+                )
+            })?;
+        }
+        let temp_path = self.persist_path.with_extension("tmp");
+        std::fs::write(&temp_path, payload).map_err(|error| {
+            anyhow::anyhow!(
+                "failed writing sampled slippage checkpoint '{}': {}",
+                temp_path.display(),
+                error
+            )
+        })?;
+        std::fs::rename(&temp_path, &self.persist_path).map_err(|error| {
+            anyhow::anyhow!(
+                "failed replacing sampled slippage checkpoint '{}': {}",
+                self.persist_path.display(),
+                error
+            )
+        })?;
+        *self.last_persist_at.write().await = Some(snapshot_time);
+        Ok(true)
     }
 
     async fn set_poll_error(&self, error: String) {
@@ -1183,11 +1394,42 @@ impl SampledSlippageStore {
                     funding_available: funding_sample.is_some(),
                     sample_count: 0,
                     last_sample_at: sampled_at,
+                    source: SampledSlippageSource::Live,
                 });
-            if state.sample_count == 0 {
+            let mut bootstrapped_replaced = false;
+            if state.source == SampledSlippageSource::Bootstrapped {
+                let should_fail_warm_start = bootstrap_deviation_exceeds_threshold(
+                    state.long_slippage_ewma_bps,
+                    state.short_slippage_ewma_bps,
+                    long_slippage_bps,
+                    short_slippage_bps,
+                    self.bootstrap_max_deviation_bps,
+                );
+                if should_fail_warm_start {
+                    tracing::warn!(
+                        pair_key = %config.key,
+                        previous_long_bps = state.long_slippage_ewma_bps,
+                        previous_short_bps = state.short_slippage_ewma_bps,
+                        first_live_long_bps = long_slippage_bps,
+                        first_live_short_bps = short_slippage_bps,
+                        threshold_bps = self.bootstrap_max_deviation_bps,
+                        "sampled slippage warm-start deviation exceeded threshold; reverting to warmup"
+                    );
+                    state.sample_count = 0;
+                } else {
+                    // Promote immediately to live sample when bootstrap and live quote agree.
+                    state.long_slippage_ewma_bps = long_slippage_bps;
+                    state.short_slippage_ewma_bps = short_slippage_bps;
+                    state.sample_count = self.warmup_samples;
+                    bootstrapped_replaced = true;
+                }
+                state.source = SampledSlippageSource::Live;
+            }
+
+            if !bootstrapped_replaced && state.sample_count == 0 {
                 state.long_slippage_ewma_bps = long_slippage_bps;
                 state.short_slippage_ewma_bps = short_slippage_bps;
-            } else {
+            } else if !bootstrapped_replaced {
                 state.long_slippage_ewma_bps = (self.ewma_alpha * long_slippage_bps)
                     + ((1.0 - self.ewma_alpha) * state.long_slippage_ewma_bps);
                 state.short_slippage_ewma_bps = (self.ewma_alpha * short_slippage_bps)
@@ -1201,7 +1443,7 @@ impl SampledSlippageStore {
             } else {
                 state.funding_available = false;
             }
-            state.sample_count += 1;
+            state.sample_count = state.sample_count.saturating_add(1);
             state.last_sample_at = sampled_at;
             updated += 1;
         }
@@ -1232,6 +1474,7 @@ impl SampledSlippageStore {
                 status: SampledSlippageStatus::Down,
                 selected_slippage_bps: 0.0,
                 selected_funding_bps_per_event: None,
+                source: None,
             };
         };
 
@@ -1267,6 +1510,7 @@ impl SampledSlippageStore {
             status,
             selected_slippage_bps,
             selected_funding_bps_per_event,
+            source: Some(state.source),
         }
     }
 }
@@ -1753,6 +1997,19 @@ async fn main() -> anyhow::Result<()> {
     let repository = Arc::new(StrategyRepository::connect(&settings.postgres_url).await?);
     let http_client = reqwest::Client::new();
     let sampled_slippage = Arc::new(SampledSlippageStore::new(&settings));
+    match sampled_slippage.hydrate_from_disk().await {
+        Ok(hydrated) => info!(
+            hydrated_pairs = hydrated,
+            sampled_slippage_state_path = %settings.sampled_slippage_state_path,
+            sampled_slippage_stale_secs = settings.sampled_slippage_stale_secs,
+            "sampled slippage warm-start hydration complete"
+        ),
+        Err(error) => tracing::warn!(
+            error = %error,
+            sampled_slippage_state_path = %settings.sampled_slippage_state_path,
+            "sampled slippage warm-start hydration failed"
+        ),
+    }
     let state = AppState {
         repository,
         settings: settings.clone(),
@@ -1820,6 +2077,9 @@ async fn main() -> anyhow::Result<()> {
         sampled_slippage_warmup_secs = settings.sampled_slippage_warmup_secs,
         sampled_slippage_stale_secs = settings.sampled_slippage_stale_secs,
         sampled_slippage_ewma_alpha = settings.sampled_slippage_ewma_alpha,
+        sampled_slippage_state_path = %settings.sampled_slippage_state_path,
+        sampled_slippage_persist_secs = settings.sampled_slippage_persist_secs,
+        sampled_slippage_bootstrap_max_deviation_bps = settings.sampled_slippage_bootstrap_max_deviation_bps,
         dynamic_funding_enabled = settings.dynamic_funding_enabled,
         funding_interval_secs = settings.funding_interval_secs,
         funding_phase_offset_secs = settings.funding_phase_offset_secs,
@@ -1894,10 +2154,32 @@ async fn refresh_sampled_slippage(state: &AppState) -> anyhow::Result<usize> {
     for metric in payload.metrics {
         quotes.insert(metric.instrument.to_uppercase(), metric);
     }
-    Ok(state
+    let updated = state
         .sampled_slippage
         .ingest_quotes(&quotes, sampled_at)
-        .await)
+        .await;
+    match state
+        .sampled_slippage
+        .persist_snapshot_if_due(sampled_at)
+        .await
+    {
+        Ok(true) => {
+            tracing::info!(
+                sampled_at = %sampled_at,
+                updated_pairs = updated,
+                "sampled slippage checkpoint persisted"
+            );
+        }
+        Ok(false) => {}
+        Err(error) => {
+            tracing::warn!(
+                error = %error,
+                sampled_at = %sampled_at,
+                "sampled slippage checkpoint persist failed"
+            );
+        }
+    }
+    Ok(updated)
 }
 
 fn spawn_reoptimize_worker(state: AppState) -> tokio::task::JoinHandle<()> {
@@ -3265,9 +3547,15 @@ async fn evaluate_pair_for_timeframe(
                 slippage_z_multiplier: state.settings.slippage_z_multiplier,
                 min_net_edge_bps: state.settings.min_net_edge_bps,
             });
-            cost_gate
-                .rationale_codes
-                .push("SLIPPAGE_SOURCE_SAMPLED".to_string());
+            if sampled.source == Some(SampledSlippageSource::Bootstrapped) {
+                cost_gate
+                    .rationale_codes
+                    .push("SLIPPAGE_SOURCE_BOOTSTRAPPED".to_string());
+            } else {
+                cost_gate
+                    .rationale_codes
+                    .push("SLIPPAGE_SOURCE_SAMPLED".to_string());
+            }
             if funding_estimate.model == FundingModel::Dynamic {
                 cost_gate
                     .rationale_codes
@@ -3493,9 +3781,9 @@ fn parse_env_bool(key: &str, default: bool) -> bool {
 #[cfg(test)]
 mod tests {
     use super::{
-        artifact_download_path, compute_pair_funding_bps_per_event,
-        compute_pair_slippage_sample_bps, days_covered, decide_champion_transition,
-        expected_funding_events_crossed, parse_backtest_exit_mode,
+        artifact_download_path, bootstrap_deviation_exceeds_threshold, bootstrap_snapshot_is_fresh,
+        compute_pair_funding_bps_per_event, compute_pair_slippage_sample_bps, days_covered,
+        decide_champion_transition, expected_funding_events_crossed, parse_backtest_exit_mode,
         parse_opportunity_history_stats_timeframe, parse_opportunity_history_window,
         resolve_artifact_path, resolve_taker_fee_bps, ChampionDecision, MaintenanceAction,
         OpportunityHistoryQuery, OpportunityHistoryStatsQuery, SampledSlippageStatus,
@@ -3874,6 +4162,51 @@ mod tests {
             Some("SLIPPAGE_DATA_UNAVAILABLE")
         );
         assert_eq!(SampledSlippageStatus::Healthy.rationale_code(), None);
+    }
+
+    #[test]
+    fn bootstrap_snapshot_freshness_requires_recent_non_future_samples() {
+        let now = chrono::DateTime::parse_from_rfc3339("2026-02-25T12:00:00Z")
+            .expect("parse now")
+            .with_timezone(&Utc);
+        let stale_after = chrono::Duration::seconds(20);
+        assert!(bootstrap_snapshot_is_fresh(
+            now - chrono::Duration::seconds(39),
+            now,
+            stale_after
+        ));
+        assert!(bootstrap_snapshot_is_fresh(
+            now - chrono::Duration::seconds(40),
+            now,
+            stale_after
+        ));
+        assert!(!bootstrap_snapshot_is_fresh(
+            now - chrono::Duration::seconds(41),
+            now,
+            stale_after
+        ));
+        assert!(!bootstrap_snapshot_is_fresh(
+            now + chrono::Duration::seconds(1),
+            now,
+            stale_after
+        ));
+    }
+
+    #[test]
+    fn bootstrap_deviation_threshold_flags_large_or_invalid_jumps() {
+        assert!(!bootstrap_deviation_exceeds_threshold(
+            1.0, 1.0, 1.8, 1.2, 1.0
+        ));
+        assert!(bootstrap_deviation_exceeds_threshold(
+            1.0, 1.0, 2.2, 1.0, 1.0
+        ));
+        assert!(bootstrap_deviation_exceeds_threshold(
+            f64::NAN,
+            1.0,
+            1.0,
+            1.0,
+            1.0
+        ));
     }
 
     #[test]

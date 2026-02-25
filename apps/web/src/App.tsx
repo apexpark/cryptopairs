@@ -521,6 +521,8 @@ function describeRationaleCode(code: string): string {
     INSUFFICIENT_TRAINING_HISTORY: "Shadow ML history is still building and not used for approvals.",
     SLIPPAGE_SOURCE_SAMPLED:
       "Cost gate uses live sampled slippage estimates from bid/ask/index quotes.",
+    SLIPPAGE_SOURCE_BOOTSTRAPPED:
+      "Cost gate is temporarily using a warm-start sampled slippage checkpoint until live samples confirm it.",
     SLIPPAGE_DATA_WARMING:
       "Live slippage feed is still warming up; entry remains blocked until enough samples are collected.",
     SLIPPAGE_DATA_STALE:
@@ -1362,7 +1364,9 @@ function App(): JSX.Element {
           timeframe: item.timeframe,
           status: costGate.status === "AVAILABLE" ? "AVAILABLE" : "UNAVAILABLE",
           rationaleCodes,
-          sampledSlippageActive: rationaleCodes.includes("SLIPPAGE_SOURCE_SAMPLED"),
+          sampledSlippageActive:
+            rationaleCodes.includes("SLIPPAGE_SOURCE_SAMPLED") ||
+            rationaleCodes.includes("SLIPPAGE_SOURCE_BOOTSTRAPPED"),
           fundingModel: costGate.funding_model ?? null,
           fundingEvents: costGate.funding_events ?? null,
           fundingBpsPerEvent: costGate.funding_bps_per_event ?? null,

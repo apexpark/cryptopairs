@@ -106,6 +106,11 @@ This project follows SemVer as defined in `docs/02-versioning-and-releases.md`.
     - `specs/contracts/data_market_metrics_batch_response.schema.json`
     - `specs/examples/data_market_metrics_batch_response.example.json`
   - `strategy-service` now maintains a 1s sampled slippage feed (EWMA) and blocks entry advisory gates when sampled data is warming/stale/unavailable (no heuristic fallback for entry gating).
+  - Added warm-start sampled slippage persistence:
+    - Persisted sampled state checkpoints (`EWMA`, funding sample, sample count, `last_sample_at`) to `STRATEGY_SAMPLED_SLIPPAGE_STATE_PATH` on a configurable interval.
+    - Strategy-service now hydrates fresh checkpoints on startup (`< 2 * STRATEGY_SAMPLED_SLIPPAGE_STALE_SECS`) and marks them as bootstrapped.
+    - First live-sample deviation checks can force fail-closed re-warming when checkpoint values diverge beyond `STRATEGY_SAMPLED_SLIPPAGE_BOOTSTRAP_MAX_DEVIATION_BPS`.
+    - Added `SLIPPAGE_SOURCE_BOOTSTRAPPED` rationale code for checkpoint-backed advisory windows.
   - Cost-gate diagnostics now include rationale codes for sampled slippage source and feed health (`SLIPPAGE_SOURCE_SAMPLED`, `SLIPPAGE_DATA_WARMING`, `SLIPPAGE_DATA_STALE`, `SLIPPAGE_DATA_UNAVAILABLE`).
   - Header spread display in web app now uses direction-aware executable quote pricing (bid/ask/index based) instead of mark-only spread.
 - Dynamic funding impact modeling for cost-gate decisions:
