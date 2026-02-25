@@ -445,6 +445,17 @@ input {
 .maintenance-actions button {
   min-width: 150px;
 }
+
+.model-health-table th,
+.model-health-table td {
+  vertical-align: top;
+}
+
+.model-health-table td:nth-child(4),
+.model-health-table td:nth-child(5) {
+  min-width: 150px;
+}
+
 .panel-card {
   background: var(--panel);
   border: 1px solid var(--line-soft);
