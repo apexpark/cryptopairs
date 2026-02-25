@@ -86,6 +86,7 @@ struct StrategySettings {
     funding_phase_offset_secs: i64,
     funding_rate_bps_multiplier: f64,
     funding_positive_rate_means_longs_pay: bool,
+    funding_rate_input_mode: FundingRateInputMode,
     advisory_gross_cap: f64,
     advisory_per_pair_cap: f64,
     advisory_enabled: bool,
@@ -101,6 +102,37 @@ struct StrategySettings {
     maintenance_action_timeout_secs: u64,
     maintenance_action_skip_pull: bool,
     ui_access_password: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum FundingRateInputMode {
+    Fraction,
+    Percent,
+    Auto,
+}
+
+impl FundingRateInputMode {
+    fn parse(raw: Option<String>) -> Self {
+        match raw
+            .as_deref()
+            .unwrap_or("percent")
+            .trim()
+            .to_ascii_lowercase()
+            .as_str()
+        {
+            "fraction" => Self::Fraction,
+            "percent" => Self::Percent,
+            _ => Self::Auto,
+        }
+    }
+
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Fraction => "fraction",
+            Self::Percent => "percent",
+            Self::Auto => "auto",
+        }
+    }
 }
 
 impl StrategySettings {
@@ -154,6 +186,8 @@ impl StrategySettings {
             parse_env_f64("STRATEGY_FUNDING_RATE_BPS_MULTIPLIER", 10_000.0).max(1.0);
         let funding_positive_rate_means_longs_pay =
             parse_env_bool("STRATEGY_FUNDING_POSITIVE_RATE_MEANS_LONGS_PAY", true);
+        let funding_rate_input_mode =
+            FundingRateInputMode::parse(std::env::var("STRATEGY_FUNDING_RATE_INPUT_MODE").ok());
         let advisory_gross_cap = parse_env_f64("STRATEGY_ADVISORY_GROSS_CAP", 1.0);
         let advisory_per_pair_cap = parse_env_f64("STRATEGY_ADVISORY_PER_PAIR_CAP", 0.35);
         let advisory_enabled = parse_env_bool("STRATEGY_ADVISORY_ENABLED", true);
@@ -224,6 +258,7 @@ impl StrategySettings {
             funding_phase_offset_secs,
             funding_rate_bps_multiplier,
             funding_positive_rate_means_longs_pay,
+            funding_rate_input_mode,
             advisory_gross_cap,
             advisory_per_pair_cap,
             advisory_enabled,
@@ -1027,6 +1062,20 @@ struct StrategyMarketMetricsResponse {
     open_interest: f64,
 }
 
+#[derive(Debug, Serialize)]
+struct StrategyMarketMetricsUiResponse {
+    instrument: String,
+    server_time: DateTime<Utc>,
+    bid: f64,
+    ask: f64,
+    mark: f64,
+    index: f64,
+    change_24h_pct: f64,
+    funding_rate: f64,
+    open_interest: f64,
+    funding_interval_secs: u64,
+}
+
 #[derive(Debug, Deserialize)]
 struct StrategyMarketMetricsBatchResponse {
     generated_at: DateTime<Utc>,
@@ -1135,6 +1184,20 @@ fn bootstrap_deviation_exceeds_threshold(
         || (first_live_short_bps - previous_short_bps).abs() > threshold
 }
 
+fn normalize_funding_rate(raw_rate: f64, mode: FundingRateInputMode) -> f64 {
+    match mode {
+        FundingRateInputMode::Fraction => raw_rate,
+        FundingRateInputMode::Percent => raw_rate / 100.0,
+        FundingRateInputMode::Auto => {
+            if raw_rate.abs() > 0.01 {
+                raw_rate / 100.0
+            } else {
+                raw_rate
+            }
+        }
+    }
+}
+
 #[derive(Debug)]
 struct SampledSlippageStore {
     pair_configs: Vec<PairSlippageConfig>,
@@ -1151,6 +1214,7 @@ struct SampledSlippageStore {
     last_persist_at: RwLock<Option<DateTime<Utc>>>,
     funding_rate_bps_multiplier: f64,
     funding_positive_rate_means_longs_pay: bool,
+    funding_rate_input_mode: FundingRateInputMode,
 }
 
 impl SampledSlippageStore {
@@ -1193,6 +1257,7 @@ impl SampledSlippageStore {
             last_persist_at: RwLock::new(None),
             funding_rate_bps_multiplier: settings.funding_rate_bps_multiplier.max(1.0),
             funding_positive_rate_means_longs_pay: settings.funding_positive_rate_means_longs_pay,
+            funding_rate_input_mode: settings.funding_rate_input_mode,
         }
     }
 
@@ -1382,6 +1447,7 @@ impl SampledSlippageStore {
                 hedge_ratio,
                 self.funding_rate_bps_multiplier,
                 self.funding_positive_rate_means_longs_pay,
+                self.funding_rate_input_mode,
             );
 
             let state = states
@@ -1571,6 +1637,7 @@ fn compute_pair_funding_bps_per_event(
     hedge_ratio: f64,
     funding_rate_bps_multiplier: f64,
     positive_rate_means_longs_pay: bool,
+    funding_rate_input_mode: FundingRateInputMode,
 ) -> Option<(f64, f64)> {
     let values = [
         left.funding_rate,
@@ -1602,8 +1669,10 @@ fn compute_pair_funding_bps_per_event(
     } else {
         -1.0
     };
-    let left_long_cost_bps = sign * left.funding_rate * funding_rate_bps_multiplier;
-    let right_long_cost_bps = sign * right.funding_rate * funding_rate_bps_multiplier;
+    let left_funding_rate = normalize_funding_rate(left.funding_rate, funding_rate_input_mode);
+    let right_funding_rate = normalize_funding_rate(right.funding_rate, funding_rate_input_mode);
+    let left_long_cost_bps = sign * left_funding_rate * funding_rate_bps_multiplier;
+    let right_long_cost_bps = sign * right_funding_rate * funding_rate_bps_multiplier;
     let left_short_cost_bps = -left_long_cost_bps;
     let right_short_cost_bps = -right_long_cost_bps;
 
@@ -2085,6 +2154,7 @@ async fn main() -> anyhow::Result<()> {
         funding_phase_offset_secs = settings.funding_phase_offset_secs,
         funding_rate_bps_multiplier = settings.funding_rate_bps_multiplier,
         funding_positive_rate_means_longs_pay = settings.funding_positive_rate_means_longs_pay,
+        funding_rate_input_mode = settings.funding_rate_input_mode.as_str(),
         advisory_enabled = settings.advisory_enabled,
         advisory_gross_cap = settings.advisory_gross_cap,
         advisory_per_pair_cap = settings.advisory_per_pair_cap,
@@ -2343,7 +2413,7 @@ async fn ui_auth_verify(
 async fn strategy_market_metrics(
     State(state): State<AppState>,
     Query(query): Query<StrategyMarketMetricsQuery>,
-) -> Result<Json<StrategyMarketMetricsResponse>, ApiError> {
+) -> Result<Json<StrategyMarketMetricsUiResponse>, ApiError> {
     let instrument = query.instrument.trim();
     if instrument.is_empty() {
         return Err(ApiError::BadRequest(
@@ -2376,8 +2446,20 @@ async fn strategy_market_metrics(
         .json()
         .await
         .map_err(|error| ApiError::Upstream(format!("market metrics decode failed: {error}")))?;
-
-    Ok(Json(payload))
+    let normalized_funding_rate =
+        normalize_funding_rate(payload.funding_rate, state.settings.funding_rate_input_mode);
+    Ok(Json(StrategyMarketMetricsUiResponse {
+        instrument: payload.instrument,
+        server_time: payload.server_time,
+        bid: payload.bid,
+        ask: payload.ask,
+        mark: payload.mark,
+        index: payload.index,
+        change_24h_pct: payload.change_24h_pct,
+        funding_rate: normalized_funding_rate,
+        open_interest: payload.open_interest,
+        funding_interval_secs: state.settings.funding_interval_secs.max(1),
+    }))
 }
 
 fn resolve_workspace_path(raw: &str) -> PathBuf {
@@ -3783,11 +3865,12 @@ mod tests {
     use super::{
         artifact_download_path, bootstrap_deviation_exceeds_threshold, bootstrap_snapshot_is_fresh,
         compute_pair_funding_bps_per_event, compute_pair_slippage_sample_bps, days_covered,
-        decide_champion_transition, expected_funding_events_crossed, parse_backtest_exit_mode,
-        parse_opportunity_history_stats_timeframe, parse_opportunity_history_window,
-        resolve_artifact_path, resolve_taker_fee_bps, ChampionDecision, MaintenanceAction,
-        OpportunityHistoryQuery, OpportunityHistoryStatsQuery, SampledSlippageStatus,
-        SelectedSignalRow, StrategyMarketMetricsResponse,
+        decide_champion_transition, expected_funding_events_crossed, normalize_funding_rate,
+        parse_backtest_exit_mode, parse_opportunity_history_stats_timeframe,
+        parse_opportunity_history_window, resolve_artifact_path, resolve_taker_fee_bps,
+        ChampionDecision, FundingRateInputMode, MaintenanceAction, OpportunityHistoryQuery,
+        OpportunityHistoryStatsQuery, SampledSlippageStatus, SelectedSignalRow,
+        StrategyMarketMetricsResponse,
     };
     use chrono::Utc;
     use common_types::Timeframe;
@@ -4233,11 +4316,34 @@ mod tests {
             funding_rate: 0.0001,
             open_interest: 0.0,
         };
-        let (long_spread, short_spread) =
-            compute_pair_funding_bps_per_event(&left, &right, 1.0, 10_000.0, true)
-                .expect("funding sample should compute");
+        let (long_spread, short_spread) = compute_pair_funding_bps_per_event(
+            &left,
+            &right,
+            1.0,
+            10_000.0,
+            true,
+            FundingRateInputMode::Fraction,
+        )
+        .expect("funding sample should compute");
         assert!(long_spread.abs() < 1e-9);
         assert!(short_spread.abs() < 1e-9);
+    }
+
+    #[test]
+    fn funding_rate_normalization_supports_fraction_percent_and_auto() {
+        assert!(
+            (normalize_funding_rate(0.00025, FundingRateInputMode::Fraction) - 0.00025).abs()
+                < 1e-12
+        );
+        assert!(
+            (normalize_funding_rate(0.025, FundingRateInputMode::Percent) - 0.00025).abs() < 1e-12
+        );
+        assert!(
+            (normalize_funding_rate(0.025, FundingRateInputMode::Auto) - 0.00025).abs() < 1e-12
+        );
+        assert!(
+            (normalize_funding_rate(0.00025, FundingRateInputMode::Auto) - 0.00025).abs() < 1e-12
+        );
     }
 
     #[test]

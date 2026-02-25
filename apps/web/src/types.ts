@@ -325,6 +325,7 @@ export interface MarketMetricsResponse {
   change_24h_pct: number;
   funding_rate: number;
   open_interest: number;
+  funding_interval_secs?: number;
 }
 
 export interface Candle {

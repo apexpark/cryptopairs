@@ -344,11 +344,22 @@ function formatMetricPercent(value: number | null | undefined): string {
   return `${value >= 0 ? "+" : ""}${value.toFixed(2)}%`;
 }
 
-function formatFundingRate(value: number | null | undefined): string {
-  if (value == null || !Number.isFinite(value)) {
+function formatFundingRateBpsPerHour(
+  ratePerFundingInterval: number | null | undefined,
+  fundingIntervalSecs: number | null | undefined
+): string {
+  if (
+    ratePerFundingInterval == null ||
+    !Number.isFinite(ratePerFundingInterval) ||
+    fundingIntervalSecs == null ||
+    !Number.isFinite(fundingIntervalSecs) ||
+    fundingIntervalSecs <= 0
+  ) {
     return "--";
   }
-  return `${(value * 100).toFixed(4)}% / hr`;
+  const hourlyScale = 3600 / fundingIntervalSecs;
+  const bpsPerHour = ratePerFundingInterval * 10_000 * hourlyScale;
+  return `${bpsPerHour >= 0 ? "+" : ""}${bpsPerHour.toFixed(2)} bps/hr`;
 }
 
 function formatSignedMetric(value: number | null | undefined, digits = 3): string {
@@ -1480,6 +1491,10 @@ function App(): JSX.Element {
     headerLeftMetrics && headerRightMetrics
       ? headerLeftMetrics.funding_rate - headerHedgeRatio * headerRightMetrics.funding_rate
       : null;
+  const spreadFundingIntervalSecs =
+    headerLeftMetrics?.funding_interval_secs ??
+    headerRightMetrics?.funding_interval_secs ??
+    null;
   const pairLotSizes = derivePairLotSizes(headerHedgeRatio);
 
   useEffect(() => {
@@ -2015,7 +2030,10 @@ function App(): JSX.Element {
             value={formatSignedMetric(pairLotSizes.rightSize, 2)}
             tone="neutral"
           />
-          <Metric label="Net Spread Funding" value={formatFundingRate(spreadFundingRate)} />
+          <Metric
+            label="Net Spread Funding"
+            value={formatFundingRateBpsPerHour(spreadFundingRate, spreadFundingIntervalSecs)}
+          />
         </div>
 
         <div className="topbar-right">
