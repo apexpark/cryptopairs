@@ -1189,7 +1189,12 @@ fn normalize_funding_rate(raw_rate: f64, mode: FundingRateInputMode) -> f64 {
         FundingRateInputMode::Fraction => raw_rate,
         FundingRateInputMode::Percent => raw_rate / 100.0,
         FundingRateInputMode::Auto => {
-            if raw_rate.abs() > 0.01 {
+            // Guard against interpreting percent-like Kraken rates (e.g. -0.009) as fractions.
+            // In auto mode, values above this threshold are treated as percent input.
+            // Example:
+            //   raw=-0.009  -> percent mode => -0.00009 (correct)
+            //   raw=-0.009  -> fraction mode => -0.009 (100x too large)
+            if raw_rate.abs() >= 0.001 {
                 raw_rate / 100.0
             } else {
                 raw_rate
@@ -4396,6 +4401,13 @@ mod tests {
         );
         assert!(
             (normalize_funding_rate(0.00025, FundingRateInputMode::Auto) - 0.00025).abs() < 1e-12
+        );
+        assert!(
+            (normalize_funding_rate(0.009, FundingRateInputMode::Auto) - 0.00009).abs() < 1e-12
+        );
+        assert!(
+            (normalize_funding_rate(-0.009, FundingRateInputMode::Auto) - (-0.00009)).abs()
+                < 1e-12
         );
     }
 
