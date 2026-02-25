@@ -96,6 +96,19 @@ interface LegExecutionOutcome {
   history: OrderIntentHistoryResponse | null;
 }
 
+interface ModelHealthSnapshot {
+  timeframe: Timeframe;
+  status: "AVAILABLE" | "UNAVAILABLE" | "NO_CUES" | "ERROR" | "LOADING";
+  rationaleCodes: string[];
+  sampledSlippageActive: boolean;
+  fundingModel: string | null;
+  fundingEvents: number | null;
+  fundingBpsPerEvent: number | null;
+  fundingBps: number | null;
+  message: string | null;
+  updatedAt: string | null;
+}
+
 const NAV_ITEMS: Array<{ id: PageId; label: string }> = [
   { id: "trade", label: "Trade" },
   { id: "how-it-works", label: "How This Works" },
@@ -237,6 +250,21 @@ function analyticsRefreshMs(timeframe: Timeframe): number {
     return 45_000;
   }
   return 90_000;
+}
+
+function loadingModelHealthSnapshot(timeframe: Timeframe): ModelHealthSnapshot {
+  return {
+    timeframe,
+    status: "LOADING",
+    rationaleCodes: [],
+    sampledSlippageActive: false,
+    fundingModel: null,
+    fundingEvents: null,
+    fundingBpsPerEvent: null,
+    fundingBps: null,
+    message: null,
+    updatedAt: null,
+  };
 }
 
 function usePersistentState<T>(key: string, fallback: T): [T, (updater: T | ((prev: T) => T)) => void] {
@@ -714,6 +742,15 @@ function App(): JSX.Element {
     useState<StrategyPairsOpportunityHistoryStatsResponse | null>(null);
   const [historyStatsLoading, setHistoryStatsLoading] = useState(false);
   const [historyStatsError, setHistoryStatsError] = useState<string | null>(null);
+  const [modelHealthByTimeframe, setModelHealthByTimeframe] = useState<
+    Record<Timeframe, ModelHealthSnapshot>
+  >({
+    "1m": loadingModelHealthSnapshot("1m"),
+    "15m": loadingModelHealthSnapshot("15m"),
+    "1h": loadingModelHealthSnapshot("1h"),
+  });
+  const [modelHealthLoading, setModelHealthLoading] = useState(false);
+  const [modelHealthError, setModelHealthError] = useState<string | null>(null);
 
   const [stopMethod, setStopMethod] = useState<"Z-Score" | "Dollar" | "Percent">("Z-Score");
   const [stopValue, setStopValue] = useState<string>("3.2");
@@ -1280,6 +1317,99 @@ function App(): JSX.Element {
     };
   }, [refreshHistoryStats, uiAccessGranted]);
 
+  const refreshModelHealth = useCallback(async (firstLoad = false): Promise<void> => {
+    if (firstLoad) {
+      setModelHealthLoading(true);
+    }
+    try {
+      const responses = await Promise.all(
+        TIMEFRAMES.map(async (tf) => {
+          const response =
+            takerFeeBpsOverride == null
+              ? await fetchStrategyCues(tf, 1)
+              : await fetchStrategyCues(tf, 1, takerFeeBpsOverride);
+          return { timeframe: tf, response };
+        })
+      );
+
+      const next: Record<Timeframe, ModelHealthSnapshot> = {
+        "1m": loadingModelHealthSnapshot("1m"),
+        "15m": loadingModelHealthSnapshot("15m"),
+        "1h": loadingModelHealthSnapshot("1h"),
+      };
+      const updatedAt = nowIso();
+
+      for (const item of responses) {
+        const selectedCue = item.response.cues[0]?.cue;
+        if (!selectedCue) {
+          next[item.timeframe] = {
+            timeframe: item.timeframe,
+            status: "NO_CUES",
+            rationaleCodes: [],
+            sampledSlippageActive: false,
+            fundingModel: null,
+            fundingEvents: null,
+            fundingBpsPerEvent: null,
+            fundingBps: null,
+            message: "No cues returned.",
+            updatedAt,
+          };
+          continue;
+        }
+        const costGate = selectedCue.cost_gate;
+        const rationaleCodes = costGate.rationale_codes ?? [];
+        next[item.timeframe] = {
+          timeframe: item.timeframe,
+          status: costGate.status === "AVAILABLE" ? "AVAILABLE" : "UNAVAILABLE",
+          rationaleCodes,
+          sampledSlippageActive: rationaleCodes.includes("SLIPPAGE_SOURCE_SAMPLED"),
+          fundingModel: costGate.funding_model ?? null,
+          fundingEvents: costGate.funding_events ?? null,
+          fundingBpsPerEvent: costGate.funding_bps_per_event ?? null,
+          fundingBps: costGate.funding_bps ?? null,
+          message: null,
+          updatedAt,
+        };
+      }
+      setModelHealthByTimeframe(next);
+      setModelHealthError(null);
+    } catch (error) {
+      setModelHealthError(
+        `Model health unavailable: ${error instanceof Error ? error.message : String(error)}`
+      );
+      const failedAt = nowIso();
+      setModelHealthByTimeframe((prev) => {
+        const next = { ...prev };
+        for (const tf of TIMEFRAMES) {
+          next[tf] = {
+            ...next[tf],
+            status: "ERROR",
+            message: "Unable to fetch cues.",
+            updatedAt: failedAt,
+          };
+        }
+        return next;
+      });
+    } finally {
+      if (firstLoad) {
+        setModelHealthLoading(false);
+      }
+    }
+  }, [takerFeeBpsOverride]);
+
+  useEffect(() => {
+    if (!uiAccessGranted || page !== "maintenance") {
+      return;
+    }
+    void refreshModelHealth(true);
+    const intervalId = window.setInterval(() => {
+      void refreshModelHealth(false);
+    }, 60_000);
+    return () => {
+      window.clearInterval(intervalId);
+    };
+  }, [page, refreshModelHealth, uiAccessGranted]);
+
   const executeMaintenanceAction = useCallback(
     async (action: "PROMOTE" | "REVERT"): Promise<StrategyMaintenanceActionResponse> => {
       setMaintenanceActionLoading(true);
@@ -1815,6 +1945,9 @@ function App(): JSX.Element {
           historyStats={historyStats}
           historyStatsLoading={historyStatsLoading}
           historyStatsError={historyStatsError}
+          modelHealthByTimeframe={modelHealthByTimeframe}
+          modelHealthLoading={modelHealthLoading}
+          modelHealthError={modelHealthError}
           maintenanceLatest={maintenanceLatest}
           maintenanceLoading={maintenanceLoading}
           maintenanceError={maintenanceError}
@@ -2604,6 +2737,9 @@ function MaintenancePage({
   historyStats,
   historyStatsLoading,
   historyStatsError,
+  modelHealthByTimeframe,
+  modelHealthLoading,
+  modelHealthError,
   maintenanceLatest,
   maintenanceLoading,
   maintenanceError,
@@ -2616,6 +2752,9 @@ function MaintenancePage({
   historyStats: StrategyPairsOpportunityHistoryStatsResponse | null;
   historyStatsLoading: boolean;
   historyStatsError: string | null;
+  modelHealthByTimeframe: Record<Timeframe, ModelHealthSnapshot>;
+  modelHealthLoading: boolean;
+  modelHealthError: string | null;
   maintenanceLatest: StrategyMaintenanceLatestResponse | null;
   maintenanceLoading: boolean;
   maintenanceError: string | null;
@@ -2709,6 +2848,66 @@ function MaintenancePage({
             </tbody>
           </table>
         </div>
+      </SectionCard>
+
+      <SectionCard
+        title="Live Model Health"
+        subtitle="Sampled slippage and dynamic funding readiness by timeframe"
+      >
+        {modelHealthLoading ? <p className="small-text">Loading model health...</p> : null}
+        {modelHealthError ? <p className="small-text tone-bad">{modelHealthError}</p> : null}
+        <div className="table-wrap">
+          <table className="model-health-table">
+            <thead>
+              <tr>
+                <th>TF</th>
+                <th>Gate</th>
+                <th>Slippage</th>
+                <th>Funding</th>
+                <th>Details</th>
+              </tr>
+            </thead>
+            <tbody>
+              {TIMEFRAMES.map((tf) => {
+                const row = modelHealthByTimeframe[tf];
+                const gateClass =
+                  row.status === "AVAILABLE"
+                    ? "tone-ok"
+                    : row.status === "LOADING"
+                      ? "tone-warn"
+                      : "tone-bad";
+                const fundingLabel =
+                  row.fundingModel == null
+                    ? "--"
+                    : `${row.fundingModel} e=${row.fundingEvents ?? 0} bps/event=${
+                        row.fundingBpsPerEvent == null ? "--" : row.fundingBpsPerEvent.toFixed(3)
+                      }`;
+                const details =
+                  row.message ??
+                  (row.rationaleCodes.length
+                    ? row.rationaleCodes.slice(0, 2).join(", ")
+                    : "No rationale codes");
+                return (
+                  <tr key={tf}>
+                    <td>{tf}</td>
+                    <td className={gateClass}>{row.status}</td>
+                    <td className={row.sampledSlippageActive ? "tone-ok" : "tone-bad"}>
+                      {row.sampledSlippageActive ? "SAMPLED" : "UNAVAILABLE"}
+                    </td>
+                    <td>{fundingLabel}</td>
+                    <td>{details}</td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+        <p className="small-text">
+          Updated:{" "}
+          {modelHealthByTimeframe[timeframe]?.updatedAt
+            ? formatLocalDateTime(modelHealthByTimeframe[timeframe].updatedAt)
+            : "--"}
+        </p>
       </SectionCard>
 
       <SectionCard
