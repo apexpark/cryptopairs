@@ -379,7 +379,7 @@ impl MarketDataAdapter for KrakenFuturesRestClient {
                 symbol.to_uppercase(),
                 MarketMetrics {
                     instrument: symbol,
-                    server_time: server_time.clone(),
+                    server_time,
                     bid,
                     ask,
                     mark,
