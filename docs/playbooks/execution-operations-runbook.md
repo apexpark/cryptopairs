@@ -62,6 +62,7 @@ This runbook uses friendly setting names first, with technical key names in pare
 14. Order Status Lookup Enabled (`EXECUTION_ORDER_STATUS_LOOKUP_ENABLED`)
 - Default: `false`
 - Use only when endpoint query parameter behavior is verified.
+- Runtime signs the exact URL-encoded URI component (`path?query`) used for the request to satisfy Kraken private-auth encoding requirements.
 
 15. Order Status Endpoint (`KRAKEN_FUTURES_ORDER_STATUS_PATH`)
 - Default: `/derivatives/api/v3/orders/status`
