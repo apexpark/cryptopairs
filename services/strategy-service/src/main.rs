@@ -108,6 +108,7 @@ struct StrategySettings {
 enum FundingRateInputMode {
     Fraction,
     Percent,
+    Bps,
     Auto,
 }
 
@@ -115,13 +116,14 @@ impl FundingRateInputMode {
     fn parse(raw: Option<String>) -> Self {
         match raw
             .as_deref()
-            .unwrap_or("percent")
+            .unwrap_or("auto")
             .trim()
             .to_ascii_lowercase()
             .as_str()
         {
             "fraction" => Self::Fraction,
             "percent" => Self::Percent,
+            "bps" | "basis_points" | "basis-points" => Self::Bps,
             _ => Self::Auto,
         }
     }
@@ -130,6 +132,7 @@ impl FundingRateInputMode {
         match self {
             Self::Fraction => "fraction",
             Self::Percent => "percent",
+            Self::Bps => "bps",
             Self::Auto => "auto",
         }
     }
@@ -1188,13 +1191,25 @@ fn normalize_funding_rate(raw_rate: f64, mode: FundingRateInputMode) -> f64 {
     match mode {
         FundingRateInputMode::Fraction => raw_rate,
         FundingRateInputMode::Percent => raw_rate / 100.0,
+        FundingRateInputMode::Bps => raw_rate / 10_000.0,
         FundingRateInputMode::Auto => {
-            // Guard against interpreting percent-like Kraken rates (e.g. -0.009) as fractions.
-            // In auto mode, values above this threshold are treated as percent input.
+            // Auto mode supports three common wire formats:
+            // - fraction (0.00025 = 2.5 bps)
+            // - percent (0.025 = 2.5 bps)
+            // - bps (2.5 = 2.5 bps)
+            //
+            // Heuristic:
+            // - very large magnitudes are treated as bps (avoids 100x inflation on values like -0.716)
+            // - mid magnitudes are treated as percent
+            // - tiny magnitudes are treated as fraction
             // Example:
-            //   raw=-0.009  -> percent mode => -0.00009 (correct)
-            //   raw=-0.009  -> fraction mode => -0.009 (100x too large)
-            if raw_rate.abs() >= 0.001 {
+            //   raw=-0.716 -> bps mode     => -0.0000716
+            //   raw=-0.009 -> percent mode => -0.00009
+            //   raw=-0.00025 -> fraction   => -0.00025
+            let abs = raw_rate.abs();
+            if abs >= 0.25 {
+                raw_rate / 10_000.0
+            } else if abs >= 0.001 {
                 raw_rate / 100.0
             } else {
                 raw_rate
@@ -4397,6 +4412,9 @@ mod tests {
             (normalize_funding_rate(0.025, FundingRateInputMode::Percent) - 0.00025).abs() < 1e-12
         );
         assert!(
+            (normalize_funding_rate(2.5, FundingRateInputMode::Bps) - 0.00025).abs() < 1e-12
+        );
+        assert!(
             (normalize_funding_rate(0.025, FundingRateInputMode::Auto) - 0.00025).abs() < 1e-12
         );
         assert!(
@@ -4407,6 +4425,13 @@ mod tests {
         );
         assert!(
             (normalize_funding_rate(-0.009, FundingRateInputMode::Auto) - (-0.00009)).abs()
+                < 1e-12
+        );
+        assert!(
+            (normalize_funding_rate(0.716, FundingRateInputMode::Auto) - 0.0000716).abs() < 1e-12
+        );
+        assert!(
+            (normalize_funding_rate(-0.716, FundingRateInputMode::Auto) - (-0.0000716)).abs()
                 < 1e-12
         );
     }
