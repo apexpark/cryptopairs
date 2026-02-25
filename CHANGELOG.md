@@ -115,8 +115,11 @@ This project follows SemVer as defined in `docs/02-versioning-and-releases.md`.
   - Header spread display in web app now uses direction-aware executable quote pricing (bid/ask/index based) instead of mark-only spread.
 - Dynamic funding impact modeling for cost-gate decisions:
   - `strategy-service` now computes spread funding as directional per-event bps from live leg funding rates and hedge-ratio/index notional weights.
-  - Funding impact is now event-aware: expected hold duration is mapped to projected funding events crossed (`STRATEGY_FUNDING_INTERVAL_SECS`, `STRATEGY_FUNDING_PHASE_OFFSET_SECS`).
-  - Entry advisory fails closed with `FUNDING_DATA_UNAVAILABLE` when projected funding events are non-zero and live funding samples are unavailable.
+  - Funding impact now uses continuous hold-hours accrual across all strategy timeframes:
+    - `funding_bps` = directional sampled `funding_bps_per_event` normalized by funding interval and scaled by expected hold duration in hours.
+    - `funding_events` remains informational settlement-boundary metadata (`STRATEGY_FUNDING_INTERVAL_SECS`, `STRATEGY_FUNDING_PHASE_OFFSET_SECS`) and is no longer used as the primary multiplier for expected funding drag.
+  - Entry advisory fails closed with `FUNDING_DATA_UNAVAILABLE` when dynamic funding samples are unavailable.
+  - Added dynamic rationale codes `FUNDING_CONTINUOUS_ACCRUAL` and `FUNDING_WINDOW_NO_SETTLEMENT` for auditability on short hold windows.
   - Static funding drag remains available only when dynamic funding is disabled (`STRATEGY_DYNAMIC_FUNDING_ENABLED=false`).
   - Cost-gate diagnostics now expose `funding_model`, `funding_events`, and `funding_bps_per_event` in cues and cost-gate APIs.
   - Added configurable funding-rate input normalization mode (`STRATEGY_FUNDING_RATE_INPUT_MODE=fraction|percent|auto`, default `percent`) so strategy math and header market-metrics proxy can normalize exchange funding-rate units consistently.
