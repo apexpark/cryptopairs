@@ -144,8 +144,13 @@ export default function LineChart({
     const fullSpan = Math.max(fullMax - fullMin, 1e-6);
     const candidateSpan = Math.max(candidateMax - candidateMin, 1e-6);
     if (candidateSpan / fullSpan >= 0.2) {
-      domainMin = candidateMin;
-      domainMax = candidateMax;
+      const recentTailWindowSize = Math.min(values.length, Math.max(6, Math.ceil(values.length * 0.1)));
+      const recentTailValues = values.slice(-recentTailWindowSize);
+      const recentTailMin = Math.min(...recentTailValues);
+      const recentTailMax = Math.max(...recentTailValues);
+      // Prevent right-edge clipping by always including the recent tail in trimmed mode.
+      domainMin = Math.min(candidateMin, recentTailMin);
+      domainMax = Math.max(candidateMax, recentTailMax);
     }
   }
   const span = Math.max(domainMax - domainMin, 1e-6);

@@ -521,6 +521,8 @@ async function fetchMarketMetricsWithFallback(
 function describeRationaleCode(code: string): string {
   const mapping: Record<string, string> = {
     BELOW_ENTRY_BAND: "Spread has not stretched far enough to trigger an entry.",
+    AT_OR_BEYOND_STOP_BAND:
+      "Spread is at or beyond the configured stop band, so new entries are blocked.",
     COST_GATE_BLOCKED: "Expected edge does not clear estimated fees, funding, and slippage.",
     NEGATIVE_EXPECTED_EDGE: "Expected edge is negative after cost adjustments.",
     NEGATIVE_EDGE: "Recent edge estimate is negative for this setup.",
@@ -570,6 +572,11 @@ function explainPairActionability(
       `Current spread z-score is ${cue.spread_z.toFixed(2)}, inside the entry trigger at ±${cue.entry_band.toFixed(2)}.`
     );
   }
+  if (mergedReasons.includes("AT_OR_BEYOND_STOP_BAND")) {
+    details.push(
+      `Current spread z-score is ${cue.spread_z.toFixed(2)}, at or beyond the stop level ±${cue.stop_band.toFixed(2)}; entries are disabled until it moves back inside stop limits.`
+    );
+  }
   if (mergedReasons.includes("COST_GATE_BLOCKED") || !cue.cost_gate.pass) {
     details.push(
       `Net edge is ${formatSigned(cue.cost_gate.net_edge_bps)}bp after costs, so the cost gate remains blocked.`
@@ -599,6 +606,15 @@ function explainPairActionability(
     return {
       headline: "Allowed: this pair currently passes entry, cost, and stability gates.",
       tone: "ok",
+      details,
+      reasons: mergedReasons,
+    };
+  }
+
+  if (mergedReasons.includes("AT_OR_BEYOND_STOP_BAND")) {
+    return {
+      headline: "Blocked for now: spread is at/through stop level, so entry is disabled.",
+      tone: "bad",
       details,
       reasons: mergedReasons,
     };

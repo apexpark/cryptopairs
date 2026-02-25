@@ -894,7 +894,12 @@ pub fn evaluate_pair(input: PairEvaluationInput) -> anyhow::Result<PairEvaluatio
         .ok_or_else(|| anyhow::anyhow!("no signal variants evaluated"))?;
 
     let mut cue_rationale = selected.rationale_codes.clone();
-    let mut direction_hint = to_direction_hint(selected.score_last, input.entry_band);
+    let unbounded_direction_hint = to_direction_hint(selected.score_last, input.entry_band);
+    let mut direction_hint =
+        to_direction_hint_with_stop(selected.score_last, input.entry_band, input.stop_band);
+    if unbounded_direction_hint != DirectionHint::None && direction_hint == DirectionHint::None {
+        cue_rationale.push("AT_OR_BEYOND_STOP_BAND".to_string());
+    }
     let mut actionable = direction_hint != DirectionHint::None && selected.opportunity_score > 0.0;
 
     if !half_life_bars.is_finite() || half_life_bars > input.max_half_life_bars {
@@ -1000,7 +1005,10 @@ pub fn compute_backtest_series(
         let position_at_bar_start = position;
 
         if position_at_bar_start == 0 {
-            if z <= -config.entry_band {
+            let at_or_beyond_stop = z.abs() >= config.stop_band.abs();
+            if at_or_beyond_stop {
+                // Fail closed: never open new entries at/through the stop level.
+            } else if z <= -config.entry_band {
                 position = 1;
                 equity *= 1.0 - round_trip_cost;
                 markers.push(BacktestMarker {
@@ -1069,6 +1077,16 @@ fn to_direction_hint(score: f64, entry_band: f64) -> DirectionHint {
     } else {
         DirectionHint::None
     }
+}
+
+fn to_direction_hint_with_stop(score: f64, entry_band: f64, stop_band: f64) -> DirectionHint {
+    if !score.is_finite() {
+        return DirectionHint::None;
+    }
+    if stop_band.is_finite() && stop_band > 0.0 && score.abs() >= stop_band.abs() {
+        return DirectionHint::None;
+    }
+    to_direction_hint(score, entry_band)
 }
 
 fn confidence_band(
@@ -1382,10 +1400,10 @@ fn median(values: &[f64]) -> f64 {
 mod tests {
     use super::{
         annotate_with_shadow_model, build_portfolio_plan, compute_backtest_series,
-        evaluate_cost_gate, evaluate_pair, train_shadow_model, BacktestConfig, BacktestExitMode,
-        CostGateDiagnostics, CostGateInput, DirectionHint, FundingModel, PairCue,
-        PairEvaluationInput, PortfolioHint, Regime, ShadowMlDiagnostics, ShadowModelTrainingRow,
-        SignalVariant,
+        evaluate_cost_gate, evaluate_pair, to_direction_hint_with_stop, train_shadow_model,
+        BacktestConfig, BacktestExitMode, CostGateDiagnostics, CostGateInput, DirectionHint,
+        FundingModel, PairCue, PairEvaluationInput, PortfolioHint, Regime, ShadowMlDiagnostics,
+        ShadowModelTrainingRow, SignalVariant,
     };
     use chrono::{Duration, Utc};
     use common_types::Timeframe;
@@ -1671,6 +1689,49 @@ mod tests {
     }
 
     #[test]
+    fn backtest_entries_are_not_opened_at_or_beyond_stop_band() {
+        let (timestamps, mut left, right) = synthetic_pair_series(260);
+        left[180] *= 1.45;
+        let stop_band = 1.2;
+        let series = compute_backtest_series(
+            &timestamps,
+            &left,
+            &right,
+            BacktestConfig {
+                hedge_ratio: 1.15,
+                entry_band: 1.0,
+                exit_band: 0.2,
+                stop_band,
+                round_trip_cost_bps: 0.0,
+                exit_mode: BacktestExitMode::MeanRevert,
+            },
+        );
+
+        let mut entry_count = 0usize;
+        for marker in &series.markers {
+            if marker.kind == "entry" {
+                entry_count += 1;
+                let z = series
+                    .points
+                    .get(marker.index)
+                    .expect("entry marker index should map to chart point")
+                    .z
+                    .abs();
+                assert!(
+                    z < stop_band,
+                    "entry marker at index {} should be below stop band; got |z|={}",
+                    marker.index,
+                    z
+                );
+            }
+        }
+        assert!(
+            entry_count > 0,
+            "expected at least one entry marker in synthetic series"
+        );
+    }
+
+    #[test]
     fn backtest_exit_mode_opposite_extreme_holds_longer_than_mean_revert() {
         let spread = vec![
             0.0, 1.8, 2.2, 1.5, 0.4, 0.1, -0.2, -1.2, -1.8, -2.1, -1.0, 0.2, 1.3, 1.9,
@@ -1734,6 +1795,30 @@ mod tests {
         assert!(
             opposite_exit > mean_exit,
             "opposite-extreme exit should occur later than mean-revert exit"
+        );
+    }
+
+    #[test]
+    fn direction_hint_with_stop_suppresses_entries_at_or_beyond_stop() {
+        assert_eq!(
+            to_direction_hint_with_stop(2.0, 1.8, 3.2),
+            DirectionHint::ShortSpread
+        );
+        assert_eq!(
+            to_direction_hint_with_stop(-2.0, 1.8, 3.2),
+            DirectionHint::LongSpread
+        );
+        assert_eq!(
+            to_direction_hint_with_stop(3.2, 1.8, 3.2),
+            DirectionHint::None
+        );
+        assert_eq!(
+            to_direction_hint_with_stop(-3.2, 1.8, 3.2),
+            DirectionHint::None
+        );
+        assert_eq!(
+            to_direction_hint_with_stop(4.0, 1.8, 3.2),
+            DirectionHint::None
         );
     }
 

@@ -78,6 +78,9 @@ This project follows SemVer as defined in `docs/02-versioning-and-releases.md`.
 - Trade and Analytics UI readability pass:
   - Added y-axis labels and threshold-value labels on z-score charts.
   - Added live current z-score label on the Trade chart right-hand side (updates each data refresh) and positioned it to the right of the latest dot for readability.
+  - Entry suppression at stop extremes:
+    - Strategy cue generation now blocks new entries when the selected score is at or beyond the configured stop band (`AT_OR_BEYOND_STOP_BAND`).
+    - Backtest/live-z marker generation now suppresses entry markers at/through stop levels so invalid stop-zone entries are not rendered.
   - Increased chart axis text size and z-score marker dot size.
   - Added persistent execution-marker overlay on the Trade z-score chart so trader action anchors remain visible across live signal recalculations.
   - Added active trade anchor summary (entry z, current z, delta z, entry timestamp) in Open spread summary.
