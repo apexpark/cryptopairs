@@ -3637,6 +3637,10 @@ fn estimate_research_combinations(payload: &ResearchSweepRequest) -> usize {
         .saturating_mul(lookback)
 }
 
+fn expectancy_z_method_supported(z_method: &str) -> bool {
+    z_method == "ROBUST_Z"
+}
+
 fn analytics_model_bars(timeframe: Timeframe) -> usize {
     match timeframe {
         Timeframe::OneMinute => 300,
@@ -3675,6 +3679,160 @@ fn infer_trade_direction(entry_z: f64, exit_z: f64, entry_band: f64) -> &'static
     } else {
         "SHORT_SPREAD"
     }
+}
+
+#[derive(Debug, Clone)]
+struct OpenReplayTrade {
+    point_index: usize,
+    ts: DateTime<Utc>,
+    z: f64,
+    equity_pre_entry: f64,
+}
+
+fn derive_replay_trades_from_series(
+    pair_id: &str,
+    timeframe: Timeframe,
+    series: &strategy_service::BacktestSeries,
+    entry_band: f64,
+) -> Vec<ReplayTradeEntry> {
+    let mut open_trade: Option<OpenReplayTrade> = None;
+    let mut rows = vec![];
+
+    for marker in &series.markers {
+        if marker.index >= series.points.len() {
+            continue;
+        }
+        let point = &series.points[marker.index];
+        if marker.kind == "entry" {
+            let equity_pre_entry = if marker.index == 0 {
+                1.0
+            } else {
+                series.points[marker.index - 1].equity
+            };
+            open_trade = Some(OpenReplayTrade {
+                point_index: marker.index,
+                ts: point.ts,
+                z: point.z,
+                equity_pre_entry,
+            });
+            continue;
+        }
+
+        if marker.kind != "exit" && marker.kind != "stop" {
+            continue;
+        }
+        let Some(entry) = open_trade.take() else {
+            continue;
+        };
+        let equity_pre_entry = entry.equity_pre_entry;
+        if !equity_pre_entry.is_finite() || equity_pre_entry <= 0.0 {
+            continue;
+        }
+        let direction = infer_trade_direction(entry.z, point.z, entry_band).to_string();
+        let bars_held = marker.index.saturating_sub(entry.point_index).max(1);
+        let mut mae_bps = f64::INFINITY;
+        let mut mfe_bps = f64::NEG_INFINITY;
+        let mut bars_underwater = 0usize;
+        for path_point in &series.points[entry.point_index..=marker.index] {
+            let path_bps = ((path_point.equity / equity_pre_entry) - 1.0) * 10_000.0;
+            mae_bps = mae_bps.min(path_bps);
+            mfe_bps = mfe_bps.max(path_bps);
+            if path_bps < 0.0 {
+                bars_underwater = bars_underwater.saturating_add(1);
+            }
+        }
+        let net_bps = ((point.equity / equity_pre_entry) - 1.0) * 10_000.0;
+
+        rows.push(ReplayTradeEntry {
+            trade_id: format!(
+                "{}|{}|{}|{}",
+                pair_id,
+                timeframe.as_str(),
+                entry.ts.to_rfc3339(),
+                point.ts.to_rfc3339()
+            ),
+            entry_ts: entry.ts,
+            exit_ts: point.ts,
+            direction,
+            entry_z: entry.z,
+            exit_z: point.z,
+            net_bps,
+            path: ReplayTradePathSummary {
+                mae_bps: if mae_bps.is_finite() { mae_bps } else { 0.0 },
+                mfe_bps: if mfe_bps.is_finite() { mfe_bps } else { 0.0 },
+                bars_underwater,
+                bars_held,
+            },
+        });
+    }
+
+    rows
+}
+
+fn percentile(values: &[f64], quantile: f64) -> f64 {
+    if values.is_empty() {
+        return 0.0;
+    }
+    let mut sorted = values
+        .iter()
+        .copied()
+        .filter(|value| value.is_finite())
+        .collect::<Vec<_>>();
+    if sorted.is_empty() {
+        return 0.0;
+    }
+    sorted.sort_by(|left, right| left.total_cmp(right));
+    let q = quantile.clamp(0.0, 1.0);
+    let rank = q * (sorted.len().saturating_sub(1) as f64);
+    let lower = rank.floor() as usize;
+    let upper = rank.ceil() as usize;
+    if lower == upper {
+        return sorted[lower];
+    }
+    let weight = rank - lower as f64;
+    sorted[lower] * (1.0 - weight) + sorted[upper] * weight
+}
+
+fn compute_expectancy_metrics(
+    rows: &[ReplayTradeEntry],
+    left_last: f64,
+    right_last: f64,
+    hedge_ratio: f64,
+) -> Option<ExpectancyMetrics> {
+    if rows.is_empty() {
+        return None;
+    }
+    let net = rows.iter().map(|row| row.net_bps).collect::<Vec<_>>();
+    let wins = rows.iter().filter(|row| row.net_bps > 0.0).count();
+    let avg_net_bps = net.iter().sum::<f64>() / net.len() as f64;
+    let avg_hold_bars = rows
+        .iter()
+        .map(|row| row.path.bars_held as f64)
+        .sum::<f64>()
+        / rows.len() as f64;
+    let avg_mae_bps = rows.iter().map(|row| row.path.mae_bps).sum::<f64>() / rows.len() as f64;
+    let avg_mfe_bps = rows.iter().map(|row| row.path.mfe_bps).sum::<f64>() / rows.len() as f64;
+    let gross_min_lot_notional = left_last.abs() + hedge_ratio.abs().max(1e-9) * right_last.abs();
+    let expected_min_lot_net_usd =
+        if gross_min_lot_notional.is_finite() && gross_min_lot_notional > 0.0 {
+            gross_min_lot_notional * avg_net_bps / 10_000.0
+        } else {
+            0.0
+        };
+
+    Some(ExpectancyMetrics {
+        trades: rows.len(),
+        win_rate: wins as f64 / rows.len() as f64,
+        avg_net_bps,
+        p25_net_bps: percentile(&net, 0.25),
+        p50_net_bps: percentile(&net, 0.50),
+        p75_net_bps: percentile(&net, 0.75),
+        avg_hold_bars,
+        avg_mae_bps,
+        avg_mfe_bps,
+        expected_min_lot_net_bps: avg_net_bps,
+        expected_min_lot_net_usd,
+    })
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -4013,6 +4171,115 @@ async fn pairs_expectancy(
     Query(query): Query<ExpectancyQuery>,
 ) -> Result<Json<ExpectancyResponse>, ApiError> {
     let (timeframe, pair_id, config) = parse_expectancy_query(&query, &state.settings)?;
+    if !expectancy_z_method_supported(&config.z_method) {
+        return Ok(Json(ExpectancyResponse {
+            timeframe: timeframe.as_str().to_string(),
+            pair_id,
+            generated_at: Utc::now(),
+            status: "UNAVAILABLE".to_string(),
+            decision_state: "CAUTION".to_string(),
+            primary_reason_code: "Z_METHOD_NOT_IMPLEMENTED".to_string(),
+            config,
+            metrics: None,
+            rationale_codes: vec![
+                "Z_METHOD_NOT_IMPLEMENTED".to_string(),
+                "EXPECTANCY_REQUIRES_ROBUST_Z".to_string(),
+            ],
+        }));
+    }
+
+    let Some(pair) = state
+        .settings
+        .pairs
+        .iter()
+        .find(|candidate| candidate.pair_id() == pair_id)
+    else {
+        return Err(ApiError::BadRequest(format!(
+            "pair_id '{}' is not configured",
+            pair_id
+        )));
+    };
+    let lookback = (config.lookback_bars.saturating_add(32).max(120)) as i64;
+    let left = state
+        .repository
+        .fetch_recent_closes(&pair.left, timeframe, lookback)
+        .await
+        .map_err(|error| ApiError::Upstream(error.to_string()))?;
+    let right = state
+        .repository
+        .fetch_recent_closes(&pair.right, timeframe, lookback)
+        .await
+        .map_err(|error| ApiError::Upstream(error.to_string()))?;
+    let (timestamps, left_closes, right_closes) = align_closes(left, right);
+    if timestamps.len() < 120 {
+        return Ok(Json(ExpectancyResponse {
+            timeframe: timeframe.as_str().to_string(),
+            pair_id,
+            generated_at: Utc::now(),
+            status: "UNAVAILABLE".to_string(),
+            decision_state: "CAUTION".to_string(),
+            primary_reason_code: "INSUFFICIENT_ALIGNED_CANDLES".to_string(),
+            config,
+            metrics: None,
+            rationale_codes: vec![
+                "INSUFFICIENT_ALIGNED_CANDLES".to_string(),
+                "EXPECTANCY_NOT_COMPUTED".to_string(),
+            ],
+        }));
+    }
+    let start_idx = timestamps
+        .len()
+        .saturating_sub(config.lookback_bars.saturating_add(1));
+    let timestamps = &timestamps[start_idx..];
+    let left_closes = &left_closes[start_idx..];
+    let right_closes = &right_closes[start_idx..];
+    if timestamps.len() < 2 {
+        return Ok(Json(ExpectancyResponse {
+            timeframe: timeframe.as_str().to_string(),
+            pair_id,
+            generated_at: Utc::now(),
+            status: "UNAVAILABLE".to_string(),
+            decision_state: "CAUTION".to_string(),
+            primary_reason_code: "INSUFFICIENT_MODEL_WINDOW".to_string(),
+            config,
+            metrics: None,
+            rationale_codes: vec![
+                "INSUFFICIENT_MODEL_WINDOW".to_string(),
+                "EXPECTANCY_NOT_COMPUTED".to_string(),
+            ],
+        }));
+    }
+
+    let output = evaluate_pair_for_timeframe(
+        &state,
+        pair,
+        timeframe,
+        false,
+        state.settings.trading_fee_bps,
+    )
+    .await
+    .map_err(|error| ApiError::Upstream(error.to_string()))?;
+    let series = compute_backtest_series(
+        timestamps,
+        left_closes,
+        right_closes,
+        BacktestConfig {
+            hedge_ratio: output.hedge_ratio,
+            entry_band: config.entry_z,
+            exit_band: config.exit_z,
+            stop_band: config.stop_z,
+            round_trip_cost_bps: output.cue.cost_estimate_bps,
+            exit_mode: BacktestExitMode::MeanRevert,
+        },
+    );
+    let replay_rows =
+        derive_replay_trades_from_series(&pair_id, timeframe, &series, config.entry_z);
+    let metrics = compute_expectancy_metrics(
+        &replay_rows,
+        *left_closes.last().unwrap_or(&0.0),
+        *right_closes.last().unwrap_or(&0.0),
+        output.hedge_ratio,
+    );
     info!(
         timeframe = %timeframe.as_str(),
         pair_id = %pair_id,
@@ -4021,22 +4288,62 @@ async fn pairs_expectancy(
         stop_z = config.stop_z,
         z_method = %config.z_method,
         lookback_bars = config.lookback_bars,
-        "expectancy query requested"
+        replay_rows = replay_rows.len(),
+        status = if metrics.is_some() { "AVAILABLE" } else { "UNAVAILABLE" },
+        "expectancy query computed"
     );
-
+    let (status, decision_state, primary_reason_code, rationale_codes) = match metrics.as_ref() {
+        Some(metrics)
+            if metrics.trades >= 5 && metrics.avg_net_bps > 0.0 && metrics.win_rate >= 0.5 =>
+        {
+            (
+                "AVAILABLE".to_string(),
+                "TRADE_READY".to_string(),
+                "EXPECTANCY_POSITIVE".to_string(),
+                vec![
+                    "EXPECTANCY_COMPUTED".to_string(),
+                    "MIN_TRADES_MET".to_string(),
+                ],
+            )
+        }
+        Some(metrics) if metrics.trades < 5 => (
+            "AVAILABLE".to_string(),
+            "CAUTION".to_string(),
+            "LOW_TRADE_COUNT".to_string(),
+            vec![
+                "EXPECTANCY_COMPUTED".to_string(),
+                "LOW_TRADE_COUNT".to_string(),
+            ],
+        ),
+        Some(_) => (
+            "AVAILABLE".to_string(),
+            "BLOCKED".to_string(),
+            "EXPECTANCY_NON_POSITIVE".to_string(),
+            vec![
+                "EXPECTANCY_COMPUTED".to_string(),
+                "EXPECTANCY_NON_POSITIVE".to_string(),
+            ],
+        ),
+        None => (
+            "UNAVAILABLE".to_string(),
+            "CAUTION".to_string(),
+            "NO_COMPLETED_TRADES".to_string(),
+            vec![
+                "NO_COMPLETED_TRADES".to_string(),
+                "EXPECTANCY_NOT_COMPUTED".to_string(),
+            ],
+        ),
+    };
     Ok(Json(ExpectancyResponse {
         timeframe: timeframe.as_str().to_string(),
         pair_id,
         generated_at: Utc::now(),
-        status: "UNAVAILABLE".to_string(),
-        decision_state: "CAUTION".to_string(),
-        primary_reason_code: "EXPECTANCY_ENGINE_NOT_IMPLEMENTED".to_string(),
+        status,
+        decision_state,
+        primary_reason_code,
         config,
-        metrics: None,
-        rationale_codes: vec![
-            "EXPECTANCY_ENGINE_NOT_IMPLEMENTED".to_string(),
-            "SLICE_A_CONTRACT_ONLY".to_string(),
-        ],
+        metrics,
+        rationale_codes,
     }))
 }
 
@@ -4046,6 +4353,106 @@ async fn pairs_replay_trades(
 ) -> Result<Json<ReplayTradesResponse>, ApiError> {
     let (timeframe, pair_id, hours, limit, exit_mode, config) =
         parse_replay_trades_query(&query, &state.settings)?;
+    if !expectancy_z_method_supported(&config.z_method) {
+        return Ok(Json(ReplayTradesResponse {
+            timeframe: timeframe.as_str().to_string(),
+            pair_id,
+            generated_at: Utc::now(),
+            status: "UNAVAILABLE".to_string(),
+            model_bars: config.lookback_bars,
+            hours,
+            limit,
+            exit_mode,
+            config,
+            rationale_codes: vec![
+                "Z_METHOD_NOT_IMPLEMENTED".to_string(),
+                "REPLAY_REQUIRES_ROBUST_Z".to_string(),
+            ],
+            rows: vec![],
+        }));
+    }
+    let Some(pair) = state
+        .settings
+        .pairs
+        .iter()
+        .find(|candidate| candidate.pair_id() == pair_id)
+    else {
+        return Err(ApiError::BadRequest(format!(
+            "pair_id '{}' is not configured",
+            pair_id
+        )));
+    };
+    let requested_bars = (hours
+        .saturating_mul(3600)
+        .div_euclid(timeframe.step_seconds())
+        .max(120) as usize)
+        .max(config.lookback_bars);
+    let lookback = requested_bars.saturating_add(32) as i64;
+    let left = state
+        .repository
+        .fetch_recent_closes(&pair.left, timeframe, lookback)
+        .await
+        .map_err(|error| ApiError::Upstream(error.to_string()))?;
+    let right = state
+        .repository
+        .fetch_recent_closes(&pair.right, timeframe, lookback)
+        .await
+        .map_err(|error| ApiError::Upstream(error.to_string()))?;
+    let (timestamps, left_closes, right_closes) = align_closes(left, right);
+    if timestamps.len() < 120 {
+        return Ok(Json(ReplayTradesResponse {
+            timeframe: timeframe.as_str().to_string(),
+            pair_id,
+            generated_at: Utc::now(),
+            status: "UNAVAILABLE".to_string(),
+            model_bars: requested_bars,
+            hours,
+            limit,
+            exit_mode,
+            config,
+            rationale_codes: vec![
+                "INSUFFICIENT_ALIGNED_CANDLES".to_string(),
+                "REPLAY_NOT_COMPUTED".to_string(),
+            ],
+            rows: vec![],
+        }));
+    }
+    let start_idx = timestamps
+        .len()
+        .saturating_sub(requested_bars.saturating_add(1));
+    let timestamps = &timestamps[start_idx..];
+    let left_closes = &left_closes[start_idx..];
+    let right_closes = &right_closes[start_idx..];
+    let output = evaluate_pair_for_timeframe(
+        &state,
+        pair,
+        timeframe,
+        false,
+        state.settings.trading_fee_bps,
+    )
+    .await
+    .map_err(|error| ApiError::Upstream(error.to_string()))?;
+    let parsed_exit_mode = parse_backtest_exit_mode(Some(&exit_mode))?;
+    let series = compute_backtest_series(
+        timestamps,
+        left_closes,
+        right_closes,
+        BacktestConfig {
+            hedge_ratio: output.hedge_ratio,
+            entry_band: config.entry_z,
+            exit_band: config.exit_z,
+            stop_band: config.stop_z,
+            round_trip_cost_bps: output.cue.cost_estimate_bps,
+            exit_mode: parsed_exit_mode,
+        },
+    );
+    let cutoff = Utc::now() - chrono::Duration::hours(hours);
+    let mut rows = derive_replay_trades_from_series(&pair_id, timeframe, &series, config.entry_z)
+        .into_iter()
+        .filter(|row| row.exit_ts >= cutoff)
+        .collect::<Vec<_>>();
+    rows.sort_by(|left, right| right.exit_ts.cmp(&left.exit_ts));
+    rows.truncate(limit as usize);
     info!(
         timeframe = %timeframe.as_str(),
         pair_id = %pair_id,
@@ -4053,24 +4460,39 @@ async fn pairs_replay_trades(
         limit,
         exit_mode = %exit_mode,
         lookback_bars = config.lookback_bars,
-        "replay-trades query requested"
+        replay_rows = rows.len(),
+        status = if rows.is_empty() { "UNAVAILABLE" } else { "AVAILABLE" },
+        "replay-trades query computed"
     );
-
+    let (status, rationale_codes) = if rows.is_empty() {
+        (
+            "UNAVAILABLE".to_string(),
+            vec![
+                "NO_COMPLETED_TRADES_IN_WINDOW".to_string(),
+                "REPLAY_NOT_COMPUTED".to_string(),
+            ],
+        )
+    } else {
+        (
+            "AVAILABLE".to_string(),
+            vec![
+                "REPLAY_COMPUTED".to_string(),
+                "BACKTEST_MARKERS_DERIVED".to_string(),
+            ],
+        )
+    };
     Ok(Json(ReplayTradesResponse {
         timeframe: timeframe.as_str().to_string(),
         pair_id,
         generated_at: Utc::now(),
-        status: "UNAVAILABLE".to_string(),
-        model_bars: config.lookback_bars,
+        status,
+        model_bars: requested_bars,
         hours,
         limit,
         exit_mode,
         config,
-        rationale_codes: vec![
-            "REPLAY_ENGINE_NOT_IMPLEMENTED".to_string(),
-            "SLICE_A_CONTRACT_ONLY".to_string(),
-        ],
-        rows: vec![],
+        rationale_codes,
+        rows,
     }))
 }
 
@@ -4136,27 +4558,53 @@ async fn pairs_research_sweep(
     let dry_run = payload.dry_run.unwrap_or(true);
     let request_id = format!("sweep-{}", Utc::now().format("%Y%m%dT%H%M%S%.3fZ"));
 
+    let z_methods = payload
+        .z_methods
+        .as_ref()
+        .map(|values| {
+            values
+                .iter()
+                .map(|value| parse_z_method(Some(value.as_str())))
+                .collect::<Result<Vec<_>, _>>()
+        })
+        .transpose()?
+        .unwrap_or_else(|| vec!["ROBUST_Z".to_string()]);
+    let unsupported_z_method = z_methods
+        .iter()
+        .any(|z_method| !expectancy_z_method_supported(z_method));
+
     info!(
         request_id = %request_id,
         dry_run,
         max_combinations,
         estimated_combinations,
+        unsupported_z_method,
         timeframe_count = timeframes.len(),
         pair_count = pair_ids.len(),
-        "research sweep request accepted in contract-only mode"
+        "research sweep request evaluated"
     );
 
-    let mut rationale_codes = vec![
-        "RESEARCH_SWEEP_ENGINE_NOT_IMPLEMENTED".to_string(),
-        "SLICE_A_CONTRACT_ONLY".to_string(),
-    ];
-    if estimated_combinations > max_combinations {
+    let mut rationale_codes = vec![];
+    let status = if unsupported_z_method {
+        rationale_codes.push("UNSUPPORTED_Z_METHOD_IN_SWEEP".to_string());
+        "UNAVAILABLE"
+    } else if estimated_combinations > max_combinations {
         rationale_codes.push("COMBINATION_LIMIT_EXCEEDED".to_string());
+        "UNAVAILABLE"
+    } else if dry_run {
+        rationale_codes.push("RESEARCH_SWEEP_DRY_RUN_READY".to_string());
+        "AVAILABLE"
+    } else {
+        rationale_codes.push("RESEARCH_SWEEP_EXECUTION_NOT_IMPLEMENTED".to_string());
+        "UNAVAILABLE"
+    };
+    if estimated_combinations > max_combinations {
+        rationale_codes.push("RESEARCH_SWEEP_NOT_ACCEPTED".to_string());
     }
 
     Ok(Json(ResearchSweepResponse {
         generated_at: Utc::now(),
-        status: "UNAVAILABLE".to_string(),
+        status: status.to_string(),
         request_id,
         dry_run,
         timeframes,
@@ -5017,15 +5465,17 @@ fn parse_env_bool(key: &str, default: bool) -> bool {
 mod tests {
     use super::{
         artifact_download_path, bootstrap_deviation_exceeds_threshold, bootstrap_snapshot_is_fresh,
-        compute_pair_funding_bps_per_event, compute_pair_slippage_sample_bps, days_covered,
-        decide_champion_transition, derive_paper_trades_from_series,
+        compute_expectancy_metrics, compute_pair_funding_bps_per_event,
+        compute_pair_slippage_sample_bps, days_covered, decide_champion_transition,
+        derive_paper_trades_from_series, derive_replay_trades_from_series,
         estimate_research_combinations, expected_funding_events_crossed, finalize_trade_gate,
         normalize_funding_rate, parse_backtest_exit_mode, parse_expectancy_query,
         parse_opportunity_history_stats_timeframe, parse_opportunity_history_window,
-        parse_paper_trades_window, parse_replay_trades_query, project_continuous_funding_bps,
-        refresh_setup_gate, resolve_artifact_path, resolve_taker_fee_bps, ChampionDecision,
-        ExpectancyQuery, FundingRateInputMode, MaintenanceAction, OpportunityHistoryQuery,
-        OpportunityHistoryStatsQuery, PaperTradesQuery, ReplayTradesQuery, ResearchSweepRequest,
+        parse_paper_trades_window, parse_replay_trades_query, percentile,
+        project_continuous_funding_bps, refresh_setup_gate, resolve_artifact_path,
+        resolve_taker_fee_bps, ChampionDecision, ExpectancyQuery, FundingRateInputMode,
+        MaintenanceAction, OpportunityHistoryQuery, OpportunityHistoryStatsQuery, PaperTradesQuery,
+        ReplayTradeEntry, ReplayTradePathSummary, ReplayTradesQuery, ResearchSweepRequest,
         SampledSlippageStatus, SelectedSignalRow, StrategyMarketMetricsResponse, StrategySettings,
     };
     use chrono::Utc;
@@ -5464,6 +5914,119 @@ mod tests {
         assert!((row.net_bps - (row.gross_bps - 2.0)).abs() < 1e-9);
         assert!(((row.left_leg_bps + row.right_leg_bps) - row.gross_bps).abs() < 1e-6);
         assert!(row.equity_trade_bps > 0.0);
+    }
+
+    #[test]
+    fn derive_replay_trades_computes_path_metrics() {
+        let start = Utc::now();
+        let series = BacktestSeries {
+            points: vec![
+                BacktestPoint {
+                    ts: start + chrono::Duration::hours(1),
+                    z: -2.0,
+                    equity: 0.99,
+                },
+                BacktestPoint {
+                    ts: start + chrono::Duration::hours(2),
+                    z: -1.0,
+                    equity: 1.01,
+                },
+                BacktestPoint {
+                    ts: start + chrono::Duration::hours(3),
+                    z: 0.2,
+                    equity: 1.02,
+                },
+            ],
+            markers: vec![
+                BacktestMarker {
+                    index: 0,
+                    kind: "entry".to_string(),
+                },
+                BacktestMarker {
+                    index: 2,
+                    kind: "exit".to_string(),
+                },
+            ],
+        };
+
+        let rows =
+            derive_replay_trades_from_series("PF_LEFT__PF_RIGHT", Timeframe::OneHour, &series, 1.8);
+        assert_eq!(rows.len(), 1);
+        let row = &rows[0];
+        assert_eq!(row.direction, "LONG_SPREAD");
+        assert_eq!(row.path.bars_held, 2);
+        assert_eq!(row.path.bars_underwater, 1);
+        assert!((row.net_bps - 200.0).abs() < 1e-9);
+        assert!((row.path.mae_bps - (-100.0)).abs() < 1e-9);
+        assert!((row.path.mfe_bps - 200.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn expectancy_metrics_aggregate_distribution_and_min_lot_projection() {
+        let rows = vec![
+            ReplayTradeEntry {
+                trade_id: "a".to_string(),
+                entry_ts: Utc::now(),
+                exit_ts: Utc::now(),
+                direction: "LONG_SPREAD".to_string(),
+                entry_z: -2.0,
+                exit_z: 0.0,
+                net_bps: 10.0,
+                path: ReplayTradePathSummary {
+                    mae_bps: -5.0,
+                    mfe_bps: 12.0,
+                    bars_underwater: 1,
+                    bars_held: 10,
+                },
+            },
+            ReplayTradeEntry {
+                trade_id: "b".to_string(),
+                entry_ts: Utc::now(),
+                exit_ts: Utc::now(),
+                direction: "SHORT_SPREAD".to_string(),
+                entry_z: 2.0,
+                exit_z: 0.0,
+                net_bps: -5.0,
+                path: ReplayTradePathSummary {
+                    mae_bps: -8.0,
+                    mfe_bps: 2.0,
+                    bars_underwater: 4,
+                    bars_held: 12,
+                },
+            },
+            ReplayTradeEntry {
+                trade_id: "c".to_string(),
+                entry_ts: Utc::now(),
+                exit_ts: Utc::now(),
+                direction: "LONG_SPREAD".to_string(),
+                entry_z: -1.9,
+                exit_z: -0.1,
+                net_bps: 15.0,
+                path: ReplayTradePathSummary {
+                    mae_bps: -3.0,
+                    mfe_bps: 18.0,
+                    bars_underwater: 2,
+                    bars_held: 8,
+                },
+            },
+        ];
+
+        let metrics =
+            compute_expectancy_metrics(&rows, 100.0, 50.0, 1.0).expect("expectancy metrics");
+        assert_eq!(metrics.trades, 3);
+        assert!((metrics.win_rate - (2.0 / 3.0)).abs() < 1e-12);
+        assert!((metrics.avg_net_bps - (20.0 / 3.0)).abs() < 1e-12);
+        assert!((metrics.p25_net_bps - 2.5).abs() < 1e-12);
+        assert!((metrics.p50_net_bps - 10.0).abs() < 1e-12);
+        assert!((metrics.p75_net_bps - 12.5).abs() < 1e-12);
+        assert!((metrics.expected_min_lot_net_usd - 0.1).abs() < 1e-9);
+    }
+
+    #[test]
+    fn percentile_handles_empty_and_interpolates() {
+        assert_eq!(percentile(&[], 0.5), 0.0);
+        let values = vec![1.0, 3.0, 7.0, 9.0];
+        assert!((percentile(&values, 0.5) - 5.0).abs() < 1e-12);
     }
 
     #[test]

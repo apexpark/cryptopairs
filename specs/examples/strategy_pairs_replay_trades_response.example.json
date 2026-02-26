@@ -2,7 +2,7 @@
   "timeframe": "1h",
   "pair_id": "PF_TAOUSD__PF_HYPEUSD",
   "generated_at": "2026-02-27T00:00:00Z",
-  "status": "UNAVAILABLE",
+  "status": "AVAILABLE",
   "model_bars": 220,
   "hours": 720,
   "limit": 500,
@@ -16,8 +16,24 @@
     "lookback_bars": 220
   },
   "rationale_codes": [
-    "REPLAY_ENGINE_NOT_IMPLEMENTED",
-    "SLICE_A_CONTRACT_ONLY"
+    "REPLAY_COMPUTED",
+    "BACKTEST_MARKERS_DERIVED"
   ],
-  "rows": []
+  "rows": [
+    {
+      "trade_id": "PF_TAOUSD__PF_HYPEUSD|1h|2026-02-24T04:00:00+00:00|2026-02-25T13:00:00+00:00",
+      "entry_ts": "2026-02-24T04:00:00Z",
+      "exit_ts": "2026-02-25T13:00:00Z",
+      "direction": "LONG_SPREAD",
+      "entry_z": -1.83,
+      "exit_z": -0.35,
+      "net_bps": 331.66,
+      "path": {
+        "mae_bps": -41.2,
+        "mfe_bps": 348.4,
+        "bars_underwater": 6,
+        "bars_held": 33
+      }
+    }
+  ]
 }

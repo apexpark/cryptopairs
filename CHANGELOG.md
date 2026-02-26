@@ -82,6 +82,11 @@ This project follows SemVer as defined in `docs/02-versioning-and-releases.md`.
     - `specs/examples/strategy_pairs_replay_trades_response.example.json`
     - `specs/contracts/strategy_pairs_research_sweep_response.schema.json`
     - `specs/examples/strategy_pairs_research_sweep_response.example.json`
+- Strategy research endpoints (slice C) now compute deterministic outputs:
+  - `GET /v1/strategy/pairs/replay-trades` returns computed replay rows (entry/exit, net bps, MAE/MFE, underwater bars, hold bars) from current backtest logic.
+  - `GET /v1/strategy/pairs/expectancy` returns computed expectancy metrics (win rate, p25/p50/p75 net bps, hold/path stats, min-lot net projection).
+  - Both endpoints fail closed for unsupported z-methods (`ROBUST_Z` only in this slice) and insufficient aligned candle history.
+  - `POST /v1/strategy/pairs/research-sweep` now performs deterministic dry-run validation and returns `AVAILABLE`/`UNAVAILABLE` based on combination limits and z-method support.
 - UI now provides 24h/72h/7d opportunity-history downloads (PASS/all) plus retention meter (days covered).
 - Automated Daily Maintenance panel moved to dedicated `Maintenance` page in side navigation (under `Data Quality`).
 - Maintenance cron installer scripts now support explicit `CRON_TZ` timezone configuration (`--timezone`).
