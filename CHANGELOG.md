@@ -432,3 +432,8 @@ This project follows SemVer as defined in `docs/02-versioning-and-releases.md`.
   `ACKNOWLEDGED` and `PARTIALLY_FILLED` (`-> EXPIRED`).
 - Integrity false-negative gap detection when request bounds were unaligned to timeframe steps
   (could report `INCOMPLETE` with non-empty candle windows).
+- Kraken funding ingestion now normalizes ticker `fundingRate` as a **relative rate**
+  (`relativeFundingRate` when available, otherwise `fundingRate/indexPrice`) to prevent
+  instrument-price-scaled funding distortions in strategy cost-gate calculations.
+- Strategy cues now force cost-gate `pass=false` when `actionable=false`, preventing
+  Gate/Edge PASS presentation on non-actionable rows (including champion-drift blocked cues).

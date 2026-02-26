@@ -357,7 +357,6 @@ impl MarketDataAdapter for KrakenFuturesRestClient {
                 Some(mark),
                 Some(index),
                 Some(change_24h_pct),
-                Some(funding_rate),
                 Some(open_interest),
             ) = (
                 ticker.bid,
@@ -365,13 +364,26 @@ impl MarketDataAdapter for KrakenFuturesRestClient {
                 ticker.mark_price,
                 ticker.index_price,
                 ticker.change_24h,
-                ticker.funding_rate,
                 ticker.open_interest,
             )
             else {
                 warn!(
                     instrument = %symbol,
                     "skipping ticker with missing required market metrics fields"
+                );
+                continue;
+            };
+            let Some(funding_rate) = resolve_relative_funding_rate(
+                ticker.funding_rate,
+                ticker.relative_funding_rate,
+                index,
+            ) else {
+                warn!(
+                    instrument = %symbol,
+                    funding_rate = ?ticker.funding_rate,
+                    relative_funding_rate = ?ticker.relative_funding_rate,
+                    index_price = index,
+                    "skipping ticker with invalid funding rate fields"
                 );
                 continue;
             };
@@ -427,6 +439,8 @@ struct KrakenTicker {
     change_24h: Option<f64>,
     #[serde(rename = "fundingRate")]
     funding_rate: Option<f64>,
+    #[serde(rename = "relativeFundingRate")]
+    relative_funding_rate: Option<f64>,
     #[serde(rename = "openInterest")]
     open_interest: Option<f64>,
 }
@@ -464,11 +478,28 @@ fn parse_number(value: &str) -> Result<f64, AdapterError> {
         .map_err(|err| AdapterError::Decode(err.to_string()))
 }
 
+fn resolve_relative_funding_rate(
+    absolute_funding_rate: Option<f64>,
+    relative_funding_rate: Option<f64>,
+    index_price: f64,
+) -> Option<f64> {
+    if let Some(value) = relative_funding_rate {
+        if value.is_finite() {
+            return Some(value);
+        }
+    }
+    let absolute = absolute_funding_rate?;
+    if !absolute.is_finite() || !index_price.is_finite() || index_price.abs() <= f64::EPSILON {
+        return None;
+    }
+    Some(absolute / index_price)
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
-        parse_number, KrakenFuturesRestClient, KrakenHistoryBounds, KrakenTicker,
-        KrakenTickersResponse,
+        parse_number, resolve_relative_funding_rate, KrakenFuturesRestClient, KrakenHistoryBounds,
+        KrakenTicker, KrakenTickersResponse,
     };
     use chrono::{TimeZone, Utc};
     use common_types::{DataQueryRequest, Timeframe};
@@ -554,7 +585,8 @@ mod tests {
               "markPrice": 67324.30,
               "indexPrice": 67317.80,
               "change24h": 0.84,
-              "fundingRate": 0.0000021,
+              "fundingRate": 0.14136738,
+              "relativeFundingRate": 0.0000021,
               "openInterest": 5278812.0
             }
           ]
@@ -572,7 +604,23 @@ mod tests {
         assert_eq!(ticker.mark_price, Some(67324.30));
         assert_eq!(ticker.index_price, Some(67317.80));
         assert_eq!(ticker.change_24h, Some(0.84));
-        assert_eq!(ticker.funding_rate, Some(0.0000021));
+        assert_eq!(ticker.funding_rate, Some(0.14136738));
+        assert_eq!(ticker.relative_funding_rate, Some(0.0000021));
         assert_eq!(ticker.open_interest, Some(5_278_812.0));
+    }
+
+    #[test]
+    fn relative_funding_rate_prefers_relative_field_when_present() {
+        let value = resolve_relative_funding_rate(Some(0.14136738), Some(0.0000021), 67_317.80)
+            .expect("relative funding rate should resolve");
+        assert!((value - 0.0000021).abs() < 1e-12);
+    }
+
+    #[test]
+    fn relative_funding_rate_falls_back_to_absolute_div_index() {
+        let value = resolve_relative_funding_rate(Some(-0.1943874837337752), None, 68_083.76)
+            .expect("relative funding rate should resolve");
+        let expected = -0.1943874837337752 / 68_083.76;
+        assert!((value - expected).abs() < 1e-12);
     }
 }
