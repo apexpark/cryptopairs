@@ -1051,15 +1051,13 @@ pub fn compute_backtest_series(
                         kind: "entry".to_string(),
                     });
                 }
-            } else if z >= config.entry_band {
-                if !short_entry_cooldown_active {
-                    position = -1;
-                    equity *= 1.0 - round_trip_cost;
-                    markers.push(BacktestMarker {
-                        index: points.len(),
-                        kind: "entry".to_string(),
-                    });
-                }
+            } else if z >= config.entry_band && !short_entry_cooldown_active {
+                position = -1;
+                equity *= 1.0 - round_trip_cost;
+                markers.push(BacktestMarker {
+                    index: points.len(),
+                    kind: "entry".to_string(),
+                });
             }
         } else {
             // Only evaluate close conditions for positions that were open
