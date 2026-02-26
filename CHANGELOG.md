@@ -57,6 +57,14 @@ This project follows SemVer as defined in `docs/02-versioning-and-releases.md`.
     - `specs/examples/strategy_pairs_opportunity_history_response.example.json`
     - `specs/contracts/strategy_pairs_opportunity_history_stats_response.schema.json`
     - `specs/examples/strategy_pairs_opportunity_history_stats_response.example.json`
+- Paper-trade ledger persistence and reporting:
+  - Added persistence table `strategy_paper_trades` populated from backtest marker replay (paper-only, no broker dependency).
+  - Added APIs:
+    - `GET /v1/strategy/pairs/paper-trades`
+    - `GET /v1/strategy/pairs/paper-trades/download`
+  - Added paper-trades contract/example:
+    - `specs/contracts/strategy_pairs_paper_trades_response.schema.json`
+    - `specs/examples/strategy_pairs_paper_trades_response.example.json`
 - UI now provides 24h/72h/7d opportunity-history downloads (PASS/all) plus retention meter (days covered).
 - Automated Daily Maintenance panel moved to dedicated `Maintenance` page in side navigation (under `Data Quality`).
 - Maintenance cron installer scripts now support explicit `CRON_TZ` timezone configuration (`--timezone`).
