@@ -33,6 +33,9 @@
           "slippage_bps",
           "net_edge_bps",
           "pass",
+          "setup_pass",
+          "trade_ready",
+          "trade_blocked_by",
           "rationale_codes"
         ],
         "properties": {
@@ -49,6 +52,12 @@
           "slippage_bps": { "type": "number", "minimum": 0 },
           "net_edge_bps": { "type": "number" },
           "pass": { "type": "boolean" },
+          "setup_pass": { "type": "boolean" },
+          "trade_ready": { "type": "boolean" },
+          "trade_blocked_by": {
+            "type": "string",
+            "enum": ["NONE", "SETUP", "COST", "MULTIPLE", "UNAVAILABLE"]
+          },
           "rationale_codes": {
             "type": "array",
             "items": { "type": "string" }

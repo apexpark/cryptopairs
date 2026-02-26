@@ -19,8 +19,14 @@
         "stop_band": 3.2,
         "expected_hold_bars": 18,
         "cost_estimate_bps": 0.6,
+        "setup_actionable": true,
         "actionable": true,
         "rationale_codes": [],
+        "setup_gate": {
+          "status": "AVAILABLE",
+          "pass": true,
+          "rationale_codes": []
+        },
         "cost_gate": {
           "status": "AVAILABLE",
           "expected_edge_bps": 7.42,
@@ -33,6 +39,12 @@
           "net_edge_bps": 4.08,
           "pass": true,
           "rationale_codes": ["FUNDING_MODEL_DYNAMIC", "FUNDING_CONTINUOUS_ACCRUAL", "FUNDING_WINDOW_NO_SETTLEMENT"]
+        },
+        "trade_gate": {
+          "status": "AVAILABLE",
+          "pass": true,
+          "blocked_by": "NONE",
+          "rationale_codes": []
         },
         "portfolio_hint": {
           "status": "AVAILABLE",

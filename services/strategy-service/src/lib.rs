@@ -148,6 +148,42 @@ impl CostGateDiagnostics {
     }
 }
 
+#[derive(Debug, Clone, Serialize)]
+pub struct SetupGateDiagnostics {
+    pub status: String,
+    pub pass: bool,
+    pub rationale_codes: Vec<String>,
+}
+
+impl SetupGateDiagnostics {
+    pub fn unavailable(rationale_codes: Vec<String>) -> Self {
+        Self {
+            status: "UNAVAILABLE".to_string(),
+            pass: false,
+            rationale_codes,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct TradeGateDiagnostics {
+    pub status: String,
+    pub pass: bool,
+    pub blocked_by: String,
+    pub rationale_codes: Vec<String>,
+}
+
+impl TradeGateDiagnostics {
+    pub fn unavailable(rationale_codes: Vec<String>) -> Self {
+        Self {
+            status: "UNAVAILABLE".to_string(),
+            pass: false,
+            blocked_by: "UNAVAILABLE".to_string(),
+            rationale_codes,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy)]
 pub struct CostGateInput {
     pub expected_edge_bps: f64,
@@ -266,9 +302,12 @@ pub struct PairCue {
     pub stop_band: f64,
     pub expected_hold_bars: i64,
     pub cost_estimate_bps: f64,
+    pub setup_actionable: bool,
     pub actionable: bool,
     pub rationale_codes: Vec<String>,
+    pub setup_gate: SetupGateDiagnostics,
     pub cost_gate: CostGateDiagnostics,
+    pub trade_gate: TradeGateDiagnostics,
     pub portfolio_hint: PortfolioHint,
     pub shadow_ml: ShadowMlDiagnostics,
     pub evaluated_at: DateTime<Utc>,
@@ -957,9 +996,16 @@ pub fn evaluate_pair(input: PairEvaluationInput) -> anyhow::Result<PairEvaluatio
         stop_band: input.stop_band,
         expected_hold_bars,
         cost_estimate_bps: input.funding_drag_bps.max(0.0) + input.taker_fee_bps.max(0.0),
+        setup_actionable: actionable,
         actionable,
         rationale_codes: cue_rationale,
+        setup_gate: SetupGateDiagnostics {
+            status: "AVAILABLE".to_string(),
+            pass: actionable,
+            rationale_codes: selected.rationale_codes.clone(),
+        },
         cost_gate: CostGateDiagnostics::unavailable(vec!["NOT_EVALUATED".to_string()]),
+        trade_gate: TradeGateDiagnostics::unavailable(vec!["NOT_EVALUATED".to_string()]),
         portfolio_hint: PortfolioHint::unavailable(vec!["NOT_EVALUATED".to_string()]),
         shadow_ml: ShadowMlDiagnostics::unavailable(vec!["NOT_EVALUATED".to_string()]),
         evaluated_at,
@@ -1501,8 +1547,8 @@ mod tests {
         evaluate_cost_gate, evaluate_pair, to_direction_hint_with_stop,
         to_direction_hint_with_stop_retrace, train_shadow_model, BacktestConfig, BacktestExitMode,
         CostGateDiagnostics, CostGateInput, DirectionHint, FundingModel, PairCue,
-        PairEvaluationInput, PortfolioHint, Regime, ShadowMlDiagnostics, ShadowModelTrainingRow,
-        SignalVariant,
+        PairEvaluationInput, PortfolioHint, Regime, SetupGateDiagnostics, ShadowMlDiagnostics,
+        ShadowModelTrainingRow, SignalVariant, TradeGateDiagnostics,
     };
     use chrono::{Duration, Utc};
     use common_types::Timeframe;
@@ -2105,8 +2151,14 @@ mod tests {
             stop_band: 3.2,
             expected_hold_bars: 12,
             cost_estimate_bps: 0.6,
+            setup_actionable: true,
             actionable: true,
             rationale_codes: vec![],
+            setup_gate: SetupGateDiagnostics {
+                status: "AVAILABLE".to_string(),
+                pass: true,
+                rationale_codes: vec![],
+            },
             cost_gate: CostGateDiagnostics {
                 status: "AVAILABLE".to_string(),
                 expected_edge_bps: opportunity_score,
@@ -2118,6 +2170,12 @@ mod tests {
                 slippage_bps: 0.5,
                 net_edge_bps,
                 pass: true,
+                rationale_codes: vec![],
+            },
+            trade_gate: TradeGateDiagnostics {
+                status: "AVAILABLE".to_string(),
+                pass: true,
+                blocked_by: "NONE".to_string(),
                 rationale_codes: vec![],
             },
             portfolio_hint: PortfolioHint::unavailable(vec!["NOT_EVALUATED".to_string()]),
