@@ -11,6 +11,7 @@ import {
   buildStrategyOpportunityHistoryUrl,
   fetchStrategyUiAuthStatus,
   verifyStrategyUiAccess,
+  fetchStrategyPaperTrades,
   fetchStrategyOpportunityHistoryStats,
   fetchStrategyMaintenanceLatest,
   runStrategyMaintenanceAction,
@@ -52,6 +53,7 @@ import type {
   SpreadPosition,
   StrategyPairsCostGateResponse,
   StrategyPairsCuesResponse,
+  StrategyPairsPaperTradesResponse,
   StrategyPairsOpportunityHistoryStatsResponse,
   StrategyMaintenanceActionResponse,
   StrategyMaintenanceLatestResponse,
@@ -807,6 +809,9 @@ function App(): JSX.Element {
   const [zMarkers, setZMarkers] = useState<ChartMarker[]>([]);
   const [analyticsError, setAnalyticsError] = useState<string | null>(null);
   const [analyticsLoading, setAnalyticsLoading] = useState(false);
+  const [paperTrades, setPaperTrades] = useState<StrategyPairsPaperTradesResponse | null>(null);
+  const [paperTradesError, setPaperTradesError] = useState<string | null>(null);
+  const [paperTradesLoading, setPaperTradesLoading] = useState(false);
   const [headerLeftMetrics, setHeaderLeftMetrics] = useState<MarketMetricsResponse | null>(null);
   const [headerRightMetrics, setHeaderRightMetrics] = useState<MarketMetricsResponse | null>(null);
   const [headerMetricsError, setHeaderMetricsError] = useState<string | null>(null);
@@ -1326,6 +1331,69 @@ function App(): JSX.Element {
       window.clearInterval(refreshIntervalId);
     };
   }, [selectedCueRow, timeframe, uiAccessGranted, takerFeeBpsOverride, backtestExitMode]);
+
+  useEffect(() => {
+    if (!uiAccessGranted) {
+      return;
+    }
+    if (!selectedCueRow) {
+      setPaperTrades(null);
+      setPaperTradesError("No pair selected.");
+      setPaperTradesLoading(false);
+      return;
+    }
+
+    let cancelled = false;
+    let inFlight = false;
+    setPaperTradesLoading(true);
+
+    const runPaperTradesRefresh = async (firstLoad = false): Promise<void> => {
+      if (cancelled || inFlight) {
+        return;
+      }
+      inFlight = true;
+      if (firstLoad) {
+        setPaperTradesLoading(true);
+      }
+      try {
+        const response = await fetchStrategyPaperTrades(
+          timeframe,
+          selectedCueRow.cue.pair_id,
+          720,
+          24,
+          backtestExitMode
+        );
+        if (cancelled) {
+          return;
+        }
+        setPaperTrades(response);
+        setPaperTradesError(null);
+      } catch (error) {
+        if (cancelled) {
+          return;
+        }
+        setPaperTrades(null);
+        setPaperTradesError(
+          `Paper-trade history unavailable: ${error instanceof Error ? error.message : String(error)}`
+        );
+      } finally {
+        if (!cancelled && firstLoad) {
+          setPaperTradesLoading(false);
+        }
+        inFlight = false;
+      }
+    };
+
+    void runPaperTradesRefresh(true);
+    const intervalId = window.setInterval(() => {
+      void runPaperTradesRefresh(false);
+    }, analyticsRefreshMs(timeframe));
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(intervalId);
+    };
+  }, [selectedCueRow, timeframe, backtestExitMode, uiAccessGranted]);
 
   const refreshMaintenanceReport = useCallback(async (firstLoad = false): Promise<void> => {
     if (firstLoad) {
@@ -1995,6 +2063,9 @@ function App(): JSX.Element {
           equityTimestamps={equityTimestamps}
           loading={analyticsLoading}
           error={analyticsError}
+          paperTrades={paperTrades}
+          paperTradesLoading={paperTradesLoading}
+          paperTradesError={paperTradesError}
           chartHeight={analyticsChartHeight}
         />
       );
@@ -2662,6 +2733,9 @@ function AnalyticsPage({
   equityTimestamps,
   loading,
   error,
+  paperTrades,
+  paperTradesLoading,
+  paperTradesError,
   chartHeight,
 }: {
   cues: StrategyPairsCuesResponse | null;
@@ -2674,6 +2748,9 @@ function AnalyticsPage({
   equityTimestamps: string[];
   loading: boolean;
   error: string | null;
+  paperTrades: StrategyPairsPaperTradesResponse | null;
+  paperTradesLoading: boolean;
+  paperTradesError: string | null;
   chartHeight: number;
 }): JSX.Element {
   const selected = cues?.cues.find((entry) => entry.cue.pair_id === selectedPairId) ?? cues?.cues[0];
@@ -2746,6 +2823,52 @@ function AnalyticsPage({
           ) : (
             <p className="empty-text">No diagnostics available.</p>
           )}
+        </SectionCard>
+
+        <SectionCard title="Paper Trades (Persisted)" subtitle="Per-trade leg PnL breakdown">
+          {paperTradesLoading ? <p className="small-text">Loading persisted paper trades...</p> : null}
+          {paperTradesError ? <p className="small-text tone-bad">{paperTradesError}</p> : null}
+          {!paperTradesLoading && !paperTradesError && paperTrades?.rows.length === 0 ? (
+            <p className="small-text">No persisted paper trades found for this pair/timeframe window.</p>
+          ) : null}
+          {paperTrades?.rows.length ? (
+            <div className="table-wrap analytics-paper-trades-table">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Exit</th>
+                    <th>Dir</th>
+                    <th>Hold</th>
+                    <th>Left</th>
+                    <th>Right</th>
+                    <th>Net</th>
+                    <th>Equity</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {paperTrades.rows.map((row) => (
+                    <tr key={`${row.entry_ts}-${row.exit_ts}-${row.exit_kind}`}>
+                      <td>{formatLocalTime(row.exit_ts)}</td>
+                      <td>{row.direction === "LONG_SPREAD" ? "LONG" : "SHORT"}</td>
+                      <td>{row.bars_held}</td>
+                      <td className={row.left_leg_bps >= 0 ? "tone-ok" : "tone-bad"}>
+                        {formatSigned(row.left_leg_bps)}bp
+                      </td>
+                      <td className={row.right_leg_bps >= 0 ? "tone-ok" : "tone-bad"}>
+                        {formatSigned(row.right_leg_bps)}bp
+                      </td>
+                      <td className={row.net_bps >= 0 ? "tone-ok" : "tone-bad"}>
+                        {formatSigned(row.net_bps)}bp
+                      </td>
+                      <td className={row.equity_trade_bps >= 0 ? "tone-ok" : "tone-bad"}>
+                        {formatSigned(row.equity_trade_bps)}bp
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          ) : null}
         </SectionCard>
       </div>
 
