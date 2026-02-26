@@ -67,6 +67,9 @@ This project follows SemVer as defined in `docs/02-versioning-and-releases.md`.
     - `specs/examples/strategy_pairs_paper_trades_response.example.json`
   - Paper-trade persistence now replaces rows per `(pair_id, timeframe, exit_mode)` scope on each recompute to prevent stale historical trades from surviving across model-window changes.
   - `GET /v1/strategy/pairs/paper-trades` now returns `model_bars` so UI can disclose the active simulation window used for persisted trade generation.
+  - Paper-trade realized accounting now uses a canonical trade outcome path:
+    - `net_bps` is aligned to equity path delta per trade (`equity_trade_bps`) to prevent contradictory profit signals.
+    - Leg contributions are hedge-ratio weighted and normalized to sum to `gross_bps`.
 - Strategy research groundwork contracts and endpoints (slice A):
   - Added APIs (contract-only, fail-closed placeholders):
     - `GET /v1/strategy/pairs/expectancy`
