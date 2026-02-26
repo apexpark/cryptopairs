@@ -2,9 +2,9 @@
   "timeframe": "1h",
   "pair_id": "PF_TAOUSD__PF_HYPEUSD",
   "generated_at": "2026-02-27T00:00:00Z",
-  "status": "UNAVAILABLE",
-  "decision_state": "CAUTION",
-  "primary_reason_code": "EXPECTANCY_ENGINE_NOT_IMPLEMENTED",
+  "status": "AVAILABLE",
+  "decision_state": "TRADE_READY",
+  "primary_reason_code": "EXPECTANCY_POSITIVE",
   "config": {
     "entry_z": 1.8,
     "exit_z": 0.2,
@@ -13,9 +13,21 @@
     "hedge_method": "HEDGE_RATIO_OLS",
     "lookback_bars": 220
   },
-  "metrics": null,
+  "metrics": {
+    "trades": 12,
+    "win_rate": 0.6667,
+    "avg_net_bps": 18.42,
+    "p25_net_bps": -3.1,
+    "p50_net_bps": 9.7,
+    "p75_net_bps": 28.4,
+    "avg_hold_bars": 26.5,
+    "avg_mae_bps": -14.8,
+    "avg_mfe_bps": 37.2,
+    "expected_min_lot_net_bps": 18.42,
+    "expected_min_lot_net_usd": 2.13
+  },
   "rationale_codes": [
-    "EXPECTANCY_ENGINE_NOT_IMPLEMENTED",
-    "SLICE_A_CONTRACT_ONLY"
+    "EXPECTANCY_COMPUTED",
+    "MIN_TRADES_MET"
   ]
 }

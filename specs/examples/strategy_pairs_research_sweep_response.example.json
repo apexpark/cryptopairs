@@ -1,6 +1,6 @@
 {
   "generated_at": "2026-02-27T00:00:00Z",
-  "status": "UNAVAILABLE",
+  "status": "AVAILABLE",
   "request_id": "sweep-20260227T000000.000Z",
   "dry_run": true,
   "timeframes": ["1m", "15m", "1h"],
@@ -8,11 +8,9 @@
     "PF_TAOUSD__PF_HYPEUSD",
     "PF_XRPUSD__PF_ADAUSD"
   ],
-  "estimated_combinations": 76800,
+  "estimated_combinations": 768,
   "max_combinations": 20000,
   "rationale_codes": [
-    "RESEARCH_SWEEP_ENGINE_NOT_IMPLEMENTED",
-    "SLICE_A_CONTRACT_ONLY",
-    "COMBINATION_LIMIT_EXCEEDED"
+    "RESEARCH_SWEEP_DRY_RUN_READY"
   ]
 }
