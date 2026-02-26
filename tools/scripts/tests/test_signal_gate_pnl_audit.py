@@ -75,3 +75,16 @@ def test_history_index_nearest_respects_tolerance() -> None:
     assert matched["actionable"] is True
     not_matched = index.nearest(epoch=probe_epoch, tolerance_seconds=5)
     assert not_matched is None
+
+
+def test_compute_equity_trade_bps_uses_pre_entry_to_exit_window() -> None:
+    points = [
+        {"equity": 1.00},
+        {"equity": 0.99},   # entry bar after entry cost
+        {"equity": 1.03},   # open trade drift
+        {"equity": 1.05},   # exit bar after exit cost
+    ]
+    pre_entry, exit_equity, trade_bps = audit.compute_equity_trade_bps(points, entry_idx=1, exit_idx=3)
+    assert pre_entry == 1.00
+    assert exit_equity == 1.05
+    assert round(trade_bps, 6) == 500.0

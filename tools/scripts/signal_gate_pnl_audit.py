@@ -235,6 +235,22 @@ def compute_leg_returns_bps(
     return left_bps, right_bps, left_bps + right_bps
 
 
+def compute_equity_trade_bps(points: list[dict[str, Any]], entry_idx: int, exit_idx: int) -> tuple[float, float, float]:
+    if entry_idx < 0 or exit_idx < 0 or exit_idx >= len(points) or entry_idx >= len(points):
+        raise ValueError("entry/exit index out of bounds")
+    if exit_idx <= entry_idx:
+        raise ValueError("exit index must be greater than entry index")
+
+    entry_equity = float(points[entry_idx].get("equity", 0.0))
+    exit_equity = float(points[exit_idx].get("equity", 0.0))
+    pre_entry_equity = float(points[entry_idx - 1].get("equity", 1.0)) if entry_idx > 0 else 1.0
+    if entry_equity <= 0.0 or exit_equity <= 0.0 or pre_entry_equity <= 0.0:
+        raise ValueError("equity values must be positive")
+
+    trade_bps = ((exit_equity / pre_entry_equity) - 1.0) * 10_000.0
+    return pre_entry_equity, exit_equity, trade_bps
+
+
 def fetch_pair_ids(args: argparse.Namespace) -> list[str]:
     explicit_pairs = parse_pair_list(args.pairs)
     if explicit_pairs:
@@ -425,6 +441,7 @@ def analyze_pair(
             trade_rows.append(trade_row)
             continue
 
+        pre_entry_equity, exit_equity, equity_trade_bps = compute_equity_trade_bps(points, entry_idx, exit_idx)
         left_bps, right_bps, gross_bps = compute_leg_returns_bps(
             direction=direction,
             hedge_ratio=float(backtest.get("hedge_ratio", 1.0)),
@@ -448,6 +465,9 @@ def analyze_pair(
                 "gross_bps": gross_bps,
                 "round_trip_cost_bps": round_trip_cost_bps,
                 "net_bps": net_bps,
+                "equity_pre_entry": pre_entry_equity,
+                "equity_exit": exit_equity,
+                "equity_trade_bps": equity_trade_bps,
             }
         )
         if gate_state == "BLOCK" and net_bps > 0.0:
