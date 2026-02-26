@@ -14,6 +14,7 @@ import type {
   StrategyPairsBacktestResponse,
   StrategyPairsCostGateResponse,
   StrategyPairsCuesResponse,
+  StrategyPairsPaperTradesResponse,
   StrategyPairsOpportunityHistoryStatsResponse,
   StrategyPairsLiveZResponse,
   StrategyMaintenanceActionRequest,
@@ -189,6 +190,27 @@ export async function fetchStrategyOpportunityHistoryStats(
     query ? `?${query}` : ""
   }`;
   return parseJson<StrategyPairsOpportunityHistoryStatsResponse>(await fetch(url));
+}
+
+export async function fetchStrategyPaperTrades(
+  timeframe: Timeframe,
+  pairId?: string,
+  hours = 168,
+  limit = 50,
+  exitMode?: BacktestExitMode
+): Promise<StrategyPairsPaperTradesResponse> {
+  const params = new URLSearchParams();
+  params.set("timeframe", timeframe);
+  params.set("hours", hours.toString());
+  params.set("limit", limit.toString());
+  if (pairId && pairId.trim().length) {
+    params.set("pair_id", pairId);
+  }
+  if (exitMode) {
+    params.set("exit_mode", exitMode);
+  }
+  const url = `${STRATEGY_SERVICE_BASE_URL}/v1/strategy/pairs/paper-trades?${params.toString()}`;
+  return parseJson<StrategyPairsPaperTradesResponse>(await fetch(url));
 }
 
 export async function fetchKillSwitchState(): Promise<KillSwitchState> {

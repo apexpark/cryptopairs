@@ -217,6 +217,45 @@ export interface StrategyPairsOpportunityHistoryStatsResponse {
   by_timeframe: OpportunityHistoryStatsEntry[];
 }
 
+export interface StrategyPairsPaperTradesResponse {
+  timeframe: Timeframe;
+  generated_at: string;
+  hours: number;
+  pair_id: string | null;
+  exit_mode: BacktestExitMode;
+  rows: Array<{
+    pair_id: string;
+    timeframe: Timeframe;
+    exit_mode: BacktestExitMode;
+    left_instrument: string;
+    right_instrument: string;
+    selected_variant: string;
+    entry_ts: string;
+    exit_ts: string;
+    bars_held: number;
+    direction: "LONG_SPREAD" | "SHORT_SPREAD";
+    exit_kind: "exit" | "stop";
+    entry_z: number;
+    exit_z: number;
+    entry_index: number;
+    exit_index: number;
+    left_entry: number;
+    left_exit: number;
+    right_entry: number;
+    right_exit: number;
+    left_leg_bps: number;
+    right_leg_bps: number;
+    gross_bps: number;
+    round_trip_cost_bps: number;
+    net_bps: number;
+    equity_pre_entry: number;
+    equity_exit: number;
+    equity_trade_bps: number;
+    created_at: string;
+    updated_at: string;
+  }>;
+}
+
 export interface StrategyPairsBacktestResponse {
   timeframe: Timeframe;
   pair_id: string;
