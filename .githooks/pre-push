@@ -1,0 +1,19 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+CHECK_SCRIPT="$ROOT_DIR/scripts/check-rust-ci.sh"
+
+if [[ "${SKIP_RUST_CHECKS:-0}" == "1" ]]; then
+  echo "[pre-push] SKIP_RUST_CHECKS=1 set; skipping Rust CI preflight."
+  exit 0
+fi
+
+if [[ ! -x "$CHECK_SCRIPT" ]]; then
+  echo "[pre-push] Missing executable preflight script: $CHECK_SCRIPT"
+  echo "[pre-push] Run: chmod +x scripts/check-rust-ci.sh"
+  exit 1
+fi
+
+echo "[pre-push] Reminder: running Rust CI preflight before push."
+"$CHECK_SCRIPT"

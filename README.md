@@ -95,6 +95,20 @@ cargo fmt --all -- --check
 cargo clippy --workspace --all-targets -- -D warnings
 ```
 
+Rust CI-equivalent preflight script:
+
+```bash
+bash scripts/check-rust-ci.sh
+```
+
+Enable automatic reminder + enforcement on every push:
+
+```bash
+bash scripts/install-git-hooks.sh
+```
+
+This installs `.githooks/pre-push`, which runs the same Rust preflight checks before `git push`.
+
 ```bash
 python -m pip install ruff pytest
 PYTHONPATH=research/strategy-engine/src pytest research/strategy-engine/tests -q
