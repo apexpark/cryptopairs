@@ -3686,6 +3686,7 @@ fn derive_paper_trades_from_series(
     right_instrument: &str,
     selected_variant: &str,
     entry_band: f64,
+    hedge_ratio: f64,
     round_trip_cost_bps: f64,
     timestamps: &[DateTime<Utc>],
     left_closes: &[f64],
@@ -3747,25 +3748,34 @@ fn derive_paper_trades_from_series(
             continue;
         }
 
-        let (left_leg_bps, right_leg_bps) = if direction == "LONG_SPREAD" {
-            (
-                ((left_exit / entry.left_entry) - 1.0) * 10_000.0,
-                -((right_exit / entry.right_entry) - 1.0) * 10_000.0,
-            )
+        let left_return = (left_exit / entry.left_entry) - 1.0;
+        let right_return = (right_exit / entry.right_entry) - 1.0;
+        let ratio = hedge_ratio.abs().max(1e-9);
+        let (raw_left_bps, raw_right_bps) = if direction == "LONG_SPREAD" {
+            (left_return * 10_000.0, -(ratio * right_return * 10_000.0))
         } else {
-            (
-                -((left_exit / entry.left_entry) - 1.0) * 10_000.0,
-                ((right_exit / entry.right_entry) - 1.0) * 10_000.0,
-            )
+            (-left_return * 10_000.0, ratio * right_return * 10_000.0)
         };
-        let gross_bps = left_leg_bps + right_leg_bps;
-        let net_bps = gross_bps - round_trip_cost_bps;
         let equity_pre_entry = entry.equity_pre_entry;
         let equity_exit = point.equity;
         let equity_trade_bps = if equity_pre_entry > 0.0 {
             ((equity_exit / equity_pre_entry) - 1.0) * 10_000.0
         } else {
             0.0
+        };
+        let cost_bps = if round_trip_cost_bps.is_finite() {
+            round_trip_cost_bps.max(0.0)
+        } else {
+            0.0
+        };
+        let net_bps = equity_trade_bps;
+        let gross_bps = net_bps + cost_bps;
+        let raw_sum = raw_left_bps + raw_right_bps;
+        let (left_leg_bps, right_leg_bps) = if raw_sum.is_finite() && raw_sum.abs() > 1e-9 {
+            let scale = gross_bps / raw_sum;
+            (raw_left_bps * scale, raw_right_bps * scale)
+        } else {
+            (gross_bps * 0.5, gross_bps * 0.5)
         };
 
         rows.push(PaperTradeInsertRow {
@@ -3791,7 +3801,7 @@ fn derive_paper_trades_from_series(
             left_leg_bps,
             right_leg_bps,
             gross_bps,
-            round_trip_cost_bps,
+            round_trip_cost_bps: cost_bps,
             net_bps,
             equity_pre_entry,
             equity_exit,
@@ -3843,6 +3853,7 @@ async fn compute_and_record_paper_trades_for_output(
         &output.cue.right_instrument,
         &output.cue.selected_variant,
         output.cue.entry_band,
+        output.hedge_ratio,
         output.cue.cost_estimate_bps,
         &timestamps,
         &left_closes,
@@ -5437,6 +5448,7 @@ mod tests {
             "PF_RIGHT",
             "ROBUST_Z",
             1.8,
+            1.0,
             2.0,
             &timestamps,
             &left_closes,
@@ -5448,7 +5460,9 @@ mod tests {
         assert_eq!(row.direction, "LONG_SPREAD");
         assert_eq!(row.exit_kind, "exit");
         assert!(row.gross_bps > 0.0);
+        assert!((row.net_bps - row.equity_trade_bps).abs() < 1e-9);
         assert!((row.net_bps - (row.gross_bps - 2.0)).abs() < 1e-9);
+        assert!(((row.left_leg_bps + row.right_leg_bps) - row.gross_bps).abs() < 1e-6);
         assert!(row.equity_trade_bps > 0.0);
     }
 
