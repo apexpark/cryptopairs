@@ -544,6 +544,8 @@ function describeRationaleCode(code: string): string {
       "Live slippage feed is stale; entry remains blocked until fresh quotes are restored.",
     SLIPPAGE_DATA_UNAVAILABLE:
       "Live slippage feed is unavailable; entry remains blocked in fail-closed mode.",
+    SETUP_GATE_BLOCKED: "Setup conditions for entry are not currently satisfied.",
+    TRADE_GATE_BLOCKED: "Combined setup/cost gate did not pass.",
   };
   return mapping[code] ?? code.replaceAll("_", " ").toLowerCase();
 }
@@ -566,60 +568,83 @@ function explainPairActionability(
   }
 
   const { cue, hedge_ratio_stability } = selected;
-  const mergedReasons = Array.from(new Set([...cue.rationale_codes, ...cue.cost_gate.rationale_codes]));
+  const setupReasons = cue.setup_gate?.rationale_codes ?? cue.rationale_codes;
+  const costReasons = cue.cost_gate.rationale_codes ?? [];
+  const tradeGate = cue.trade_gate ?? {
+    status: cue.cost_gate.status === "AVAILABLE" ? "AVAILABLE" : "UNAVAILABLE",
+    pass: cue.actionable,
+    blocked_by: cue.actionable ? "NONE" : "UNAVAILABLE",
+    rationale_codes: cue.actionable
+      ? []
+      : Array.from(new Set([...setupReasons, ...costReasons])),
+  };
+  const tradeReasons = tradeGate.rationale_codes ?? [];
+  const mergedReasons = Array.from(new Set([...setupReasons, ...costReasons, ...tradeReasons]));
+  const costUnavailable = cue.cost_gate.status !== "AVAILABLE";
+  const costBlocked =
+    costUnavailable ||
+    costReasons.includes("COST_GATE_BLOCKED") ||
+    costReasons.includes("NEGATIVE_EXPECTED_EDGE") ||
+    (cue.cost_gate.status === "AVAILABLE" && !cue.cost_gate.pass);
 
   const details: string[] = [];
-  if (mergedReasons.includes("BELOW_ENTRY_BAND")) {
+  if (setupReasons.includes("BELOW_ENTRY_BAND")) {
     details.push(
       `Current spread z-score is ${cue.spread_z.toFixed(2)}, inside the entry trigger at ±${cue.entry_band.toFixed(2)}.`
     );
   }
-  if (mergedReasons.includes("AT_OR_BEYOND_STOP_BAND")) {
+  if (setupReasons.includes("AT_OR_BEYOND_STOP_BAND")) {
     details.push(
       `Current spread z-score is ${cue.spread_z.toFixed(2)}, at or beyond the stop level ±${cue.stop_band.toFixed(2)}; entries are disabled until it moves back inside stop limits.`
     );
   }
-  if (mergedReasons.includes("RETRACE_COOLDOWN_ACTIVE")) {
+  if (setupReasons.includes("RETRACE_COOLDOWN_ACTIVE")) {
     const rearmLevel = cue.stop_band - (cue.stop_band - cue.entry_band) * 0.25;
     details.push(
       `Recent stop breach detected. New entries stay blocked until z-score retraces to ±${rearmLevel.toFixed(2)} (25% back from stop toward entry).`
     );
   }
-  if (mergedReasons.includes("COST_GATE_BLOCKED") || !cue.cost_gate.pass) {
+  if (costUnavailable) {
+    details.push("Cost economics are unavailable right now, so trading remains fail-closed.");
+  } else if (costBlocked) {
     details.push(
       `Net edge is ${formatSigned(cue.cost_gate.net_edge_bps)}bp after costs, so the cost gate remains blocked.`
     );
+  } else {
+    details.push(
+      `Net edge is ${formatSigned(cue.cost_gate.net_edge_bps)}bp after costs, so economics currently pass.`
+    );
   }
-  if (mergedReasons.includes("HEDGE_RATIO_UNSTABLE")) {
+  if (setupReasons.includes("HEDGE_RATIO_UNSTABLE")) {
     details.push(
       `Hedge ratio stability is ${(hedge_ratio_stability * 100).toFixed(1)}%, below preferred stability for neutral sizing.`
     );
   }
-  if (mergedReasons.includes("LOW_SAMPLE")) {
+  if (setupReasons.includes("LOW_SAMPLE")) {
     details.push("Recent setup history is limited, so confidence is intentionally reduced.");
   }
-  if (mergedReasons.includes("CHAMPION_DRIFT_BLOCKED")) {
+  if (setupReasons.includes("CHAMPION_DRIFT_BLOCKED")) {
     details.push("Variant drift guard is active until model selection stabilizes.");
   }
 
   if (!details.length) {
     details.push(
-      cue.actionable
-        ? "All active gates for this cue are currently passing."
+      tradeGate.pass
+        ? "Setup and cost gates are currently passing."
         : "At least one strategy or safety gate is currently blocking entry."
     );
   }
 
-  if (cue.actionable) {
+  if (tradeGate.pass) {
     return {
-      headline: "Allowed: this pair currently passes entry, cost, and stability gates.",
+      headline: "Allowed: setup and cost economics are currently passing.",
       tone: "ok",
       details,
       reasons: mergedReasons,
     };
   }
 
-  if (mergedReasons.includes("AT_OR_BEYOND_STOP_BAND")) {
+  if (tradeGate.blocked_by === "SETUP" && setupReasons.includes("AT_OR_BEYOND_STOP_BAND")) {
     return {
       headline: "Blocked for now: spread is at/through stop level, so entry is disabled.",
       tone: "bad",
@@ -627,7 +652,7 @@ function explainPairActionability(
       reasons: mergedReasons,
     };
   }
-  if (mergedReasons.includes("RETRACE_COOLDOWN_ACTIVE")) {
+  if (tradeGate.blocked_by === "SETUP" && setupReasons.includes("RETRACE_COOLDOWN_ACTIVE")) {
     return {
       headline: "Blocked for now: waiting for 25% retrace after stop breach before re-entry.",
       tone: "bad",
@@ -636,7 +661,7 @@ function explainPairActionability(
     };
   }
 
-  if (mergedReasons.includes("BELOW_ENTRY_BAND")) {
+  if (tradeGate.blocked_by === "SETUP" && setupReasons.includes("BELOW_ENTRY_BAND")) {
     return {
       headline: "Blocked for now: spread stretch is not yet at entry level.",
       tone: "bad",
@@ -644,7 +669,7 @@ function explainPairActionability(
       reasons: mergedReasons,
     };
   }
-  if (mergedReasons.includes("COST_GATE_BLOCKED") || mergedReasons.includes("NEGATIVE_EXPECTED_EDGE")) {
+  if (tradeGate.blocked_by === "COST") {
     return {
       headline: "Blocked for now: expected edge does not clear trade costs.",
       tone: "bad",
@@ -652,7 +677,15 @@ function explainPairActionability(
       reasons: mergedReasons,
     };
   }
-  if (mergedReasons.includes("HEDGE_RATIO_UNSTABLE")) {
+  if (tradeGate.blocked_by === "MULTIPLE") {
+    return {
+      headline: "Blocked for now: both setup conditions and cost economics are failing.",
+      tone: "bad",
+      details,
+      reasons: mergedReasons,
+    };
+  }
+  if (tradeGate.blocked_by === "SETUP" && setupReasons.includes("HEDGE_RATIO_UNSTABLE")) {
     return {
       headline: "Blocked for now: hedge sizing is unstable for reliable spread neutrality.",
       tone: "bad",
@@ -2236,7 +2269,7 @@ function TradePage(props: {
                 <th>Pair</th>
                 <th>Z</th>
                 <th>Edge</th>
-                <th>Gate</th>
+                <th>Ready</th>
               </tr>
             </thead>
             <tbody>
@@ -2249,8 +2282,8 @@ function TradePage(props: {
                   <td>{formatPairLabel(entry.cue.pair_id)}</td>
                   <td>{entry.cue.spread_z.toFixed(2)}</td>
                   <td>{formatSigned(entry.cue.cost_gate.net_edge_bps)}bp</td>
-                  <td className={entry.cue.cost_gate.pass ? "tone-ok" : "tone-bad"}>
-                    {entry.cue.cost_gate.pass ? "PASS" : "BLOCK"}
+                  <td className={(entry.cue.trade_gate?.pass ?? entry.cue.actionable) ? "tone-ok" : "tone-bad"}>
+                    {(entry.cue.trade_gate?.pass ?? entry.cue.actionable) ? "PASS" : "BLOCK"}
                   </td>
                 </tr>
               ))}
@@ -2695,9 +2728,19 @@ function AnalyticsPage({
                 tone={selected.cue.shadow_ml.agrees_with_selected ? "ok" : "warn"}
               />
               <StatRow
-                label="Cost Gate"
+                label="Setup Gate"
+                value={(selected.cue.setup_gate?.pass ?? selected.cue.setup_actionable ?? selected.cue.actionable) ? "PASS" : "BLOCK"}
+                tone={(selected.cue.setup_gate?.pass ?? selected.cue.setup_actionable ?? selected.cue.actionable) ? "ok" : "bad"}
+              />
+              <StatRow
+                label="Cost Economics"
                 value={selected.cue.cost_gate.pass ? "PASS" : "BLOCK"}
                 tone={selected.cue.cost_gate.pass ? "ok" : "bad"}
+              />
+              <StatRow
+                label="Trade Ready"
+                value={(selected.cue.trade_gate?.pass ?? selected.cue.actionable) ? "PASS" : "BLOCK"}
+                tone={(selected.cue.trade_gate?.pass ?? selected.cue.actionable) ? "ok" : "bad"}
               />
             </>
           ) : (

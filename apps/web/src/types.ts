@@ -17,6 +17,19 @@ export interface CostGate {
   rationale_codes: string[];
 }
 
+export interface SetupGate {
+  status: "AVAILABLE" | "UNAVAILABLE";
+  pass: boolean;
+  rationale_codes: string[];
+}
+
+export interface TradeGate {
+  status: "AVAILABLE" | "UNAVAILABLE";
+  pass: boolean;
+  blocked_by: "NONE" | "SETUP" | "COST" | "MULTIPLE" | "UNAVAILABLE";
+  rationale_codes: string[];
+}
+
 export interface PortfolioHint {
   status: "AVAILABLE" | "UNAVAILABLE";
   target_weight: number;
@@ -54,9 +67,12 @@ export interface Cue {
   stop_band: number;
   expected_hold_bars: number;
   cost_estimate_bps: number;
+  setup_actionable?: boolean;
   actionable: boolean;
   rationale_codes: string[];
+  setup_gate?: SetupGate;
   cost_gate: CostGate;
+  trade_gate?: TradeGate;
   portfolio_hint: PortfolioHint;
   shadow_ml: ShadowMl;
   evaluated_at: string;
@@ -130,6 +146,9 @@ export interface StrategyPairsCostGateResponse {
     slippage_bps: number;
     net_edge_bps: number;
     pass: boolean;
+    setup_pass?: boolean;
+    trade_ready?: boolean;
+    trade_blocked_by?: "NONE" | "SETUP" | "COST" | "MULTIPLE" | "UNAVAILABLE";
     rationale_codes: string[];
   }>;
   skipped: Array<{ pair_id: string; reason: string }>;

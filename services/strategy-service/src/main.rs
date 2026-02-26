@@ -1930,6 +1930,9 @@ struct CostGatePair {
     slippage_bps: f64,
     net_edge_bps: f64,
     pass: bool,
+    setup_pass: bool,
+    trade_ready: bool,
+    trade_blocked_by: String,
     rationale_codes: Vec<String>,
 }
 
@@ -2917,6 +2920,7 @@ async fn pairs_cues(
                 cue.selected_variant = preferred.signal_variant;
                 cue.opportunity_score = preferred.opportunity_score;
                 if state.settings.block_on_champion_drift {
+                    cue.setup_actionable = false;
                     cue.actionable = false;
                     cue.direction_hint = "NONE".to_string();
                     cue.rationale_codes
@@ -2924,7 +2928,8 @@ async fn pairs_cues(
                 }
             }
         }
-        harmonize_gate_with_actionability(&mut cue);
+        refresh_setup_gate(&mut cue);
+        finalize_trade_gate(&mut cue);
 
         cues.push(CueWithDiagnostics {
             cue,
@@ -2941,11 +2946,7 @@ async fn pairs_cues(
         actionable_pairs: cues.iter().filter(|item| item.cue.actionable).count(),
         cost_gate_pass_pairs: cues
             .iter()
-            .filter(|item| {
-                item.cue.actionable
-                    && item.cue.cost_gate.status == "AVAILABLE"
-                    && item.cue.cost_gate.pass
-            })
+            .filter(|item| item.cue.cost_gate.status == "AVAILABLE" && item.cue.cost_gate.pass)
             .count(),
         shadow_disagreement_pairs: cues
             .iter()
@@ -3006,6 +3007,9 @@ async fn pairs_cost_gate(
             slippage_bps: output.cue.cost_gate.slippage_bps,
             net_edge_bps: output.cue.cost_gate.net_edge_bps,
             pass: output.cue.cost_gate.pass,
+            setup_pass: output.cue.setup_gate.pass,
+            trade_ready: output.cue.trade_gate.pass,
+            trade_blocked_by: output.cue.trade_gate.blocked_by,
             rationale_codes: output.cue.cost_gate.rationale_codes,
         })
         .collect::<Vec<_>>();
@@ -3674,18 +3678,12 @@ async fn evaluate_pair_for_timeframe(
                 Ok(estimate) => estimate,
                 Err(reason_code) => {
                     output.cue.actionable = false;
-                    if !output
-                        .cue
-                        .rationale_codes
-                        .iter()
-                        .any(|code| code == reason_code)
-                    {
-                        output.cue.rationale_codes.push(reason_code.to_string());
-                    }
                     output.cue.cost_gate =
                         strategy_service::CostGateDiagnostics::unavailable(vec![
                             reason_code.to_string()
                         ]);
+                    refresh_setup_gate(&mut output.cue);
+                    finalize_trade_gate(&mut output.cue);
                     return Ok(output);
                 }
             };
@@ -3733,33 +3731,13 @@ async fn evaluate_pair_for_timeframe(
 
             if !cost_gate.pass {
                 output.cue.actionable = false;
-                if !output
-                    .cue
-                    .rationale_codes
-                    .iter()
-                    .any(|code| code == "COST_GATE_BLOCKED")
-                {
-                    output
-                        .cue
-                        .rationale_codes
-                        .push("COST_GATE_BLOCKED".to_string());
-                }
             }
             output.cue.cost_estimate_bps =
                 (cost_gate.fee_bps + cost_gate.funding_bps + cost_gate.slippage_bps).max(0.0);
             output.cue.cost_gate = cost_gate;
-            harmonize_gate_with_actionability(&mut output.cue);
         } else {
             output.cue.actionable = false;
             if let Some(reason_code) = sampled.status.rationale_code() {
-                if !output
-                    .cue
-                    .rationale_codes
-                    .iter()
-                    .any(|code| code == reason_code)
-                {
-                    output.cue.rationale_codes.push(reason_code.to_string());
-                }
                 output.cue.cost_gate = strategy_service::CostGateDiagnostics::unavailable(vec![
                     reason_code.to_string(),
                 ]);
@@ -3774,25 +3752,84 @@ async fn evaluate_pair_for_timeframe(
             "ADVISORY_DISABLED".to_string(),
         ]);
     }
+    refresh_setup_gate(&mut output.cue);
+    finalize_trade_gate(&mut output.cue);
 
     Ok(output)
 }
 
-fn harmonize_gate_with_actionability(cue: &mut PairCue) {
-    if cue.actionable || cue.cost_gate.status != "AVAILABLE" {
-        return;
-    }
-    cue.cost_gate.pass = false;
-    if !cue
-        .cost_gate
+fn is_cost_reason(code: &str) -> bool {
+    matches!(
+        code,
+        "COST_GATE_BLOCKED"
+            | "NEGATIVE_EXPECTED_EDGE"
+            | "INVALID_FUNDING_INPUT"
+            | "SLIPPAGE_SOURCE_SAMPLED"
+            | "SLIPPAGE_SOURCE_BOOTSTRAPPED"
+            | "SLIPPAGE_DATA_WARMING"
+            | "SLIPPAGE_DATA_STALE"
+            | "SLIPPAGE_DATA_UNAVAILABLE"
+            | "FUNDING_MODEL_DYNAMIC"
+            | "FUNDING_CONTINUOUS_ACCRUAL"
+            | "FUNDING_WINDOW_NO_SETTLEMENT"
+            | "FUNDING_MODEL_STATIC"
+            | "ADVISORY_DISABLED"
+    )
+}
+
+fn refresh_setup_gate(cue: &mut PairCue) {
+    let mut setup_reasons = cue
         .rationale_codes
         .iter()
-        .any(|code| code == "NON_ACTIONABLE_CUE")
+        .filter(|code| !is_cost_reason(code))
+        .cloned()
+        .collect::<Vec<_>>();
+    if !cue.setup_actionable
+        && !setup_reasons
+            .iter()
+            .any(|code| code == "SETUP_GATE_BLOCKED")
     {
-        cue.cost_gate
-            .rationale_codes
-            .push("NON_ACTIONABLE_CUE".to_string());
+        setup_reasons.push("SETUP_GATE_BLOCKED".to_string());
     }
+    cue.setup_gate.status = "AVAILABLE".to_string();
+    cue.setup_gate.pass = cue.setup_actionable;
+    cue.setup_gate.rationale_codes = setup_reasons;
+}
+
+fn finalize_trade_gate(cue: &mut PairCue) {
+    let setup_available = cue.setup_gate.status == "AVAILABLE";
+    let setup_pass = setup_available && cue.setup_gate.pass;
+    let cost_available = cue.cost_gate.status == "AVAILABLE";
+    let cost_pass = cost_available && cue.cost_gate.pass;
+
+    let (status, pass, blocked_by) = if !setup_available || !cost_available {
+        ("UNAVAILABLE".to_string(), false, "UNAVAILABLE".to_string())
+    } else if setup_pass && cost_pass {
+        ("AVAILABLE".to_string(), true, "NONE".to_string())
+    } else if !setup_pass && !cost_pass {
+        ("AVAILABLE".to_string(), false, "MULTIPLE".to_string())
+    } else if !setup_pass {
+        ("AVAILABLE".to_string(), false, "SETUP".to_string())
+    } else {
+        ("AVAILABLE".to_string(), false, "COST".to_string())
+    };
+
+    let mut rationale_codes = vec![];
+    if !setup_pass {
+        rationale_codes.extend(cue.setup_gate.rationale_codes.iter().cloned());
+    }
+    if !cost_pass || !cost_available {
+        rationale_codes.extend(cue.cost_gate.rationale_codes.iter().cloned());
+    }
+    if rationale_codes.is_empty() && !pass {
+        rationale_codes.push("TRADE_GATE_BLOCKED".to_string());
+    }
+
+    cue.trade_gate.status = status;
+    cue.trade_gate.pass = pass;
+    cue.trade_gate.blocked_by = blocked_by;
+    cue.trade_gate.rationale_codes = rationale_codes;
+    cue.actionable = pass;
 }
 
 async fn evaluate_timeframe_outputs(
@@ -3961,21 +3998,21 @@ mod tests {
     use super::{
         artifact_download_path, bootstrap_deviation_exceeds_threshold, bootstrap_snapshot_is_fresh,
         compute_pair_funding_bps_per_event, compute_pair_slippage_sample_bps, days_covered,
-        decide_champion_transition, expected_funding_events_crossed,
-        harmonize_gate_with_actionability, normalize_funding_rate, parse_backtest_exit_mode,
+        decide_champion_transition, expected_funding_events_crossed, finalize_trade_gate,
+        normalize_funding_rate, parse_backtest_exit_mode,
         parse_opportunity_history_stats_timeframe, parse_opportunity_history_window,
-        project_continuous_funding_bps, resolve_artifact_path, resolve_taker_fee_bps,
-        ChampionDecision, FundingRateInputMode, MaintenanceAction, OpportunityHistoryQuery,
-        OpportunityHistoryStatsQuery, SampledSlippageStatus, SelectedSignalRow,
-        StrategyMarketMetricsResponse,
+        project_continuous_funding_bps, refresh_setup_gate, resolve_artifact_path,
+        resolve_taker_fee_bps, ChampionDecision, FundingRateInputMode, MaintenanceAction,
+        OpportunityHistoryQuery, OpportunityHistoryStatsQuery, SampledSlippageStatus,
+        SelectedSignalRow, StrategyMarketMetricsResponse,
     };
     use chrono::Utc;
     use common_types::Timeframe;
     use std::fs;
     use std::path::PathBuf;
     use strategy_service::{
-        CostGateDiagnostics, PairCue, PairEvaluationOutput, PortfolioHint, ShadowMlDiagnostics,
-        VariantEvaluation,
+        CostGateDiagnostics, PairCue, PairEvaluationOutput, PortfolioHint, SetupGateDiagnostics,
+        ShadowMlDiagnostics, TradeGateDiagnostics, VariantEvaluation,
     };
 
     fn output(
@@ -4001,9 +4038,12 @@ mod tests {
                 stop_band: 3.2,
                 expected_hold_bars: 12,
                 cost_estimate_bps: 1.0,
+                setup_actionable: false,
                 actionable: false,
                 rationale_codes: vec![],
+                setup_gate: SetupGateDiagnostics::unavailable(vec![]),
                 cost_gate: CostGateDiagnostics::unavailable(vec![]),
+                trade_gate: TradeGateDiagnostics::unavailable(vec![]),
                 portfolio_hint: PortfolioHint::unavailable(vec![]),
                 shadow_ml: ShadowMlDiagnostics::unavailable(vec![]),
                 evaluated_at: Utc::now(),
@@ -4492,7 +4532,7 @@ mod tests {
     }
 
     #[test]
-    fn harmonize_gate_blocks_non_actionable_available_cues() {
+    fn trade_gate_blocks_when_setup_fails_even_if_cost_passes() {
         let mut cue = PairCue {
             pair_id: "PF_XBTUSD__PF_ETHUSD".to_string(),
             left_instrument: "PF_XBTUSD".to_string(),
@@ -4509,8 +4549,10 @@ mod tests {
             stop_band: 3.2,
             expected_hold_bars: 12,
             cost_estimate_bps: 0.0,
+            setup_actionable: false,
             actionable: false,
             rationale_codes: vec![],
+            setup_gate: SetupGateDiagnostics::unavailable(vec![]),
             cost_gate: CostGateDiagnostics {
                 status: "AVAILABLE".to_string(),
                 expected_edge_bps: 5.0,
@@ -4524,17 +4566,22 @@ mod tests {
                 pass: true,
                 rationale_codes: vec![],
             },
+            trade_gate: TradeGateDiagnostics::unavailable(vec![]),
             portfolio_hint: PortfolioHint::unavailable(vec![]),
             shadow_ml: ShadowMlDiagnostics::unavailable(vec![]),
             evaluated_at: Utc::now(),
         };
 
-        harmonize_gate_with_actionability(&mut cue);
-        assert!(!cue.cost_gate.pass);
+        cue.rationale_codes.push("BELOW_ENTRY_BAND".to_string());
+        refresh_setup_gate(&mut cue);
+        finalize_trade_gate(&mut cue);
+        assert!(cue.cost_gate.pass);
+        assert!(!cue.trade_gate.pass);
+        assert_eq!(cue.trade_gate.blocked_by, "SETUP");
         assert!(cue
-            .cost_gate
+            .trade_gate
             .rationale_codes
             .iter()
-            .any(|code| code == "NON_ACTIONABLE_CUE"));
+            .any(|code| code == "BELOW_ENTRY_BAND"));
     }
 }

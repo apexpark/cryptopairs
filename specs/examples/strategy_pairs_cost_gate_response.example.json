@@ -16,6 +16,9 @@
       "slippage_bps": 1.84,
       "net_edge_bps": 4.08,
       "pass": true,
+      "setup_pass": true,
+      "trade_ready": true,
+      "trade_blocked_by": "NONE",
       "rationale_codes": ["FUNDING_MODEL_DYNAMIC", "FUNDING_CONTINUOUS_ACCRUAL", "FUNDING_WINDOW_NO_SETTLEMENT"]
     },
     {
@@ -32,6 +35,9 @@
       "slippage_bps": 1.55,
       "net_edge_bps": -1.64,
       "pass": false,
+      "setup_pass": true,
+      "trade_ready": false,
+      "trade_blocked_by": "COST",
       "rationale_codes": ["FUNDING_MODEL_DYNAMIC", "FUNDING_CONTINUOUS_ACCRUAL", "FUNDING_WINDOW_NO_SETTLEMENT", "COST_GATE_BLOCKED"]
     }
   ],

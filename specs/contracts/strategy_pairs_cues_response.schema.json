@@ -40,9 +40,12 @@
               "stop_band",
               "expected_hold_bars",
               "cost_estimate_bps",
+              "setup_actionable",
               "actionable",
               "rationale_codes",
+              "setup_gate",
               "cost_gate",
+              "trade_gate",
               "portfolio_hint",
               "shadow_ml",
               "evaluated_at"
@@ -66,10 +69,24 @@
               "stop_band": { "type": "number" },
               "expected_hold_bars": { "type": "integer", "minimum": 1 },
               "cost_estimate_bps": { "type": "number" },
+              "setup_actionable": { "type": "boolean" },
               "actionable": { "type": "boolean" },
               "rationale_codes": {
                 "type": "array",
                 "items": { "type": "string" }
+              },
+              "setup_gate": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["status", "pass", "rationale_codes"],
+                "properties": {
+                  "status": { "type": "string", "enum": ["AVAILABLE", "UNAVAILABLE"] },
+                  "pass": { "type": "boolean" },
+                  "rationale_codes": {
+                    "type": "array",
+                    "items": { "type": "string" }
+                  }
+                }
               },
               "cost_gate": {
                 "type": "object",
@@ -98,6 +115,23 @@
                   "slippage_bps": { "type": "number", "minimum": 0 },
                   "net_edge_bps": { "type": "number" },
                   "pass": { "type": "boolean" },
+                  "rationale_codes": {
+                    "type": "array",
+                    "items": { "type": "string" }
+                  }
+                }
+              },
+              "trade_gate": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["status", "pass", "blocked_by", "rationale_codes"],
+                "properties": {
+                  "status": { "type": "string", "enum": ["AVAILABLE", "UNAVAILABLE"] },
+                  "pass": { "type": "boolean" },
+                  "blocked_by": {
+                    "type": "string",
+                    "enum": ["NONE", "SETUP", "COST", "MULTIPLE", "UNAVAILABLE"]
+                  },
                   "rationale_codes": {
                     "type": "array",
                     "items": { "type": "string" }

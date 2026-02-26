@@ -130,6 +130,11 @@ This project follows SemVer as defined in `docs/02-versioning-and-releases.md`.
 - Kraken private-auth hardening for execution order-status lookups:
   - `execution-service` now signs the exact URL-encoded URI component (`path?query`) used on wire for private status requests.
   - Reduces risk of auth mismatch under Kraken’s encoded-URI signing enforcement updates.
+- Gate signaling clarity improvements for operator UX:
+  - `cost_gate.pass` is now preserved as economics-only pass/fail (expected edge minus fee/funding/slippage).
+  - Added explicit cue diagnostics: `setup_gate` and `trade_gate` (with `blocked_by`) to separate setup constraints from economics constraints.
+  - Trade/Analytics UI now reports setup, cost economics, and final trade readiness independently, reducing false “cost blocked” messaging when setup is the actual blocker.
+  - Cost-gate API now includes `setup_pass`, `trade_ready`, and `trade_blocked_by` for downstream consumers.
 - Strategy module implementation spec derived from SSRN 151 Trading Strategies review: `docs/18-strategy-module-implementation-spec.md`.
 - Initial documentation suite and agent governance scaffolding.
 - Rust workspace foundation with:
