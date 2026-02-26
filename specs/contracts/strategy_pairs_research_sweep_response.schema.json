@@ -1,0 +1,38 @@
+{
+  "$id": "https://cryptopairs/specs/contracts/strategy_pairs_research_sweep_response.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Strategy Pairs Research Sweep Response",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "generated_at",
+    "status",
+    "request_id",
+    "dry_run",
+    "timeframes",
+    "pair_ids",
+    "estimated_combinations",
+    "max_combinations",
+    "rationale_codes"
+  ],
+  "properties": {
+    "generated_at": { "type": "string", "format": "date-time" },
+    "status": { "type": "string", "enum": ["AVAILABLE", "UNAVAILABLE"] },
+    "request_id": { "type": "string" },
+    "dry_run": { "type": "boolean" },
+    "timeframes": {
+      "type": "array",
+      "items": { "type": "string", "enum": ["1m", "15m", "1h"] }
+    },
+    "pair_ids": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "estimated_combinations": { "type": "integer", "minimum": 0 },
+    "max_combinations": { "type": "integer", "minimum": 1 },
+    "rationale_codes": {
+      "type": "array",
+      "items": { "type": "string" }
+    }
+  }
+}

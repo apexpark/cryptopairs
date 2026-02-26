@@ -1201,6 +1201,44 @@ struct PaperTradesQuery {
 }
 
 #[derive(Debug, Deserialize)]
+struct ExpectancyQuery {
+    timeframe: String,
+    pair_id: String,
+    entry_z: Option<f64>,
+    exit_z: Option<f64>,
+    stop_z: Option<f64>,
+    z_method: Option<String>,
+    lookback_bars: Option<usize>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ReplayTradesQuery {
+    timeframe: String,
+    pair_id: String,
+    hours: Option<i64>,
+    limit: Option<usize>,
+    exit_mode: Option<String>,
+    entry_z: Option<f64>,
+    exit_z: Option<f64>,
+    stop_z: Option<f64>,
+    z_method: Option<String>,
+    lookback_bars: Option<usize>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ResearchSweepRequest {
+    timeframes: Option<Vec<String>>,
+    pair_ids: Option<Vec<String>>,
+    entry_z_grid: Option<Vec<f64>>,
+    exit_z_grid: Option<Vec<f64>>,
+    stop_z_grid: Option<Vec<f64>>,
+    z_methods: Option<Vec<String>>,
+    lookback_bars_grid: Option<Vec<usize>>,
+    max_combinations: Option<usize>,
+    dry_run: Option<bool>,
+}
+
+#[derive(Debug, Deserialize)]
 struct ReoptimizeRequest {
     timeframes: Option<Vec<String>>,
 }
@@ -2271,6 +2309,92 @@ struct PaperTradesResponse {
 }
 
 #[derive(Debug, Serialize)]
+struct ExpectancyConfig {
+    entry_z: f64,
+    exit_z: f64,
+    stop_z: f64,
+    z_method: String,
+    hedge_method: String,
+    lookback_bars: usize,
+}
+
+#[derive(Debug, Serialize)]
+struct ExpectancyMetrics {
+    trades: usize,
+    win_rate: f64,
+    avg_net_bps: f64,
+    p25_net_bps: f64,
+    p50_net_bps: f64,
+    p75_net_bps: f64,
+    avg_hold_bars: f64,
+    avg_mae_bps: f64,
+    avg_mfe_bps: f64,
+    expected_min_lot_net_bps: f64,
+    expected_min_lot_net_usd: f64,
+}
+
+#[derive(Debug, Serialize)]
+struct ExpectancyResponse {
+    timeframe: String,
+    pair_id: String,
+    generated_at: DateTime<Utc>,
+    status: String,
+    decision_state: String,
+    primary_reason_code: String,
+    config: ExpectancyConfig,
+    metrics: Option<ExpectancyMetrics>,
+    rationale_codes: Vec<String>,
+}
+
+#[derive(Debug, Serialize)]
+struct ReplayTradePathSummary {
+    mae_bps: f64,
+    mfe_bps: f64,
+    bars_underwater: usize,
+    bars_held: usize,
+}
+
+#[derive(Debug, Serialize)]
+struct ReplayTradeEntry {
+    trade_id: String,
+    entry_ts: DateTime<Utc>,
+    exit_ts: DateTime<Utc>,
+    direction: String,
+    entry_z: f64,
+    exit_z: f64,
+    net_bps: f64,
+    path: ReplayTradePathSummary,
+}
+
+#[derive(Debug, Serialize)]
+struct ReplayTradesResponse {
+    timeframe: String,
+    pair_id: String,
+    generated_at: DateTime<Utc>,
+    status: String,
+    model_bars: usize,
+    hours: i64,
+    limit: i64,
+    exit_mode: String,
+    config: ExpectancyConfig,
+    rationale_codes: Vec<String>,
+    rows: Vec<ReplayTradeEntry>,
+}
+
+#[derive(Debug, Serialize)]
+struct ResearchSweepResponse {
+    generated_at: DateTime<Utc>,
+    status: String,
+    request_id: String,
+    dry_run: bool,
+    timeframes: Vec<String>,
+    pair_ids: Vec<String>,
+    estimated_combinations: usize,
+    max_combinations: usize,
+    rationale_codes: Vec<String>,
+}
+
+#[derive(Debug, Serialize)]
 struct ReoptimizeResponse {
     generated_at: DateTime<Utc>,
     timeframes: Vec<String>,
@@ -2445,6 +2569,12 @@ async fn main() -> anyhow::Result<()> {
         .route("/v1/strategy/pairs/backtest", get(pairs_backtest))
         .route("/v1/strategy/pairs/live-z", get(pairs_live_z))
         .route("/v1/strategy/pairs/cost-gate", get(pairs_cost_gate))
+        .route("/v1/strategy/pairs/expectancy", get(pairs_expectancy))
+        .route("/v1/strategy/pairs/replay-trades", get(pairs_replay_trades))
+        .route(
+            "/v1/strategy/pairs/research-sweep",
+            post(pairs_research_sweep),
+        )
         .route("/v1/strategy/pairs/paper-trades", get(pairs_paper_trades))
         .route(
             "/v1/strategy/pairs/paper-trades/download",
@@ -3378,6 +3508,135 @@ fn parse_paper_trades_window(
     Ok((timeframe, pair_id, exit_mode, hours, limit))
 }
 
+fn parse_z_method(raw: Option<&str>) -> Result<String, ApiError> {
+    let normalized = raw
+        .map(|value| value.trim().to_ascii_uppercase())
+        .unwrap_or_else(|| "ROBUST_Z".to_string());
+    match normalized.as_str() {
+        "COINTEGRATION_Z" | "ROBUST_Z" | "VOL_NORMALIZED" | "FUNDING_ADJUSTED" => {
+            Ok(normalized)
+        }
+        _ => Err(ApiError::BadRequest(
+            "invalid z_method; expected COINTEGRATION_Z, ROBUST_Z, VOL_NORMALIZED, FUNDING_ADJUSTED"
+                .to_string(),
+        )),
+    }
+}
+
+fn parse_expectancy_config(
+    entry_z: Option<f64>,
+    exit_z: Option<f64>,
+    stop_z: Option<f64>,
+    z_method: Option<&str>,
+    lookback_bars: Option<usize>,
+    settings: &StrategySettings,
+) -> Result<ExpectancyConfig, ApiError> {
+    let entry = entry_z.unwrap_or(settings.entry_band.abs());
+    if !entry.is_finite() || !(0.2..=8.0).contains(&entry) {
+        return Err(ApiError::BadRequest(
+            "invalid entry_z; expected finite value in range [0.2, 8.0]".to_string(),
+        ));
+    }
+
+    let exit = exit_z.unwrap_or(settings.exit_band.abs());
+    if !exit.is_finite() || !(0.0..entry).contains(&exit) {
+        return Err(ApiError::BadRequest(format!(
+            "invalid exit_z; expected finite value in range [0.0, {entry})"
+        )));
+    }
+
+    let stop = stop_z.unwrap_or(settings.stop_band.abs());
+    if !stop.is_finite() || !(entry..=12.0).contains(&stop) {
+        return Err(ApiError::BadRequest(format!(
+            "invalid stop_z; expected finite value in range ({entry}, 12.0]"
+        )));
+    }
+
+    let z_method = parse_z_method(z_method)?;
+    let lookback = lookback_bars.unwrap_or(analytics_model_bars(Timeframe::OneHour));
+    let lookback = lookback.clamp(120, 10_000);
+
+    Ok(ExpectancyConfig {
+        entry_z: entry,
+        exit_z: exit,
+        stop_z: stop,
+        z_method,
+        hedge_method: "HEDGE_RATIO_OLS".to_string(),
+        lookback_bars: lookback,
+    })
+}
+
+fn parse_expectancy_query(
+    query: &ExpectancyQuery,
+    settings: &StrategySettings,
+) -> Result<(Timeframe, String, ExpectancyConfig), ApiError> {
+    let timeframe = Timeframe::parse(&query.timeframe).ok_or_else(|| {
+        ApiError::BadRequest("invalid timeframe; expected 1m, 15m, 1h".to_string())
+    })?;
+    let pair_id = query.pair_id.trim().to_string();
+    if pair_id.is_empty() {
+        return Err(ApiError::BadRequest("pair_id is required".to_string()));
+    }
+    let mut config = parse_expectancy_config(
+        query.entry_z,
+        query.exit_z,
+        query.stop_z,
+        query.z_method.as_deref(),
+        query.lookback_bars,
+        settings,
+    )?;
+    config.lookback_bars = config.lookback_bars.max(analytics_model_bars(timeframe));
+    Ok((timeframe, pair_id, config))
+}
+
+fn parse_replay_trades_query(
+    query: &ReplayTradesQuery,
+    settings: &StrategySettings,
+) -> Result<(Timeframe, String, i64, i64, String, ExpectancyConfig), ApiError> {
+    let timeframe = Timeframe::parse(&query.timeframe).ok_or_else(|| {
+        ApiError::BadRequest("invalid timeframe; expected 1m, 15m, 1h".to_string())
+    })?;
+    let pair_id = query.pair_id.trim().to_string();
+    if pair_id.is_empty() {
+        return Err(ApiError::BadRequest("pair_id is required".to_string()));
+    }
+    let hours = query.hours.unwrap_or(168).clamp(1, 175_200);
+    let limit = query.limit.unwrap_or(500).clamp(1, 20_000) as i64;
+    let exit_mode = parse_backtest_exit_mode(query.exit_mode.as_deref())?
+        .as_str()
+        .to_string();
+    let mut config = parse_expectancy_config(
+        query.entry_z,
+        query.exit_z,
+        query.stop_z,
+        query.z_method.as_deref(),
+        query.lookback_bars,
+        settings,
+    )?;
+    config.lookback_bars = config.lookback_bars.max(analytics_model_bars(timeframe));
+    Ok((timeframe, pair_id, hours, limit, exit_mode, config))
+}
+
+fn estimate_research_combinations(payload: &ResearchSweepRequest) -> usize {
+    let tf = payload.timeframes.as_ref().map_or(3, Vec::len).max(1);
+    let pairs = payload.pair_ids.as_ref().map_or(16, Vec::len).max(1);
+    let entry = payload.entry_z_grid.as_ref().map_or(5, Vec::len).max(1);
+    let exit = payload.exit_z_grid.as_ref().map_or(5, Vec::len).max(1);
+    let stop = payload.stop_z_grid.as_ref().map_or(4, Vec::len).max(1);
+    let z_methods = payload.z_methods.as_ref().map_or(4, Vec::len).max(1);
+    let lookback = payload
+        .lookback_bars_grid
+        .as_ref()
+        .map_or(4, Vec::len)
+        .max(1);
+    tf.saturating_mul(pairs)
+        .saturating_mul(entry)
+        .saturating_mul(exit)
+        .saturating_mul(stop)
+        .saturating_mul(z_methods)
+        .saturating_mul(lookback)
+}
+
 fn analytics_model_bars(timeframe: Timeframe) -> usize {
     match timeframe {
         Timeframe::OneMinute => 300,
@@ -3736,6 +3995,165 @@ async fn pairs_paper_trades_download(
     let body = serde_json::to_vec_pretty(&payload)
         .map_err(|error| ApiError::Upstream(error.to_string()))?;
     Ok((StatusCode::OK, headers, body).into_response())
+}
+
+async fn pairs_expectancy(
+    State(state): State<AppState>,
+    Query(query): Query<ExpectancyQuery>,
+) -> Result<Json<ExpectancyResponse>, ApiError> {
+    let (timeframe, pair_id, config) = parse_expectancy_query(&query, &state.settings)?;
+    info!(
+        timeframe = %timeframe.as_str(),
+        pair_id = %pair_id,
+        entry_z = config.entry_z,
+        exit_z = config.exit_z,
+        stop_z = config.stop_z,
+        z_method = %config.z_method,
+        lookback_bars = config.lookback_bars,
+        "expectancy query requested"
+    );
+
+    Ok(Json(ExpectancyResponse {
+        timeframe: timeframe.as_str().to_string(),
+        pair_id,
+        generated_at: Utc::now(),
+        status: "UNAVAILABLE".to_string(),
+        decision_state: "CAUTION".to_string(),
+        primary_reason_code: "EXPECTANCY_ENGINE_NOT_IMPLEMENTED".to_string(),
+        config,
+        metrics: None,
+        rationale_codes: vec![
+            "EXPECTANCY_ENGINE_NOT_IMPLEMENTED".to_string(),
+            "SLICE_A_CONTRACT_ONLY".to_string(),
+        ],
+    }))
+}
+
+async fn pairs_replay_trades(
+    State(state): State<AppState>,
+    Query(query): Query<ReplayTradesQuery>,
+) -> Result<Json<ReplayTradesResponse>, ApiError> {
+    let (timeframe, pair_id, hours, limit, exit_mode, config) =
+        parse_replay_trades_query(&query, &state.settings)?;
+    info!(
+        timeframe = %timeframe.as_str(),
+        pair_id = %pair_id,
+        hours,
+        limit,
+        exit_mode = %exit_mode,
+        lookback_bars = config.lookback_bars,
+        "replay-trades query requested"
+    );
+
+    Ok(Json(ReplayTradesResponse {
+        timeframe: timeframe.as_str().to_string(),
+        pair_id,
+        generated_at: Utc::now(),
+        status: "UNAVAILABLE".to_string(),
+        model_bars: config.lookback_bars,
+        hours,
+        limit,
+        exit_mode,
+        config,
+        rationale_codes: vec![
+            "REPLAY_ENGINE_NOT_IMPLEMENTED".to_string(),
+            "SLICE_A_CONTRACT_ONLY".to_string(),
+        ],
+        rows: vec![],
+    }))
+}
+
+async fn pairs_research_sweep(
+    State(state): State<AppState>,
+    Json(payload): Json<ResearchSweepRequest>,
+) -> Result<Json<ResearchSweepResponse>, ApiError> {
+    let timeframes = if let Some(values) = payload.timeframes.as_ref() {
+        let mut parsed = Vec::with_capacity(values.len());
+        for value in values {
+            let parsed_tf = Timeframe::parse(value).ok_or_else(|| {
+                ApiError::BadRequest(format!(
+                    "invalid timeframe '{}' in research sweep request",
+                    value
+                ))
+            })?;
+            parsed.push(parsed_tf.as_str().to_string());
+        }
+        if parsed.is_empty() {
+            state
+                .settings
+                .timeframes
+                .iter()
+                .map(|item| item.as_str().to_string())
+                .collect::<Vec<_>>()
+        } else {
+            parsed
+        }
+    } else {
+        state
+            .settings
+            .timeframes
+            .iter()
+            .map(|item| item.as_str().to_string())
+            .collect::<Vec<_>>()
+    };
+
+    let pair_ids = payload
+        .pair_ids
+        .as_ref()
+        .map(|values| {
+            values
+                .iter()
+                .map(|value| value.trim().to_string())
+                .filter(|value| !value.is_empty())
+                .collect::<Vec<_>>()
+        })
+        .filter(|values| !values.is_empty())
+        .unwrap_or_else(|| {
+            state
+                .settings
+                .pairs
+                .iter()
+                .map(|pair| pair.pair_id())
+                .collect()
+        });
+
+    let max_combinations = payload
+        .max_combinations
+        .unwrap_or(20_000)
+        .clamp(1, 1_000_000);
+    let estimated_combinations = estimate_research_combinations(&payload);
+    let dry_run = payload.dry_run.unwrap_or(true);
+    let request_id = format!("sweep-{}", Utc::now().format("%Y%m%dT%H%M%S%.3fZ"));
+
+    info!(
+        request_id = %request_id,
+        dry_run,
+        max_combinations,
+        estimated_combinations,
+        timeframe_count = timeframes.len(),
+        pair_count = pair_ids.len(),
+        "research sweep request accepted in contract-only mode"
+    );
+
+    let mut rationale_codes = vec![
+        "RESEARCH_SWEEP_ENGINE_NOT_IMPLEMENTED".to_string(),
+        "SLICE_A_CONTRACT_ONLY".to_string(),
+    ];
+    if estimated_combinations > max_combinations {
+        rationale_codes.push("COMBINATION_LIMIT_EXCEEDED".to_string());
+    }
+
+    Ok(Json(ResearchSweepResponse {
+        generated_at: Utc::now(),
+        status: "UNAVAILABLE".to_string(),
+        request_id,
+        dry_run,
+        timeframes,
+        pair_ids,
+        estimated_combinations,
+        max_combinations,
+        rationale_codes,
+    }))
 }
 
 async fn pairs_backtest(
@@ -4590,13 +5008,14 @@ mod tests {
         artifact_download_path, bootstrap_deviation_exceeds_threshold, bootstrap_snapshot_is_fresh,
         compute_pair_funding_bps_per_event, compute_pair_slippage_sample_bps, days_covered,
         decide_champion_transition, derive_paper_trades_from_series,
-        expected_funding_events_crossed, finalize_trade_gate, normalize_funding_rate,
-        parse_backtest_exit_mode, parse_opportunity_history_stats_timeframe,
-        parse_opportunity_history_window, parse_paper_trades_window,
-        project_continuous_funding_bps, refresh_setup_gate, resolve_artifact_path,
-        resolve_taker_fee_bps, ChampionDecision, FundingRateInputMode, MaintenanceAction,
-        OpportunityHistoryQuery, OpportunityHistoryStatsQuery, PaperTradesQuery,
-        SampledSlippageStatus, SelectedSignalRow, StrategyMarketMetricsResponse,
+        estimate_research_combinations, expected_funding_events_crossed, finalize_trade_gate,
+        normalize_funding_rate, parse_backtest_exit_mode, parse_expectancy_query,
+        parse_opportunity_history_stats_timeframe, parse_opportunity_history_window,
+        parse_paper_trades_window, parse_replay_trades_query, project_continuous_funding_bps,
+        refresh_setup_gate, resolve_artifact_path, resolve_taker_fee_bps, ChampionDecision,
+        ExpectancyQuery, FundingRateInputMode, MaintenanceAction, OpportunityHistoryQuery,
+        OpportunityHistoryStatsQuery, PaperTradesQuery, ReplayTradesQuery, ResearchSweepRequest,
+        SampledSlippageStatus, SelectedSignalRow, StrategyMarketMetricsResponse, StrategySettings,
     };
     use chrono::Utc;
     use common_types::Timeframe;
@@ -4865,6 +5284,102 @@ mod tests {
             exit_mode: None,
         };
         assert!(parse_paper_trades_window(&query).is_err());
+    }
+
+    #[test]
+    fn expectancy_query_defaults_and_bounds() {
+        let settings = StrategySettings::from_env();
+        let query = ExpectancyQuery {
+            timeframe: "1m".to_string(),
+            pair_id: "PF_TAOUSD__PF_HYPEUSD".to_string(),
+            entry_z: Some(1.8),
+            exit_z: Some(0.2),
+            stop_z: Some(3.2),
+            z_method: Some("robust_z".to_string()),
+            lookback_bars: Some(50),
+        };
+        let (timeframe, pair_id, config) =
+            parse_expectancy_query(&query, &settings).expect("parse expectancy query");
+        assert_eq!(timeframe.as_str(), "1m");
+        assert_eq!(pair_id, "PF_TAOUSD__PF_HYPEUSD");
+        assert_eq!(config.z_method, "ROBUST_Z");
+        assert!(config.lookback_bars >= 300);
+    }
+
+    #[test]
+    fn replay_trades_query_defaults_and_bounds() {
+        let settings = StrategySettings::from_env();
+        let query = ReplayTradesQuery {
+            timeframe: "1h".to_string(),
+            pair_id: "PF_TAOUSD__PF_HYPEUSD".to_string(),
+            hours: Some(200_000),
+            limit: Some(99_999),
+            exit_mode: Some("opposite_extreme".to_string()),
+            entry_z: Some(2.1),
+            exit_z: Some(0.4),
+            stop_z: Some(3.5),
+            z_method: Some("vol_normalized".to_string()),
+            lookback_bars: Some(150),
+        };
+        let (timeframe, pair_id, hours, limit, exit_mode, config) =
+            parse_replay_trades_query(&query, &settings).expect("parse replay query");
+        assert_eq!(timeframe.as_str(), "1h");
+        assert_eq!(pair_id, "PF_TAOUSD__PF_HYPEUSD");
+        assert_eq!(hours, 175_200);
+        assert_eq!(limit, 20_000);
+        assert_eq!(exit_mode, "opposite_extreme");
+        assert_eq!(config.z_method, "VOL_NORMALIZED");
+        assert!(config.lookback_bars >= 220);
+    }
+
+    #[test]
+    fn replay_trades_query_rejects_invalid_pair_id() {
+        let settings = StrategySettings::from_env();
+        let query = ReplayTradesQuery {
+            timeframe: "1h".to_string(),
+            pair_id: "   ".to_string(),
+            hours: Some(24),
+            limit: Some(100),
+            exit_mode: Some("mean_revert".to_string()),
+            entry_z: None,
+            exit_z: None,
+            stop_z: None,
+            z_method: None,
+            lookback_bars: None,
+        };
+        assert!(parse_replay_trades_query(&query, &settings).is_err());
+    }
+
+    #[test]
+    fn research_sweep_estimator_uses_defaults_and_grid_sizes() {
+        let default_payload = ResearchSweepRequest {
+            timeframes: None,
+            pair_ids: None,
+            entry_z_grid: None,
+            exit_z_grid: None,
+            stop_z_grid: None,
+            z_methods: None,
+            lookback_bars_grid: None,
+            max_combinations: None,
+            dry_run: None,
+        };
+        assert_eq!(estimate_research_combinations(&default_payload), 76_800);
+
+        let custom_payload = ResearchSweepRequest {
+            timeframes: Some(vec!["1m".to_string(), "1h".to_string()]),
+            pair_ids: Some(vec![
+                "PF_TAOUSD__PF_HYPEUSD".to_string(),
+                "PF_XRPUSD__PF_ADAUSD".to_string(),
+            ]),
+            entry_z_grid: Some(vec![1.6, 1.8, 2.0]),
+            exit_z_grid: Some(vec![0.1, 0.2]),
+            stop_z_grid: Some(vec![2.8, 3.2, 3.6]),
+            z_methods: Some(vec!["ROBUST_Z".to_string(), "VOL_NORMALIZED".to_string()]),
+            lookback_bars_grid: Some(vec![220, 440]),
+            max_combinations: Some(10_000),
+            dry_run: Some(true),
+        };
+        assert_eq!(estimate_research_combinations(&custom_payload), 288);
     }
 
     #[test]
