@@ -1,0 +1,40 @@
+{
+  "timeframe": "1h",
+  "generated_at": "2026-02-26T06:22:10Z",
+  "hours": 168,
+  "pair_id": "PF_TAOUSD__PF_HYPEUSD",
+  "exit_mode": "mean_revert",
+  "rows": [
+    {
+      "pair_id": "PF_TAOUSD__PF_HYPEUSD",
+      "timeframe": "1h",
+      "exit_mode": "mean_revert",
+      "left_instrument": "PF_TAOUSD",
+      "right_instrument": "PF_HYPEUSD",
+      "selected_variant": "ROBUST_Z",
+      "entry_ts": "2026-02-24T04:00:00Z",
+      "exit_ts": "2026-02-25T13:00:00Z",
+      "bars_held": 33,
+      "direction": "LONG_SPREAD",
+      "exit_kind": "exit",
+      "entry_z": -1.93,
+      "exit_z": 0.02,
+      "entry_index": 112,
+      "exit_index": 145,
+      "left_entry": 184.23,
+      "left_exit": 196.58,
+      "right_entry": 29.71,
+      "right_exit": 30.66,
+      "left_leg_bps": 670.53,
+      "right_leg_bps": -322.80,
+      "gross_bps": 347.73,
+      "round_trip_cost_bps": 14.93,
+      "net_bps": 332.80,
+      "equity_pre_entry": 1.0958,
+      "equity_exit": 1.2041,
+      "equity_trade_bps": 988.50,
+      "created_at": "2026-02-26T06:21:40Z",
+      "updated_at": "2026-02-26T06:21:40Z"
+    }
+  ]
+}

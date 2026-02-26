@@ -58,6 +58,7 @@ struct StrategySettings {
     lookback_bars_1m: usize,
     lookback_bars_15m: usize,
     lookback_bars_1h: usize,
+    paper_trade_persist_bars: usize,
     hold_bars_1m: usize,
     hold_bars_15m: usize,
     hold_bars_1h: usize,
@@ -233,6 +234,7 @@ impl StrategySettings {
             lookback_bars_1m: parse_env_usize("STRATEGY_LOOKBACK_BARS_1M", 520),
             lookback_bars_15m: parse_env_usize("STRATEGY_LOOKBACK_BARS_15M", 720),
             lookback_bars_1h: parse_env_usize("STRATEGY_LOOKBACK_BARS_1H", 900),
+            paper_trade_persist_bars: parse_env_usize("STRATEGY_PAPER_TRADE_PERSIST_BARS", 5000),
             hold_bars_1m: parse_env_usize("STRATEGY_HOLD_BARS_1M", 20),
             hold_bars_15m: parse_env_usize("STRATEGY_HOLD_BARS_15M", 14),
             hold_bars_1h: parse_env_usize("STRATEGY_HOLD_BARS_1H", 10),
@@ -459,6 +461,38 @@ impl StrategyRepository {
                     cost_gate_rationale_codes TEXT NOT NULL DEFAULT '',
                     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
                     PRIMARY KEY (pair_id, timeframe, evaluated_at)
+                 );
+                 CREATE TABLE IF NOT EXISTS strategy_paper_trades (
+                    pair_id TEXT NOT NULL,
+                    timeframe TEXT NOT NULL,
+                    exit_mode TEXT NOT NULL,
+                    left_instrument TEXT NOT NULL,
+                    right_instrument TEXT NOT NULL,
+                    selected_variant TEXT NOT NULL,
+                    entry_ts TIMESTAMPTZ NOT NULL,
+                    exit_ts TIMESTAMPTZ NOT NULL,
+                    bars_held INTEGER NOT NULL,
+                    direction TEXT NOT NULL,
+                    exit_kind TEXT NOT NULL,
+                    entry_z DOUBLE PRECISION NOT NULL,
+                    exit_z DOUBLE PRECISION NOT NULL,
+                    entry_index INTEGER NOT NULL,
+                    exit_index INTEGER NOT NULL,
+                    left_entry DOUBLE PRECISION NOT NULL,
+                    left_exit DOUBLE PRECISION NOT NULL,
+                    right_entry DOUBLE PRECISION NOT NULL,
+                    right_exit DOUBLE PRECISION NOT NULL,
+                    left_leg_bps DOUBLE PRECISION NOT NULL,
+                    right_leg_bps DOUBLE PRECISION NOT NULL,
+                    gross_bps DOUBLE PRECISION NOT NULL,
+                    round_trip_cost_bps DOUBLE PRECISION NOT NULL,
+                    net_bps DOUBLE PRECISION NOT NULL,
+                    equity_pre_entry DOUBLE PRECISION NOT NULL,
+                    equity_exit DOUBLE PRECISION NOT NULL,
+                    equity_trade_bps DOUBLE PRECISION NOT NULL,
+                    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                    PRIMARY KEY (pair_id, timeframe, exit_mode, entry_ts, exit_ts, exit_kind)
                  );",
             )
             .await?;
@@ -712,6 +746,142 @@ impl StrategyRepository {
                     last_evaluated_at: last,
                     days_covered: days_covered(first, last),
                 }
+            })
+            .collect())
+    }
+
+    async fn record_paper_trades(&self, rows: &[PaperTradeInsertRow]) -> anyhow::Result<u64> {
+        let mut total_written = 0u64;
+        for row in rows {
+            let written = self
+                .client
+                .execute(
+                    "INSERT INTO strategy_paper_trades
+                     (pair_id, timeframe, exit_mode, left_instrument, right_instrument, selected_variant,
+                      entry_ts, exit_ts, bars_held, direction, exit_kind, entry_z, exit_z, entry_index, exit_index,
+                      left_entry, left_exit, right_entry, right_exit, left_leg_bps, right_leg_bps, gross_bps,
+                      round_trip_cost_bps, net_bps, equity_pre_entry, equity_exit, equity_trade_bps)
+                     VALUES
+                     ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27)
+                     ON CONFLICT (pair_id, timeframe, exit_mode, entry_ts, exit_ts, exit_kind)
+                     DO UPDATE SET
+                       left_instrument = EXCLUDED.left_instrument,
+                       right_instrument = EXCLUDED.right_instrument,
+                       selected_variant = EXCLUDED.selected_variant,
+                       bars_held = EXCLUDED.bars_held,
+                       direction = EXCLUDED.direction,
+                       entry_z = EXCLUDED.entry_z,
+                       exit_z = EXCLUDED.exit_z,
+                       entry_index = EXCLUDED.entry_index,
+                       exit_index = EXCLUDED.exit_index,
+                       left_entry = EXCLUDED.left_entry,
+                       left_exit = EXCLUDED.left_exit,
+                       right_entry = EXCLUDED.right_entry,
+                       right_exit = EXCLUDED.right_exit,
+                       left_leg_bps = EXCLUDED.left_leg_bps,
+                       right_leg_bps = EXCLUDED.right_leg_bps,
+                       gross_bps = EXCLUDED.gross_bps,
+                       round_trip_cost_bps = EXCLUDED.round_trip_cost_bps,
+                       net_bps = EXCLUDED.net_bps,
+                       equity_pre_entry = EXCLUDED.equity_pre_entry,
+                       equity_exit = EXCLUDED.equity_exit,
+                       equity_trade_bps = EXCLUDED.equity_trade_bps,
+                       updated_at = NOW()",
+                    &[
+                        &row.pair_id as &(dyn ToSql + Sync),
+                        &row.timeframe,
+                        &row.exit_mode,
+                        &row.left_instrument,
+                        &row.right_instrument,
+                        &row.selected_variant,
+                        &row.entry_ts,
+                        &row.exit_ts,
+                        &row.bars_held,
+                        &row.direction,
+                        &row.exit_kind,
+                        &row.entry_z,
+                        &row.exit_z,
+                        &row.entry_index,
+                        &row.exit_index,
+                        &row.left_entry,
+                        &row.left_exit,
+                        &row.right_entry,
+                        &row.right_exit,
+                        &row.left_leg_bps,
+                        &row.right_leg_bps,
+                        &row.gross_bps,
+                        &row.round_trip_cost_bps,
+                        &row.net_bps,
+                        &row.equity_pre_entry,
+                        &row.equity_exit,
+                        &row.equity_trade_bps,
+                    ],
+                )
+                .await?;
+            total_written += written;
+        }
+        Ok(total_written)
+    }
+
+    async fn fetch_paper_trades(
+        &self,
+        timeframe: Timeframe,
+        pair_id: Option<&str>,
+        exit_mode: &str,
+        since: DateTime<Utc>,
+        limit: i64,
+    ) -> anyhow::Result<Vec<PaperTradeEntry>> {
+        let pair_filter = pair_id.map(str::to_string);
+        let rows = self
+            .client
+            .query(
+                "SELECT pair_id, timeframe, exit_mode, left_instrument, right_instrument, selected_variant,
+                        entry_ts, exit_ts, bars_held, direction, exit_kind, entry_z, exit_z, entry_index, exit_index,
+                        left_entry, left_exit, right_entry, right_exit, left_leg_bps, right_leg_bps, gross_bps,
+                        round_trip_cost_bps, net_bps, equity_pre_entry, equity_exit, equity_trade_bps,
+                        created_at, updated_at
+                 FROM strategy_paper_trades
+                 WHERE timeframe=$1
+                   AND ($2::text IS NULL OR pair_id = $2)
+                   AND exit_mode = $3
+                   AND exit_ts >= $4
+                 ORDER BY exit_ts DESC
+                 LIMIT $5",
+                &[&timeframe.as_str(), &pair_filter, &exit_mode, &since, &limit],
+            )
+            .await?;
+        Ok(rows
+            .into_iter()
+            .map(|row| PaperTradeEntry {
+                pair_id: row.get(0),
+                timeframe: row.get(1),
+                exit_mode: row.get(2),
+                left_instrument: row.get(3),
+                right_instrument: row.get(4),
+                selected_variant: row.get(5),
+                entry_ts: row.get(6),
+                exit_ts: row.get(7),
+                bars_held: row.get(8),
+                direction: row.get(9),
+                exit_kind: row.get(10),
+                entry_z: row.get(11),
+                exit_z: row.get(12),
+                entry_index: row.get(13),
+                exit_index: row.get(14),
+                left_entry: row.get(15),
+                left_exit: row.get(16),
+                right_entry: row.get(17),
+                right_exit: row.get(18),
+                left_leg_bps: row.get(19),
+                right_leg_bps: row.get(20),
+                gross_bps: row.get(21),
+                round_trip_cost_bps: row.get(22),
+                net_bps: row.get(23),
+                equity_pre_entry: row.get(24),
+                equity_exit: row.get(25),
+                equity_trade_bps: row.get(26),
+                created_at: row.get(27),
+                updated_at: row.get(28),
             })
             .collect())
     }
@@ -1003,6 +1173,15 @@ struct OpportunityHistoryQuery {
 #[derive(Debug, Deserialize)]
 struct OpportunityHistoryStatsQuery {
     timeframe: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct PaperTradesQuery {
+    timeframe: String,
+    pair_id: Option<String>,
+    hours: Option<i64>,
+    limit: Option<usize>,
+    exit_mode: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -2001,6 +2180,80 @@ struct OpportunityHistoryStatsResponse {
 }
 
 #[derive(Debug, Serialize)]
+struct PaperTradeEntry {
+    pair_id: String,
+    timeframe: String,
+    exit_mode: String,
+    left_instrument: String,
+    right_instrument: String,
+    selected_variant: String,
+    entry_ts: DateTime<Utc>,
+    exit_ts: DateTime<Utc>,
+    bars_held: i32,
+    direction: String,
+    exit_kind: String,
+    entry_z: f64,
+    exit_z: f64,
+    entry_index: i32,
+    exit_index: i32,
+    left_entry: f64,
+    left_exit: f64,
+    right_entry: f64,
+    right_exit: f64,
+    left_leg_bps: f64,
+    right_leg_bps: f64,
+    gross_bps: f64,
+    round_trip_cost_bps: f64,
+    net_bps: f64,
+    equity_pre_entry: f64,
+    equity_exit: f64,
+    equity_trade_bps: f64,
+    created_at: DateTime<Utc>,
+    updated_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone)]
+struct PaperTradeInsertRow {
+    pair_id: String,
+    timeframe: String,
+    exit_mode: String,
+    left_instrument: String,
+    right_instrument: String,
+    selected_variant: String,
+    entry_ts: DateTime<Utc>,
+    exit_ts: DateTime<Utc>,
+    bars_held: i32,
+    direction: String,
+    exit_kind: String,
+    entry_z: f64,
+    exit_z: f64,
+    entry_index: i32,
+    exit_index: i32,
+    left_entry: f64,
+    left_exit: f64,
+    right_entry: f64,
+    right_exit: f64,
+    left_leg_bps: f64,
+    right_leg_bps: f64,
+    gross_bps: f64,
+    round_trip_cost_bps: f64,
+    net_bps: f64,
+    equity_pre_entry: f64,
+    equity_exit: f64,
+    equity_trade_bps: f64,
+}
+
+#[derive(Debug, Serialize)]
+struct PaperTradesResponse {
+    timeframe: String,
+    generated_at: DateTime<Utc>,
+    hours: i64,
+    pair_id: Option<String>,
+    exit_mode: String,
+    rows: Vec<PaperTradeEntry>,
+}
+
+#[derive(Debug, Serialize)]
 struct ReoptimizeResponse {
     generated_at: DateTime<Utc>,
     timeframes: Vec<String>,
@@ -2175,6 +2428,11 @@ async fn main() -> anyhow::Result<()> {
         .route("/v1/strategy/pairs/backtest", get(pairs_backtest))
         .route("/v1/strategy/pairs/live-z", get(pairs_live_z))
         .route("/v1/strategy/pairs/cost-gate", get(pairs_cost_gate))
+        .route("/v1/strategy/pairs/paper-trades", get(pairs_paper_trades))
+        .route(
+            "/v1/strategy/pairs/paper-trades/download",
+            get(pairs_paper_trades_download),
+        )
         .route(
             "/v1/strategy/pairs/opportunity-history",
             get(pairs_opportunity_history),
@@ -2222,6 +2480,7 @@ async fn main() -> anyhow::Result<()> {
         sampled_slippage_state_path = %settings.sampled_slippage_state_path,
         sampled_slippage_persist_secs = settings.sampled_slippage_persist_secs,
         sampled_slippage_bootstrap_max_deviation_bps = settings.sampled_slippage_bootstrap_max_deviation_bps,
+        paper_trade_persist_bars = settings.paper_trade_persist_bars,
         dynamic_funding_enabled = settings.dynamic_funding_enabled,
         funding_interval_secs = settings.funding_interval_secs,
         funding_phase_offset_secs = settings.funding_phase_offset_secs,
@@ -2433,6 +2692,22 @@ fn spawn_reoptimize_worker(state: AppState) -> tokio::task::JoinHandle<()> {
                             timeframe = %timeframe.as_str(),
                             error = %error,
                             "failed to persist opportunity history row"
+                        );
+                    }
+                    let pair_spec = PairSpec {
+                        left: output.cue.left_instrument.clone(),
+                        right: output.cue.right_instrument.clone(),
+                    };
+                    if let Err(error) = compute_and_record_paper_trades_for_output(
+                        &state, &pair_spec, *timeframe, &output,
+                    )
+                    .await
+                    {
+                        tracing::warn!(
+                            pair_id = %output.cue.pair_id,
+                            timeframe = %timeframe.as_str(),
+                            error = %error,
+                            "failed to persist paper trade rows"
                         );
                     }
                 }
@@ -3067,6 +3342,25 @@ fn parse_opportunity_history_stats_timeframe(
     Ok(Some(timeframe))
 }
 
+fn parse_paper_trades_window(
+    query: &PaperTradesQuery,
+) -> Result<(Timeframe, Option<String>, String, i64, i64), ApiError> {
+    let timeframe = Timeframe::parse(&query.timeframe).ok_or_else(|| {
+        ApiError::BadRequest("invalid timeframe; expected 1m, 15m, 1h".to_string())
+    })?;
+    let hours = query.hours.unwrap_or(24).clamp(1, 720);
+    let limit = query.limit.unwrap_or(5_000).clamp(1, 20_000) as i64;
+    let pair_id = query
+        .pair_id
+        .as_ref()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty());
+    let exit_mode = parse_backtest_exit_mode(query.exit_mode.as_deref())?
+        .as_str()
+        .to_string();
+    Ok((timeframe, pair_id, exit_mode, hours, limit))
+}
+
 fn days_covered(first: Option<DateTime<Utc>>, last: Option<DateTime<Utc>>) -> f64 {
     match (first, last) {
         (Some(start), Some(end)) if end >= start => {
@@ -3075,6 +3369,209 @@ fn days_covered(first: Option<DateTime<Utc>>, last: Option<DateTime<Utc>>) -> f6
         }
         _ => 0.0,
     }
+}
+
+#[derive(Debug, Clone)]
+struct OpenPaperTrade {
+    point_index: usize,
+    ts: DateTime<Utc>,
+    z: f64,
+    equity_pre_entry: f64,
+    left_entry: f64,
+    right_entry: f64,
+}
+
+fn infer_trade_direction(entry_z: f64, exit_z: f64, entry_band: f64) -> &'static str {
+    if entry_z <= -entry_band {
+        "LONG_SPREAD"
+    } else if entry_z >= entry_band {
+        "SHORT_SPREAD"
+    } else if exit_z >= entry_z {
+        "LONG_SPREAD"
+    } else {
+        "SHORT_SPREAD"
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn derive_paper_trades_from_series(
+    pair_id: &str,
+    timeframe: Timeframe,
+    exit_mode: BacktestExitMode,
+    left_instrument: &str,
+    right_instrument: &str,
+    selected_variant: &str,
+    entry_band: f64,
+    round_trip_cost_bps: f64,
+    timestamps: &[DateTime<Utc>],
+    left_closes: &[f64],
+    right_closes: &[f64],
+    series: &strategy_service::BacktestSeries,
+) -> Vec<PaperTradeInsertRow> {
+    if series.points.is_empty()
+        || timestamps.len() != left_closes.len()
+        || timestamps.len() != right_closes.len()
+        || timestamps.len() != series.points.len() + 1
+    {
+        return vec![];
+    }
+
+    let mut open_trade: Option<OpenPaperTrade> = None;
+    let mut rows = vec![];
+    for marker in &series.markers {
+        if marker.index >= series.points.len() {
+            continue;
+        }
+        let close_index = marker.index + 1;
+        if close_index >= timestamps.len() {
+            continue;
+        }
+        let point = &series.points[marker.index];
+        let ts = timestamps[close_index];
+
+        if marker.kind == "entry" {
+            let equity_pre_entry = if marker.index == 0 {
+                1.0
+            } else {
+                series.points[marker.index - 1].equity
+            };
+            open_trade = Some(OpenPaperTrade {
+                point_index: marker.index,
+                ts,
+                z: point.z,
+                equity_pre_entry,
+                left_entry: left_closes[close_index],
+                right_entry: right_closes[close_index],
+            });
+            continue;
+        }
+
+        if marker.kind != "exit" && marker.kind != "stop" {
+            continue;
+        }
+        let Some(entry) = open_trade.take() else {
+            continue;
+        };
+        let direction = infer_trade_direction(entry.z, point.z, entry_band);
+        let left_exit = left_closes[close_index];
+        let right_exit = right_closes[close_index];
+        if entry.left_entry <= 0.0
+            || entry.right_entry <= 0.0
+            || left_exit <= 0.0
+            || right_exit <= 0.0
+        {
+            continue;
+        }
+
+        let (left_leg_bps, right_leg_bps) = if direction == "LONG_SPREAD" {
+            (
+                ((left_exit / entry.left_entry) - 1.0) * 10_000.0,
+                -((right_exit / entry.right_entry) - 1.0) * 10_000.0,
+            )
+        } else {
+            (
+                -((left_exit / entry.left_entry) - 1.0) * 10_000.0,
+                ((right_exit / entry.right_entry) - 1.0) * 10_000.0,
+            )
+        };
+        let gross_bps = left_leg_bps + right_leg_bps;
+        let net_bps = gross_bps - round_trip_cost_bps;
+        let equity_pre_entry = entry.equity_pre_entry;
+        let equity_exit = point.equity;
+        let equity_trade_bps = if equity_pre_entry > 0.0 {
+            ((equity_exit / equity_pre_entry) - 1.0) * 10_000.0
+        } else {
+            0.0
+        };
+
+        rows.push(PaperTradeInsertRow {
+            pair_id: pair_id.to_string(),
+            timeframe: timeframe.as_str().to_string(),
+            exit_mode: exit_mode.as_str().to_string(),
+            left_instrument: left_instrument.to_string(),
+            right_instrument: right_instrument.to_string(),
+            selected_variant: selected_variant.to_string(),
+            entry_ts: entry.ts,
+            exit_ts: ts,
+            bars_held: (marker.index.saturating_sub(entry.point_index)).max(1) as i32,
+            direction: direction.to_string(),
+            exit_kind: marker.kind.clone(),
+            entry_z: entry.z,
+            exit_z: point.z,
+            entry_index: entry.point_index as i32,
+            exit_index: marker.index as i32,
+            left_entry: entry.left_entry,
+            left_exit,
+            right_entry: entry.right_entry,
+            right_exit,
+            left_leg_bps,
+            right_leg_bps,
+            gross_bps,
+            round_trip_cost_bps,
+            net_bps,
+            equity_pre_entry,
+            equity_exit,
+            equity_trade_bps,
+        });
+    }
+    rows
+}
+
+async fn compute_and_record_paper_trades_for_output(
+    state: &AppState,
+    pair: &PairSpec,
+    timeframe: Timeframe,
+    output: &PairEvaluationOutput,
+) -> anyhow::Result<u64> {
+    let lookback = state
+        .settings
+        .lookback_bars(timeframe)
+        .max(state.settings.paper_trade_persist_bars) as i64;
+    let left = state
+        .repository
+        .fetch_recent_closes(&pair.left, timeframe, lookback)
+        .await?;
+    let right = state
+        .repository
+        .fetch_recent_closes(&pair.right, timeframe, lookback)
+        .await?;
+    let (timestamps, left_closes, right_closes) = align_closes(left, right);
+    if timestamps.len() < 120 {
+        return Ok(0);
+    }
+
+    let exit_mode = BacktestExitMode::MeanRevert;
+    let series = compute_backtest_series(
+        &timestamps,
+        &left_closes,
+        &right_closes,
+        BacktestConfig {
+            hedge_ratio: output.hedge_ratio,
+            entry_band: output.cue.entry_band,
+            exit_band: output.cue.exit_band,
+            stop_band: output.cue.stop_band,
+            round_trip_cost_bps: output.cue.cost_estimate_bps,
+            exit_mode,
+        },
+    );
+    let rows = derive_paper_trades_from_series(
+        &output.cue.pair_id,
+        timeframe,
+        exit_mode,
+        &output.cue.left_instrument,
+        &output.cue.right_instrument,
+        &output.cue.selected_variant,
+        output.cue.entry_band,
+        output.cue.cost_estimate_bps,
+        &timestamps,
+        &left_closes,
+        &right_closes,
+        &series,
+    );
+    if rows.is_empty() {
+        return Ok(0);
+    }
+    state.repository.record_paper_trades(&rows).await
 }
 
 async fn build_opportunity_history_response(
@@ -3153,6 +3650,63 @@ async fn pairs_opportunity_history_download(
         HeaderValue::from_str(&format!(
             "attachment; filename=\"opportunity-history-{}-{}h.json\"",
             payload.timeframe, payload.hours
+        ))
+        .map_err(|error| ApiError::Upstream(error.to_string()))?,
+    );
+    let body = serde_json::to_vec_pretty(&payload)
+        .map_err(|error| ApiError::Upstream(error.to_string()))?;
+    Ok((StatusCode::OK, headers, body).into_response())
+}
+
+async fn build_paper_trades_response(
+    state: &AppState,
+    query: &PaperTradesQuery,
+) -> Result<PaperTradesResponse, ApiError> {
+    let (timeframe, pair_id, exit_mode, hours, limit) = parse_paper_trades_window(query)?;
+    let since = Utc::now() - chrono::Duration::hours(hours);
+    let rows = state
+        .repository
+        .fetch_paper_trades(timeframe, pair_id.as_deref(), &exit_mode, since, limit)
+        .await
+        .map_err(|error| ApiError::Upstream(error.to_string()))?;
+
+    Ok(PaperTradesResponse {
+        timeframe: timeframe.as_str().to_string(),
+        generated_at: Utc::now(),
+        hours,
+        pair_id,
+        exit_mode,
+        rows,
+    })
+}
+
+async fn pairs_paper_trades(
+    State(state): State<AppState>,
+    Query(query): Query<PaperTradesQuery>,
+) -> Result<Json<PaperTradesResponse>, ApiError> {
+    Ok(Json(build_paper_trades_response(&state, &query).await?))
+}
+
+async fn pairs_paper_trades_download(
+    State(state): State<AppState>,
+    Query(query): Query<PaperTradesQuery>,
+) -> Result<Response, ApiError> {
+    let payload = build_paper_trades_response(&state, &query).await?;
+    let mut headers = HeaderMap::new();
+    headers.insert(
+        header::CONTENT_TYPE,
+        HeaderValue::from_static("application/json"),
+    );
+    let pair_suffix = payload
+        .pair_id
+        .as_ref()
+        .map(|value| format!("-{}", value.replace("__", "-")))
+        .unwrap_or_default();
+    headers.insert(
+        header::CONTENT_DISPOSITION,
+        HeaderValue::from_str(&format!(
+            "attachment; filename=\"paper-trades-{}{}-{}h.json\"",
+            payload.timeframe, pair_suffix, payload.hours
         ))
         .map_err(|error| ApiError::Upstream(error.to_string()))?,
     );
@@ -3543,9 +4097,23 @@ async fn reoptimize(
                 .await
             {
                 errors.push(ReoptError {
-                    pair_id: output.cue.pair_id,
+                    pair_id: output.cue.pair_id.clone(),
                     timeframe: timeframe.as_str().to_string(),
                     error: format!("opportunity history persist failed: {error}"),
+                });
+            }
+            let pair_spec = PairSpec {
+                left: output.cue.left_instrument.clone(),
+                right: output.cue.right_instrument.clone(),
+            };
+            if let Err(error) =
+                compute_and_record_paper_trades_for_output(&state, &pair_spec, *timeframe, &output)
+                    .await
+            {
+                errors.push(ReoptError {
+                    pair_id: output.cue.pair_id.clone(),
+                    timeframe: timeframe.as_str().to_string(),
+                    error: format!("paper trade history persist failed: {error}"),
                 });
             }
         }
@@ -3998,21 +4566,23 @@ mod tests {
     use super::{
         artifact_download_path, bootstrap_deviation_exceeds_threshold, bootstrap_snapshot_is_fresh,
         compute_pair_funding_bps_per_event, compute_pair_slippage_sample_bps, days_covered,
-        decide_champion_transition, expected_funding_events_crossed, finalize_trade_gate,
-        normalize_funding_rate, parse_backtest_exit_mode,
-        parse_opportunity_history_stats_timeframe, parse_opportunity_history_window,
+        decide_champion_transition, derive_paper_trades_from_series,
+        expected_funding_events_crossed, finalize_trade_gate, normalize_funding_rate,
+        parse_backtest_exit_mode, parse_opportunity_history_stats_timeframe,
+        parse_opportunity_history_window, parse_paper_trades_window,
         project_continuous_funding_bps, refresh_setup_gate, resolve_artifact_path,
         resolve_taker_fee_bps, ChampionDecision, FundingRateInputMode, MaintenanceAction,
-        OpportunityHistoryQuery, OpportunityHistoryStatsQuery, SampledSlippageStatus,
-        SelectedSignalRow, StrategyMarketMetricsResponse,
+        OpportunityHistoryQuery, OpportunityHistoryStatsQuery, PaperTradesQuery,
+        SampledSlippageStatus, SelectedSignalRow, StrategyMarketMetricsResponse,
     };
     use chrono::Utc;
     use common_types::Timeframe;
     use std::fs;
     use std::path::PathBuf;
     use strategy_service::{
-        CostGateDiagnostics, PairCue, PairEvaluationOutput, PortfolioHint, SetupGateDiagnostics,
-        ShadowMlDiagnostics, TradeGateDiagnostics, VariantEvaluation,
+        BacktestExitMode, BacktestMarker, BacktestPoint, BacktestSeries, CostGateDiagnostics,
+        PairCue, PairEvaluationOutput, PortfolioHint, SetupGateDiagnostics, ShadowMlDiagnostics,
+        TradeGateDiagnostics, VariantEvaluation,
     };
 
     fn output(
@@ -4242,6 +4812,99 @@ mod tests {
             timeframe: Some("5m".to_string()),
         };
         assert!(parse_opportunity_history_stats_timeframe(&invalid_query).is_err());
+    }
+
+    #[test]
+    fn paper_trades_window_defaults_and_bounds() {
+        let query = PaperTradesQuery {
+            timeframe: "1h".to_string(),
+            pair_id: Some("PF_TAOUSD__PF_HYPEUSD".to_string()),
+            hours: Some(2_000),
+            limit: Some(99_999),
+            exit_mode: Some("mean_revert".to_string()),
+        };
+        let (timeframe, pair_id, exit_mode, hours, limit) =
+            parse_paper_trades_window(&query).expect("parse paper-trades query");
+        assert_eq!(timeframe.as_str(), "1h");
+        assert_eq!(pair_id.as_deref(), Some("PF_TAOUSD__PF_HYPEUSD"));
+        assert_eq!(exit_mode, "mean_revert");
+        assert_eq!(hours, 720);
+        assert_eq!(limit, 20_000);
+    }
+
+    #[test]
+    fn paper_trades_window_rejects_invalid_timeframe() {
+        let query = PaperTradesQuery {
+            timeframe: "5m".to_string(),
+            pair_id: None,
+            hours: Some(24),
+            limit: Some(100),
+            exit_mode: None,
+        };
+        assert!(parse_paper_trades_window(&query).is_err());
+    }
+
+    #[test]
+    fn derive_paper_trades_computes_leg_and_equity_metrics() {
+        let start = Utc::now();
+        let timestamps = vec![
+            start,
+            start + chrono::Duration::hours(1),
+            start + chrono::Duration::hours(2),
+            start + chrono::Duration::hours(3),
+        ];
+        let left_closes = vec![100.0, 98.0, 102.0, 104.0];
+        let right_closes = vec![50.0, 50.0, 49.0, 48.5];
+        let series = BacktestSeries {
+            points: vec![
+                BacktestPoint {
+                    ts: timestamps[1],
+                    z: -2.0,
+                    equity: 0.999,
+                },
+                BacktestPoint {
+                    ts: timestamps[2],
+                    z: 0.5,
+                    equity: 1.02,
+                },
+                BacktestPoint {
+                    ts: timestamps[3],
+                    z: 0.4,
+                    equity: 1.02,
+                },
+            ],
+            markers: vec![
+                BacktestMarker {
+                    index: 0,
+                    kind: "entry".to_string(),
+                },
+                BacktestMarker {
+                    index: 1,
+                    kind: "exit".to_string(),
+                },
+            ],
+        };
+        let rows = derive_paper_trades_from_series(
+            "PF_LEFT__PF_RIGHT",
+            Timeframe::OneHour,
+            BacktestExitMode::MeanRevert,
+            "PF_LEFT",
+            "PF_RIGHT",
+            "ROBUST_Z",
+            1.8,
+            2.0,
+            &timestamps,
+            &left_closes,
+            &right_closes,
+            &series,
+        );
+        assert_eq!(rows.len(), 1);
+        let row = &rows[0];
+        assert_eq!(row.direction, "LONG_SPREAD");
+        assert_eq!(row.exit_kind, "exit");
+        assert!(row.gross_bps > 0.0);
+        assert!((row.net_bps - (row.gross_bps - 2.0)).abs() < 1e-9);
+        assert!(row.equity_trade_bps > 0.0);
     }
 
     #[test]
