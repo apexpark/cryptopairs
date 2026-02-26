@@ -3348,7 +3348,7 @@ fn parse_paper_trades_window(
     let timeframe = Timeframe::parse(&query.timeframe).ok_or_else(|| {
         ApiError::BadRequest("invalid timeframe; expected 1m, 15m, 1h".to_string())
     })?;
-    let hours = query.hours.unwrap_or(24).clamp(1, 720);
+    let hours = query.hours.unwrap_or(24).clamp(1, 175_200);
     let limit = query.limit.unwrap_or(5_000).clamp(1, 20_000) as i64;
     let pair_id = query
         .pair_id
@@ -3523,10 +3523,7 @@ async fn compute_and_record_paper_trades_for_output(
     timeframe: Timeframe,
     output: &PairEvaluationOutput,
 ) -> anyhow::Result<u64> {
-    let lookback = state
-        .settings
-        .lookback_bars(timeframe)
-        .max(state.settings.paper_trade_persist_bars) as i64;
+    let lookback = state.settings.paper_trade_persist_bars.max(120) as i64;
     let left = state
         .repository
         .fetch_recent_closes(&pair.left, timeframe, lookback)
@@ -4828,7 +4825,7 @@ mod tests {
         assert_eq!(timeframe.as_str(), "1h");
         assert_eq!(pair_id.as_deref(), Some("PF_TAOUSD__PF_HYPEUSD"));
         assert_eq!(exit_mode, "mean_revert");
-        assert_eq!(hours, 720);
+        assert_eq!(hours, 2_000);
         assert_eq!(limit, 20_000);
     }
 
