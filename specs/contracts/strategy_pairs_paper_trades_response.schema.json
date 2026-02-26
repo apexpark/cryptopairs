@@ -9,6 +9,7 @@
     "hours",
     "pair_id",
     "exit_mode",
+    "model_bars",
     "rows"
   ],
   "properties": {
@@ -17,6 +18,7 @@
     "hours": { "type": "integer", "minimum": 1 },
     "pair_id": { "type": ["string", "null"] },
     "exit_mode": { "type": "string", "enum": ["mean_revert", "opposite_extreme"] },
+    "model_bars": { "type": "integer", "minimum": 1 },
     "rows": {
       "type": "array",
       "items": {

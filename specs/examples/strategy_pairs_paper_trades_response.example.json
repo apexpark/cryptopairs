@@ -4,6 +4,7 @@
   "hours": 168,
   "pair_id": "PF_TAOUSD__PF_HYPEUSD",
   "exit_mode": "mean_revert",
+  "model_bars": 220,
   "rows": [
     {
       "pair_id": "PF_TAOUSD__PF_HYPEUSD",

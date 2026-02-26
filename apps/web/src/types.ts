@@ -223,6 +223,7 @@ export interface StrategyPairsPaperTradesResponse {
   hours: number;
   pair_id: string | null;
   exit_mode: BacktestExitMode;
+  model_bars: number;
   rows: Array<{
     pair_id: string;
     timeframe: Timeframe;
