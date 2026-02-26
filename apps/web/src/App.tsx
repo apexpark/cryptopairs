@@ -2826,6 +2826,9 @@ function AnalyticsPage({
         </SectionCard>
 
         <SectionCard title="Paper Trades (Persisted)" subtitle="Per-trade leg PnL breakdown">
+          {paperTrades?.model_bars ? (
+            <p className="small-text tone-info">Model window: {paperTrades.model_bars} bars</p>
+          ) : null}
           {paperTradesLoading ? <p className="small-text">Loading persisted paper trades...</p> : null}
           {paperTradesError ? <p className="small-text tone-bad">{paperTradesError}</p> : null}
           {!paperTradesLoading && !paperTradesError && paperTrades?.rows.length === 0 ? (

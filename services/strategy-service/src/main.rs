@@ -750,7 +750,23 @@ impl StrategyRepository {
             .collect())
     }
 
-    async fn record_paper_trades(&self, rows: &[PaperTradeInsertRow]) -> anyhow::Result<u64> {
+    async fn replace_paper_trades(
+        &self,
+        pair_id: &str,
+        timeframe: Timeframe,
+        exit_mode: &str,
+        rows: &[PaperTradeInsertRow],
+    ) -> anyhow::Result<u64> {
+        self.client
+            .execute(
+                "DELETE FROM strategy_paper_trades
+                 WHERE pair_id = $1
+                   AND timeframe = $2
+                   AND exit_mode = $3",
+                &[&pair_id, &timeframe.as_str(), &exit_mode],
+            )
+            .await?;
+
         let mut total_written = 0u64;
         for row in rows {
             let written = self
@@ -2250,6 +2266,7 @@ struct PaperTradesResponse {
     hours: i64,
     pair_id: Option<String>,
     exit_mode: String,
+    model_bars: usize,
     rows: Vec<PaperTradeEntry>,
 }
 
@@ -3361,6 +3378,14 @@ fn parse_paper_trades_window(
     Ok((timeframe, pair_id, exit_mode, hours, limit))
 }
 
+fn analytics_model_bars(timeframe: Timeframe) -> usize {
+    match timeframe {
+        Timeframe::OneMinute => 300,
+        Timeframe::FifteenMinutes => 280,
+        Timeframe::OneHour => 220,
+    }
+}
+
 fn days_covered(first: Option<DateTime<Utc>>, last: Option<DateTime<Utc>>) -> f64 {
     match (first, last) {
         (Some(start), Some(end)) if end >= start => {
@@ -3523,7 +3548,7 @@ async fn compute_and_record_paper_trades_for_output(
     timeframe: Timeframe,
     output: &PairEvaluationOutput,
 ) -> anyhow::Result<u64> {
-    let lookback = state.settings.paper_trade_persist_bars.max(120) as i64;
+    let lookback = analytics_model_bars(timeframe).max(120) as i64;
     let left = state
         .repository
         .fetch_recent_closes(&pair.left, timeframe, lookback)
@@ -3565,10 +3590,10 @@ async fn compute_and_record_paper_trades_for_output(
         &right_closes,
         &series,
     );
-    if rows.is_empty() {
-        return Ok(0);
-    }
-    state.repository.record_paper_trades(&rows).await
+    state
+        .repository
+        .replace_paper_trades(&output.cue.pair_id, timeframe, exit_mode.as_str(), &rows)
+        .await
 }
 
 async fn build_opportunity_history_response(
@@ -3673,6 +3698,7 @@ async fn build_paper_trades_response(
         hours,
         pair_id,
         exit_mode,
+        model_bars: analytics_model_bars(timeframe),
         rows,
     })
 }
@@ -4839,6 +4865,13 @@ mod tests {
             exit_mode: None,
         };
         assert!(parse_paper_trades_window(&query).is_err());
+    }
+
+    #[test]
+    fn analytics_model_bars_match_ui_defaults() {
+        assert_eq!(super::analytics_model_bars(Timeframe::OneMinute), 300);
+        assert_eq!(super::analytics_model_bars(Timeframe::FifteenMinutes), 280);
+        assert_eq!(super::analytics_model_bars(Timeframe::OneHour), 220);
     }
 
     #[test]
