@@ -1,0 +1,87 @@
+{
+  "$id": "https://cryptopairs/specs/contracts/strategy_pairs_replay_trades_response.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Strategy Pairs Replay Trades Response",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "timeframe",
+    "pair_id",
+    "generated_at",
+    "status",
+    "model_bars",
+    "hours",
+    "limit",
+    "exit_mode",
+    "config",
+    "rationale_codes",
+    "rows"
+  ],
+  "properties": {
+    "timeframe": { "type": "string", "enum": ["1m", "15m", "1h"] },
+    "pair_id": { "type": "string" },
+    "generated_at": { "type": "string", "format": "date-time" },
+    "status": { "type": "string", "enum": ["AVAILABLE", "UNAVAILABLE"] },
+    "model_bars": { "type": "integer", "minimum": 1 },
+    "hours": { "type": "integer", "minimum": 1 },
+    "limit": { "type": "integer", "minimum": 1 },
+    "exit_mode": { "type": "string", "enum": ["mean_revert", "opposite_extreme"] },
+    "config": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["entry_z", "exit_z", "stop_z", "z_method", "hedge_method", "lookback_bars"],
+      "properties": {
+        "entry_z": { "type": "number", "exclusiveMinimum": 0 },
+        "exit_z": { "type": "number", "minimum": 0 },
+        "stop_z": { "type": "number", "exclusiveMinimum": 0 },
+        "z_method": {
+          "type": "string",
+          "enum": ["COINTEGRATION_Z", "ROBUST_Z", "VOL_NORMALIZED", "FUNDING_ADJUSTED"]
+        },
+        "hedge_method": { "type": "string" },
+        "lookback_bars": { "type": "integer", "minimum": 1 }
+      }
+    },
+    "rationale_codes": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "rows": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "trade_id",
+          "entry_ts",
+          "exit_ts",
+          "direction",
+          "entry_z",
+          "exit_z",
+          "net_bps",
+          "path"
+        ],
+        "properties": {
+          "trade_id": { "type": "string" },
+          "entry_ts": { "type": "string", "format": "date-time" },
+          "exit_ts": { "type": "string", "format": "date-time" },
+          "direction": { "type": "string", "enum": ["LONG_SPREAD", "SHORT_SPREAD"] },
+          "entry_z": { "type": "number" },
+          "exit_z": { "type": "number" },
+          "net_bps": { "type": "number" },
+          "path": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["mae_bps", "mfe_bps", "bars_underwater", "bars_held"],
+            "properties": {
+              "mae_bps": { "type": "number" },
+              "mfe_bps": { "type": "number" },
+              "bars_underwater": { "type": "integer", "minimum": 0 },
+              "bars_held": { "type": "integer", "minimum": 1 }
+            }
+          }
+        }
+      }
+    }
+  }
+}

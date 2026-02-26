@@ -67,6 +67,18 @@ This project follows SemVer as defined in `docs/02-versioning-and-releases.md`.
     - `specs/examples/strategy_pairs_paper_trades_response.example.json`
   - Paper-trade persistence now replaces rows per `(pair_id, timeframe, exit_mode)` scope on each recompute to prevent stale historical trades from surviving across model-window changes.
   - `GET /v1/strategy/pairs/paper-trades` now returns `model_bars` so UI can disclose the active simulation window used for persisted trade generation.
+- Strategy research groundwork contracts and endpoints (slice A):
+  - Added APIs (contract-only, fail-closed placeholders):
+    - `GET /v1/strategy/pairs/expectancy`
+    - `GET /v1/strategy/pairs/replay-trades`
+    - `POST /v1/strategy/pairs/research-sweep`
+  - Added contracts/examples:
+    - `specs/contracts/strategy_pairs_expectancy_response.schema.json`
+    - `specs/examples/strategy_pairs_expectancy_response.example.json`
+    - `specs/contracts/strategy_pairs_replay_trades_response.schema.json`
+    - `specs/examples/strategy_pairs_replay_trades_response.example.json`
+    - `specs/contracts/strategy_pairs_research_sweep_response.schema.json`
+    - `specs/examples/strategy_pairs_research_sweep_response.example.json`
 - UI now provides 24h/72h/7d opportunity-history downloads (PASS/all) plus retention meter (days covered).
 - Automated Daily Maintenance panel moved to dedicated `Maintenance` page in side navigation (under `Data Quality`).
 - Maintenance cron installer scripts now support explicit `CRON_TZ` timezone configuration (`--timezone`).

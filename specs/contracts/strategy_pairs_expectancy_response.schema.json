@@ -1,0 +1,81 @@
+{
+  "$id": "https://cryptopairs/specs/contracts/strategy_pairs_expectancy_response.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Strategy Pairs Expectancy Response",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "timeframe",
+    "pair_id",
+    "generated_at",
+    "status",
+    "decision_state",
+    "primary_reason_code",
+    "config",
+    "metrics",
+    "rationale_codes"
+  ],
+  "properties": {
+    "timeframe": { "type": "string", "enum": ["1m", "15m", "1h"] },
+    "pair_id": { "type": "string" },
+    "generated_at": { "type": "string", "format": "date-time" },
+    "status": { "type": "string", "enum": ["AVAILABLE", "UNAVAILABLE"] },
+    "decision_state": { "type": "string", "enum": ["TRADE_READY", "CAUTION", "BLOCKED"] },
+    "primary_reason_code": { "type": "string" },
+    "config": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["entry_z", "exit_z", "stop_z", "z_method", "hedge_method", "lookback_bars"],
+      "properties": {
+        "entry_z": { "type": "number", "exclusiveMinimum": 0 },
+        "exit_z": { "type": "number", "minimum": 0 },
+        "stop_z": { "type": "number", "exclusiveMinimum": 0 },
+        "z_method": {
+          "type": "string",
+          "enum": ["COINTEGRATION_Z", "ROBUST_Z", "VOL_NORMALIZED", "FUNDING_ADJUSTED"]
+        },
+        "hedge_method": { "type": "string" },
+        "lookback_bars": { "type": "integer", "minimum": 1 }
+      }
+    },
+    "metrics": {
+      "anyOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "trades",
+            "win_rate",
+            "avg_net_bps",
+            "p25_net_bps",
+            "p50_net_bps",
+            "p75_net_bps",
+            "avg_hold_bars",
+            "avg_mae_bps",
+            "avg_mfe_bps",
+            "expected_min_lot_net_bps",
+            "expected_min_lot_net_usd"
+          ],
+          "properties": {
+            "trades": { "type": "integer", "minimum": 0 },
+            "win_rate": { "type": "number", "minimum": 0, "maximum": 1 },
+            "avg_net_bps": { "type": "number" },
+            "p25_net_bps": { "type": "number" },
+            "p50_net_bps": { "type": "number" },
+            "p75_net_bps": { "type": "number" },
+            "avg_hold_bars": { "type": "number", "minimum": 0 },
+            "avg_mae_bps": { "type": "number" },
+            "avg_mfe_bps": { "type": "number" },
+            "expected_min_lot_net_bps": { "type": "number" },
+            "expected_min_lot_net_usd": { "type": "number" }
+          }
+        },
+        { "type": "null" }
+      ]
+    },
+    "rationale_codes": {
+      "type": "array",
+      "items": { "type": "string" }
+    }
+  }
+}

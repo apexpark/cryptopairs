@@ -1,0 +1,21 @@
+{
+  "timeframe": "1h",
+  "pair_id": "PF_TAOUSD__PF_HYPEUSD",
+  "generated_at": "2026-02-27T00:00:00Z",
+  "status": "UNAVAILABLE",
+  "decision_state": "CAUTION",
+  "primary_reason_code": "EXPECTANCY_ENGINE_NOT_IMPLEMENTED",
+  "config": {
+    "entry_z": 1.8,
+    "exit_z": 0.2,
+    "stop_z": 3.2,
+    "z_method": "ROBUST_Z",
+    "hedge_method": "HEDGE_RATIO_OLS",
+    "lookback_bars": 220
+  },
+  "metrics": null,
+  "rationale_codes": [
+    "EXPECTANCY_ENGINE_NOT_IMPLEMENTED",
+    "SLICE_A_CONTRACT_ONLY"
+  ]
+}
