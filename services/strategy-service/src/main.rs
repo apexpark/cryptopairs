@@ -2924,6 +2924,7 @@ async fn pairs_cues(
                 }
             }
         }
+        harmonize_gate_with_actionability(&mut cue);
 
         cues.push(CueWithDiagnostics {
             cue,
@@ -2940,7 +2941,11 @@ async fn pairs_cues(
         actionable_pairs: cues.iter().filter(|item| item.cue.actionable).count(),
         cost_gate_pass_pairs: cues
             .iter()
-            .filter(|item| item.cue.cost_gate.status == "AVAILABLE" && item.cue.cost_gate.pass)
+            .filter(|item| {
+                item.cue.actionable
+                    && item.cue.cost_gate.status == "AVAILABLE"
+                    && item.cue.cost_gate.pass
+            })
             .count(),
         shadow_disagreement_pairs: cues
             .iter()
@@ -3743,6 +3748,7 @@ async fn evaluate_pair_for_timeframe(
             output.cue.cost_estimate_bps =
                 (cost_gate.fee_bps + cost_gate.funding_bps + cost_gate.slippage_bps).max(0.0);
             output.cue.cost_gate = cost_gate;
+            harmonize_gate_with_actionability(&mut output.cue);
         } else {
             output.cue.actionable = false;
             if let Some(reason_code) = sampled.status.rationale_code() {
@@ -3770,6 +3776,23 @@ async fn evaluate_pair_for_timeframe(
     }
 
     Ok(output)
+}
+
+fn harmonize_gate_with_actionability(cue: &mut PairCue) {
+    if cue.actionable || cue.cost_gate.status != "AVAILABLE" {
+        return;
+    }
+    cue.cost_gate.pass = false;
+    if !cue
+        .cost_gate
+        .rationale_codes
+        .iter()
+        .any(|code| code == "NON_ACTIONABLE_CUE")
+    {
+        cue.cost_gate
+            .rationale_codes
+            .push("NON_ACTIONABLE_CUE".to_string());
+    }
 }
 
 async fn evaluate_timeframe_outputs(
@@ -3938,12 +3961,13 @@ mod tests {
     use super::{
         artifact_download_path, bootstrap_deviation_exceeds_threshold, bootstrap_snapshot_is_fresh,
         compute_pair_funding_bps_per_event, compute_pair_slippage_sample_bps, days_covered,
-        decide_champion_transition, expected_funding_events_crossed, normalize_funding_rate,
-        parse_backtest_exit_mode, parse_opportunity_history_stats_timeframe,
-        parse_opportunity_history_window, project_continuous_funding_bps, resolve_artifact_path,
-        resolve_taker_fee_bps, ChampionDecision, FundingRateInputMode, MaintenanceAction,
-        OpportunityHistoryQuery, OpportunityHistoryStatsQuery, SampledSlippageStatus,
-        SelectedSignalRow, StrategyMarketMetricsResponse,
+        decide_champion_transition, expected_funding_events_crossed,
+        harmonize_gate_with_actionability, normalize_funding_rate, parse_backtest_exit_mode,
+        parse_opportunity_history_stats_timeframe, parse_opportunity_history_window,
+        project_continuous_funding_bps, resolve_artifact_path, resolve_taker_fee_bps,
+        ChampionDecision, FundingRateInputMode, MaintenanceAction, OpportunityHistoryQuery,
+        OpportunityHistoryStatsQuery, SampledSlippageStatus, SelectedSignalRow,
+        StrategyMarketMetricsResponse,
     };
     use chrono::Utc;
     use common_types::Timeframe;
@@ -4411,9 +4435,7 @@ mod tests {
         assert!(
             (normalize_funding_rate(0.025, FundingRateInputMode::Percent) - 0.00025).abs() < 1e-12
         );
-        assert!(
-            (normalize_funding_rate(2.5, FundingRateInputMode::Bps) - 0.00025).abs() < 1e-12
-        );
+        assert!((normalize_funding_rate(2.5, FundingRateInputMode::Bps) - 0.00025).abs() < 1e-12);
         assert!(
             (normalize_funding_rate(0.025, FundingRateInputMode::Auto) - 0.00025).abs() < 1e-12
         );
@@ -4424,8 +4446,7 @@ mod tests {
             (normalize_funding_rate(0.009, FundingRateInputMode::Auto) - 0.00009).abs() < 1e-12
         );
         assert!(
-            (normalize_funding_rate(-0.009, FundingRateInputMode::Auto) - (-0.00009)).abs()
-                < 1e-12
+            (normalize_funding_rate(-0.009, FundingRateInputMode::Auto) - (-0.00009)).abs() < 1e-12
         );
         assert!(
             (normalize_funding_rate(0.716, FundingRateInputMode::Auto) - 0.0000716).abs() < 1e-12
@@ -4468,5 +4489,52 @@ mod tests {
     fn continuous_funding_projection_respects_funding_interval() {
         let projected = project_continuous_funding_bps(0.3, 120, Timeframe::OneMinute, 1800);
         assert!((projected - 1.2).abs() < 1e-9);
+    }
+
+    #[test]
+    fn harmonize_gate_blocks_non_actionable_available_cues() {
+        let mut cue = PairCue {
+            pair_id: "PF_XBTUSD__PF_ETHUSD".to_string(),
+            left_instrument: "PF_XBTUSD".to_string(),
+            right_instrument: "PF_ETHUSD".to_string(),
+            timeframe: "1h".to_string(),
+            regime: "CALM".to_string(),
+            selected_variant: "COINTEGRATION_Z".to_string(),
+            direction_hint: "NONE".to_string(),
+            spread_z: 0.0,
+            opportunity_score: 1.0,
+            confidence_band: "HIGH".to_string(),
+            entry_band: 1.8,
+            exit_band: 0.6,
+            stop_band: 3.2,
+            expected_hold_bars: 12,
+            cost_estimate_bps: 0.0,
+            actionable: false,
+            rationale_codes: vec![],
+            cost_gate: CostGateDiagnostics {
+                status: "AVAILABLE".to_string(),
+                expected_edge_bps: 5.0,
+                fee_bps: 1.2,
+                funding_model: "DYNAMIC".to_string(),
+                funding_events: 12,
+                funding_bps_per_event: 0.2,
+                funding_bps: 2.4,
+                slippage_bps: 0.5,
+                net_edge_bps: 0.9,
+                pass: true,
+                rationale_codes: vec![],
+            },
+            portfolio_hint: PortfolioHint::unavailable(vec![]),
+            shadow_ml: ShadowMlDiagnostics::unavailable(vec![]),
+            evaluated_at: Utc::now(),
+        };
+
+        harmonize_gate_with_actionability(&mut cue);
+        assert!(!cue.cost_gate.pass);
+        assert!(cue
+            .cost_gate
+            .rationale_codes
+            .iter()
+            .any(|code| code == "NON_ACTIONABLE_CUE"));
     }
 }
