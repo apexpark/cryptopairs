@@ -79,6 +79,27 @@ python3 tools/scripts/fail_closed_readiness_check.py \
   --output-json artifacts/fail_closed_readiness_report.json
 ```
 
+## Signal vs Gate PnL Audit
+
+Audit chart signal markers against gate state at entry time, with leg-level spread PnL attribution:
+
+```bash
+python3 tools/scripts/signal_gate_pnl_audit.py \
+  --timeframe 1m \
+  --hours 24 \
+  --bars 600 \
+  --output-json artifacts/analysis/signal_gate_pnl_audit_1m.json
+```
+
+Optional: scope to explicit pairs.
+
+```bash
+python3 tools/scripts/signal_gate_pnl_audit.py \
+  --timeframe 1m \
+  --pairs "PF_TAOUSD__PF_HYPEUSD,PF_XRPUSD__PF_ADAUSD" \
+  --output-json artifacts/analysis/signal_gate_pnl_audit_pairs.json
+```
+
 ## Strategy Tuning Reporter
 
 Generate a deterministic tuning report with policy checks and a decision:
