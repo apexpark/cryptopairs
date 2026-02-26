@@ -83,6 +83,8 @@ impl DirectionHint {
     }
 }
 
+const STOP_RETRACE_FRACTION: f64 = 0.25;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 pub enum FundingModel {
     Static,
@@ -894,11 +896,23 @@ pub fn evaluate_pair(input: PairEvaluationInput) -> anyhow::Result<PairEvaluatio
         .ok_or_else(|| anyhow::anyhow!("no signal variants evaluated"))?;
 
     let mut cue_rationale = selected.rationale_codes.clone();
+    let selected_variant = SignalVariant::parse(&selected.variant);
+    let selected_scores = match selected_variant {
+        Some(SignalVariant::CointegrationZ) => z_scores.as_slice(),
+        Some(SignalVariant::RobustZ) => robust_z_scores.as_slice(),
+        Some(SignalVariant::VolNormalized) => vol_norm_scores.as_slice(),
+        Some(SignalVariant::FundingAdjusted) => funding_scores.as_slice(),
+        None => z_scores.as_slice(),
+    };
     let unbounded_direction_hint = to_direction_hint(selected.score_last, input.entry_band);
-    let mut direction_hint =
-        to_direction_hint_with_stop(selected.score_last, input.entry_band, input.stop_band);
+    let (mut direction_hint, entry_gate_block_reason) = to_direction_hint_with_stop_retrace(
+        selected_scores,
+        input.entry_band,
+        input.stop_band,
+        STOP_RETRACE_FRACTION,
+    );
     if unbounded_direction_hint != DirectionHint::None && direction_hint == DirectionHint::None {
-        cue_rationale.push("AT_OR_BEYOND_STOP_BAND".to_string());
+        cue_rationale.push(entry_gate_block_reason.to_string());
     }
     let mut actionable = direction_hint != DirectionHint::None && selected.opportunity_score > 0.0;
 
@@ -996,6 +1010,12 @@ pub fn compute_backtest_series(
     let mut position: i8 = 0;
     let mut equity = 1.0;
     let round_trip_cost = (config.round_trip_cost_bps.max(0.0) / 20_000.0).clamp(0.0, 1.0);
+    let stop_abs = config.stop_band.abs();
+    let entry_abs = config.entry_band.abs().max(0.0);
+    let stop_to_entry_span = (stop_abs - entry_abs).max(0.0);
+    let rearm_level = stop_abs - stop_to_entry_span * STOP_RETRACE_FRACTION;
+    let mut short_entry_cooldown_active = false;
+    let mut long_entry_cooldown_active = false;
 
     for idx in 1..timestamps.len() {
         let z = (spread[idx] - spread_mean) / spread_std;
@@ -1003,25 +1023,43 @@ pub fn compute_backtest_series(
         let right_return = (right_closes[idx] / right_closes[idx - 1]) - 1.0;
         let spread_return = left_return - config.hedge_ratio * right_return;
         let position_at_bar_start = position;
+        if stop_abs > 0.0 {
+            if z >= stop_abs {
+                short_entry_cooldown_active = true;
+            }
+            if z <= -stop_abs {
+                long_entry_cooldown_active = true;
+            }
+            if short_entry_cooldown_active && z <= rearm_level {
+                short_entry_cooldown_active = false;
+            }
+            if long_entry_cooldown_active && z >= -rearm_level {
+                long_entry_cooldown_active = false;
+            }
+        }
 
         if position_at_bar_start == 0 {
             let at_or_beyond_stop = z.abs() >= config.stop_band.abs();
             if at_or_beyond_stop {
                 // Fail closed: never open new entries at/through the stop level.
             } else if z <= -config.entry_band {
-                position = 1;
-                equity *= 1.0 - round_trip_cost;
-                markers.push(BacktestMarker {
-                    index: points.len(),
-                    kind: "entry".to_string(),
-                });
+                if !long_entry_cooldown_active {
+                    position = 1;
+                    equity *= 1.0 - round_trip_cost;
+                    markers.push(BacktestMarker {
+                        index: points.len(),
+                        kind: "entry".to_string(),
+                    });
+                }
             } else if z >= config.entry_band {
-                position = -1;
-                equity *= 1.0 - round_trip_cost;
-                markers.push(BacktestMarker {
-                    index: points.len(),
-                    kind: "entry".to_string(),
-                });
+                if !short_entry_cooldown_active {
+                    position = -1;
+                    equity *= 1.0 - round_trip_cost;
+                    markers.push(BacktestMarker {
+                        index: points.len(),
+                        kind: "entry".to_string(),
+                    });
+                }
             }
         } else {
             // Only evaluate close conditions for positions that were open
@@ -1087,6 +1125,68 @@ fn to_direction_hint_with_stop(score: f64, entry_band: f64, stop_band: f64) -> D
         return DirectionHint::None;
     }
     to_direction_hint(score, entry_band)
+}
+
+fn to_direction_hint_with_stop_retrace(
+    scores: &[f64],
+    entry_band: f64,
+    stop_band: f64,
+    retrace_fraction: f64,
+) -> (DirectionHint, &'static str) {
+    let Some(score) = scores.last().copied() else {
+        return (DirectionHint::None, "AT_OR_BEYOND_STOP_BAND");
+    };
+    if !score.is_finite() {
+        return (DirectionHint::None, "AT_OR_BEYOND_STOP_BAND");
+    }
+
+    let unbounded = to_direction_hint(score, entry_band);
+    if unbounded == DirectionHint::None {
+        return (DirectionHint::None, "AT_OR_BEYOND_STOP_BAND");
+    }
+    let candidate = to_direction_hint_with_stop(score, entry_band, stop_band);
+    if candidate == DirectionHint::None {
+        return (DirectionHint::None, "AT_OR_BEYOND_STOP_BAND");
+    }
+
+    let stop = stop_band.abs();
+    if !stop.is_finite() || stop <= 0.0 {
+        return (candidate, "AT_OR_BEYOND_STOP_BAND");
+    }
+
+    let entry = entry_band.abs().max(0.0);
+    let retrace = retrace_fraction.clamp(0.0, 1.0);
+    let stop_to_entry_span = (stop - entry).max(0.0);
+    let rearm_level = stop - stop_to_entry_span * retrace;
+
+    let mut short_cooldown_active = false;
+    let mut long_cooldown_active = false;
+    for sample in scores {
+        if !sample.is_finite() {
+            continue;
+        }
+        if *sample >= stop {
+            short_cooldown_active = true;
+        }
+        if *sample <= -stop {
+            long_cooldown_active = true;
+        }
+        if short_cooldown_active && *sample <= rearm_level {
+            short_cooldown_active = false;
+        }
+        if long_cooldown_active && *sample >= -rearm_level {
+            long_cooldown_active = false;
+        }
+    }
+
+    if candidate == DirectionHint::ShortSpread && short_cooldown_active {
+        return (DirectionHint::None, "RETRACE_COOLDOWN_ACTIVE");
+    }
+    if candidate == DirectionHint::LongSpread && long_cooldown_active {
+        return (DirectionHint::None, "RETRACE_COOLDOWN_ACTIVE");
+    }
+
+    (candidate, "AT_OR_BEYOND_STOP_BAND")
 }
 
 fn confidence_band(
@@ -1400,10 +1500,11 @@ fn median(values: &[f64]) -> f64 {
 mod tests {
     use super::{
         annotate_with_shadow_model, build_portfolio_plan, compute_backtest_series,
-        evaluate_cost_gate, evaluate_pair, to_direction_hint_with_stop, train_shadow_model,
-        BacktestConfig, BacktestExitMode, CostGateDiagnostics, CostGateInput, DirectionHint,
-        FundingModel, PairCue, PairEvaluationInput, PortfolioHint, Regime, ShadowMlDiagnostics,
-        ShadowModelTrainingRow, SignalVariant,
+        evaluate_cost_gate, evaluate_pair, to_direction_hint_with_stop,
+        to_direction_hint_with_stop_retrace, train_shadow_model, BacktestConfig, BacktestExitMode,
+        CostGateDiagnostics, CostGateInput, DirectionHint, FundingModel, PairCue,
+        PairEvaluationInput, PortfolioHint, Regime, ShadowMlDiagnostics, ShadowModelTrainingRow,
+        SignalVariant,
     };
     use chrono::{Duration, Utc};
     use common_types::Timeframe;
@@ -1819,6 +1920,87 @@ mod tests {
         assert_eq!(
             to_direction_hint_with_stop(4.0, 1.8, 3.2),
             DirectionHint::None
+        );
+    }
+
+    #[test]
+    fn direction_hint_requires_positive_side_retrace_after_stop_breach() {
+        let blocked_scores = vec![0.2, 1.9, 3.25, 3.05, 2.95];
+        let (hint, reason) = to_direction_hint_with_stop_retrace(&blocked_scores, 1.8, 3.2, 0.25);
+        assert_eq!(hint, DirectionHint::None);
+        assert_eq!(reason, "RETRACE_COOLDOWN_ACTIVE");
+
+        let rearmed_scores = vec![0.2, 1.9, 3.25, 3.05, 2.84];
+        let (hint, reason) = to_direction_hint_with_stop_retrace(&rearmed_scores, 1.8, 3.2, 0.25);
+        assert_eq!(hint, DirectionHint::ShortSpread);
+        assert_eq!(reason, "AT_OR_BEYOND_STOP_BAND");
+    }
+
+    #[test]
+    fn direction_hint_requires_negative_side_retrace_after_stop_breach() {
+        let blocked_scores = vec![-0.3, -2.1, -3.22, -3.0, -2.9];
+        let (hint, reason) = to_direction_hint_with_stop_retrace(&blocked_scores, 1.8, 3.2, 0.25);
+        assert_eq!(hint, DirectionHint::None);
+        assert_eq!(reason, "RETRACE_COOLDOWN_ACTIVE");
+
+        let rearmed_scores = vec![-0.3, -2.1, -3.22, -3.0, -2.8];
+        let (hint, reason) = to_direction_hint_with_stop_retrace(&rearmed_scores, 1.8, 3.2, 0.25);
+        assert_eq!(hint, DirectionHint::LongSpread);
+        assert_eq!(reason, "AT_OR_BEYOND_STOP_BAND");
+    }
+
+    #[test]
+    fn backtest_retrace_cooldown_blocks_reentry_until_rearm_level() {
+        let spread = vec![
+            -0.5, 0.3, 1.1, 1.3, 1.25, 1.18, 1.15, 0.9, 0.2, -0.4, -1.0, -1.2, -1.0, -0.6, -0.1,
+        ];
+        let (timestamps, left, right) = synthetic_spread_path(&spread);
+        let entry_band = 1.0;
+        let stop_band = 1.2;
+        let rearm_level = stop_band - (stop_band - entry_band) * 0.25;
+
+        let series = compute_backtest_series(
+            &timestamps,
+            &left,
+            &right,
+            BacktestConfig {
+                hedge_ratio: 1.0,
+                entry_band,
+                exit_band: 0.3,
+                stop_band,
+                round_trip_cost_bps: 0.0,
+                exit_mode: BacktestExitMode::MeanRevert,
+            },
+        );
+
+        let stop_marker = series
+            .markers
+            .iter()
+            .find(|marker| marker.kind == "stop")
+            .expect("expected at least one stop marker");
+        let stop_z = series.points[stop_marker.index].z;
+        assert!(stop_z.abs() >= stop_band);
+
+        let rearm_idx = series
+            .points
+            .iter()
+            .enumerate()
+            .skip(stop_marker.index + 1)
+            .find_map(|(idx, point)| {
+                if stop_z > 0.0 {
+                    (point.z <= rearm_level).then_some(idx)
+                } else {
+                    (point.z >= -rearm_level).then_some(idx)
+                }
+            })
+            .expect("expected retrace through rearm threshold");
+
+        let entry_before_rearm = series.markers.iter().any(|marker| {
+            marker.kind == "entry" && marker.index > stop_marker.index && marker.index < rearm_idx
+        });
+        assert!(
+            !entry_before_rearm,
+            "entry marker occurred before retrace cooldown rearm"
         );
     }
 

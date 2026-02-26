@@ -57,4 +57,27 @@ describe("LineChart current value label", () => {
     expect(Number.isFinite(latestY)).toBe(true);
     expect(Math.abs(latestY - previousY)).toBeGreaterThan(0.5);
   });
+
+  it("keeps mirrored left/right axis labels aligned on the same y coordinates", () => {
+    const { container } = render(
+      <LineChart
+        values={[0.2, 1.5, -0.6, 0.9, -2.2, -3.1, -2.5]}
+        thresholds={[
+          { value: 3.2, tone: "bad" },
+          { value: 1.8, tone: "warn" },
+          { value: 0, tone: "info" },
+          { value: -1.8, tone: "warn" },
+          { value: -3.2, tone: "bad" },
+        ]}
+        showThresholdLabels
+        mirrorThresholdLabels
+      />
+    );
+
+    const labels320 = Array.from(container.querySelectorAll("text")).filter(
+      (node) => node.textContent === "3.20"
+    );
+    expect(labels320).toHaveLength(2);
+    expect(labels320[0]?.getAttribute("y")).toEqual(labels320[1]?.getAttribute("y"));
+  });
 });

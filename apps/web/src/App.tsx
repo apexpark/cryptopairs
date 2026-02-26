@@ -523,6 +523,8 @@ function describeRationaleCode(code: string): string {
     BELOW_ENTRY_BAND: "Spread has not stretched far enough to trigger an entry.",
     AT_OR_BEYOND_STOP_BAND:
       "Spread is at or beyond the configured stop band, so new entries are blocked.",
+    RETRACE_COOLDOWN_ACTIVE:
+      "A recent stop breach triggered cooldown; entry re-arms only after 25% retrace from stop toward entry.",
     COST_GATE_BLOCKED: "Expected edge does not clear estimated fees, funding, and slippage.",
     NEGATIVE_EXPECTED_EDGE: "Expected edge is negative after cost adjustments.",
     NEGATIVE_EDGE: "Recent edge estimate is negative for this setup.",
@@ -577,6 +579,12 @@ function explainPairActionability(
       `Current spread z-score is ${cue.spread_z.toFixed(2)}, at or beyond the stop level ±${cue.stop_band.toFixed(2)}; entries are disabled until it moves back inside stop limits.`
     );
   }
+  if (mergedReasons.includes("RETRACE_COOLDOWN_ACTIVE")) {
+    const rearmLevel = cue.stop_band - (cue.stop_band - cue.entry_band) * 0.25;
+    details.push(
+      `Recent stop breach detected. New entries stay blocked until z-score retraces to ±${rearmLevel.toFixed(2)} (25% back from stop toward entry).`
+    );
+  }
   if (mergedReasons.includes("COST_GATE_BLOCKED") || !cue.cost_gate.pass) {
     details.push(
       `Net edge is ${formatSigned(cue.cost_gate.net_edge_bps)}bp after costs, so the cost gate remains blocked.`
@@ -614,6 +622,14 @@ function explainPairActionability(
   if (mergedReasons.includes("AT_OR_BEYOND_STOP_BAND")) {
     return {
       headline: "Blocked for now: spread is at/through stop level, so entry is disabled.",
+      tone: "bad",
+      details,
+      reasons: mergedReasons,
+    };
+  }
+  if (mergedReasons.includes("RETRACE_COOLDOWN_ACTIVE")) {
+    return {
+      headline: "Blocked for now: waiting for 25% retrace after stop breach before re-entry.",
       tone: "bad",
       details,
       reasons: mergedReasons,
@@ -2271,7 +2287,7 @@ function TradePage(props: {
       </SectionCard>
 
       <SectionCard
-        title="Analysis"
+        title="Z Score Chart"
         subtitle="Spread z-score chart and rationale"
         className="analysis-panel"
       >
@@ -2290,7 +2306,7 @@ function TradePage(props: {
                 ]
               : []
           }
-          title="Live spread z-score (entry / mean / stop)"
+          title="Z score (entry / mean / stop)"
           unavailableText={props.analyticsError ?? "No live z-score data"}
           height={props.zChartHeight}
           yAxisFormatter={(value) => value.toFixed(2)}

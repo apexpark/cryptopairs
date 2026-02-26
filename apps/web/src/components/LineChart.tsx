@@ -233,9 +233,23 @@ export default function LineChart({
           </text>
         ))}
 
+        {showThresholdLabels && mirrorThresholdLabels
+          ? yAxisTicks.map((tick, index) => (
+              <text
+                key={`right-axis-label-${index}`}
+                className="threshold-label"
+                x={width - 6}
+                y={tick.y + 4}
+                textAnchor="end"
+              >
+                {yAxisFormatter(tick.value)}
+              </text>
+            ))
+          : null}
+
         {thresholds.map((threshold, index) => {
           const y = mapY(threshold.value);
-          const thresholdLabelY = clamp(y - 4, topPadding + 10, chartBottom - 4);
+          const thresholdLabelY = clamp(y + 4, topPadding + 10, chartBottom - 4);
           return (
             <g key={`threshold-${index}`}>
               <line
@@ -247,7 +261,7 @@ export default function LineChart({
                 strokeWidth={1}
                 opacity={0.9}
               />
-              {showThresholdLabels ? (
+              {showThresholdLabels && !mirrorThresholdLabels ? (
                 <text className="threshold-label" x={width - 6} y={thresholdLabelY} textAnchor="end">
                   {yAxisFormatter(threshold.value)}
                 </text>
