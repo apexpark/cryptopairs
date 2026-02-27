@@ -12,22 +12,16 @@ import type {
   OrderIntentResponse,
   ReconcileResponse,
   StrategyPairsBacktestResponse,
-  StrategyPairsCostGateResponse,
   StrategyPairsCuesResponse,
   StrategyPairsExpectancyResponse,
   StrategyPairsPaperTradesResponse,
   StrategyPairsReplayTradesResponse,
   StrategyPairsResearchSweepRequest,
   StrategyPairsResearchSweepResponse,
-  StrategyPairsOpportunityHistoryStatsResponse,
   StrategyPairsLiveZResponse,
-  StrategyMaintenanceActionRequest,
-  StrategyMaintenanceActionResponse,
-  StrategyMaintenanceLatestResponse,
   StrategyUiAuthStatusResponse,
   StrategyUiAuthVerifyRequest,
   StrategyUiAuthVerifyResponse,
-  StrategyPairsPortfolioPlanResponse,
   BacktestExitMode,
   Timeframe,
 } from "../types";
@@ -69,28 +63,6 @@ export async function fetchStrategyCues(
   return parseJson<StrategyPairsCuesResponse>(await fetch(url));
 }
 
-export async function fetchStrategyCostGates(
-  timeframe: Timeframe,
-  takerFeeBps?: number
-): Promise<StrategyPairsCostGateResponse> {
-  const params = new URLSearchParams();
-  params.set("timeframe", timeframe);
-  withOptionalTakerFeeBps(params, takerFeeBps);
-  const url = `${STRATEGY_SERVICE_BASE_URL}/v1/strategy/pairs/cost-gate?${params.toString()}`;
-  return parseJson<StrategyPairsCostGateResponse>(await fetch(url));
-}
-
-export async function fetchStrategyPortfolioPlan(
-  timeframe: Timeframe,
-  takerFeeBps?: number
-): Promise<StrategyPairsPortfolioPlanResponse> {
-  const params = new URLSearchParams();
-  params.set("timeframe", timeframe);
-  withOptionalTakerFeeBps(params, takerFeeBps);
-  const url = `${STRATEGY_SERVICE_BASE_URL}/v1/strategy/pairs/portfolio-plan?${params.toString()}`;
-  return parseJson<StrategyPairsPortfolioPlanResponse>(await fetch(url));
-}
-
 export async function fetchStrategyBacktest(
   timeframe: Timeframe,
   pairId: string,
@@ -129,24 +101,6 @@ export async function fetchStrategyLiveZ(
   return parseJson<StrategyPairsLiveZResponse>(await fetch(url));
 }
 
-export async function fetchStrategyMaintenanceLatest(): Promise<StrategyMaintenanceLatestResponse> {
-  const url = `${STRATEGY_SERVICE_BASE_URL}/v1/strategy/maintenance/latest`;
-  return parseJson<StrategyMaintenanceLatestResponse>(await fetch(url));
-}
-
-export async function runStrategyMaintenanceAction(
-  payload: StrategyMaintenanceActionRequest
-): Promise<StrategyMaintenanceActionResponse> {
-  const url = `${STRATEGY_SERVICE_BASE_URL}/v1/strategy/maintenance/action`;
-  return parseJson<StrategyMaintenanceActionResponse>(
-    await fetch(url, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload),
-    })
-  );
-}
-
 export async function fetchStrategyUiAuthStatus(): Promise<StrategyUiAuthStatusResponse> {
   const url = `${STRATEGY_SERVICE_BASE_URL}/v1/strategy/ui-auth/status`;
   return parseJson<StrategyUiAuthStatusResponse>(await fetch(url));
@@ -163,37 +117,6 @@ export async function verifyStrategyUiAccess(
       body: JSON.stringify(payload),
     })
   );
-}
-
-export function buildStrategyMaintenanceArtifactUrl(path: string): string {
-  return `${STRATEGY_SERVICE_BASE_URL}/v1/strategy/maintenance/artifact?path=${encodeURIComponent(
-    path
-  )}`;
-}
-
-export function buildStrategyOpportunityHistoryUrl(
-  timeframe: Timeframe,
-  hours = 12,
-  onlyPass = true,
-  limit = 5000
-): string {
-  return `${STRATEGY_SERVICE_BASE_URL}/v1/strategy/pairs/opportunity-history/download?timeframe=${encodeURIComponent(
-    timeframe
-  )}&hours=${hours}&only_pass=${onlyPass ? "true" : "false"}&limit=${limit}`;
-}
-
-export async function fetchStrategyOpportunityHistoryStats(
-  timeframe?: Timeframe
-): Promise<StrategyPairsOpportunityHistoryStatsResponse> {
-  const params = new URLSearchParams();
-  if (timeframe) {
-    params.set("timeframe", timeframe);
-  }
-  const query = params.toString();
-  const url = `${STRATEGY_SERVICE_BASE_URL}/v1/strategy/pairs/opportunity-history/stats${
-    query ? `?${query}` : ""
-  }`;
-  return parseJson<StrategyPairsOpportunityHistoryStatsResponse>(await fetch(url));
 }
 
 export async function fetchStrategyPaperTrades(
