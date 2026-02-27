@@ -2027,6 +2027,7 @@ struct FundingCostEstimate {
     events: u32,
     bps_per_event: f64,
     total_bps: f64,
+    sample_available: bool,
 }
 
 fn resolve_funding_cost_estimate(
@@ -2034,15 +2035,16 @@ fn resolve_funding_cost_estimate(
     output: &PairEvaluationOutput,
     timeframe: Timeframe,
     sampled: &PairSlippageSnapshot,
-) -> Result<FundingCostEstimate, &'static str> {
+) -> FundingCostEstimate {
     if !settings.dynamic_funding_enabled {
         let total_bps = settings.funding_drag_bps.max(0.0);
-        return Ok(FundingCostEstimate {
+        return FundingCostEstimate {
             model: FundingModel::Static,
             events: 0,
             bps_per_event: total_bps,
             total_bps,
-        });
+            sample_available: true,
+        };
     }
 
     let hold_hours = expected_hold_hours(output.cue.expected_hold_bars, timeframe);
@@ -2055,29 +2057,38 @@ fn resolve_funding_cost_estimate(
     );
     if hold_hours <= 0.0 {
         let bps_per_event = sampled.selected_funding_bps_per_event.unwrap_or(0.0);
-        return Ok(FundingCostEstimate {
+        return FundingCostEstimate {
             model: FundingModel::Dynamic,
             events,
             bps_per_event,
             total_bps: 0.0,
-        });
+            sample_available: sampled.selected_funding_bps_per_event.is_some(),
+        };
     }
 
-    let Some(bps_per_event) = sampled.selected_funding_bps_per_event else {
-        return Err("FUNDING_DATA_UNAVAILABLE");
-    };
+    let bps_per_event = sampled.selected_funding_bps_per_event.unwrap_or(0.0);
     let total_bps = project_continuous_funding_bps(
         bps_per_event,
         output.cue.expected_hold_bars,
         timeframe,
         settings.funding_interval_secs,
     );
-    Ok(FundingCostEstimate {
+    FundingCostEstimate {
         model: FundingModel::Dynamic,
         events,
         bps_per_event,
         total_bps,
-    })
+        sample_available: sampled.selected_funding_bps_per_event.is_some(),
+    }
+}
+
+fn resolve_expected_edge_bps_for_cost_gate(output: &PairEvaluationOutput) -> f64 {
+    output
+        .variants
+        .iter()
+        .find(|variant| variant.variant == output.cue.selected_variant)
+        .map(|variant| (variant.edge_bps * variant.reliability).max(0.0))
+        .unwrap_or_else(|| output.cue.opportunity_score.max(0.0))
 }
 
 #[derive(Debug, Serialize)]
@@ -5684,26 +5695,10 @@ async fn evaluate_pair_for_timeframe(
             .snapshot_for(&output.cue.pair_id, timeframe, &output.cue.direction_hint)
             .await;
         if sampled.status == SampledSlippageStatus::Healthy {
-            let funding_estimate = match resolve_funding_cost_estimate(
-                &state.settings,
-                &output,
-                timeframe,
-                &sampled,
-            ) {
-                Ok(estimate) => estimate,
-                Err(reason_code) => {
-                    output.cue.actionable = false;
-                    output.cue.cost_gate =
-                        strategy_service::CostGateDiagnostics::unavailable(vec![
-                            reason_code.to_string()
-                        ]);
-                    refresh_setup_gate(&mut output.cue);
-                    finalize_trade_gate(&mut output.cue);
-                    return Ok(output);
-                }
-            };
+            let funding_estimate =
+                resolve_funding_cost_estimate(&state.settings, &output, timeframe, &sampled);
             let mut cost_gate = evaluate_cost_gate(CostGateInput {
-                expected_edge_bps: output.cue.opportunity_score.max(0.0),
+                expected_edge_bps: resolve_expected_edge_bps_for_cost_gate(&output),
                 fee_bps: taker_fee_bps,
                 funding_model: funding_estimate.model,
                 funding_events: funding_estimate.events,
@@ -5738,6 +5733,11 @@ async fn evaluate_pair_for_timeframe(
                         .rationale_codes
                         .push("FUNDING_WINDOW_NO_SETTLEMENT".to_string());
                 }
+                if !funding_estimate.sample_available {
+                    cost_gate
+                        .rationale_codes
+                        .push("FUNDING_DATA_UNAVAILABLE_INFO".to_string());
+                }
             } else {
                 cost_gate
                     .rationale_codes
@@ -5747,8 +5747,7 @@ async fn evaluate_pair_for_timeframe(
             if !cost_gate.pass {
                 output.cue.actionable = false;
             }
-            output.cue.cost_estimate_bps =
-                (cost_gate.fee_bps + cost_gate.funding_bps + cost_gate.slippage_bps).max(0.0);
+            output.cue.cost_estimate_bps = (cost_gate.fee_bps + cost_gate.slippage_bps).max(0.0);
             output.cue.cost_gate = cost_gate;
         } else {
             output.cue.actionable = false;
@@ -5787,6 +5786,7 @@ fn is_cost_reason(code: &str) -> bool {
             | "FUNDING_MODEL_DYNAMIC"
             | "FUNDING_CONTINUOUS_ACCRUAL"
             | "FUNDING_WINDOW_NO_SETTLEMENT"
+            | "FUNDING_DATA_UNAVAILABLE_INFO"
             | "FUNDING_MODEL_STATIC"
             | "ADVISORY_DISABLED"
     )
@@ -5799,11 +5799,7 @@ fn refresh_setup_gate(cue: &mut PairCue) {
         .filter(|code| !is_cost_reason(code))
         .cloned()
         .collect::<Vec<_>>();
-    if !cue.setup_actionable
-        && !setup_reasons
-            .iter()
-            .any(|code| code == "SETUP_GATE_BLOCKED")
-    {
+    if !cue.setup_actionable && setup_reasons.is_empty() {
         setup_reasons.push("SETUP_GATE_BLOCKED".to_string());
     }
     cue.setup_gate.status = "AVAILABLE".to_string();

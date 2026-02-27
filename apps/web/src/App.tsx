@@ -373,10 +373,11 @@ function describeRationaleCode(code: string): string {
       "Spread is at or beyond the configured stop band, so new entries are blocked.",
     RETRACE_COOLDOWN_ACTIVE:
       "A recent stop breach triggered cooldown; entry re-arms only after 25% retrace from stop toward entry.",
-    COST_GATE_BLOCKED: "Expected edge does not clear estimated fees, funding, and slippage.",
+    COST_GATE_BLOCKED: "Expected edge does not clear estimated fees and slippage.",
     NEGATIVE_EXPECTED_EDGE: "Expected edge is negative after cost adjustments.",
     NEGATIVE_EDGE: "Recent edge estimate is negative for this setup.",
-    HEDGE_RATIO_UNSTABLE: "Hedge ratio stability is weak, so pair balancing is less reliable.",
+    HEDGE_RATIO_UNSTABLE:
+      "Hedge ratio drift is elevated, so pair balancing reliability is reduced.",
     LOW_SAMPLE: "Recent sample size is limited, reducing confidence.",
     CHAMPION_DRIFT: "Best-performing model selection is drifting.",
     CHAMPION_DRIFT_BLOCKED: "Model drift guard is active, so entries are blocked.",
@@ -394,6 +395,12 @@ function describeRationaleCode(code: string): string {
       "Live slippage feed is unavailable; entry remains blocked in fail-closed mode.",
     SETUP_GATE_BLOCKED: "Setup conditions for entry are not currently satisfied.",
     TRADE_GATE_BLOCKED: "Combined setup/cost gate did not pass.",
+    FUNDING_MODEL_DYNAMIC:
+      "Funding model is dynamic (live sampled estimate shown for operator reference).",
+    FUNDING_CONTINUOUS_ACCRUAL:
+      "Funding impact is projected as continuous accrual over expected hold time.",
+    FUNDING_DATA_UNAVAILABLE_INFO:
+      "Funding sample was unavailable; funding impact is shown as zero informationally.",
   };
   return mapping[code] ?? code.replaceAll("_", " ").toLowerCase();
 }
@@ -428,6 +435,14 @@ function explainPairActionability(
   };
   const tradeReasons = tradeGate.rationale_codes ?? [];
   const mergedReasons = Array.from(new Set([...setupReasons, ...costReasons, ...tradeReasons]));
+  const reasonSet = new Set(mergedReasons);
+  if (reasonSet.has("SETUP_GATE_BLOCKED") && mergedReasons.length > 1) {
+    reasonSet.delete("SETUP_GATE_BLOCKED");
+  }
+  if (reasonSet.has("TRADE_GATE_BLOCKED") && mergedReasons.length > 1) {
+    reasonSet.delete("TRADE_GATE_BLOCKED");
+  }
+  const displayReasons = Array.from(reasonSet);
   const costUnavailable = cue.cost_gate.status !== "AVAILABLE";
   const costBlocked =
     costUnavailable ||
@@ -465,7 +480,7 @@ function explainPairActionability(
   }
   if (setupReasons.includes("HEDGE_RATIO_UNSTABLE")) {
     details.push(
-      `Hedge ratio stability is ${(hedge_ratio_stability * 100).toFixed(1)}%, below preferred stability for neutral sizing.`
+      `Hedge ratio drift is ${(hedge_ratio_stability * 100).toFixed(1)}%, above preferred stability tolerance for neutral sizing.`
     );
   }
   if (setupReasons.includes("LOW_SAMPLE")) {
@@ -488,7 +503,7 @@ function explainPairActionability(
       headline: "Allowed: setup and cost economics are currently passing.",
       tone: "ok",
       details,
-      reasons: mergedReasons,
+      reasons: displayReasons,
     };
   }
 
@@ -497,7 +512,7 @@ function explainPairActionability(
       headline: "Blocked for now: spread is at/through stop level, so entry is disabled.",
       tone: "bad",
       details,
-      reasons: mergedReasons,
+      reasons: displayReasons,
     };
   }
   if (tradeGate.blocked_by === "SETUP" && setupReasons.includes("RETRACE_COOLDOWN_ACTIVE")) {
@@ -505,7 +520,7 @@ function explainPairActionability(
       headline: "Blocked for now: waiting for 25% retrace after stop breach before re-entry.",
       tone: "bad",
       details,
-      reasons: mergedReasons,
+      reasons: displayReasons,
     };
   }
 
@@ -514,7 +529,7 @@ function explainPairActionability(
       headline: "Blocked for now: spread stretch is not yet at entry level.",
       tone: "bad",
       details,
-      reasons: mergedReasons,
+      reasons: displayReasons,
     };
   }
   if (tradeGate.blocked_by === "COST") {
@@ -522,7 +537,7 @@ function explainPairActionability(
       headline: "Blocked for now: expected edge does not clear trade costs.",
       tone: "bad",
       details,
-      reasons: mergedReasons,
+      reasons: displayReasons,
     };
   }
   if (tradeGate.blocked_by === "MULTIPLE") {
@@ -530,7 +545,7 @@ function explainPairActionability(
       headline: "Blocked for now: both setup conditions and cost economics are failing.",
       tone: "bad",
       details,
-      reasons: mergedReasons,
+      reasons: displayReasons,
     };
   }
   if (tradeGate.blocked_by === "SETUP" && setupReasons.includes("HEDGE_RATIO_UNSTABLE")) {
@@ -538,7 +553,7 @@ function explainPairActionability(
       headline: "Blocked for now: hedge sizing is unstable for reliable spread neutrality.",
       tone: "bad",
       details,
-      reasons: mergedReasons,
+      reasons: displayReasons,
     };
   }
 
@@ -546,7 +561,7 @@ function explainPairActionability(
     headline: "Blocked for now: one or more strategy gates are not satisfied.",
     tone: "bad",
     details,
-    reasons: mergedReasons,
+    reasons: displayReasons,
   };
 }
 
