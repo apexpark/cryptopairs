@@ -330,6 +330,26 @@ function formatPairLabel(pairId: string): string {
     .join("/");
 }
 
+function deriveOpportunityStatus(
+  cue: StrategyPairsCuesResponse["cues"][number]["cue"]
+): { label: "READY" | "WAIT" | "UNTESTED"; toneClass: "tone-ok" | "tone-warn" | "tone-info" } {
+  const tradePass = cue.trade_gate?.pass ?? cue.actionable;
+  if (tradePass) {
+    return { label: "READY", toneClass: "tone-ok" };
+  }
+
+  const reasons = new Set<string>([
+    ...(cue.trade_gate?.rationale_codes ?? []),
+    ...(cue.cost_gate?.rationale_codes ?? []),
+    ...(cue.setup_gate?.rationale_codes ?? cue.rationale_codes),
+  ]);
+  if (reasons.has("PERFORMANCE_HISTORY_WAIT")) {
+    return { label: "UNTESTED", toneClass: "tone-info" };
+  }
+
+  return { label: "WAIT", toneClass: "tone-warn" };
+}
+
 function marketMetricInstrumentCandidates(instrument: string): string[] {
   const trimmed = instrument.trim();
   if (!trimmed.length) {
@@ -368,7 +388,7 @@ async function fetchMarketMetricsWithFallback(
 
 function describeRationaleCode(code: string): string {
   const mapping: Record<string, string> = {
-    BELOW_ENTRY_BAND: "Spread has not stretched far enough to trigger an entry.",
+    BELOW_ENTRY_BAND: "Spread z-score is inside the entry trigger band (|z| is below entry threshold).",
     AT_OR_BEYOND_STOP_BAND:
       "Spread is at or beyond the configured stop band, so new entries are blocked.",
     RETRACE_COOLDOWN_ACTIVE:
@@ -2093,24 +2113,25 @@ function TradePage(props: {
                 <th>Pair</th>
                 <th>Z</th>
                 <th>Edge</th>
-                <th>Ready</th>
+                <th>Status</th>
               </tr>
             </thead>
             <tbody>
-              {props.cues?.cues.map((entry) => (
-                <tr
-                  key={entry.cue.pair_id}
-                  className={entry.cue.pair_id === props.selectedPairId ? "selected-row" : ""}
-                  onClick={() => props.onSelectPair(entry.cue.pair_id)}
-                >
-                  <td>{formatPairLabel(entry.cue.pair_id)}</td>
-                  <td>{entry.cue.spread_z.toFixed(2)}</td>
-                  <td>{formatSigned(entry.cue.cost_gate.net_edge_bps)}bp</td>
-                  <td className={(entry.cue.trade_gate?.pass ?? entry.cue.actionable) ? "tone-ok" : "tone-bad"}>
-                    {(entry.cue.trade_gate?.pass ?? entry.cue.actionable) ? "PASS" : "BLOCK"}
-                  </td>
-                </tr>
-              ))}
+              {props.cues?.cues.map((entry) => {
+                const status = deriveOpportunityStatus(entry.cue);
+                return (
+                  <tr
+                    key={entry.cue.pair_id}
+                    className={entry.cue.pair_id === props.selectedPairId ? "selected-row" : ""}
+                    onClick={() => props.onSelectPair(entry.cue.pair_id)}
+                  >
+                    <td>{formatPairLabel(entry.cue.pair_id)}</td>
+                    <td>{entry.cue.spread_z.toFixed(2)}</td>
+                    <td>{formatSigned(entry.cue.cost_gate.net_edge_bps)}bp</td>
+                    <td className={status.toneClass}>{status.label}</td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         </div>
