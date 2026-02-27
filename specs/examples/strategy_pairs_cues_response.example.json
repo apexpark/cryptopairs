@@ -29,7 +29,7 @@
         },
         "cost_gate": {
           "status": "AVAILABLE",
-          "expected_edge_bps": 7.42,
+          "expected_edge_bps": 5.11,
           "fee_bps": 1.2,
           "funding_model": "DYNAMIC",
           "funding_events": 0,
@@ -38,7 +38,7 @@
           "slippage_bps": 1.84,
           "net_edge_bps": 4.08,
           "pass": true,
-          "rationale_codes": ["FUNDING_MODEL_DYNAMIC", "FUNDING_CONTINUOUS_ACCRUAL", "FUNDING_WINDOW_NO_SETTLEMENT"]
+          "rationale_codes": ["PERFORMANCE_GATE_SOURCE_PAPER_TRADES", "SLIPPAGE_SOURCE_SAMPLED"]
         },
         "trade_gate": {
           "status": "AVAILABLE",

@@ -80,7 +80,7 @@
                 "additionalProperties": false,
                 "required": ["status", "pass", "rationale_codes"],
                 "properties": {
-                  "status": { "type": "string", "enum": ["AVAILABLE", "UNAVAILABLE"] },
+                  "status": { "type": "string", "enum": ["AVAILABLE", "WAIT", "UNAVAILABLE"] },
                   "pass": { "type": "boolean" },
                   "rationale_codes": {
                     "type": "array",
@@ -105,7 +105,7 @@
                   "rationale_codes"
                 ],
                 "properties": {
-                  "status": { "type": "string", "enum": ["AVAILABLE", "UNAVAILABLE"] },
+                  "status": { "type": "string", "enum": ["AVAILABLE", "WAIT", "UNAVAILABLE"] },
                   "expected_edge_bps": { "type": "number" },
                   "fee_bps": { "type": "number", "minimum": 0 },
                   "funding_model": { "type": "string", "enum": ["STATIC", "DYNAMIC"] },
@@ -126,11 +126,11 @@
                 "additionalProperties": false,
                 "required": ["status", "pass", "blocked_by", "rationale_codes"],
                 "properties": {
-                  "status": { "type": "string", "enum": ["AVAILABLE", "UNAVAILABLE"] },
+                  "status": { "type": "string", "enum": ["AVAILABLE", "WAIT", "UNAVAILABLE"] },
                   "pass": { "type": "boolean" },
                   "blocked_by": {
                     "type": "string",
-                    "enum": ["NONE", "SETUP", "COST", "MULTIPLE", "UNAVAILABLE"]
+                    "enum": ["NONE", "SETUP", "COST", "MULTIPLE", "WAIT", "UNAVAILABLE"]
                   },
                   "rationale_codes": {
                     "type": "array",

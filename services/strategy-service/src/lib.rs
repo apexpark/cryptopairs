@@ -133,7 +133,7 @@ pub struct CostGateDiagnostics {
 impl CostGateDiagnostics {
     pub fn unavailable(rationale_codes: Vec<String>) -> Self {
         Self {
-            status: "UNAVAILABLE".to_string(),
+            status: "WAIT".to_string(),
             expected_edge_bps: 0.0,
             fee_bps: 0.0,
             funding_model: FundingModel::Static.as_str().to_string(),
@@ -158,7 +158,7 @@ pub struct SetupGateDiagnostics {
 impl SetupGateDiagnostics {
     pub fn unavailable(rationale_codes: Vec<String>) -> Self {
         Self {
-            status: "UNAVAILABLE".to_string(),
+            status: "WAIT".to_string(),
             pass: false,
             rationale_codes,
         }
@@ -176,9 +176,9 @@ pub struct TradeGateDiagnostics {
 impl TradeGateDiagnostics {
     pub fn unavailable(rationale_codes: Vec<String>) -> Self {
         Self {
-            status: "UNAVAILABLE".to_string(),
+            status: "WAIT".to_string(),
             pass: false,
-            blocked_by: "UNAVAILABLE".to_string(),
+            blocked_by: "WAIT".to_string(),
             rationale_codes,
         }
     }

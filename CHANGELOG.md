@@ -481,6 +481,11 @@ This project follows SemVer as defined in `docs/02-versioning-and-releases.md`.
   and setting `direction_hint=NONE` until reoptimize policy promotes the challenger.
 - `evaluate_order_intent` now includes explicit risk-gate decision routing in addition
   to kill-switch, integrity, and reconcile gates.
+- Strategy cost gate now prioritizes realized recent paper-trade profitability:
+  - Pass/block is derived from recent persisted `strategy_paper_trades` outcomes (median/sum net bps),
+    instead of modeled expected-edge arithmetic.
+  - Funding rationale codes were removed from gate blocking reasons (funding remains reference data only).
+  - Non-ready gate state now surfaces as `WAIT` (replacing `UNAVAILABLE` in setup/cost/trade gate flow).
 
 ### Fixed
 - Removed accidental duplicate spec/example files with `* 2.json` suffix.
