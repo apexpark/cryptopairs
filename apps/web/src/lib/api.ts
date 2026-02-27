@@ -14,7 +14,11 @@ import type {
   StrategyPairsBacktestResponse,
   StrategyPairsCostGateResponse,
   StrategyPairsCuesResponse,
+  StrategyPairsExpectancyResponse,
   StrategyPairsPaperTradesResponse,
+  StrategyPairsReplayTradesResponse,
+  StrategyPairsResearchSweepRequest,
+  StrategyPairsResearchSweepResponse,
   StrategyPairsOpportunityHistoryStatsResponse,
   StrategyPairsLiveZResponse,
   StrategyMaintenanceActionRequest,
@@ -211,6 +215,67 @@ export async function fetchStrategyPaperTrades(
   }
   const url = `${STRATEGY_SERVICE_BASE_URL}/v1/strategy/pairs/paper-trades?${params.toString()}`;
   return parseJson<StrategyPairsPaperTradesResponse>(await fetch(url));
+}
+
+export async function fetchStrategyExpectancy(
+  timeframe: Timeframe,
+  pairId: string,
+  entryZ: number,
+  exitZ: number,
+  stopZ: number,
+  zMethod: string,
+  lookbackBars: number
+): Promise<StrategyPairsExpectancyResponse> {
+  const params = new URLSearchParams();
+  params.set("timeframe", timeframe);
+  params.set("pair_id", pairId);
+  params.set("entry_z", entryZ.toString());
+  params.set("exit_z", exitZ.toString());
+  params.set("stop_z", stopZ.toString());
+  params.set("z_method", zMethod);
+  params.set("lookback_bars", lookbackBars.toString());
+  const url = `${STRATEGY_SERVICE_BASE_URL}/v1/strategy/pairs/expectancy?${params.toString()}`;
+  return parseJson<StrategyPairsExpectancyResponse>(await fetch(url));
+}
+
+export async function fetchStrategyReplayTrades(
+  timeframe: Timeframe,
+  pairId: string,
+  hours: number,
+  limit: number,
+  exitMode: BacktestExitMode,
+  entryZ: number,
+  exitZ: number,
+  stopZ: number,
+  zMethod: string,
+  lookbackBars: number
+): Promise<StrategyPairsReplayTradesResponse> {
+  const params = new URLSearchParams();
+  params.set("timeframe", timeframe);
+  params.set("pair_id", pairId);
+  params.set("hours", hours.toString());
+  params.set("limit", limit.toString());
+  params.set("exit_mode", exitMode);
+  params.set("entry_z", entryZ.toString());
+  params.set("exit_z", exitZ.toString());
+  params.set("stop_z", stopZ.toString());
+  params.set("z_method", zMethod);
+  params.set("lookback_bars", lookbackBars.toString());
+  const url = `${STRATEGY_SERVICE_BASE_URL}/v1/strategy/pairs/replay-trades?${params.toString()}`;
+  return parseJson<StrategyPairsReplayTradesResponse>(await fetch(url));
+}
+
+export async function runStrategyResearchSweep(
+  payload: StrategyPairsResearchSweepRequest
+): Promise<StrategyPairsResearchSweepResponse> {
+  const url = `${STRATEGY_SERVICE_BASE_URL}/v1/strategy/pairs/research-sweep`;
+  return parseJson<StrategyPairsResearchSweepResponse>(
+    await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    })
+  );
 }
 
 export async function fetchKillSwitchState(): Promise<KillSwitchState> {

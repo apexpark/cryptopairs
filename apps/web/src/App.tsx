@@ -9,11 +9,14 @@ import { buildActiveTradeAnchor, buildExecutionMarkers } from "./lib/chartMarker
 import {
   buildStrategyMaintenanceArtifactUrl,
   buildStrategyOpportunityHistoryUrl,
+  fetchStrategyExpectancy,
+  fetchStrategyReplayTrades,
   fetchStrategyUiAuthStatus,
   verifyStrategyUiAccess,
   fetchStrategyPaperTrades,
   fetchStrategyOpportunityHistoryStats,
   fetchStrategyMaintenanceLatest,
+  runStrategyResearchSweep,
   runStrategyMaintenanceAction,
   fetchExecutionPortfolioPositions,
   dispatchOrderIntent,
@@ -53,11 +56,15 @@ import type {
   SpreadPosition,
   StrategyPairsCostGateResponse,
   StrategyPairsCuesResponse,
+  StrategyPairsExpectancyResponse,
   StrategyPairsPaperTradesResponse,
+  StrategyPairsReplayTradesResponse,
+  StrategyPairsResearchSweepResponse,
   StrategyPairsOpportunityHistoryStatsResponse,
   StrategyMaintenanceActionResponse,
   StrategyMaintenanceLatestResponse,
   StrategyPairsPortfolioPlanResponse,
+  StrategyZMethod,
   Timeframe,
   TimelineEvent,
   TradeSide,
@@ -242,6 +249,12 @@ const HOW_IT_WORKS_TABS: Array<{
 ];
 
 const TIMEFRAMES: Timeframe[] = ["1m", "15m", "1h"];
+const RESEARCH_Z_METHODS: StrategyZMethod[] = [
+  "ROBUST_Z",
+  "COINTEGRATION_Z",
+  "VOL_NORMALIZED",
+  "FUNDING_ADJUSTED",
+];
 const WEB_BUILD_STAMP = "2026-02-23-02";
 
 function analyticsRefreshMs(timeframe: Timeframe): number {
@@ -424,6 +437,18 @@ function formatLocalTime(value: string | number | Date): string {
     hour12: false,
     timeZoneName: "short",
   }).format(date);
+}
+
+function downloadJsonFile(filename: string, payload: unknown): void {
+  const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
+  const url = window.URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = filename;
+  document.body.appendChild(anchor);
+  anchor.click();
+  anchor.remove();
+  window.URL.revokeObjectURL(url);
 }
 
 function clampNumber(value: number, min: number, max: number): number {
@@ -812,6 +837,49 @@ function App(): JSX.Element {
   const [paperTrades, setPaperTrades] = useState<StrategyPairsPaperTradesResponse | null>(null);
   const [paperTradesError, setPaperTradesError] = useState<string | null>(null);
   const [paperTradesLoading, setPaperTradesLoading] = useState(false);
+  const [researchEntryZ, setResearchEntryZ] = usePersistentState<string>(
+    "cp.research.entry_z",
+    "1.8"
+  );
+  const [researchExitZ, setResearchExitZ] = usePersistentState<string>(
+    "cp.research.exit_z",
+    "0.6"
+  );
+  const [researchStopZ, setResearchStopZ] = usePersistentState<string>(
+    "cp.research.stop_z",
+    "3.2"
+  );
+  const [researchLookbackBars, setResearchLookbackBars] = usePersistentState<string>(
+    "cp.research.lookback_bars",
+    "220"
+  );
+  const [researchHours, setResearchHours] = usePersistentState<string>(
+    "cp.research.hours",
+    "720"
+  );
+  const [researchLimit, setResearchLimit] = usePersistentState<string>(
+    "cp.research.limit",
+    "50"
+  );
+  const [researchMaxCombinations, setResearchMaxCombinations] = usePersistentState<string>(
+    "cp.research.max_combinations",
+    "20000"
+  );
+  const [researchZMethod, setResearchZMethod] = usePersistentState<StrategyZMethod>(
+    "cp.research.z_method",
+    "ROBUST_Z"
+  );
+  const [expectancyResult, setExpectancyResult] =
+    useState<StrategyPairsExpectancyResponse | null>(null);
+  const [expectancyLoading, setExpectancyLoading] = useState(false);
+  const [expectancyError, setExpectancyError] = useState<string | null>(null);
+  const [replayResult, setReplayResult] = useState<StrategyPairsReplayTradesResponse | null>(null);
+  const [replayLoading, setReplayLoading] = useState(false);
+  const [replayError, setReplayError] = useState<string | null>(null);
+  const [researchSweepResult, setResearchSweepResult] =
+    useState<StrategyPairsResearchSweepResponse | null>(null);
+  const [researchSweepLoading, setResearchSweepLoading] = useState(false);
+  const [researchSweepError, setResearchSweepError] = useState<string | null>(null);
   const [headerLeftMetrics, setHeaderLeftMetrics] = useState<MarketMetricsResponse | null>(null);
   const [headerRightMetrics, setHeaderRightMetrics] = useState<MarketMetricsResponse | null>(null);
   const [headerMetricsError, setHeaderMetricsError] = useState<string | null>(null);
@@ -939,6 +1007,28 @@ function App(): JSX.Element {
     () => parseCommissionPercentToBps(takerCommissionPct),
     [takerCommissionPct]
   );
+  const researchEntryZNumber = Number.parseFloat(researchEntryZ);
+  const researchExitZNumber = Number.parseFloat(researchExitZ);
+  const researchStopZNumber = Number.parseFloat(researchStopZ);
+  const researchLookbackBarsNumber = Number.parseInt(researchLookbackBars, 10);
+  const researchHoursNumber = Number.parseInt(researchHours, 10);
+  const researchLimitNumber = Number.parseInt(researchLimit, 10);
+  const researchMaxCombinationsNumber = Number.parseInt(researchMaxCombinations, 10);
+  const researchInputsValid =
+    Number.isFinite(researchEntryZNumber) &&
+    Number.isFinite(researchExitZNumber) &&
+    Number.isFinite(researchStopZNumber) &&
+    Number.isFinite(researchLookbackBarsNumber) &&
+    Number.isFinite(researchHoursNumber) &&
+    Number.isFinite(researchLimitNumber) &&
+    Number.isFinite(researchMaxCombinationsNumber) &&
+    researchEntryZNumber > 0 &&
+    researchExitZNumber >= 0 &&
+    researchStopZNumber > researchEntryZNumber &&
+    researchLookbackBarsNumber > 0 &&
+    researchHoursNumber > 0 &&
+    researchLimitNumber > 0 &&
+    researchMaxCombinationsNumber > 0;
 
   const stopConfigured = isStopConfigured(stopMethod, stopValueNumber);
   const gateState = useMemo(
@@ -1595,6 +1685,183 @@ function App(): JSX.Element {
     [operatorId, refreshMaintenanceReport, refreshHistoryStats]
   );
 
+  useEffect(() => {
+    setExpectancyResult(null);
+    setReplayResult(null);
+    setResearchSweepResult(null);
+    setExpectancyError(null);
+    setReplayError(null);
+    setResearchSweepError(null);
+  }, [currentPairId, timeframe, backtestExitMode]);
+
+  const runExpectancyResearch = useCallback(async (): Promise<void> => {
+    if (!selectedCueRow) {
+      setExpectancyError("No pair selected.");
+      return;
+    }
+    if (!researchInputsValid) {
+      setExpectancyError("Research inputs are invalid.");
+      return;
+    }
+    setExpectancyLoading(true);
+    setExpectancyError(null);
+    try {
+      const response = await fetchStrategyExpectancy(
+        timeframe,
+        selectedCueRow.cue.pair_id,
+        researchEntryZNumber,
+        researchExitZNumber,
+        researchStopZNumber,
+        researchZMethod,
+        researchLookbackBarsNumber
+      );
+      setExpectancyResult(response);
+    } catch (error) {
+      setExpectancyResult(null);
+      setExpectancyError(
+        `Expectancy query failed: ${error instanceof Error ? error.message : String(error)}`
+      );
+    } finally {
+      setExpectancyLoading(false);
+    }
+  }, [
+    researchEntryZNumber,
+    researchExitZNumber,
+    researchInputsValid,
+    researchLookbackBarsNumber,
+    researchStopZNumber,
+    researchZMethod,
+    selectedCueRow,
+    timeframe,
+  ]);
+
+  const runReplayResearch = useCallback(async (): Promise<void> => {
+    if (!selectedCueRow) {
+      setReplayError("No pair selected.");
+      return;
+    }
+    if (!researchInputsValid) {
+      setReplayError("Research inputs are invalid.");
+      return;
+    }
+    setReplayLoading(true);
+    setReplayError(null);
+    try {
+      const response = await fetchStrategyReplayTrades(
+        timeframe,
+        selectedCueRow.cue.pair_id,
+        researchHoursNumber,
+        researchLimitNumber,
+        backtestExitMode,
+        researchEntryZNumber,
+        researchExitZNumber,
+        researchStopZNumber,
+        researchZMethod,
+        researchLookbackBarsNumber
+      );
+      setReplayResult(response);
+    } catch (error) {
+      setReplayResult(null);
+      setReplayError(
+        `Replay query failed: ${error instanceof Error ? error.message : String(error)}`
+      );
+    } finally {
+      setReplayLoading(false);
+    }
+  }, [
+    backtestExitMode,
+    researchEntryZNumber,
+    researchExitZNumber,
+    researchHoursNumber,
+    researchInputsValid,
+    researchLimitNumber,
+    researchLookbackBarsNumber,
+    researchStopZNumber,
+    researchZMethod,
+    selectedCueRow,
+    timeframe,
+  ]);
+
+  const runResearchSweepDryRun = useCallback(async (): Promise<void> => {
+    if (!selectedCueRow) {
+      setResearchSweepError("No pair selected.");
+      return;
+    }
+    if (!researchInputsValid) {
+      setResearchSweepError("Research inputs are invalid.");
+      return;
+    }
+    setResearchSweepLoading(true);
+    setResearchSweepError(null);
+    try {
+      const response = await runStrategyResearchSweep({
+        timeframes: [timeframe],
+        pair_ids: [selectedCueRow.cue.pair_id],
+        entry_z_grid: [researchEntryZNumber],
+        exit_z_grid: [researchExitZNumber],
+        stop_z_grid: [researchStopZNumber],
+        z_methods: [researchZMethod],
+        lookback_bars_grid: [researchLookbackBarsNumber],
+        max_combinations: researchMaxCombinationsNumber,
+        dry_run: true,
+      });
+      setResearchSweepResult(response);
+    } catch (error) {
+      setResearchSweepResult(null);
+      setResearchSweepError(
+        `Research sweep failed: ${error instanceof Error ? error.message : String(error)}`
+      );
+    } finally {
+      setResearchSweepLoading(false);
+    }
+  }, [
+    researchEntryZNumber,
+    researchExitZNumber,
+    researchInputsValid,
+    researchLookbackBarsNumber,
+    researchMaxCombinationsNumber,
+    researchStopZNumber,
+    researchZMethod,
+    selectedCueRow,
+    timeframe,
+  ]);
+
+  const applyCueBandsToResearch = useCallback((): void => {
+    if (!selectedCueRow) {
+      return;
+    }
+    setResearchEntryZ(selectedCueRow.cue.entry_band.toFixed(2));
+    setResearchExitZ(selectedCueRow.cue.exit_band.toFixed(2));
+    setResearchStopZ(selectedCueRow.cue.stop_band.toFixed(2));
+  }, [selectedCueRow, setResearchEntryZ, setResearchExitZ, setResearchStopZ]);
+
+  const downloadExpectancyResult = useCallback((): void => {
+    if (!expectancyResult) {
+      return;
+    }
+    downloadJsonFile(
+      `expectancy-${expectancyResult.timeframe}-${expectancyResult.pair_id}-${Date.now()}.json`,
+      expectancyResult
+    );
+  }, [expectancyResult]);
+
+  const downloadReplayResult = useCallback((): void => {
+    if (!replayResult) {
+      return;
+    }
+    downloadJsonFile(
+      `replay-trades-${replayResult.timeframe}-${replayResult.pair_id}-${Date.now()}.json`,
+      replayResult
+    );
+  }, [replayResult]);
+
+  const downloadResearchSweepResult = useCallback((): void => {
+    if (!researchSweepResult) {
+      return;
+    }
+    downloadJsonFile(`research-sweep-${researchSweepResult.request_id}.json`, researchSweepResult);
+  }, [researchSweepResult]);
+
   const headerLeftInstrument = selectedCueRow?.cue.left_instrument ?? "PF_XBTUSD";
   const headerRightInstrument = selectedCueRow?.cue.right_instrument ?? "PF_ETHUSD";
   const headerLeftLabel = formatInstrumentLabel(headerLeftInstrument);
@@ -2066,6 +2333,39 @@ function App(): JSX.Element {
           paperTrades={paperTrades}
           paperTradesLoading={paperTradesLoading}
           paperTradesError={paperTradesError}
+          researchEntryZ={researchEntryZ}
+          researchExitZ={researchExitZ}
+          researchStopZ={researchStopZ}
+          researchLookbackBars={researchLookbackBars}
+          researchHours={researchHours}
+          researchLimit={researchLimit}
+          researchMaxCombinations={researchMaxCombinations}
+          researchZMethod={researchZMethod}
+          researchInputsValid={researchInputsValid}
+          expectancyResult={expectancyResult}
+          expectancyLoading={expectancyLoading}
+          expectancyError={expectancyError}
+          replayResult={replayResult}
+          replayLoading={replayLoading}
+          replayError={replayError}
+          researchSweepResult={researchSweepResult}
+          researchSweepLoading={researchSweepLoading}
+          researchSweepError={researchSweepError}
+          setResearchEntryZ={setResearchEntryZ}
+          setResearchExitZ={setResearchExitZ}
+          setResearchStopZ={setResearchStopZ}
+          setResearchLookbackBars={setResearchLookbackBars}
+          setResearchHours={setResearchHours}
+          setResearchLimit={setResearchLimit}
+          setResearchMaxCombinations={setResearchMaxCombinations}
+          setResearchZMethod={setResearchZMethod}
+          onApplyCueBands={applyCueBandsToResearch}
+          onRunExpectancy={runExpectancyResearch}
+          onRunReplay={runReplayResearch}
+          onRunSweep={runResearchSweepDryRun}
+          onDownloadExpectancy={downloadExpectancyResult}
+          onDownloadReplay={downloadReplayResult}
+          onDownloadSweep={downloadResearchSweepResult}
           chartHeight={analyticsChartHeight}
         />
       );
@@ -2736,6 +3036,39 @@ function AnalyticsPage({
   paperTrades,
   paperTradesLoading,
   paperTradesError,
+  researchEntryZ,
+  researchExitZ,
+  researchStopZ,
+  researchLookbackBars,
+  researchHours,
+  researchLimit,
+  researchMaxCombinations,
+  researchZMethod,
+  researchInputsValid,
+  expectancyResult,
+  expectancyLoading,
+  expectancyError,
+  replayResult,
+  replayLoading,
+  replayError,
+  researchSweepResult,
+  researchSweepLoading,
+  researchSweepError,
+  setResearchEntryZ,
+  setResearchExitZ,
+  setResearchStopZ,
+  setResearchLookbackBars,
+  setResearchHours,
+  setResearchLimit,
+  setResearchMaxCombinations,
+  setResearchZMethod,
+  onApplyCueBands,
+  onRunExpectancy,
+  onRunReplay,
+  onRunSweep,
+  onDownloadExpectancy,
+  onDownloadReplay,
+  onDownloadSweep,
   chartHeight,
 }: {
   cues: StrategyPairsCuesResponse | null;
@@ -2751,6 +3084,39 @@ function AnalyticsPage({
   paperTrades: StrategyPairsPaperTradesResponse | null;
   paperTradesLoading: boolean;
   paperTradesError: string | null;
+  researchEntryZ: string;
+  researchExitZ: string;
+  researchStopZ: string;
+  researchLookbackBars: string;
+  researchHours: string;
+  researchLimit: string;
+  researchMaxCombinations: string;
+  researchZMethod: StrategyZMethod;
+  researchInputsValid: boolean;
+  expectancyResult: StrategyPairsExpectancyResponse | null;
+  expectancyLoading: boolean;
+  expectancyError: string | null;
+  replayResult: StrategyPairsReplayTradesResponse | null;
+  replayLoading: boolean;
+  replayError: string | null;
+  researchSweepResult: StrategyPairsResearchSweepResponse | null;
+  researchSweepLoading: boolean;
+  researchSweepError: string | null;
+  setResearchEntryZ: (value: string) => void;
+  setResearchExitZ: (value: string) => void;
+  setResearchStopZ: (value: string) => void;
+  setResearchLookbackBars: (value: string) => void;
+  setResearchHours: (value: string) => void;
+  setResearchLimit: (value: string) => void;
+  setResearchMaxCombinations: (value: string) => void;
+  setResearchZMethod: (value: StrategyZMethod) => void;
+  onApplyCueBands: () => void;
+  onRunExpectancy: () => Promise<void>;
+  onRunReplay: () => Promise<void>;
+  onRunSweep: () => Promise<void>;
+  onDownloadExpectancy: () => void;
+  onDownloadReplay: () => void;
+  onDownloadSweep: () => void;
   chartHeight: number;
 }): JSX.Element {
   const selected = cues?.cues.find((entry) => entry.cue.pair_id === selectedPairId) ?? cues?.cues[0];
@@ -2872,6 +3238,219 @@ function AnalyticsPage({
               </table>
             </div>
           ) : null}
+        </SectionCard>
+
+        <SectionCard
+          title="Research Controls"
+          subtitle="Run expectancy/replay with parameter overrides and export results"
+        >
+          <div className="research-controls-grid">
+            <label>
+              Entry Z
+              <input
+                type="number"
+                min="0.2"
+                max="8"
+                step="0.01"
+                value={researchEntryZ}
+                onChange={(event) => setResearchEntryZ(event.target.value)}
+              />
+            </label>
+            <label>
+              Exit Z
+              <input
+                type="number"
+                min="0"
+                step="0.01"
+                value={researchExitZ}
+                onChange={(event) => setResearchExitZ(event.target.value)}
+              />
+            </label>
+            <label>
+              Stop Z
+              <input
+                type="number"
+                min="0.2"
+                max="12"
+                step="0.01"
+                value={researchStopZ}
+                onChange={(event) => setResearchStopZ(event.target.value)}
+              />
+            </label>
+            <label>
+              Lookback Bars
+              <input
+                type="number"
+                min="120"
+                max="10000"
+                step="1"
+                value={researchLookbackBars}
+                onChange={(event) => setResearchLookbackBars(event.target.value)}
+              />
+            </label>
+            <label>
+              Replay Hours
+              <input
+                type="number"
+                min="1"
+                max="175200"
+                step="1"
+                value={researchHours}
+                onChange={(event) => setResearchHours(event.target.value)}
+              />
+            </label>
+            <label>
+              Replay Limit
+              <input
+                type="number"
+                min="1"
+                max="20000"
+                step="1"
+                value={researchLimit}
+                onChange={(event) => setResearchLimit(event.target.value)}
+              />
+            </label>
+            <label>
+              Sweep Max Combos
+              <input
+                type="number"
+                min="1"
+                max="1000000"
+                step="1"
+                value={researchMaxCombinations}
+                onChange={(event) => setResearchMaxCombinations(event.target.value)}
+              />
+            </label>
+            <label>
+              Z Method
+              <select
+                value={researchZMethod}
+                onChange={(event) => setResearchZMethod(event.target.value as StrategyZMethod)}
+              >
+                {RESEARCH_Z_METHODS.map((method) => (
+                  <option key={method} value={method}>
+                    {method}
+                  </option>
+                ))}
+              </select>
+            </label>
+          </div>
+
+          {!researchInputsValid ? (
+            <p className="small-text tone-bad">Research inputs are invalid. Check Z bands and ranges.</p>
+          ) : null}
+
+          <div className="research-controls-actions">
+            <button type="button" onClick={onApplyCueBands}>
+              Use Cue Bands
+            </button>
+            <button
+              type="button"
+              onClick={() => void onRunExpectancy()}
+              disabled={!researchInputsValid || expectancyLoading}
+            >
+              {expectancyLoading ? "Running..." : "Run Expectancy"}
+            </button>
+            <button
+              type="button"
+              onClick={() => void onRunReplay()}
+              disabled={!researchInputsValid || replayLoading}
+            >
+              {replayLoading ? "Running..." : "Run Replay"}
+            </button>
+            <button
+              type="button"
+              onClick={() => void onRunSweep()}
+              disabled={!researchInputsValid || researchSweepLoading}
+            >
+              {researchSweepLoading ? "Running..." : "Run Sweep Dry-Run"}
+            </button>
+          </div>
+
+          <div className="research-results-grid">
+            <div className="mini-card">
+              <h3>Expectancy</h3>
+              {expectancyError ? <p className="small-text tone-bad">{expectancyError}</p> : null}
+              {expectancyResult ? (
+                <>
+                  <p>
+                    Status:{" "}
+                    <span className={expectancyResult.status === "AVAILABLE" ? "tone-ok" : "tone-bad"}>
+                      {expectancyResult.status}
+                    </span>
+                  </p>
+                  <p>Decision: {expectancyResult.decision_state}</p>
+                  <p>Reason: {expectancyResult.primary_reason_code}</p>
+                  <p>Trades: {expectancyResult.metrics?.trades ?? 0}</p>
+                  <p>
+                    Avg net:{" "}
+                    {expectancyResult.metrics ? `${formatSigned(expectancyResult.metrics.avg_net_bps)}bp` : "--"}
+                  </p>
+                  <p>
+                    Win rate:{" "}
+                    {expectancyResult.metrics
+                      ? `${(expectancyResult.metrics.win_rate * 100).toFixed(2)}%`
+                      : "--"}
+                  </p>
+                  <button type="button" onClick={onDownloadExpectancy}>
+                    Download Expectancy JSON
+                  </button>
+                </>
+              ) : (
+                <p className="small-text">No expectancy result loaded.</p>
+              )}
+            </div>
+
+            <div className="mini-card">
+              <h3>Replay</h3>
+              {replayError ? <p className="small-text tone-bad">{replayError}</p> : null}
+              {replayResult ? (
+                <>
+                  <p>
+                    Status:{" "}
+                    <span className={replayResult.status === "AVAILABLE" ? "tone-ok" : "tone-bad"}>
+                      {replayResult.status}
+                    </span>
+                  </p>
+                  <p>Rows: {replayResult.rows.length}</p>
+                  <p>Mode: {replayResult.exit_mode}</p>
+                  <p>Window: {replayResult.hours}h</p>
+                  <button type="button" onClick={onDownloadReplay}>
+                    Download Replay JSON
+                  </button>
+                </>
+              ) : (
+                <p className="small-text">No replay result loaded.</p>
+              )}
+            </div>
+
+            <div className="mini-card">
+              <h3>Sweep Dry-Run</h3>
+              {researchSweepError ? <p className="small-text tone-bad">{researchSweepError}</p> : null}
+              {researchSweepResult ? (
+                <>
+                  <p>
+                    Status:{" "}
+                    <span
+                      className={researchSweepResult.status === "AVAILABLE" ? "tone-ok" : "tone-bad"}
+                    >
+                      {researchSweepResult.status}
+                    </span>
+                  </p>
+                  <p>Request: {researchSweepResult.request_id}</p>
+                  <p>
+                    Combos: {researchSweepResult.estimated_combinations} /{" "}
+                    {researchSweepResult.max_combinations}
+                  </p>
+                  <button type="button" onClick={onDownloadSweep}>
+                    Download Sweep JSON
+                  </button>
+                </>
+              ) : (
+                <p className="small-text">No sweep result loaded.</p>
+              )}
+            </div>
+          </div>
         </SectionCard>
       </div>
 

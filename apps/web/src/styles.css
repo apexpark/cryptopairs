@@ -355,7 +355,7 @@ input {
 
 .analytics-left-stack {
   display: grid;
-  grid-template-rows: auto auto auto;
+  grid-template-rows: repeat(4, auto);
   gap: 10px;
   min-height: 0;
 }
@@ -402,6 +402,35 @@ input {
 .analytics-paper-trades-table table td {
   font-size: 0.78rem;
   padding: 5px 6px;
+}
+
+.research-controls-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(120px, 1fr));
+  gap: 8px;
+}
+
+.research-controls-actions {
+  margin-top: 10px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.research-results-grid {
+  margin-top: 10px;
+  display: grid;
+  gap: 8px;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.research-results-grid .mini-card {
+  display: grid;
+  gap: 4px;
+}
+
+.research-results-grid .mini-card button {
+  margin-top: 6px;
 }
 
 .maintenance-steps {
@@ -922,6 +951,11 @@ button:disabled {
   }
 
   .analytics-chart-split {
+    grid-template-columns: 1fr;
+  }
+
+  .research-controls-grid,
+  .research-results-grid {
     grid-template-columns: 1fr;
   }
 

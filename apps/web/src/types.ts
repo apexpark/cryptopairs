@@ -257,6 +257,103 @@ export interface StrategyPairsPaperTradesResponse {
   }>;
 }
 
+export type StrategyZMethod =
+  | "COINTEGRATION_Z"
+  | "ROBUST_Z"
+  | "VOL_NORMALIZED"
+  | "FUNDING_ADJUSTED";
+
+export interface StrategyExpectancyConfig {
+  entry_z: number;
+  exit_z: number;
+  stop_z: number;
+  z_method: StrategyZMethod;
+  hedge_method: string;
+  lookback_bars: number;
+}
+
+export interface StrategyPairsExpectancyMetrics {
+  trades: number;
+  win_rate: number;
+  avg_net_bps: number;
+  p25_net_bps: number;
+  p50_net_bps: number;
+  p75_net_bps: number;
+  avg_hold_bars: number;
+  avg_mae_bps: number;
+  avg_mfe_bps: number;
+  expected_min_lot_net_bps: number;
+  expected_min_lot_net_usd: number;
+}
+
+export interface StrategyPairsExpectancyResponse {
+  timeframe: Timeframe;
+  pair_id: string;
+  generated_at: string;
+  status: "AVAILABLE" | "UNAVAILABLE";
+  decision_state: "TRADE_READY" | "CAUTION" | "BLOCKED";
+  primary_reason_code: string;
+  config: StrategyExpectancyConfig;
+  metrics: StrategyPairsExpectancyMetrics | null;
+  rationale_codes: string[];
+}
+
+export interface StrategyPairsReplayTradePath {
+  mae_bps: number;
+  mfe_bps: number;
+  bars_underwater: number;
+  bars_held: number;
+}
+
+export interface StrategyPairsReplayTradeEntry {
+  trade_id: string;
+  entry_ts: string;
+  exit_ts: string;
+  direction: "LONG_SPREAD" | "SHORT_SPREAD";
+  entry_z: number;
+  exit_z: number;
+  net_bps: number;
+  path: StrategyPairsReplayTradePath;
+}
+
+export interface StrategyPairsReplayTradesResponse {
+  timeframe: Timeframe;
+  pair_id: string;
+  generated_at: string;
+  status: "AVAILABLE" | "UNAVAILABLE";
+  model_bars: number;
+  hours: number;
+  limit: number;
+  exit_mode: BacktestExitMode;
+  config: StrategyExpectancyConfig;
+  rationale_codes: string[];
+  rows: StrategyPairsReplayTradeEntry[];
+}
+
+export interface StrategyPairsResearchSweepRequest {
+  timeframes?: Timeframe[];
+  pair_ids?: string[];
+  entry_z_grid?: number[];
+  exit_z_grid?: number[];
+  stop_z_grid?: number[];
+  z_methods?: StrategyZMethod[];
+  lookback_bars_grid?: number[];
+  max_combinations?: number;
+  dry_run?: boolean;
+}
+
+export interface StrategyPairsResearchSweepResponse {
+  generated_at: string;
+  status: "AVAILABLE" | "UNAVAILABLE";
+  request_id: string;
+  dry_run: boolean;
+  timeframes: Timeframe[];
+  pair_ids: string[];
+  estimated_combinations: number;
+  max_combinations: number;
+  rationale_codes: string[];
+}
+
 export interface StrategyPairsBacktestResponse {
   timeframe: Timeframe;
   pair_id: string;
