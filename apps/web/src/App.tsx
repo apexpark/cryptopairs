@@ -2418,83 +2418,110 @@ function AnalyticsPage({
           </label>
         </SectionCard>
 
-        <SectionCard title="Diagnostics" subtitle="Reoptimize and shadow model status">
-          {selected ? (
-            <>
-              <StatRow label="Champion Variant" value={selected.cue.selected_variant} />
-              <StatRow
-                label="Shadow Agreement"
-                value={selected.cue.shadow_ml.agrees_with_selected ? "YES" : "NO"}
-                tone={selected.cue.shadow_ml.agrees_with_selected ? "ok" : "warn"}
-              />
-              <StatRow
-                label="Setup Gate"
-                value={(selected.cue.setup_gate?.pass ?? selected.cue.setup_actionable ?? selected.cue.actionable) ? "PASS" : "BLOCK"}
-                tone={(selected.cue.setup_gate?.pass ?? selected.cue.setup_actionable ?? selected.cue.actionable) ? "ok" : "bad"}
-              />
-              <StatRow
-                label="Cost Economics"
-                value={selected.cue.cost_gate.pass ? "PASS" : "BLOCK"}
-                tone={selected.cue.cost_gate.pass ? "ok" : "bad"}
-              />
-              <StatRow
-                label="Trade Ready"
-                value={(selected.cue.trade_gate?.pass ?? selected.cue.actionable) ? "PASS" : "BLOCK"}
-                tone={(selected.cue.trade_gate?.pass ?? selected.cue.actionable) ? "ok" : "bad"}
-              />
-            </>
-          ) : (
-            <p className="empty-text">No diagnostics available.</p>
-          )}
-        </SectionCard>
-
-        <SectionCard title="Paper Trades (Persisted)" subtitle="Per-trade leg PnL breakdown">
-          {paperTrades?.model_bars ? (
-            <p className="small-text tone-info">Model window: {paperTrades.model_bars} bars</p>
-          ) : null}
-          {paperTradesLoading ? <p className="small-text">Loading persisted paper trades...</p> : null}
-          {paperTradesError ? <p className="small-text tone-bad">{paperTradesError}</p> : null}
-          {!paperTradesLoading && !paperTradesError && paperTrades?.rows.length === 0 ? (
-            <p className="small-text">No persisted paper trades found for this pair/timeframe window.</p>
-          ) : null}
-          {paperTrades?.rows.length ? (
-            <div className="table-wrap analytics-paper-trades-table">
-              <table>
-                <thead>
-                  <tr>
-                    <th>Exit</th>
-                    <th>Dir</th>
-                    <th>Hold</th>
-                    <th>Left</th>
-                    <th>Right</th>
-                    <th>Net</th>
-                    <th>Equity</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {paperTrades.rows.map((row) => (
-                    <tr key={`${row.entry_ts}-${row.exit_ts}-${row.exit_kind}`}>
-                      <td>{formatLocalTime(row.exit_ts)}</td>
-                      <td>{row.direction === "LONG_SPREAD" ? "LONG" : "SHORT"}</td>
-                      <td>{row.bars_held}</td>
-                      <td className={row.left_leg_bps >= 0 ? "tone-ok" : "tone-bad"}>
-                        {formatSigned(row.left_leg_bps)}bp
-                      </td>
-                      <td className={row.right_leg_bps >= 0 ? "tone-ok" : "tone-bad"}>
-                        {formatSigned(row.right_leg_bps)}bp
-                      </td>
-                      <td className={row.net_bps >= 0 ? "tone-ok" : "tone-bad"}>
-                        {formatSigned(row.net_bps)}bp
-                      </td>
-                      <td className={row.equity_trade_bps >= 0 ? "tone-ok" : "tone-bad"}>
-                        {formatSigned(row.equity_trade_bps)}bp
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+        <SectionCard
+          title="Advanced Analytics"
+          subtitle="Optional diagnostics and persisted paper-trade inspection"
+        >
+          <details className="analytics-advanced-panel">
+            <summary>
+              <span>Diagnostics (Optional)</span>
+            </summary>
+            <div className="analytics-advanced-body">
+              {selected ? (
+                <>
+                  <StatRow label="Champion Variant" value={selected.cue.selected_variant} />
+                  <StatRow
+                    label="Shadow Agreement"
+                    value={selected.cue.shadow_ml.agrees_with_selected ? "YES" : "NO"}
+                    tone={selected.cue.shadow_ml.agrees_with_selected ? "ok" : "warn"}
+                  />
+                  <StatRow
+                    label="Setup Gate"
+                    value={
+                      (selected.cue.setup_gate?.pass ??
+                      selected.cue.setup_actionable ??
+                      selected.cue.actionable)
+                        ? "PASS"
+                        : "BLOCK"
+                    }
+                    tone={
+                      (selected.cue.setup_gate?.pass ??
+                      selected.cue.setup_actionable ??
+                      selected.cue.actionable)
+                        ? "ok"
+                        : "bad"
+                    }
+                  />
+                  <StatRow
+                    label="Cost Economics"
+                    value={selected.cue.cost_gate.pass ? "PASS" : "BLOCK"}
+                    tone={selected.cue.cost_gate.pass ? "ok" : "bad"}
+                  />
+                  <StatRow
+                    label="Trade Ready"
+                    value={(selected.cue.trade_gate?.pass ?? selected.cue.actionable) ? "PASS" : "BLOCK"}
+                    tone={(selected.cue.trade_gate?.pass ?? selected.cue.actionable) ? "ok" : "bad"}
+                  />
+                </>
+              ) : (
+                <p className="empty-text">No diagnostics available.</p>
+              )}
             </div>
-          ) : null}
+          </details>
+
+          <details className="analytics-advanced-panel">
+            <summary>
+              <span>Paper Trades (Optional)</span>
+            </summary>
+            <div className="analytics-advanced-body">
+              {paperTrades?.model_bars ? (
+                <p className="small-text tone-info">Model window: {paperTrades.model_bars} bars</p>
+              ) : null}
+              {paperTradesLoading ? <p className="small-text">Loading persisted paper trades...</p> : null}
+              {paperTradesError ? <p className="small-text tone-bad">{paperTradesError}</p> : null}
+              {!paperTradesLoading && !paperTradesError && paperTrades?.rows.length === 0 ? (
+                <p className="small-text">No persisted paper trades found for this pair/timeframe window.</p>
+              ) : null}
+              {paperTrades?.rows.length ? (
+                <div className="table-wrap analytics-paper-trades-table">
+                  <table>
+                    <thead>
+                      <tr>
+                        <th>Exit</th>
+                        <th>Dir</th>
+                        <th>Hold</th>
+                        <th>Left</th>
+                        <th>Right</th>
+                        <th>Net</th>
+                        <th>Equity</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {paperTrades.rows.map((row) => (
+                        <tr key={`${row.entry_ts}-${row.exit_ts}-${row.exit_kind}`}>
+                          <td>{formatLocalTime(row.exit_ts)}</td>
+                          <td>{row.direction === "LONG_SPREAD" ? "LONG" : "SHORT"}</td>
+                          <td>{row.bars_held}</td>
+                          <td className={row.left_leg_bps >= 0 ? "tone-ok" : "tone-bad"}>
+                            {formatSigned(row.left_leg_bps)}bp
+                          </td>
+                          <td className={row.right_leg_bps >= 0 ? "tone-ok" : "tone-bad"}>
+                            {formatSigned(row.right_leg_bps)}bp
+                          </td>
+                          <td className={row.net_bps >= 0 ? "tone-ok" : "tone-bad"}>
+                            {formatSigned(row.net_bps)}bp
+                          </td>
+                          <td className={row.equity_trade_bps >= 0 ? "tone-ok" : "tone-bad"}>
+                            {formatSigned(row.equity_trade_bps)}bp
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              ) : null}
+            </div>
+          </details>
         </SectionCard>
 
         <SectionCard
@@ -2868,7 +2895,7 @@ function SettingsPage({
   timeframe: Timeframe;
 }): JSX.Element {
   return (
-    <div className="split-grid">
+    <div className="settings-layout">
       <SectionCard title="Settings" subtitle="Manual trading defaults and UI preferences">
         <label>
           Theme
@@ -2933,14 +2960,8 @@ function SettingsPage({
           <h3>Current global timeframe</h3>
           <p>{timeframe}</p>
         </div>
-      </SectionCard>
-
-      <SectionCard title="Safety Defaults" subtitle="Fail-closed behavior">
-        <p className="tone-ok">Entry/exit require operator confirmation.</p>
-        <p className="tone-ok">Emergency close is available for open spread flattening.</p>
-        <p className="tone-ok">If gate state is unavailable, entry buttons remain disabled.</p>
-        <p className="small-text">
-          Live credentials should remain backend-managed and encrypted at rest.
+        <p className="small-text tone-info">
+          Execution guardrails are enforced in Trade regardless of Settings page visibility.
         </p>
       </SectionCard>
     </div>
