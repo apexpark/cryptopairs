@@ -373,7 +373,13 @@ function describeRationaleCode(code: string): string {
       "Spread is at or beyond the configured stop band, so new entries are blocked.",
     RETRACE_COOLDOWN_ACTIVE:
       "A recent stop breach triggered cooldown; entry re-arms only after 25% retrace from stop toward entry.",
-    COST_GATE_BLOCKED: "Expected edge does not clear estimated fees and slippage.",
+    COST_GATE_BLOCKED: "Recent realized paper-trade performance does not pass the profitability gate.",
+    PERFORMANCE_HISTORY_WAIT:
+      "Waiting for enough completed paper trades before enabling the profitability gate.",
+    PERFORMANCE_GATE_BLOCKED:
+      "Recent completed paper trades are not profitable enough to open new entries.",
+    PERFORMANCE_GATE_SOURCE_PAPER_TRADES:
+      "Cost gate uses recent completed paper-trade profitability for pass/block decisions.",
     NEGATIVE_EXPECTED_EDGE: "Expected edge is negative after cost adjustments.",
     NEGATIVE_EDGE: "Recent edge estimate is negative for this setup.",
     HEDGE_RATIO_UNSTABLE:
@@ -396,11 +402,11 @@ function describeRationaleCode(code: string): string {
     SETUP_GATE_BLOCKED: "Setup conditions for entry are not currently satisfied.",
     TRADE_GATE_BLOCKED: "Combined setup/cost gate did not pass.",
     FUNDING_MODEL_DYNAMIC:
-      "Funding model is dynamic (live sampled estimate shown for operator reference).",
+      "Funding model is dynamic (reference-only in this gate mode).",
     FUNDING_CONTINUOUS_ACCRUAL:
-      "Funding impact is projected as continuous accrual over expected hold time.",
+      "Funding impact is projected as continuous accrual over expected hold time (reference-only).",
     FUNDING_DATA_UNAVAILABLE_INFO:
-      "Funding sample was unavailable; funding impact is shown as zero informationally.",
+      "Funding sample was unavailable; shown as zero for operator reference.",
   };
   return mapping[code] ?? code.replaceAll("_", " ").toLowerCase();
 }
@@ -426,9 +432,9 @@ function explainPairActionability(
   const setupReasons = cue.setup_gate?.rationale_codes ?? cue.rationale_codes;
   const costReasons = cue.cost_gate.rationale_codes ?? [];
   const tradeGate = cue.trade_gate ?? {
-    status: cue.cost_gate.status === "AVAILABLE" ? "AVAILABLE" : "UNAVAILABLE",
+    status: cue.cost_gate.status === "AVAILABLE" ? "AVAILABLE" : "WAIT",
     pass: cue.actionable,
-    blocked_by: cue.actionable ? "NONE" : "UNAVAILABLE",
+    blocked_by: cue.actionable ? "NONE" : "WAIT",
     rationale_codes: cue.actionable
       ? []
       : Array.from(new Set([...setupReasons, ...costReasons])),
@@ -443,11 +449,13 @@ function explainPairActionability(
     reasonSet.delete("TRADE_GATE_BLOCKED");
   }
   const displayReasons = Array.from(reasonSet);
-  const costUnavailable = cue.cost_gate.status !== "AVAILABLE";
+  const costWaiting = cue.cost_gate.status === "WAIT";
+  const costUnavailable = cue.cost_gate.status !== "AVAILABLE" && !costWaiting;
   const costBlocked =
+    costWaiting ||
     costUnavailable ||
     costReasons.includes("COST_GATE_BLOCKED") ||
-    costReasons.includes("NEGATIVE_EXPECTED_EDGE") ||
+    costReasons.includes("PERFORMANCE_GATE_BLOCKED") ||
     (cue.cost_gate.status === "AVAILABLE" && !cue.cost_gate.pass);
 
   const details: string[] = [];
@@ -467,15 +475,19 @@ function explainPairActionability(
       `Recent stop breach detected. New entries stay blocked until z-score retraces to ±${rearmLevel.toFixed(2)} (25% back from stop toward entry).`
     );
   }
-  if (costUnavailable) {
-    details.push("Cost economics are unavailable right now, so trading remains fail-closed.");
+  if (costWaiting) {
+    details.push(
+      "Profitability gate is in WAIT mode until enough completed paper trades are available."
+    );
+  } else if (costUnavailable) {
+    details.push("Cost/performance gate is unavailable right now, so trading remains fail-closed.");
   } else if (costBlocked) {
     details.push(
-      `Net edge is ${formatSigned(cue.cost_gate.net_edge_bps)}bp after costs, so the cost gate remains blocked.`
+      `Recent paper-trade median net performance is ${formatSigned(cue.cost_gate.net_edge_bps)}bp, so the profitability gate remains blocked.`
     );
   } else {
     details.push(
-      `Net edge is ${formatSigned(cue.cost_gate.net_edge_bps)}bp after costs, so economics currently pass.`
+      `Recent paper-trade median net performance is ${formatSigned(cue.cost_gate.net_edge_bps)}bp, so the profitability gate currently passes.`
     );
   }
   if (setupReasons.includes("HEDGE_RATIO_UNSTABLE")) {
@@ -534,15 +546,23 @@ function explainPairActionability(
   }
   if (tradeGate.blocked_by === "COST") {
     return {
-      headline: "Blocked for now: expected edge does not clear trade costs.",
+      headline: "Blocked for now: recent paper-trade profitability does not pass gate rules.",
       tone: "bad",
+      details,
+      reasons: displayReasons,
+    };
+  }
+  if (tradeGate.blocked_by === "WAIT") {
+    return {
+      headline: "Blocked for now: waiting for gate readiness before allowing entries.",
+      tone: "warn",
       details,
       reasons: displayReasons,
     };
   }
   if (tradeGate.blocked_by === "MULTIPLE") {
     return {
-      headline: "Blocked for now: both setup conditions and cost economics are failing.",
+      headline: "Blocked for now: both setup conditions and profitability gate are failing.",
       tone: "bad",
       details,
       reasons: displayReasons,

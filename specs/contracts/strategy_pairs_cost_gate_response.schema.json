@@ -56,7 +56,7 @@
           "trade_ready": { "type": "boolean" },
           "trade_blocked_by": {
             "type": "string",
-            "enum": ["NONE", "SETUP", "COST", "MULTIPLE", "UNAVAILABLE"]
+            "enum": ["NONE", "SETUP", "COST", "MULTIPLE", "WAIT", "UNAVAILABLE"]
           },
           "rationale_codes": {
             "type": "array",

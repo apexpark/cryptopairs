@@ -16,10 +16,9 @@ use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 use strategy_service::{
     annotate_with_shadow_model, apply_portfolio_plan_to_cues, build_portfolio_plan,
-    compute_backtest_series, evaluate_cost_gate, evaluate_pair, train_shadow_model, BacktestConfig,
-    BacktestExitMode, CandidateSetDiagnostics, CostGateInput, FundingModel, PairCue,
-    PairEvaluationInput, PairEvaluationOutput, PortfolioPlan, Regime, ShadowModelTrainingRow,
-    SignalVariant,
+    compute_backtest_series, evaluate_pair, train_shadow_model, BacktestConfig, BacktestExitMode,
+    CandidateSetDiagnostics, FundingModel, PairCue, PairEvaluationInput, PairEvaluationOutput,
+    PortfolioPlan, Regime, ShadowModelTrainingRow, SignalVariant,
 };
 use tokio::net::TcpListener;
 use tokio::sync::RwLock;
@@ -84,6 +83,9 @@ struct StrategySettings {
     sampled_slippage_persist_secs: u64,
     sampled_slippage_bootstrap_max_deviation_bps: f64,
     min_net_edge_bps: f64,
+    performance_gate_min_trades: usize,
+    performance_gate_lookback_trades: usize,
+    performance_gate_exit_mode: String,
     dynamic_funding_enabled: bool,
     funding_interval_secs: u64,
     funding_phase_offset_secs: i64,
@@ -187,6 +189,20 @@ impl StrategySettings {
         let sampled_slippage_bootstrap_max_deviation_bps =
             parse_env_f64("STRATEGY_SAMPLED_SLIPPAGE_BOOTSTRAP_MAX_DEVIATION_BPS", 3.0).max(0.0);
         let min_net_edge_bps = parse_env_f64("STRATEGY_MIN_NET_EDGE_BPS", 0.0);
+        let performance_gate_min_trades =
+            parse_env_usize("STRATEGY_PERFORMANCE_GATE_MIN_TRADES", 2).max(1);
+        let performance_gate_lookback_trades =
+            parse_env_usize("STRATEGY_PERFORMANCE_GATE_LOOKBACK_TRADES", 12).max(1);
+        let performance_gate_exit_mode = std::env::var("STRATEGY_PERFORMANCE_GATE_EXIT_MODE")
+            .unwrap_or_else(|_| "mean_revert".to_string())
+            .trim()
+            .to_ascii_lowercase();
+        let performance_gate_exit_mode =
+            if BacktestExitMode::parse(&performance_gate_exit_mode).is_some() {
+                performance_gate_exit_mode
+            } else {
+                "mean_revert".to_string()
+            };
         let dynamic_funding_enabled = parse_env_bool("STRATEGY_DYNAMIC_FUNDING_ENABLED", true);
         let funding_interval_secs = parse_env_u64("STRATEGY_FUNDING_INTERVAL_SECS", 3600).max(1);
         let funding_phase_offset_secs = parse_env_i64("STRATEGY_FUNDING_PHASE_OFFSET_SECS", 0);
@@ -266,6 +282,9 @@ impl StrategySettings {
             sampled_slippage_persist_secs,
             sampled_slippage_bootstrap_max_deviation_bps,
             min_net_edge_bps,
+            performance_gate_min_trades,
+            performance_gate_lookback_trades,
+            performance_gate_exit_mode,
             dynamic_funding_enabled,
             funding_interval_secs,
             funding_phase_offset_secs,
@@ -910,6 +929,29 @@ impl StrategyRepository {
                 updated_at: row.get(28),
             })
             .collect())
+    }
+
+    async fn fetch_recent_paper_trade_net_bps(
+        &self,
+        pair_id: &str,
+        timeframe: Timeframe,
+        exit_mode: &str,
+        limit: i64,
+    ) -> anyhow::Result<Vec<f64>> {
+        let rows = self
+            .client
+            .query(
+                "SELECT net_bps
+                 FROM strategy_paper_trades
+                 WHERE pair_id = $1
+                   AND timeframe = $2
+                   AND exit_mode = $3
+                 ORDER BY exit_ts DESC
+                 LIMIT $4",
+                &[&pair_id, &timeframe.as_str(), &exit_mode, &limit],
+            )
+            .await?;
+        Ok(rows.into_iter().map(|row| row.get(0)).collect())
     }
 
     async fn upsert_selected_signal(
@@ -2027,7 +2069,6 @@ struct FundingCostEstimate {
     events: u32,
     bps_per_event: f64,
     total_bps: f64,
-    sample_available: bool,
 }
 
 fn resolve_funding_cost_estimate(
@@ -2043,7 +2084,6 @@ fn resolve_funding_cost_estimate(
             events: 0,
             bps_per_event: total_bps,
             total_bps,
-            sample_available: true,
         };
     }
 
@@ -2062,7 +2102,6 @@ fn resolve_funding_cost_estimate(
             events,
             bps_per_event,
             total_bps: 0.0,
-            sample_available: sampled.selected_funding_bps_per_event.is_some(),
         };
     }
 
@@ -2078,17 +2117,100 @@ fn resolve_funding_cost_estimate(
         events,
         bps_per_event,
         total_bps,
-        sample_available: sampled.selected_funding_bps_per_event.is_some(),
     }
 }
 
-fn resolve_expected_edge_bps_for_cost_gate(output: &PairEvaluationOutput) -> f64 {
-    output
-        .variants
+#[derive(Debug, Clone, Copy)]
+struct PerformanceGateStats {
+    trades: usize,
+    net_sum_bps: f64,
+    net_mean_bps: f64,
+    net_median_bps: f64,
+}
+
+fn summarize_recent_performance(net_bps: &[f64]) -> Option<PerformanceGateStats> {
+    let mut values = net_bps
         .iter()
-        .find(|variant| variant.variant == output.cue.selected_variant)
-        .map(|variant| (variant.edge_bps * variant.reliability).max(0.0))
-        .unwrap_or_else(|| output.cue.opportunity_score.max(0.0))
+        .copied()
+        .filter(|value| value.is_finite())
+        .collect::<Vec<_>>();
+    if values.is_empty() {
+        return None;
+    }
+    let trades = values.len();
+    let net_sum_bps = values.iter().sum::<f64>();
+    let net_mean_bps = net_sum_bps / trades as f64;
+    values.sort_by(|left, right| left.total_cmp(right));
+    let net_median_bps = percentile(&values, 0.5);
+
+    Some(PerformanceGateStats {
+        trades,
+        net_sum_bps,
+        net_mean_bps,
+        net_median_bps,
+    })
+}
+
+fn evaluate_recent_performance_gate(
+    stats: Option<PerformanceGateStats>,
+    min_trades: usize,
+    taker_fee_bps: f64,
+    sampled_slippage_bps: f64,
+    funding_estimate: FundingCostEstimate,
+) -> strategy_service::CostGateDiagnostics {
+    let mut rationale_codes = vec!["PERFORMANCE_GATE_SOURCE_PAPER_TRADES".to_string()];
+    let Some(stats) = stats else {
+        rationale_codes.push("PERFORMANCE_HISTORY_WAIT".to_string());
+        return strategy_service::CostGateDiagnostics {
+            status: "WAIT".to_string(),
+            expected_edge_bps: 0.0,
+            fee_bps: taker_fee_bps.max(0.0),
+            funding_model: funding_estimate.model.as_str().to_string(),
+            funding_events: funding_estimate.events,
+            funding_bps_per_event: funding_estimate.bps_per_event,
+            funding_bps: funding_estimate.total_bps,
+            slippage_bps: sampled_slippage_bps.max(0.0),
+            net_edge_bps: 0.0,
+            pass: false,
+            rationale_codes,
+        };
+    };
+
+    if stats.trades < min_trades.max(1) {
+        rationale_codes.push("PERFORMANCE_HISTORY_WAIT".to_string());
+        return strategy_service::CostGateDiagnostics {
+            status: "WAIT".to_string(),
+            expected_edge_bps: stats.net_mean_bps,
+            fee_bps: taker_fee_bps.max(0.0),
+            funding_model: funding_estimate.model.as_str().to_string(),
+            funding_events: funding_estimate.events,
+            funding_bps_per_event: funding_estimate.bps_per_event,
+            funding_bps: funding_estimate.total_bps,
+            slippage_bps: sampled_slippage_bps.max(0.0),
+            net_edge_bps: stats.net_median_bps,
+            pass: false,
+            rationale_codes,
+        };
+    }
+
+    let pass = stats.net_sum_bps > 0.0 && stats.net_median_bps > 0.0;
+    if !pass {
+        rationale_codes.push("PERFORMANCE_GATE_BLOCKED".to_string());
+    }
+
+    strategy_service::CostGateDiagnostics {
+        status: "AVAILABLE".to_string(),
+        expected_edge_bps: stats.net_mean_bps,
+        fee_bps: taker_fee_bps.max(0.0),
+        funding_model: funding_estimate.model.as_str().to_string(),
+        funding_events: funding_estimate.events,
+        funding_bps_per_event: funding_estimate.bps_per_event,
+        funding_bps: funding_estimate.total_bps,
+        slippage_bps: sampled_slippage_bps.max(0.0),
+        net_edge_bps: stats.net_median_bps,
+        pass,
+        rationale_codes,
+    }
 }
 
 #[derive(Debug, Serialize)]
@@ -2661,6 +2783,12 @@ async fn main() -> anyhow::Result<()> {
         shadow_ml_training_limit = settings.shadow_ml_training_limit,
         trading_fee_bps = settings.trading_fee_bps,
         min_net_edge_bps = settings.min_net_edge_bps,
+        slippage_base_bps = settings.slippage_base_bps,
+        slippage_vol_multiplier = settings.slippage_vol_multiplier,
+        slippage_z_multiplier = settings.slippage_z_multiplier,
+        performance_gate_min_trades = settings.performance_gate_min_trades,
+        performance_gate_lookback_trades = settings.performance_gate_lookback_trades,
+        performance_gate_exit_mode = %settings.performance_gate_exit_mode,
         sampled_slippage_interval_ms = settings.sampled_slippage_interval_ms,
         sampled_slippage_warmup_secs = settings.sampled_slippage_warmup_secs,
         sampled_slippage_stale_secs = settings.sampled_slippage_stale_secs,
@@ -5697,21 +5825,35 @@ async fn evaluate_pair_for_timeframe(
         if sampled.status == SampledSlippageStatus::Healthy {
             let funding_estimate =
                 resolve_funding_cost_estimate(&state.settings, &output, timeframe, &sampled);
-            let mut cost_gate = evaluate_cost_gate(CostGateInput {
-                expected_edge_bps: resolve_expected_edge_bps_for_cost_gate(&output),
-                fee_bps: taker_fee_bps,
-                funding_model: funding_estimate.model,
-                funding_events: funding_estimate.events,
-                funding_bps_per_event: funding_estimate.bps_per_event,
-                funding_bps: funding_estimate.total_bps,
-                spread_vol_bps: output.spread_vol_bps.max(0.0),
-                spread_z: output.cue.spread_z,
-                sampled_slippage_bps: Some(sampled.selected_slippage_bps),
-                slippage_base_bps: state.settings.slippage_base_bps,
-                slippage_vol_multiplier: state.settings.slippage_vol_multiplier,
-                slippage_z_multiplier: state.settings.slippage_z_multiplier,
-                min_net_edge_bps: state.settings.min_net_edge_bps,
-            });
+            let recent_net_bps = match state
+                .repository
+                .fetch_recent_paper_trade_net_bps(
+                    &output.cue.pair_id,
+                    timeframe,
+                    &state.settings.performance_gate_exit_mode,
+                    state.settings.performance_gate_lookback_trades as i64,
+                )
+                .await
+            {
+                Ok(values) => values,
+                Err(error) => {
+                    tracing::warn!(
+                        pair_id = %output.cue.pair_id,
+                        timeframe = %timeframe.as_str(),
+                        error = %error,
+                        "unable to load paper-trade performance window for cost gate"
+                    );
+                    vec![]
+                }
+            };
+            let performance_stats = summarize_recent_performance(&recent_net_bps);
+            let mut cost_gate = evaluate_recent_performance_gate(
+                performance_stats,
+                state.settings.performance_gate_min_trades,
+                taker_fee_bps,
+                sampled.selected_slippage_bps,
+                funding_estimate,
+            );
             if sampled.source == Some(SampledSlippageSource::Bootstrapped) {
                 cost_gate
                     .rationale_codes
@@ -5720,28 +5862,6 @@ async fn evaluate_pair_for_timeframe(
                 cost_gate
                     .rationale_codes
                     .push("SLIPPAGE_SOURCE_SAMPLED".to_string());
-            }
-            if funding_estimate.model == FundingModel::Dynamic {
-                cost_gate
-                    .rationale_codes
-                    .push("FUNDING_MODEL_DYNAMIC".to_string());
-                cost_gate
-                    .rationale_codes
-                    .push("FUNDING_CONTINUOUS_ACCRUAL".to_string());
-                if funding_estimate.events == 0 {
-                    cost_gate
-                        .rationale_codes
-                        .push("FUNDING_WINDOW_NO_SETTLEMENT".to_string());
-                }
-                if !funding_estimate.sample_available {
-                    cost_gate
-                        .rationale_codes
-                        .push("FUNDING_DATA_UNAVAILABLE_INFO".to_string());
-                }
-            } else {
-                cost_gate
-                    .rationale_codes
-                    .push("FUNDING_MODEL_STATIC".to_string());
             }
 
             if !cost_gate.pass {
@@ -5776,18 +5896,14 @@ fn is_cost_reason(code: &str) -> bool {
     matches!(
         code,
         "COST_GATE_BLOCKED"
-            | "NEGATIVE_EXPECTED_EDGE"
-            | "INVALID_FUNDING_INPUT"
+            | "PERFORMANCE_HISTORY_WAIT"
+            | "PERFORMANCE_GATE_BLOCKED"
+            | "PERFORMANCE_GATE_SOURCE_PAPER_TRADES"
             | "SLIPPAGE_SOURCE_SAMPLED"
             | "SLIPPAGE_SOURCE_BOOTSTRAPPED"
             | "SLIPPAGE_DATA_WARMING"
             | "SLIPPAGE_DATA_STALE"
             | "SLIPPAGE_DATA_UNAVAILABLE"
-            | "FUNDING_MODEL_DYNAMIC"
-            | "FUNDING_CONTINUOUS_ACCRUAL"
-            | "FUNDING_WINDOW_NO_SETTLEMENT"
-            | "FUNDING_DATA_UNAVAILABLE_INFO"
-            | "FUNDING_MODEL_STATIC"
             | "ADVISORY_DISABLED"
     )
 }
@@ -5808,28 +5924,31 @@ fn refresh_setup_gate(cue: &mut PairCue) {
 }
 
 fn finalize_trade_gate(cue: &mut PairCue) {
+    let setup_wait = cue.setup_gate.status == "WAIT";
+    let cost_wait = cue.cost_gate.status == "WAIT";
     let setup_available = cue.setup_gate.status == "AVAILABLE";
     let setup_pass = setup_available && cue.setup_gate.pass;
     let cost_available = cue.cost_gate.status == "AVAILABLE";
     let cost_pass = cost_available && cue.cost_gate.pass;
 
-    let (status, pass, blocked_by) = if !setup_available || !cost_available {
-        ("UNAVAILABLE".to_string(), false, "UNAVAILABLE".to_string())
-    } else if setup_pass && cost_pass {
-        ("AVAILABLE".to_string(), true, "NONE".to_string())
-    } else if !setup_pass && !cost_pass {
-        ("AVAILABLE".to_string(), false, "MULTIPLE".to_string())
-    } else if !setup_pass {
-        ("AVAILABLE".to_string(), false, "SETUP".to_string())
-    } else {
-        ("AVAILABLE".to_string(), false, "COST".to_string())
-    };
+    let (status, pass, blocked_by) =
+        if setup_wait || cost_wait || !setup_available || !cost_available {
+            ("WAIT".to_string(), false, "WAIT".to_string())
+        } else if setup_pass && cost_pass {
+            ("AVAILABLE".to_string(), true, "NONE".to_string())
+        } else if !setup_pass && !cost_pass {
+            ("AVAILABLE".to_string(), false, "MULTIPLE".to_string())
+        } else if !setup_pass {
+            ("AVAILABLE".to_string(), false, "SETUP".to_string())
+        } else {
+            ("AVAILABLE".to_string(), false, "COST".to_string())
+        };
 
     let mut rationale_codes = vec![];
     if !setup_pass {
         rationale_codes.extend(cue.setup_gate.rationale_codes.iter().cloned());
     }
-    if !cost_pass || !cost_available {
+    if !cost_pass || !cost_available || cost_wait {
         rationale_codes.extend(cue.cost_gate.rationale_codes.iter().cloned());
     }
     if rationale_codes.is_empty() && !pass {
@@ -6011,17 +6130,17 @@ mod tests {
         classify_expectancy_result, compute_expectancy_metrics, compute_pair_funding_bps_per_event,
         compute_pair_slippage_sample_bps, days_covered, decide_champion_transition,
         derive_paper_trades_from_series, derive_replay_trades_from_series,
-        estimate_research_combinations, expectancy_objective_score,
-        expected_funding_events_crossed, finalize_trade_gate, normalize_funding_rate,
-        parse_backtest_exit_mode, parse_expectancy_query,
+        estimate_research_combinations, evaluate_recent_performance_gate,
+        expectancy_objective_score, expected_funding_events_crossed, finalize_trade_gate,
+        normalize_funding_rate, parse_backtest_exit_mode, parse_expectancy_query,
         parse_opportunity_history_stats_timeframe, parse_opportunity_history_window,
         parse_paper_trades_window, parse_replay_trades_query, percentile,
         project_continuous_funding_bps, refresh_setup_gate, resolve_artifact_path,
-        resolve_taker_fee_bps, ChampionDecision, ExpectancyMetrics, ExpectancyQuery,
-        FundingRateInputMode, MaintenanceAction, OpportunityHistoryQuery,
-        OpportunityHistoryStatsQuery, PaperTradesQuery, ReplayTradeEntry, ReplayTradePathSummary,
-        ReplayTradesQuery, ResearchSweepRequest, SampledSlippageStatus, SelectedSignalRow,
-        StrategyMarketMetricsResponse, StrategySettings,
+        resolve_taker_fee_bps, summarize_recent_performance, ChampionDecision, ExpectancyMetrics,
+        ExpectancyQuery, FundingCostEstimate, FundingRateInputMode, MaintenanceAction,
+        OpportunityHistoryQuery, OpportunityHistoryStatsQuery, PaperTradesQuery, ReplayTradeEntry,
+        ReplayTradePathSummary, ReplayTradesQuery, ResearchSweepRequest, SampledSlippageStatus,
+        SelectedSignalRow, StrategyMarketMetricsResponse, StrategySettings,
     };
     use chrono::Utc;
     use common_types::Timeframe;
@@ -6029,8 +6148,8 @@ mod tests {
     use std::path::PathBuf;
     use strategy_service::{
         BacktestExitMode, BacktestMarker, BacktestPoint, BacktestSeries, CostGateDiagnostics,
-        PairCue, PairEvaluationOutput, PortfolioHint, SetupGateDiagnostics, ShadowMlDiagnostics,
-        TradeGateDiagnostics, VariantEvaluation,
+        FundingModel, PairCue, PairEvaluationOutput, PortfolioHint, SetupGateDiagnostics,
+        ShadowMlDiagnostics, TradeGateDiagnostics, VariantEvaluation,
     };
 
     fn output(
@@ -7000,5 +7119,97 @@ mod tests {
             .rationale_codes
             .iter()
             .any(|code| code == "BELOW_ENTRY_BAND"));
+    }
+
+    #[test]
+    fn performance_gate_waits_when_trade_history_is_insufficient() {
+        let funding = FundingCostEstimate {
+            model: FundingModel::Dynamic,
+            events: 0,
+            bps_per_event: 0.0,
+            total_bps: 0.0,
+        };
+        let gate = evaluate_recent_performance_gate(None, 2, 1.2, 0.7, funding);
+        assert_eq!(gate.status, "WAIT");
+        assert!(!gate.pass);
+        assert!(gate
+            .rationale_codes
+            .iter()
+            .any(|code| code == "PERFORMANCE_HISTORY_WAIT"));
+    }
+
+    #[test]
+    fn performance_gate_blocks_when_recent_performance_is_not_profitable() {
+        let funding = FundingCostEstimate {
+            model: FundingModel::Dynamic,
+            events: 2,
+            bps_per_event: 0.1,
+            total_bps: 0.2,
+        };
+        let stats = summarize_recent_performance(&[-2.0, 3.0, -1.5]).expect("stats");
+        let gate = evaluate_recent_performance_gate(Some(stats), 2, 1.2, 0.7, funding);
+        assert_eq!(gate.status, "AVAILABLE");
+        assert!(!gate.pass);
+        assert!(gate
+            .rationale_codes
+            .iter()
+            .any(|code| code == "PERFORMANCE_GATE_BLOCKED"));
+    }
+
+    #[test]
+    fn performance_gate_passes_when_recent_performance_is_positive() {
+        let funding = FundingCostEstimate {
+            model: FundingModel::Dynamic,
+            events: 1,
+            bps_per_event: 0.1,
+            total_bps: 0.1,
+        };
+        let stats = summarize_recent_performance(&[1.5, 2.0, 3.0]).expect("stats");
+        let gate = evaluate_recent_performance_gate(Some(stats), 2, 1.2, 0.7, funding);
+        assert_eq!(gate.status, "AVAILABLE");
+        assert!(gate.pass);
+        assert!(gate.net_edge_bps > 0.0);
+    }
+
+    #[test]
+    fn trade_gate_waits_when_cost_gate_is_waiting() {
+        let mut cue = PairCue {
+            pair_id: "PF_XBTUSD__PF_ETHUSD".to_string(),
+            left_instrument: "PF_XBTUSD".to_string(),
+            right_instrument: "PF_ETHUSD".to_string(),
+            timeframe: "1h".to_string(),
+            regime: "CALM".to_string(),
+            selected_variant: "COINTEGRATION_Z".to_string(),
+            direction_hint: "LONG_SPREAD".to_string(),
+            spread_z: -2.1,
+            opportunity_score: 1.0,
+            confidence_band: "HIGH".to_string(),
+            entry_band: 1.8,
+            exit_band: 0.6,
+            stop_band: 3.2,
+            expected_hold_bars: 12,
+            cost_estimate_bps: 0.0,
+            setup_actionable: true,
+            actionable: true,
+            rationale_codes: vec![],
+            setup_gate: SetupGateDiagnostics {
+                status: "AVAILABLE".to_string(),
+                pass: true,
+                rationale_codes: vec![],
+            },
+            cost_gate: CostGateDiagnostics::unavailable(vec![
+                "PERFORMANCE_HISTORY_WAIT".to_string()
+            ]),
+            trade_gate: TradeGateDiagnostics::unavailable(vec![]),
+            portfolio_hint: PortfolioHint::unavailable(vec![]),
+            shadow_ml: ShadowMlDiagnostics::unavailable(vec![]),
+            evaluated_at: Utc::now(),
+        };
+
+        refresh_setup_gate(&mut cue);
+        finalize_trade_gate(&mut cue);
+        assert_eq!(cue.trade_gate.status, "WAIT");
+        assert_eq!(cue.trade_gate.blocked_by, "WAIT");
+        assert!(!cue.trade_gate.pass);
     }
 }

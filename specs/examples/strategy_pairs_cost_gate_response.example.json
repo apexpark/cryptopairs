@@ -19,7 +19,7 @@
       "setup_pass": true,
       "trade_ready": true,
       "trade_blocked_by": "NONE",
-      "rationale_codes": ["FUNDING_MODEL_DYNAMIC", "FUNDING_CONTINUOUS_ACCRUAL", "FUNDING_WINDOW_NO_SETTLEMENT"]
+      "rationale_codes": ["PERFORMANCE_GATE_SOURCE_PAPER_TRADES", "SLIPPAGE_SOURCE_SAMPLED"]
     },
     {
       "pair_id": "PI_SOLUSD__PI_ETHUSD",
@@ -38,7 +38,11 @@
       "setup_pass": true,
       "trade_ready": false,
       "trade_blocked_by": "COST",
-      "rationale_codes": ["FUNDING_MODEL_DYNAMIC", "FUNDING_CONTINUOUS_ACCRUAL", "FUNDING_WINDOW_NO_SETTLEMENT", "COST_GATE_BLOCKED"]
+      "rationale_codes": [
+        "PERFORMANCE_GATE_SOURCE_PAPER_TRADES",
+        "SLIPPAGE_SOURCE_SAMPLED",
+        "PERFORMANCE_GATE_BLOCKED"
+      ]
     }
   ],
   "skipped": []

@@ -4,7 +4,7 @@ export type BacktestExitMode = "mean_revert" | "opposite_extreme";
 export type DirectionHint = "LONG_SPREAD" | "SHORT_SPREAD" | "NONE";
 
 export interface CostGate {
-  status: "AVAILABLE" | "UNAVAILABLE";
+  status: "AVAILABLE" | "WAIT" | "UNAVAILABLE";
   expected_edge_bps: number;
   fee_bps: number;
   funding_model: "STATIC" | "DYNAMIC";
@@ -18,15 +18,15 @@ export interface CostGate {
 }
 
 export interface SetupGate {
-  status: "AVAILABLE" | "UNAVAILABLE";
+  status: "AVAILABLE" | "WAIT" | "UNAVAILABLE";
   pass: boolean;
   rationale_codes: string[];
 }
 
 export interface TradeGate {
-  status: "AVAILABLE" | "UNAVAILABLE";
+  status: "AVAILABLE" | "WAIT" | "UNAVAILABLE";
   pass: boolean;
-  blocked_by: "NONE" | "SETUP" | "COST" | "MULTIPLE" | "UNAVAILABLE";
+  blocked_by: "NONE" | "SETUP" | "COST" | "MULTIPLE" | "WAIT" | "UNAVAILABLE";
   rationale_codes: string[];
 }
 
