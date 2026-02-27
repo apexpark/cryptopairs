@@ -1,5 +1,5 @@
 use chrono::{DateTime, Utc};
-use common_types::Timeframe;
+use common_types::{quantize_price_to_tick, InstrumentTradingConstraints, Timeframe};
 use serde::Serialize;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -392,6 +392,8 @@ pub struct BacktestConfig {
     pub stop_band: f64,
     pub round_trip_cost_bps: f64,
     pub exit_mode: BacktestExitMode,
+    pub left_constraints: Option<InstrumentTradingConstraints>,
+    pub right_constraints: Option<InstrumentTradingConstraints>,
 }
 
 #[derive(Debug, Clone)]
@@ -1056,6 +1058,14 @@ pub fn compute_backtest_series(
     let mut position: i8 = 0;
     let mut equity = 1.0;
     let round_trip_cost = (config.round_trip_cost_bps.max(0.0) / 20_000.0).clamp(0.0, 1.0);
+    let left_tick = config
+        .left_constraints
+        .filter(|constraints| constraints.tick_size.is_finite() && constraints.tick_size > 0.0)
+        .map(|constraints| constraints.tick_size);
+    let right_tick = config
+        .right_constraints
+        .filter(|constraints| constraints.tick_size.is_finite() && constraints.tick_size > 0.0)
+        .map(|constraints| constraints.tick_size);
     let stop_abs = config.stop_band.abs();
     let entry_abs = config.entry_band.abs().max(0.0);
     let stop_to_entry_span = (stop_abs - entry_abs).max(0.0);
@@ -1065,8 +1075,36 @@ pub fn compute_backtest_series(
 
     for idx in 1..timestamps.len() {
         let z = (spread[idx] - spread_mean) / spread_std;
-        let left_return = (left_closes[idx] / left_closes[idx - 1]) - 1.0;
-        let right_return = (right_closes[idx] / right_closes[idx - 1]) - 1.0;
+        let left_prev = if let Some(tick) = left_tick {
+            quantize_price_to_tick(left_closes[idx - 1], tick).unwrap_or(left_closes[idx - 1])
+        } else {
+            left_closes[idx - 1]
+        };
+        let left_now = if let Some(tick) = left_tick {
+            quantize_price_to_tick(left_closes[idx], tick).unwrap_or(left_closes[idx])
+        } else {
+            left_closes[idx]
+        };
+        let right_prev = if let Some(tick) = right_tick {
+            quantize_price_to_tick(right_closes[idx - 1], tick).unwrap_or(right_closes[idx - 1])
+        } else {
+            right_closes[idx - 1]
+        };
+        let right_now = if let Some(tick) = right_tick {
+            quantize_price_to_tick(right_closes[idx], tick).unwrap_or(right_closes[idx])
+        } else {
+            right_closes[idx]
+        };
+        let left_return = if left_prev > 0.0 {
+            (left_now / left_prev) - 1.0
+        } else {
+            0.0
+        };
+        let right_return = if right_prev > 0.0 {
+            (right_now / right_prev) - 1.0
+        } else {
+            0.0
+        };
         let spread_return = left_return - config.hedge_ratio * right_return;
         let position_at_bar_start = position;
         if stop_abs > 0.0 {
@@ -1774,6 +1812,8 @@ mod tests {
                 stop_band: 3.2,
                 round_trip_cost_bps: 2.0,
                 exit_mode: BacktestExitMode::MeanRevert,
+                left_constraints: None,
+                right_constraints: None,
             },
         );
         assert!(series.points.len() > 200);
@@ -1796,6 +1836,8 @@ mod tests {
                 stop_band: 3.2,
                 round_trip_cost_bps: 0.0,
                 exit_mode: BacktestExitMode::MeanRevert,
+                left_constraints: None,
+                right_constraints: None,
             },
         );
         assert!(series.points.is_empty());
@@ -1820,6 +1862,8 @@ mod tests {
                 stop_band: 1.2,
                 round_trip_cost_bps: 0.0,
                 exit_mode: BacktestExitMode::MeanRevert,
+                left_constraints: None,
+                right_constraints: None,
             },
         );
 
@@ -1849,6 +1893,8 @@ mod tests {
                 stop_band,
                 round_trip_cost_bps: 0.0,
                 exit_mode: BacktestExitMode::MeanRevert,
+                left_constraints: None,
+                right_constraints: None,
             },
         );
 
@@ -1894,6 +1940,8 @@ mod tests {
                 stop_band: 4.0,
                 round_trip_cost_bps: 0.0,
                 exit_mode: BacktestExitMode::MeanRevert,
+                left_constraints: None,
+                right_constraints: None,
             },
         );
         let opposite_extreme = compute_backtest_series(
@@ -1907,6 +1955,8 @@ mod tests {
                 stop_band: 4.0,
                 round_trip_cost_bps: 0.0,
                 exit_mode: BacktestExitMode::OppositeExtreme,
+                left_constraints: None,
+                right_constraints: None,
             },
         );
 
@@ -2014,6 +2064,8 @@ mod tests {
                 stop_band,
                 round_trip_cost_bps: 0.0,
                 exit_mode: BacktestExitMode::MeanRevert,
+                left_constraints: None,
+                right_constraints: None,
             },
         );
 

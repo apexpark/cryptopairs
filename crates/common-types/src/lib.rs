@@ -1,6 +1,111 @@
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq)]
+pub struct InstrumentTradingConstraints {
+    pub min_lot: f64,
+    pub tick_size: f64,
+}
+
+pub fn normalize_kraken_perp_symbol(raw: &str) -> String {
+    let upper = raw.trim().to_ascii_uppercase();
+    let without_suffix = upper.trim_end_matches('*');
+    if let Some(symbol) = without_suffix.strip_prefix("PI_") {
+        format!("PF_{symbol}")
+    } else {
+        without_suffix.to_string()
+    }
+}
+
+pub fn kraken_perp_constraints(raw_instrument: &str) -> Option<InstrumentTradingConstraints> {
+    match normalize_kraken_perp_symbol(raw_instrument).as_str() {
+        "PF_ADAUSD" => Some(InstrumentTradingConstraints {
+            min_lot: 1.0,
+            tick_size: 0.00001,
+        }),
+        "PF_ARBUSD" => Some(InstrumentTradingConstraints {
+            min_lot: 1.0,
+            tick_size: 0.0001,
+        }),
+        "PF_AVAXUSD" => Some(InstrumentTradingConstraints {
+            min_lot: 0.01,
+            tick_size: 0.001,
+        }),
+        "PF_BNBUSD" => Some(InstrumentTradingConstraints {
+            min_lot: 0.01,
+            tick_size: 0.01,
+        }),
+        "PF_DOGEUSD" => Some(InstrumentTradingConstraints {
+            min_lot: 1.0,
+            tick_size: 0.000001,
+        }),
+        "PF_ETHUSD" => Some(InstrumentTradingConstraints {
+            min_lot: 0.001,
+            tick_size: 0.1,
+        }),
+        "PF_HYPEUSD" => Some(InstrumentTradingConstraints {
+            min_lot: 0.1,
+            tick_size: 0.001,
+        }),
+        "PF_LINKUSD" => Some(InstrumentTradingConstraints {
+            min_lot: 0.1,
+            tick_size: 0.001,
+        }),
+        "PF_PEPEUSD" => Some(InstrumentTradingConstraints {
+            min_lot: 1000.0,
+            tick_size: 0.0000000001,
+        }),
+        "PF_SOLUSD" => Some(InstrumentTradingConstraints {
+            min_lot: 0.01,
+            tick_size: 0.01,
+        }),
+        "PF_SUIUSD" => Some(InstrumentTradingConstraints {
+            min_lot: 1.0,
+            tick_size: 0.0001,
+        }),
+        "PF_TAOUSD" => Some(InstrumentTradingConstraints {
+            min_lot: 0.01,
+            tick_size: 0.01,
+        }),
+        "PF_XBTUSD" => Some(InstrumentTradingConstraints {
+            min_lot: 0.0001,
+            tick_size: 1.0,
+        }),
+        "PF_XRPUSD" => Some(InstrumentTradingConstraints {
+            min_lot: 1.0,
+            tick_size: 0.00001,
+        }),
+        _ => None,
+    }
+}
+
+pub fn quantize_to_step(value: f64, step: f64) -> Option<f64> {
+    if !value.is_finite() || !step.is_finite() || value <= 0.0 || step <= 0.0 {
+        return None;
+    }
+    let units = (value / step).round();
+    if !units.is_finite() || units <= 0.0 {
+        return None;
+    }
+    Some(units * step)
+}
+
+pub fn is_aligned_to_step(value: f64, step: f64, unit_tolerance: f64) -> bool {
+    if !value.is_finite() || !step.is_finite() || value <= 0.0 || step <= 0.0 {
+        return false;
+    }
+    let units = value / step;
+    if !units.is_finite() {
+        return false;
+    }
+    let tolerance = unit_tolerance.max(1e-9);
+    (units - units.round()).abs() <= tolerance
+}
+
+pub fn quantize_price_to_tick(price: f64, tick_size: f64) -> Option<f64> {
+    quantize_to_step(price, tick_size).filter(|value| *value > 0.0)
+}
+
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum IntegrityStatus {
@@ -127,7 +232,10 @@ pub struct TradeTick {
 
 #[cfg(test)]
 mod tests {
-    use super::{DataIntegrityReport, IntegrityStatus, Timeframe};
+    use super::{
+        is_aligned_to_step, kraken_perp_constraints, normalize_kraken_perp_symbol,
+        quantize_price_to_tick, quantize_to_step, DataIntegrityReport, IntegrityStatus, Timeframe,
+    };
     use chrono::Utc;
 
     #[test]
@@ -148,5 +256,33 @@ mod tests {
         };
         assert!(report.is_live_eligible(99.5));
         assert!(!report.is_live_eligible(99.9));
+    }
+
+    #[test]
+    fn kraken_symbol_normalization_handles_aliases_and_suffixes() {
+        assert_eq!(normalize_kraken_perp_symbol("PF_XBTUSD"), "PF_XBTUSD");
+        assert_eq!(normalize_kraken_perp_symbol("PI_XBTUSD"), "PF_XBTUSD");
+        assert_eq!(normalize_kraken_perp_symbol("PF_XBTUSD*"), "PF_XBTUSD");
+    }
+
+    #[test]
+    fn kraken_constraints_lookup_resolves_known_symbols() {
+        let pepe = kraken_perp_constraints("PF_PEPEUSD").expect("pepe constraints");
+        assert!((pepe.min_lot - 1000.0).abs() < 1e-9);
+        assert!((pepe.tick_size - 0.0000000001).abs() < 1e-15);
+
+        let xbt = kraken_perp_constraints("PI_XBTUSD").expect("xbt constraints");
+        assert!((xbt.min_lot - 0.0001).abs() < 1e-9);
+        assert!((xbt.tick_size - 1.0).abs() < 1e-9);
+
+        assert!(kraken_perp_constraints("PF_UNKNOWN").is_none());
+    }
+
+    #[test]
+    fn step_helpers_align_and_quantize_values() {
+        assert!(is_aligned_to_step(1.0, 0.01, 1e-6));
+        assert!(!is_aligned_to_step(0.015, 0.01, 1e-6));
+        assert_eq!(quantize_to_step(0.015, 0.01), Some(0.02));
+        assert_eq!(quantize_price_to_tick(2021.749, 0.1), Some(2021.7));
     }
 }

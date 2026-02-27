@@ -7,7 +7,9 @@ use axum::{
 };
 use base64::{engine::general_purpose::STANDARD as BASE64_STANDARD, Engine as _};
 use chrono::{DateTime, Utc};
-use common_types::Timeframe;
+use common_types::{
+    is_aligned_to_step, kraken_perp_constraints, normalize_kraken_perp_symbol, Timeframe,
+};
 use execution_service::{
     can_transition_state, evaluate_integrity_gate_from_store, evaluate_order_intent,
     evaluate_risk_caps, normalize_side, GateDecision, OrderIntentAction, OrderIntentDecision,
@@ -2717,6 +2719,7 @@ async fn order_intent(
         }
         return Ok(Json(map_order_intent(existing)));
     }
+    validate_order_qty_constraints(action, &payload.instrument, payload.qty)?;
 
     let kill_switch = state
         .repository
@@ -3266,6 +3269,40 @@ fn validate_manual_controls(
     Ok(())
 }
 
+fn validate_order_qty_constraints(
+    action: OrderIntentAction,
+    instrument: &str,
+    qty: f64,
+) -> Result<(), ApiError> {
+    if !matches!(action, OrderIntentAction::Entry | OrderIntentAction::Exit) {
+        return Ok(());
+    }
+    if !qty.is_finite() || qty <= 0.0 {
+        return Err(ApiError::BadRequest("qty must be > 0".to_string()));
+    }
+
+    let normalized_instrument = normalize_kraken_perp_symbol(instrument);
+    let constraints = kraken_perp_constraints(&normalized_instrument).ok_or_else(|| {
+        ApiError::BadRequest(format!(
+            "instrument '{normalized_instrument}' has no configured lot/tick constraints; fail-closed"
+        ))
+    })?;
+    if qty + 1e-12 < constraints.min_lot {
+        return Err(ApiError::BadRequest(format!(
+            "qty={qty} is below min lot {min_lot} for instrument {normalized_instrument}",
+            min_lot = constraints.min_lot
+        )));
+    }
+    if !is_aligned_to_step(qty, constraints.min_lot, 1e-6) {
+        return Err(ApiError::BadRequest(format!(
+            "qty={qty} is not aligned to lot step {step} for instrument {normalized_instrument}",
+            step = constraints.min_lot
+        )));
+    }
+
+    Ok(())
+}
+
 fn normalize_optional_string(value: Option<&str>) -> Option<String> {
     value
         .map(str::trim)
@@ -3366,9 +3403,9 @@ mod tests {
         derive_order_status_transition, fold_spread_positions, is_snapshot_stale,
         is_terminal_state, parse_ingest_target_state, parse_kraken_open_orders_response,
         parse_kraken_order_status_response, parse_kraken_submit_response, resolve_secret_value,
-        safe_ratio, sign_kraken_futures_payload, validate_manual_controls, ApiError, DispatchMode,
-        ExecutionObservabilityMetricsRaw, ExecutionObservabilityThresholds, KrakenOpenOrder,
-        KrakenStatusOrder, SpreadLedgerEvent,
+        safe_ratio, sign_kraken_futures_payload, validate_manual_controls,
+        validate_order_qty_constraints, ApiError, DispatchMode, ExecutionObservabilityMetricsRaw,
+        ExecutionObservabilityThresholds, KrakenOpenOrder, KrakenStatusOrder, SpreadLedgerEvent,
     };
     use chrono::{DateTime, Duration, Utc};
     use execution_service::{OrderIntentAction, OrderLifecycleState};
@@ -3409,6 +3446,29 @@ mod tests {
     #[test]
     fn emergency_stop_can_run_without_operator_confirmation() {
         let result = validate_manual_controls(OrderIntentAction::EmergencyStopClose, false, None);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn entry_qty_must_meet_min_lot_and_step_constraints() {
+        let below = validate_order_qty_constraints(OrderIntentAction::Entry, "PF_PEPEUSD", 1.0);
+        assert!(matches!(below, Err(ApiError::BadRequest(_))));
+
+        let misaligned =
+            validate_order_qty_constraints(OrderIntentAction::Entry, "PF_SOLUSD", 0.015);
+        assert!(matches!(misaligned, Err(ApiError::BadRequest(_))));
+
+        let ok = validate_order_qty_constraints(OrderIntentAction::Entry, "PF_SOLUSD", 0.02);
+        assert!(ok.is_ok());
+    }
+
+    #[test]
+    fn emergency_stop_close_skips_lot_step_validation() {
+        let result = validate_order_qty_constraints(
+            OrderIntentAction::EmergencyStopClose,
+            "PF_PEPEUSD",
+            1.0,
+        );
         assert!(result.is_ok());
     }
 

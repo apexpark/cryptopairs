@@ -6,7 +6,9 @@ use axum::{
     Json, Router,
 };
 use chrono::{DateTime, Utc};
-use common_types::Timeframe;
+use common_types::{
+    kraken_perp_constraints, quantize_price_to_tick, InstrumentTradingConstraints, Timeframe,
+};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
@@ -3857,6 +3859,23 @@ fn infer_trade_direction(entry_z: f64, exit_z: f64, entry_band: f64) -> &'static
     }
 }
 
+fn lookup_constraints(instrument: &str) -> Option<InstrumentTradingConstraints> {
+    kraken_perp_constraints(instrument)
+}
+
+fn lookup_pair_constraints(
+    left_instrument: &str,
+    right_instrument: &str,
+) -> (
+    Option<InstrumentTradingConstraints>,
+    Option<InstrumentTradingConstraints>,
+) {
+    (
+        lookup_constraints(left_instrument),
+        lookup_constraints(right_instrument),
+    )
+}
+
 #[derive(Debug, Clone)]
 struct OpenReplayTrade {
     point_index: usize,
@@ -3974,6 +3993,8 @@ fn compute_expectancy_metrics(
     left_last: f64,
     right_last: f64,
     hedge_ratio: f64,
+    left_constraints: Option<InstrumentTradingConstraints>,
+    right_constraints: Option<InstrumentTradingConstraints>,
 ) -> Option<ExpectancyMetrics> {
     if rows.is_empty() {
         return None;
@@ -3988,7 +4009,21 @@ fn compute_expectancy_metrics(
         / rows.len() as f64;
     let avg_mae_bps = rows.iter().map(|row| row.path.mae_bps).sum::<f64>() / rows.len() as f64;
     let avg_mfe_bps = rows.iter().map(|row| row.path.mfe_bps).sum::<f64>() / rows.len() as f64;
-    let gross_min_lot_notional = left_last.abs() + hedge_ratio.abs().max(1e-9) * right_last.abs();
+    let left_min_lot = left_constraints
+        .map(|constraints| constraints.min_lot)
+        .filter(|value| value.is_finite() && *value > 0.0)
+        .unwrap_or(1.0);
+    let target_right_qty = hedge_ratio.abs().max(1e-9) * left_min_lot;
+    let right_min_lot = right_constraints
+        .map(|constraints| constraints.min_lot)
+        .filter(|value| value.is_finite() && *value > 0.0);
+    let right_qty = if let Some(step) = right_min_lot {
+        let steps = (target_right_qty / step).round().max(1.0);
+        steps * step
+    } else {
+        target_right_qty
+    };
+    let gross_min_lot_notional = left_last.abs() * left_min_lot + right_last.abs() * right_qty;
     let expected_min_lot_net_usd =
         if gross_min_lot_notional.is_finite() && gross_min_lot_notional > 0.0 {
             gross_min_lot_notional * avg_net_bps / 10_000.0
@@ -4022,6 +4057,8 @@ fn derive_paper_trades_from_series(
     entry_band: f64,
     hedge_ratio: f64,
     round_trip_cost_bps: f64,
+    left_constraints: Option<InstrumentTradingConstraints>,
+    right_constraints: Option<InstrumentTradingConstraints>,
     timestamps: &[DateTime<Utc>],
     left_closes: &[f64],
     right_closes: &[f64],
@@ -4054,13 +4091,25 @@ fn derive_paper_trades_from_series(
             } else {
                 series.points[marker.index - 1].equity
             };
+            let left_entry = if let Some(constraints) = left_constraints {
+                quantize_price_to_tick(left_closes[close_index], constraints.tick_size)
+                    .unwrap_or(left_closes[close_index])
+            } else {
+                left_closes[close_index]
+            };
+            let right_entry = if let Some(constraints) = right_constraints {
+                quantize_price_to_tick(right_closes[close_index], constraints.tick_size)
+                    .unwrap_or(right_closes[close_index])
+            } else {
+                right_closes[close_index]
+            };
             open_trade = Some(OpenPaperTrade {
                 point_index: marker.index,
                 ts,
                 z: point.z,
                 equity_pre_entry,
-                left_entry: left_closes[close_index],
-                right_entry: right_closes[close_index],
+                left_entry,
+                right_entry,
             });
             continue;
         }
@@ -4072,8 +4121,18 @@ fn derive_paper_trades_from_series(
             continue;
         };
         let direction = infer_trade_direction(entry.z, point.z, entry_band);
-        let left_exit = left_closes[close_index];
-        let right_exit = right_closes[close_index];
+        let left_exit = if let Some(constraints) = left_constraints {
+            quantize_price_to_tick(left_closes[close_index], constraints.tick_size)
+                .unwrap_or(left_closes[close_index])
+        } else {
+            left_closes[close_index]
+        };
+        let right_exit = if let Some(constraints) = right_constraints {
+            quantize_price_to_tick(right_closes[close_index], constraints.tick_size)
+                .unwrap_or(right_closes[close_index])
+        } else {
+            right_closes[close_index]
+        };
         if entry.left_entry <= 0.0
             || entry.right_entry <= 0.0
             || left_exit <= 0.0
@@ -4165,6 +4224,7 @@ async fn compute_and_record_paper_trades_for_output(
         return Ok(0);
     }
 
+    let (left_constraints, right_constraints) = lookup_pair_constraints(&pair.left, &pair.right);
     let exit_mode = BacktestExitMode::MeanRevert;
     let series = compute_backtest_series(
         &timestamps,
@@ -4177,6 +4237,8 @@ async fn compute_and_record_paper_trades_for_output(
             stop_band: output.cue.stop_band,
             round_trip_cost_bps: output.cue.cost_estimate_bps,
             exit_mode,
+            left_constraints,
+            right_constraints,
         },
     );
     let rows = derive_paper_trades_from_series(
@@ -4189,6 +4251,8 @@ async fn compute_and_record_paper_trades_for_output(
         output.cue.entry_band,
         output.hedge_ratio,
         output.cue.cost_estimate_bps,
+        left_constraints,
+        right_constraints,
         &timestamps,
         &left_closes,
         &right_closes,
@@ -4435,6 +4499,7 @@ async fn pairs_expectancy(
     )
     .await
     .map_err(|error| ApiError::Upstream(error.to_string()))?;
+    let (left_constraints, right_constraints) = lookup_pair_constraints(&pair.left, &pair.right);
     let series = compute_backtest_series(
         timestamps,
         left_closes,
@@ -4446,6 +4511,8 @@ async fn pairs_expectancy(
             stop_band: config.stop_z,
             round_trip_cost_bps: output.cue.cost_estimate_bps,
             exit_mode: BacktestExitMode::MeanRevert,
+            left_constraints,
+            right_constraints,
         },
     );
     let replay_rows =
@@ -4455,6 +4522,8 @@ async fn pairs_expectancy(
         *left_closes.last().unwrap_or(&0.0),
         *right_closes.last().unwrap_or(&0.0),
         output.hedge_ratio,
+        left_constraints,
+        right_constraints,
     );
     info!(
         timeframe = %timeframe.as_str(),
@@ -4568,6 +4637,7 @@ async fn pairs_replay_trades(
     )
     .await
     .map_err(|error| ApiError::Upstream(error.to_string()))?;
+    let (left_constraints, right_constraints) = lookup_pair_constraints(&pair.left, &pair.right);
     let parsed_exit_mode = parse_backtest_exit_mode(Some(&exit_mode))?;
     let series = compute_backtest_series(
         timestamps,
@@ -4580,6 +4650,8 @@ async fn pairs_replay_trades(
             stop_band: config.stop_z,
             round_trip_cost_bps: output.cue.cost_estimate_bps,
             exit_mode: parsed_exit_mode,
+            left_constraints,
+            right_constraints,
         },
     );
     let cutoff = Utc::now() - chrono::Duration::hours(hours);
@@ -4634,6 +4706,8 @@ async fn pairs_replay_trades(
 
 #[derive(Debug, Clone)]
 struct SweepDataset {
+    left_instrument: String,
+    right_instrument: String,
     timestamps: Vec<DateTime<Utc>>,
     left_closes: Vec<f64>,
     right_closes: Vec<f64>,
@@ -4673,6 +4747,8 @@ fn build_sweep_candidate(
     let timestamps = &dataset.timestamps[start_idx..];
     let left_closes = &dataset.left_closes[start_idx..];
     let right_closes = &dataset.right_closes[start_idx..];
+    let (left_constraints, right_constraints) =
+        lookup_pair_constraints(&dataset.left_instrument, &dataset.right_instrument);
 
     let series = compute_backtest_series(
         timestamps,
@@ -4685,6 +4761,8 @@ fn build_sweep_candidate(
             stop_band: config.stop_z,
             round_trip_cost_bps: dataset.round_trip_cost_bps,
             exit_mode: BacktestExitMode::MeanRevert,
+            left_constraints,
+            right_constraints,
         },
     );
     let replay_rows = derive_replay_trades_from_series(pair_id, timeframe, &series, config.entry_z);
@@ -4693,6 +4771,8 @@ fn build_sweep_candidate(
         *left_closes.last().unwrap_or(&0.0),
         *right_closes.last().unwrap_or(&0.0),
         dataset.hedge_ratio,
+        left_constraints,
+        right_constraints,
     );
     let (status, decision_state, primary_reason_code, mut rationale_codes) =
         classify_expectancy_result(metrics.as_ref());
@@ -4928,6 +5008,8 @@ async fn pairs_research_sweep(
                 dataset_cache.insert(
                     (timeframe.clone(), pair_id.clone()),
                     SweepDataset {
+                        left_instrument: pair.left.clone(),
+                        right_instrument: pair.right.clone(),
                         timestamps,
                         left_closes,
                         right_closes,
@@ -5132,6 +5214,7 @@ async fn pairs_backtest(
     )
     .await
     .map_err(|error| ApiError::Upstream(error.to_string()))?;
+    let (left_constraints, right_constraints) = lookup_pair_constraints(&pair.left, &pair.right);
 
     let series = compute_backtest_series(
         timestamps,
@@ -5144,6 +5227,8 @@ async fn pairs_backtest(
             stop_band: output.cue.stop_band,
             round_trip_cost_bps: output.cue.cost_estimate_bps,
             exit_mode,
+            left_constraints,
+            right_constraints,
         },
     );
 
@@ -5257,6 +5342,7 @@ async fn pairs_live_z(
     )
     .await
     .map_err(|error| ApiError::Upstream(error.to_string()))?;
+    let (left_constraints, right_constraints) = lookup_pair_constraints(&pair.left, &pair.right);
     let series = compute_backtest_series(
         timestamps,
         left_closes,
@@ -5268,6 +5354,8 @@ async fn pairs_live_z(
             stop_band: output.cue.stop_band,
             round_trip_cost_bps: output.cue.cost_estimate_bps,
             exit_mode,
+            left_constraints,
+            right_constraints,
         },
     );
     if series.points.is_empty() {
@@ -6420,6 +6508,8 @@ mod tests {
             1.8,
             1.0,
             2.0,
+            None,
+            None,
             &timestamps,
             &left_closes,
             &right_closes,
@@ -6531,8 +6621,8 @@ mod tests {
             },
         ];
 
-        let metrics =
-            compute_expectancy_metrics(&rows, 100.0, 50.0, 1.0).expect("expectancy metrics");
+        let metrics = compute_expectancy_metrics(&rows, 100.0, 50.0, 1.0, None, None)
+            .expect("expectancy metrics");
         assert_eq!(metrics.trades, 3);
         assert!((metrics.win_rate - (2.0 / 3.0)).abs() < 1e-12);
         assert!((metrics.avg_net_bps - (20.0 / 3.0)).abs() < 1e-12);
@@ -6540,6 +6630,32 @@ mod tests {
         assert!((metrics.p50_net_bps - 10.0).abs() < 1e-12);
         assert!((metrics.p75_net_bps - 12.5).abs() < 1e-12);
         assert!((metrics.expected_min_lot_net_usd - 0.1).abs() < 1e-9);
+    }
+
+    #[test]
+    fn expectancy_metrics_uses_exchange_min_lot_notional_when_constraints_available() {
+        let rows = vec![ReplayTradeEntry {
+            trade_id: "x".to_string(),
+            entry_ts: Utc::now(),
+            exit_ts: Utc::now(),
+            direction: "LONG_SPREAD".to_string(),
+            entry_z: -2.0,
+            exit_z: 0.0,
+            net_bps: 10.0,
+            path: ReplayTradePathSummary {
+                mae_bps: -2.0,
+                mfe_bps: 12.0,
+                bars_underwater: 1,
+                bars_held: 5,
+            },
+        }];
+        let xbt = common_types::kraken_perp_constraints("PF_XBTUSD").expect("xbt constraints");
+        let eth = common_types::kraken_perp_constraints("PF_ETHUSD").expect("eth constraints");
+        let metrics =
+            compute_expectancy_metrics(&rows, 67_000.0, 2_000.0, 1.0, Some(xbt), Some(eth))
+                .expect("expectancy metrics");
+        // Min-lot notional = 0.0001*67000 + 0.001*2000 = 8.7, at 10bp => 0.0087 USD.
+        assert!((metrics.expected_min_lot_net_usd - 0.0087).abs() < 1e-9);
     }
 
     #[test]
