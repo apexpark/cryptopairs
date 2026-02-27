@@ -328,15 +328,6 @@ input {
   min-height: 0;
 }
 
-.how-layout {
-  display: grid;
-  grid-template-columns: minmax(0, 1.8fr) minmax(280px, 1fr);
-  gap: 10px;
-  align-items: start;
-  min-height: 0;
-  height: 100%;
-}
-
 .split-grid {
   display: grid;
   grid-template-columns: 1fr 1fr;
@@ -382,9 +373,6 @@ input {
   margin-top: 0;
 }
 
-.analytics-maintenance {
-  min-height: 0;
-}
 .analytics-explainer-list {
   margin: 8px 0 0 18px;
   padding: 0;
@@ -410,6 +398,35 @@ input {
   gap: 8px;
 }
 
+.research-controls-panel {
+  border: 1px solid var(--line-soft);
+  border-radius: 8px;
+  background: var(--panel-2);
+}
+
+.research-controls-panel summary {
+  cursor: pointer;
+  list-style: none;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 8px 10px;
+  font-weight: 600;
+}
+
+.research-controls-panel summary::-webkit-details-marker {
+  display: none;
+}
+
+.research-controls-panel[open] summary {
+  border-bottom: 1px solid var(--line-soft);
+}
+
+.research-controls-body {
+  padding: 10px;
+}
+
 .research-controls-actions {
   margin-top: 10px;
   display: flex;
@@ -431,64 +448,6 @@ input {
 
 .research-results-grid .mini-card button {
   margin-top: 6px;
-}
-
-.maintenance-steps {
-  margin-top: 8px;
-  display: grid;
-  gap: 6px;
-}
-
-.maintenance-step-row {
-  display: flex;
-  justify-content: space-between;
-  gap: 10px;
-  padding: 6px 8px;
-  border: 1px solid var(--line-soft);
-  border-radius: 8px;
-  background: var(--panel-2);
-  font-size: 0.84rem;
-}
-
-.maintenance-downloads {
-  margin: 8px 0 0 18px;
-  padding: 0;
-  display: grid;
-  gap: 6px;
-}
-
-.maintenance-downloads li {
-  font-size: 0.86rem;
-}
-
-.maintenance-downloads a {
-  color: var(--tone-info);
-  text-decoration: none;
-}
-
-.maintenance-downloads a:hover {
-  text-decoration: underline;
-}
-
-.maintenance-actions {
-  margin-top: 10px;
-  display: flex;
-  gap: 8px;
-  flex-wrap: wrap;
-}
-
-.maintenance-actions button {
-  min-width: 150px;
-}
-
-.model-health-table th,
-.model-health-table td {
-  vertical-align: top;
-}
-
-.model-health-table td:nth-child(4),
-.model-health-table td:nth-child(5) {
-  min-width: 150px;
 }
 
 .panel-card {
@@ -940,8 +899,7 @@ button:disabled {
 
 @media (max-width: 1320px) {
   .trade-grid,
-  .split-grid,
-  .how-layout {
+  .split-grid {
     grid-template-columns: 1fr;
     grid-template-rows: auto;
   }

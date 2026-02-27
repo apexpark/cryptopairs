@@ -2499,249 +2499,260 @@ function AnalyticsPage({
 
         <SectionCard
           title="Research Controls"
-          subtitle="Run expectancy/replay with parameter overrides and export results"
+          subtitle="Optional advanced diagnostics and parameter exploration"
         >
-          <div className="research-controls-grid">
-            <label>
-              Entry Z
-              <input
-                type="number"
-                min="0.2"
-                max="8"
-                step="0.01"
-                value={researchEntryZ}
-                onChange={(event) => setResearchEntryZ(event.target.value)}
-              />
-            </label>
-            <label>
-              Exit Z
-              <input
-                type="number"
-                min="0"
-                step="0.01"
-                value={researchExitZ}
-                onChange={(event) => setResearchExitZ(event.target.value)}
-              />
-            </label>
-            <label>
-              Stop Z
-              <input
-                type="number"
-                min="0.2"
-                max="12"
-                step="0.01"
-                value={researchStopZ}
-                onChange={(event) => setResearchStopZ(event.target.value)}
-              />
-            </label>
-            <label>
-              Lookback Bars
-              <input
-                type="number"
-                min="120"
-                max="10000"
-                step="1"
-                value={researchLookbackBars}
-                onChange={(event) => setResearchLookbackBars(event.target.value)}
-              />
-            </label>
-            <label>
-              Replay Hours
-              <input
-                type="number"
-                min="1"
-                max="175200"
-                step="1"
-                value={researchHours}
-                onChange={(event) => setResearchHours(event.target.value)}
-              />
-            </label>
-            <label>
-              Replay Limit
-              <input
-                type="number"
-                min="1"
-                max="20000"
-                step="1"
-                value={researchLimit}
-                onChange={(event) => setResearchLimit(event.target.value)}
-              />
-            </label>
-            <label>
-              Sweep Max Combos
-              <input
-                type="number"
-                min="1"
-                max="1000000"
-                step="1"
-                value={researchMaxCombinations}
-                onChange={(event) => setResearchMaxCombinations(event.target.value)}
-              />
-            </label>
-            <label>
-              Z Method
-              <select
-                value={researchZMethod}
-                onChange={(event) => setResearchZMethod(event.target.value as StrategyZMethod)}
-              >
-                {RESEARCH_Z_METHODS.map((method) => (
-                  <option key={method} value={method}>
-                    {method}
-                  </option>
-                ))}
-              </select>
-            </label>
-          </div>
+          <details className="research-controls-panel">
+            <summary>
+              <span>Advanced Research (Optional)</span>
+              <span className="small-text">Expectancy, replay, and sweep tooling</span>
+            </summary>
 
-          {!researchInputsValid ? (
-            <p className="small-text tone-bad">Research inputs are invalid. Check Z bands and ranges.</p>
-          ) : null}
+            <div className="research-controls-body">
+              <div className="research-controls-grid">
+                <label>
+                  Entry Z
+                  <input
+                    type="number"
+                    min="0.2"
+                    max="8"
+                    step="0.01"
+                    value={researchEntryZ}
+                    onChange={(event) => setResearchEntryZ(event.target.value)}
+                  />
+                </label>
+                <label>
+                  Exit Z
+                  <input
+                    type="number"
+                    min="0"
+                    step="0.01"
+                    value={researchExitZ}
+                    onChange={(event) => setResearchExitZ(event.target.value)}
+                  />
+                </label>
+                <label>
+                  Stop Z
+                  <input
+                    type="number"
+                    min="0.2"
+                    max="12"
+                    step="0.01"
+                    value={researchStopZ}
+                    onChange={(event) => setResearchStopZ(event.target.value)}
+                  />
+                </label>
+                <label>
+                  Lookback Bars
+                  <input
+                    type="number"
+                    min="120"
+                    max="10000"
+                    step="1"
+                    value={researchLookbackBars}
+                    onChange={(event) => setResearchLookbackBars(event.target.value)}
+                  />
+                </label>
+                <label>
+                  Replay Hours
+                  <input
+                    type="number"
+                    min="1"
+                    max="175200"
+                    step="1"
+                    value={researchHours}
+                    onChange={(event) => setResearchHours(event.target.value)}
+                  />
+                </label>
+                <label>
+                  Replay Limit
+                  <input
+                    type="number"
+                    min="1"
+                    max="20000"
+                    step="1"
+                    value={researchLimit}
+                    onChange={(event) => setResearchLimit(event.target.value)}
+                  />
+                </label>
+                <label>
+                  Sweep Max Combos
+                  <input
+                    type="number"
+                    min="1"
+                    max="1000000"
+                    step="1"
+                    value={researchMaxCombinations}
+                    onChange={(event) => setResearchMaxCombinations(event.target.value)}
+                  />
+                </label>
+                <label>
+                  Z Method
+                  <select
+                    value={researchZMethod}
+                    onChange={(event) => setResearchZMethod(event.target.value as StrategyZMethod)}
+                  >
+                    {RESEARCH_Z_METHODS.map((method) => (
+                      <option key={method} value={method}>
+                        {method}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              </div>
 
-          <div className="research-controls-actions">
-            <button type="button" onClick={onApplyCueBands}>
-              Use Cue Bands
-            </button>
-            <button
-              type="button"
-              onClick={() => void onRunExpectancy()}
-              disabled={!researchInputsValid || expectancyLoading}
-            >
-              {expectancyLoading ? "Running..." : "Run Expectancy"}
-            </button>
-            <button
-              type="button"
-              onClick={() => void onRunReplay()}
-              disabled={!researchInputsValid || replayLoading}
-            >
-              {replayLoading ? "Running..." : "Run Replay"}
-            </button>
-            <button
-              type="button"
-              onClick={() => void onRunSweepDryRun()}
-              disabled={!researchInputsValid || researchSweepLoading}
-            >
-              {researchSweepLoading ? "Running..." : "Run Sweep Dry-Run"}
-            </button>
-            <button
-              type="button"
-              onClick={() => void onRunSweepExecute()}
-              disabled={!researchInputsValid || researchSweepLoading}
-            >
-              {researchSweepLoading ? "Running..." : "Run Sweep Execute"}
-            </button>
-          </div>
+              {!researchInputsValid ? (
+                <p className="small-text tone-bad">
+                  Research inputs are invalid. Check Z bands and ranges.
+                </p>
+              ) : null}
 
-          <div className="research-results-grid">
-            <div className="mini-card">
-              <h3>Expectancy</h3>
-              {expectancyError ? <p className="small-text tone-bad">{expectancyError}</p> : null}
-              {expectancyResult ? (
-                <>
-                  <p>
-                    Status:{" "}
-                    <span className={expectancyResult.status === "AVAILABLE" ? "tone-ok" : "tone-bad"}>
-                      {expectancyResult.status}
-                    </span>
-                  </p>
-                  <p>Decision: {expectancyResult.decision_state}</p>
-                  <p>Reason: {expectancyResult.primary_reason_code}</p>
-                  <p>Trades: {expectancyResult.metrics?.trades ?? 0}</p>
-                  <p>
-                    Avg net:{" "}
-                    {expectancyResult.metrics ? `${formatSigned(expectancyResult.metrics.avg_net_bps)}bp` : "--"}
-                  </p>
-                  <p>
-                    Win rate:{" "}
-                    {expectancyResult.metrics
-                      ? `${(expectancyResult.metrics.win_rate * 100).toFixed(2)}%`
-                      : "--"}
-                  </p>
-                  <button type="button" onClick={onDownloadExpectancy}>
-                    Download Expectancy JSON
-                  </button>
-                </>
-              ) : (
-                <p className="small-text">No expectancy result loaded.</p>
-              )}
-            </div>
+              <div className="research-controls-actions">
+                <button type="button" onClick={onApplyCueBands}>
+                  Use Cue Bands
+                </button>
+                <button
+                  type="button"
+                  onClick={() => void onRunExpectancy()}
+                  disabled={!researchInputsValid || expectancyLoading}
+                >
+                  {expectancyLoading ? "Running..." : "Run Expectancy"}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => void onRunReplay()}
+                  disabled={!researchInputsValid || replayLoading}
+                >
+                  {replayLoading ? "Running..." : "Run Replay"}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => void onRunSweepDryRun()}
+                  disabled={!researchInputsValid || researchSweepLoading}
+                >
+                  {researchSweepLoading ? "Running..." : "Run Sweep Dry-Run"}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => void onRunSweepExecute()}
+                  disabled={!researchInputsValid || researchSweepLoading}
+                >
+                  {researchSweepLoading ? "Running..." : "Run Sweep Execute"}
+                </button>
+              </div>
 
-            <div className="mini-card">
-              <h3>Replay</h3>
-              {replayError ? <p className="small-text tone-bad">{replayError}</p> : null}
-              {replayResult ? (
-                <>
-                  <p>
-                    Status:{" "}
-                    <span className={replayResult.status === "AVAILABLE" ? "tone-ok" : "tone-bad"}>
-                      {replayResult.status}
-                    </span>
-                  </p>
-                  <p>Rows: {replayResult.rows.length}</p>
-                  <p>Mode: {replayResult.exit_mode}</p>
-                  <p>Window: {replayResult.hours}h</p>
-                  <button type="button" onClick={onDownloadReplay}>
-                    Download Replay JSON
-                  </button>
-                </>
-              ) : (
-                <p className="small-text">No replay result loaded.</p>
-              )}
-            </div>
-
-            <div className="mini-card">
-              <h3>Sweep</h3>
-              {researchSweepError ? <p className="small-text tone-bad">{researchSweepError}</p> : null}
-              {researchSweepResult ? (
-                <>
-                  <p>
-                    Status:{" "}
-                    <span
-                      className={researchSweepResult.status === "AVAILABLE" ? "tone-ok" : "tone-bad"}
-                    >
-                      {researchSweepResult.status}
-                    </span>
-                  </p>
-                  <p>Request: {researchSweepResult.request_id}</p>
-                  <p>Mode: {researchSweepResult.dry_run ? "Dry-run" : "Execute"}</p>
-                  <p>
-                    Combos: {researchSweepResult.estimated_combinations} /{" "}
-                    {researchSweepResult.max_combinations}
-                  </p>
-                  <p>
-                    Executed: {researchSweepResult.executed_combinations} | Success:{" "}
-                    {researchSweepResult.successful_combinations} | Failed:{" "}
-                    {researchSweepResult.failed_combinations}
-                  </p>
-                  {researchSweepResult.best_candidate ? (
+              <div className="research-results-grid">
+                <div className="mini-card">
+                  <h3>Expectancy</h3>
+                  {expectancyError ? <p className="small-text tone-bad">{expectancyError}</p> : null}
+                  {expectancyResult ? (
                     <>
-                      <p className="small-text tone-info">
-                        Best: {formatPairLabel(researchSweepResult.best_candidate.pair_id)}{" "}
-                        {researchSweepResult.best_candidate.timeframe} | entry{" "}
-                        {researchSweepResult.best_candidate.config.entry_z.toFixed(2)} exit{" "}
-                        {researchSweepResult.best_candidate.config.exit_z.toFixed(2)} stop{" "}
-                        {researchSweepResult.best_candidate.config.stop_z.toFixed(2)} | lookback{" "}
-                        {researchSweepResult.best_candidate.config.lookback_bars}
+                      <p>
+                        Status:{" "}
+                        <span className={expectancyResult.status === "AVAILABLE" ? "tone-ok" : "tone-bad"}>
+                          {expectancyResult.status}
+                        </span>
                       </p>
-                      <p className="small-text">
-                        Objective: {formatSigned(researchSweepResult.best_candidate.objective_score)} | Trades:{" "}
-                        {researchSweepResult.best_candidate.metrics?.trades ?? 0} | Win rate:{" "}
-                        {researchSweepResult.best_candidate.metrics
-                          ? `${(researchSweepResult.best_candidate.metrics.win_rate * 100).toFixed(
-                              2
-                            )}%`
+                      <p>Decision: {expectancyResult.decision_state}</p>
+                      <p>Reason: {expectancyResult.primary_reason_code}</p>
+                      <p>Trades: {expectancyResult.metrics?.trades ?? 0}</p>
+                      <p>
+                        Avg net:{" "}
+                        {expectancyResult.metrics ? `${formatSigned(expectancyResult.metrics.avg_net_bps)}bp` : "--"}
+                      </p>
+                      <p>
+                        Win rate:{" "}
+                        {expectancyResult.metrics
+                          ? `${(expectancyResult.metrics.win_rate * 100).toFixed(2)}%`
                           : "--"}
                       </p>
+                      <button type="button" onClick={onDownloadExpectancy}>
+                        Download Expectancy JSON
+                      </button>
                     </>
-                  ) : null}
-                  <button type="button" onClick={onDownloadSweep}>
-                    Download Sweep JSON
-                  </button>
-                </>
-              ) : (
-                <p className="small-text">No sweep result loaded.</p>
-              )}
+                  ) : (
+                    <p className="small-text">No expectancy result loaded.</p>
+                  )}
+                </div>
+
+                <div className="mini-card">
+                  <h3>Replay</h3>
+                  {replayError ? <p className="small-text tone-bad">{replayError}</p> : null}
+                  {replayResult ? (
+                    <>
+                      <p>
+                        Status:{" "}
+                        <span className={replayResult.status === "AVAILABLE" ? "tone-ok" : "tone-bad"}>
+                          {replayResult.status}
+                        </span>
+                      </p>
+                      <p>Rows: {replayResult.rows.length}</p>
+                      <p>Mode: {replayResult.exit_mode}</p>
+                      <p>Window: {replayResult.hours}h</p>
+                      <button type="button" onClick={onDownloadReplay}>
+                        Download Replay JSON
+                      </button>
+                    </>
+                  ) : (
+                    <p className="small-text">No replay result loaded.</p>
+                  )}
+                </div>
+
+                <div className="mini-card">
+                  <h3>Sweep</h3>
+                  {researchSweepError ? <p className="small-text tone-bad">{researchSweepError}</p> : null}
+                  {researchSweepResult ? (
+                    <>
+                      <p>
+                        Status:{" "}
+                        <span
+                          className={researchSweepResult.status === "AVAILABLE" ? "tone-ok" : "tone-bad"}
+                        >
+                          {researchSweepResult.status}
+                        </span>
+                      </p>
+                      <p>Request: {researchSweepResult.request_id}</p>
+                      <p>Mode: {researchSweepResult.dry_run ? "Dry-run" : "Execute"}</p>
+                      <p>
+                        Combos: {researchSweepResult.estimated_combinations} /{" "}
+                        {researchSweepResult.max_combinations}
+                      </p>
+                      <p>
+                        Executed: {researchSweepResult.executed_combinations} | Success:{" "}
+                        {researchSweepResult.successful_combinations} | Failed:{" "}
+                        {researchSweepResult.failed_combinations}
+                      </p>
+                      {researchSweepResult.best_candidate ? (
+                        <>
+                          <p className="small-text tone-info">
+                            Best: {formatPairLabel(researchSweepResult.best_candidate.pair_id)}{" "}
+                            {researchSweepResult.best_candidate.timeframe} | entry{" "}
+                            {researchSweepResult.best_candidate.config.entry_z.toFixed(2)} exit{" "}
+                            {researchSweepResult.best_candidate.config.exit_z.toFixed(2)} stop{" "}
+                            {researchSweepResult.best_candidate.config.stop_z.toFixed(2)} | lookback{" "}
+                            {researchSweepResult.best_candidate.config.lookback_bars}
+                          </p>
+                          <p className="small-text">
+                            Objective: {formatSigned(researchSweepResult.best_candidate.objective_score)} | Trades:{" "}
+                            {researchSweepResult.best_candidate.metrics?.trades ?? 0} | Win rate:{" "}
+                            {researchSweepResult.best_candidate.metrics
+                              ? `${(researchSweepResult.best_candidate.metrics.win_rate * 100).toFixed(
+                                  2
+                                )}%`
+                              : "--"}
+                          </p>
+                        </>
+                      ) : null}
+                      <button type="button" onClick={onDownloadSweep}>
+                        Download Sweep JSON
+                      </button>
+                    </>
+                  ) : (
+                    <p className="small-text">No sweep result loaded.</p>
+                  )}
+                </div>
+              </div>
             </div>
-          </div>
+          </details>
         </SectionCard>
       </div>
 
