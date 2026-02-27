@@ -115,6 +115,10 @@ This project follows SemVer as defined in `docs/02-versioning-and-releases.md`.
 - Trade and Analytics UI readability pass:
   - Added y-axis labels and threshold-value labels on z-score charts.
   - Added live current z-score label on the Trade chart right-hand side (updates each data refresh) and positioned it to the right of the latest dot for readability.
+  - Decluttered Analytics and Settings with progressive disclosure:
+    - Diagnostics and persisted paper-trade tables now live under optional “Advanced Analytics” accordions.
+    - Research controls remain fully available but are collapsed by default under “Advanced Research (Optional)”.
+    - Removed redundant static “Safety Defaults” settings card; guardrails remain enforced in Trade execution controls.
   - Entry suppression at stop extremes:
     - Strategy cue generation now blocks new entries when the selected score is at or beyond the configured stop band (`AT_OR_BEYOND_STOP_BAND`).
     - Backtest/live-z marker generation now suppresses entry markers at/through stop levels so invalid stop-zone entries are not rendered.
