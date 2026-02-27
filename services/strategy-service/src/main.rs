@@ -93,6 +93,8 @@ struct StrategySettings {
     advisory_enabled: bool,
     champion_switch_min_delta: f64,
     block_on_champion_drift: bool,
+    research_sweep_execution_cap: usize,
+    research_sweep_top_k: usize,
     maintenance_report_path: String,
     maintenance_artifacts_root: String,
     maintenance_apply_script_path: String,
@@ -197,6 +199,10 @@ impl StrategySettings {
         let advisory_enabled = parse_env_bool("STRATEGY_ADVISORY_ENABLED", true);
         let champion_switch_min_delta = parse_env_f64("STRATEGY_CHAMPION_SWITCH_MIN_DELTA", 0.25);
         let block_on_champion_drift = parse_env_bool("STRATEGY_BLOCK_ON_CHAMPION_DRIFT", true);
+        let research_sweep_execution_cap =
+            parse_env_usize("STRATEGY_RESEARCH_SWEEP_EXECUTION_CAP", 20_000).clamp(1, 1_000_000);
+        let research_sweep_top_k =
+            parse_env_usize("STRATEGY_RESEARCH_SWEEP_TOP_K", 10).clamp(1, 100);
         let maintenance_report_path = std::env::var("STRATEGY_MAINTENANCE_REPORT_PATH")
             .unwrap_or_else(|_| {
                 "artifacts/strategy_tuning/latest_maintenance_report.json".to_string()
@@ -269,6 +275,8 @@ impl StrategySettings {
             advisory_enabled,
             champion_switch_min_delta,
             block_on_champion_drift,
+            research_sweep_execution_cap,
+            research_sweep_top_k,
             maintenance_report_path,
             maintenance_artifacts_root,
             maintenance_apply_script_path,
@@ -2308,7 +2316,7 @@ struct PaperTradesResponse {
     rows: Vec<PaperTradeEntry>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 struct ExpectancyConfig {
     entry_z: f64,
     exit_z: f64,
@@ -2318,7 +2326,7 @@ struct ExpectancyConfig {
     lookback_bars: usize,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 struct ExpectancyMetrics {
     trades: usize,
     win_rate: f64,
@@ -2381,6 +2389,20 @@ struct ReplayTradesResponse {
     rows: Vec<ReplayTradeEntry>,
 }
 
+#[derive(Debug, Clone, Serialize)]
+struct ResearchSweepCandidateResponse {
+    rank: usize,
+    timeframe: String,
+    pair_id: String,
+    config: ExpectancyConfig,
+    status: String,
+    decision_state: String,
+    primary_reason_code: String,
+    objective_score: f64,
+    metrics: Option<ExpectancyMetrics>,
+    rationale_codes: Vec<String>,
+}
+
 #[derive(Debug, Serialize)]
 struct ResearchSweepResponse {
     generated_at: DateTime<Utc>,
@@ -2390,6 +2412,12 @@ struct ResearchSweepResponse {
     timeframes: Vec<String>,
     pair_ids: Vec<String>,
     estimated_combinations: usize,
+    executed_combinations: usize,
+    successful_combinations: usize,
+    failed_combinations: usize,
+    top_k: usize,
+    best_candidate: Option<ResearchSweepCandidateResponse>,
+    top_candidates: Vec<ResearchSweepCandidateResponse>,
     max_combinations: usize,
     rationale_codes: Vec<String>,
 }
@@ -2639,6 +2667,8 @@ async fn main() -> anyhow::Result<()> {
         advisory_per_pair_cap = settings.advisory_per_pair_cap,
         champion_switch_min_delta = settings.champion_switch_min_delta,
         block_on_champion_drift = settings.block_on_champion_drift,
+        research_sweep_execution_cap = settings.research_sweep_execution_cap,
+        research_sweep_top_k = settings.research_sweep_top_k,
         maintenance_report_path = %settings.maintenance_report_path,
         maintenance_artifacts_root = %settings.maintenance_artifacts_root,
         maintenance_apply_script_path = %settings.maintenance_apply_script_path,
@@ -3617,13 +3647,14 @@ fn parse_replay_trades_query(
     Ok((timeframe, pair_id, hours, limit, exit_mode, config))
 }
 
+#[cfg(test)]
 fn estimate_research_combinations(payload: &ResearchSweepRequest) -> usize {
     let tf = payload.timeframes.as_ref().map_or(3, Vec::len).max(1);
     let pairs = payload.pair_ids.as_ref().map_or(16, Vec::len).max(1);
     let entry = payload.entry_z_grid.as_ref().map_or(5, Vec::len).max(1);
     let exit = payload.exit_z_grid.as_ref().map_or(5, Vec::len).max(1);
     let stop = payload.stop_z_grid.as_ref().map_or(4, Vec::len).max(1);
-    let z_methods = payload.z_methods.as_ref().map_or(4, Vec::len).max(1);
+    let z_methods = payload.z_methods.as_ref().map_or(1, Vec::len).max(1);
     let lookback = payload
         .lookback_bars_grid
         .as_ref()
@@ -3637,8 +3668,153 @@ fn estimate_research_combinations(payload: &ResearchSweepRequest) -> usize {
         .saturating_mul(lookback)
 }
 
+fn estimate_research_combinations_resolved(
+    timeframe_count: usize,
+    pair_count: usize,
+    entry_count: usize,
+    exit_count: usize,
+    stop_count: usize,
+    z_method_count: usize,
+    lookback_count: usize,
+) -> usize {
+    timeframe_count
+        .max(1)
+        .saturating_mul(pair_count.max(1))
+        .saturating_mul(entry_count.max(1))
+        .saturating_mul(exit_count.max(1))
+        .saturating_mul(stop_count.max(1))
+        .saturating_mul(z_method_count.max(1))
+        .saturating_mul(lookback_count.max(1))
+}
+
 fn expectancy_z_method_supported(z_method: &str) -> bool {
     z_method == "ROBUST_Z"
+}
+
+fn classify_expectancy_result(
+    metrics: Option<&ExpectancyMetrics>,
+) -> (String, String, String, Vec<String>) {
+    match metrics {
+        Some(metrics)
+            if metrics.trades >= 5 && metrics.avg_net_bps > 0.0 && metrics.win_rate >= 0.5 =>
+        {
+            (
+                "AVAILABLE".to_string(),
+                "TRADE_READY".to_string(),
+                "EXPECTANCY_POSITIVE".to_string(),
+                vec![
+                    "EXPECTANCY_COMPUTED".to_string(),
+                    "MIN_TRADES_MET".to_string(),
+                ],
+            )
+        }
+        Some(metrics) if metrics.trades < 5 => (
+            "AVAILABLE".to_string(),
+            "CAUTION".to_string(),
+            "LOW_TRADE_COUNT".to_string(),
+            vec![
+                "EXPECTANCY_COMPUTED".to_string(),
+                "LOW_TRADE_COUNT".to_string(),
+            ],
+        ),
+        Some(_) => (
+            "AVAILABLE".to_string(),
+            "BLOCKED".to_string(),
+            "EXPECTANCY_NON_POSITIVE".to_string(),
+            vec![
+                "EXPECTANCY_COMPUTED".to_string(),
+                "EXPECTANCY_NON_POSITIVE".to_string(),
+            ],
+        ),
+        None => (
+            "UNAVAILABLE".to_string(),
+            "CAUTION".to_string(),
+            "NO_COMPLETED_TRADES".to_string(),
+            vec![
+                "NO_COMPLETED_TRADES".to_string(),
+                "EXPECTANCY_NOT_COMPUTED".to_string(),
+            ],
+        ),
+    }
+}
+
+fn expectancy_objective_score(metrics: &ExpectancyMetrics) -> f64 {
+    let trade_weight = (metrics.trades as f64).ln_1p().max(1.0);
+    metrics.expected_min_lot_net_bps * metrics.win_rate * trade_weight
+}
+
+fn default_sweep_entry_grid() -> &'static [f64] {
+    &[1.4, 1.6, 1.8, 2.0, 2.2]
+}
+
+fn default_sweep_exit_grid() -> &'static [f64] {
+    &[0.2, 0.4, 0.6, 0.8, 1.0]
+}
+
+fn default_sweep_stop_grid() -> &'static [f64] {
+    &[2.8, 3.2, 3.6, 4.0]
+}
+
+fn default_sweep_lookback_grid() -> &'static [usize] {
+    &[220, 440, 880, 1200]
+}
+
+fn resolve_unique_sorted_f64_grid(
+    values: Option<&Vec<f64>>,
+    defaults: &[f64],
+    min_value: f64,
+    max_value: f64,
+    label: &str,
+) -> Result<Vec<f64>, ApiError> {
+    let source = values.map_or(defaults.to_vec(), Clone::clone);
+    let mut dedup = HashSet::new();
+    let mut resolved = Vec::with_capacity(source.len());
+    for value in source {
+        if !value.is_finite() || value < min_value || value > max_value {
+            return Err(ApiError::BadRequest(format!(
+                "invalid {label} grid value '{value}'; expected finite value in range [{min_value}, {max_value}]"
+            )));
+        }
+        if dedup.insert(value.to_bits()) {
+            resolved.push(value);
+        }
+    }
+    resolved.sort_by(|left, right| left.total_cmp(right));
+    if resolved.is_empty() {
+        return Err(ApiError::BadRequest(format!(
+            "{label} grid cannot be empty"
+        )));
+    }
+    Ok(resolved)
+}
+
+fn resolve_unique_sorted_usize_grid(
+    values: Option<&Vec<usize>>,
+    defaults: &[usize],
+    min_value: usize,
+    max_value: usize,
+    label: &str,
+) -> Result<Vec<usize>, ApiError> {
+    let source = values.map_or(defaults.to_vec(), Clone::clone);
+    let mut dedup = HashSet::new();
+    let mut resolved = Vec::with_capacity(source.len());
+    for value in source {
+        if value < min_value || value > max_value {
+            return Err(ApiError::BadRequest(format!(
+                "invalid {label} grid value '{value}'; expected value in range [{min_value}, {max_value}]"
+            )));
+        }
+        if dedup.insert(value) {
+            resolved.push(value);
+        }
+    }
+    resolved.sort_unstable();
+    if resolved.is_empty() {
+        return Err(ApiError::BadRequest(format!(
+            "{label} grid cannot be empty"
+        )));
+    }
+    Ok(resolved)
 }
 
 fn analytics_model_bars(timeframe: Timeframe) -> usize {
@@ -4292,48 +4468,8 @@ async fn pairs_expectancy(
         status = if metrics.is_some() { "AVAILABLE" } else { "UNAVAILABLE" },
         "expectancy query computed"
     );
-    let (status, decision_state, primary_reason_code, rationale_codes) = match metrics.as_ref() {
-        Some(metrics)
-            if metrics.trades >= 5 && metrics.avg_net_bps > 0.0 && metrics.win_rate >= 0.5 =>
-        {
-            (
-                "AVAILABLE".to_string(),
-                "TRADE_READY".to_string(),
-                "EXPECTANCY_POSITIVE".to_string(),
-                vec![
-                    "EXPECTANCY_COMPUTED".to_string(),
-                    "MIN_TRADES_MET".to_string(),
-                ],
-            )
-        }
-        Some(metrics) if metrics.trades < 5 => (
-            "AVAILABLE".to_string(),
-            "CAUTION".to_string(),
-            "LOW_TRADE_COUNT".to_string(),
-            vec![
-                "EXPECTANCY_COMPUTED".to_string(),
-                "LOW_TRADE_COUNT".to_string(),
-            ],
-        ),
-        Some(_) => (
-            "AVAILABLE".to_string(),
-            "BLOCKED".to_string(),
-            "EXPECTANCY_NON_POSITIVE".to_string(),
-            vec![
-                "EXPECTANCY_COMPUTED".to_string(),
-                "EXPECTANCY_NON_POSITIVE".to_string(),
-            ],
-        ),
-        None => (
-            "UNAVAILABLE".to_string(),
-            "CAUTION".to_string(),
-            "NO_COMPLETED_TRADES".to_string(),
-            vec![
-                "NO_COMPLETED_TRADES".to_string(),
-                "EXPECTANCY_NOT_COMPUTED".to_string(),
-            ],
-        ),
-    };
+    let (status, decision_state, primary_reason_code, rationale_codes) =
+        classify_expectancy_result(metrics.as_ref());
     Ok(Json(ExpectancyResponse {
         timeframe: timeframe.as_str().to_string(),
         pair_id,
@@ -4496,6 +4632,90 @@ async fn pairs_replay_trades(
     }))
 }
 
+#[derive(Debug, Clone)]
+struct SweepDataset {
+    timestamps: Vec<DateTime<Utc>>,
+    left_closes: Vec<f64>,
+    right_closes: Vec<f64>,
+    hedge_ratio: f64,
+    round_trip_cost_bps: f64,
+}
+
+fn build_sweep_candidate(
+    timeframe: Timeframe,
+    pair_id: &str,
+    config: &ExpectancyConfig,
+    dataset: &SweepDataset,
+) -> ResearchSweepCandidateResponse {
+    let required_points = config.lookback_bars.saturating_add(1);
+    if dataset.timestamps.len() < required_points
+        || dataset.left_closes.len() != dataset.timestamps.len()
+        || dataset.right_closes.len() != dataset.timestamps.len()
+    {
+        return ResearchSweepCandidateResponse {
+            rank: 0,
+            timeframe: timeframe.as_str().to_string(),
+            pair_id: pair_id.to_string(),
+            config: config.clone(),
+            status: "UNAVAILABLE".to_string(),
+            decision_state: "CAUTION".to_string(),
+            primary_reason_code: "INSUFFICIENT_MODEL_WINDOW".to_string(),
+            objective_score: f64::NEG_INFINITY,
+            metrics: None,
+            rationale_codes: vec![
+                "INSUFFICIENT_MODEL_WINDOW".to_string(),
+                "SWEEP_CANDIDATE_NOT_COMPUTED".to_string(),
+            ],
+        };
+    }
+
+    let start_idx = dataset.timestamps.len().saturating_sub(required_points);
+    let timestamps = &dataset.timestamps[start_idx..];
+    let left_closes = &dataset.left_closes[start_idx..];
+    let right_closes = &dataset.right_closes[start_idx..];
+
+    let series = compute_backtest_series(
+        timestamps,
+        left_closes,
+        right_closes,
+        BacktestConfig {
+            hedge_ratio: dataset.hedge_ratio,
+            entry_band: config.entry_z,
+            exit_band: config.exit_z,
+            stop_band: config.stop_z,
+            round_trip_cost_bps: dataset.round_trip_cost_bps,
+            exit_mode: BacktestExitMode::MeanRevert,
+        },
+    );
+    let replay_rows = derive_replay_trades_from_series(pair_id, timeframe, &series, config.entry_z);
+    let metrics = compute_expectancy_metrics(
+        &replay_rows,
+        *left_closes.last().unwrap_or(&0.0),
+        *right_closes.last().unwrap_or(&0.0),
+        dataset.hedge_ratio,
+    );
+    let (status, decision_state, primary_reason_code, mut rationale_codes) =
+        classify_expectancy_result(metrics.as_ref());
+    let objective_score = metrics
+        .as_ref()
+        .map(expectancy_objective_score)
+        .unwrap_or(f64::NEG_INFINITY);
+    rationale_codes.push("SWEEP_EXIT_MODE_MEAN_REVERT".to_string());
+
+    ResearchSweepCandidateResponse {
+        rank: 0,
+        timeframe: timeframe.as_str().to_string(),
+        pair_id: pair_id.to_string(),
+        config: config.clone(),
+        status,
+        decision_state,
+        primary_reason_code,
+        objective_score,
+        metrics,
+        rationale_codes,
+    }
+}
+
 async fn pairs_research_sweep(
     State(state): State<AppState>,
     Json(payload): Json<ResearchSweepRequest>,
@@ -4554,30 +4774,71 @@ async fn pairs_research_sweep(
         .max_combinations
         .unwrap_or(20_000)
         .clamp(1, 1_000_000);
-    let estimated_combinations = estimate_research_combinations(&payload);
     let dry_run = payload.dry_run.unwrap_or(true);
     let request_id = format!("sweep-{}", Utc::now().format("%Y%m%dT%H%M%S%.3fZ"));
+    let entry_grid = resolve_unique_sorted_f64_grid(
+        payload.entry_z_grid.as_ref(),
+        default_sweep_entry_grid(),
+        0.2,
+        8.0,
+        "entry_z",
+    )?;
+    let exit_grid = resolve_unique_sorted_f64_grid(
+        payload.exit_z_grid.as_ref(),
+        default_sweep_exit_grid(),
+        0.0,
+        8.0,
+        "exit_z",
+    )?;
+    let stop_grid = resolve_unique_sorted_f64_grid(
+        payload.stop_z_grid.as_ref(),
+        default_sweep_stop_grid(),
+        0.2,
+        12.0,
+        "stop_z",
+    )?;
+    let lookback_grid = resolve_unique_sorted_usize_grid(
+        payload.lookback_bars_grid.as_ref(),
+        default_sweep_lookback_grid(),
+        120,
+        10_000,
+        "lookback_bars",
+    )?;
 
-    let z_methods = payload
-        .z_methods
-        .as_ref()
-        .map(|values| {
-            values
+    let z_methods = payload.z_methods.as_ref().map_or_else(
+        || Ok(vec!["ROBUST_Z".to_string()]),
+        |values| {
+            let mut methods = values
                 .iter()
                 .map(|value| parse_z_method(Some(value.as_str())))
-                .collect::<Result<Vec<_>, _>>()
-        })
-        .transpose()?
-        .unwrap_or_else(|| vec!["ROBUST_Z".to_string()]);
+                .collect::<Result<Vec<_>, _>>()?;
+            methods.sort_unstable();
+            methods.dedup();
+            if methods.is_empty() {
+                return Ok(vec!["ROBUST_Z".to_string()]);
+            }
+            Ok(methods)
+        },
+    )?;
     let unsupported_z_method = z_methods
         .iter()
         .any(|z_method| !expectancy_z_method_supported(z_method));
+    let estimated_combinations = estimate_research_combinations_resolved(
+        timeframes.len(),
+        pair_ids.len(),
+        entry_grid.len(),
+        exit_grid.len(),
+        stop_grid.len(),
+        z_methods.len(),
+        lookback_grid.len(),
+    );
 
     info!(
         request_id = %request_id,
         dry_run,
         max_combinations,
         estimated_combinations,
+        execution_cap = state.settings.research_sweep_execution_cap,
         unsupported_z_method,
         timeframe_count = timeframes.len(),
         pair_count = pair_ids.len(),
@@ -4585,21 +4846,213 @@ async fn pairs_research_sweep(
     );
 
     let mut rationale_codes = vec![];
-    let status = if unsupported_z_method {
+    let mut status = if unsupported_z_method {
         rationale_codes.push("UNSUPPORTED_Z_METHOD_IN_SWEEP".to_string());
         "UNAVAILABLE"
     } else if estimated_combinations > max_combinations {
         rationale_codes.push("COMBINATION_LIMIT_EXCEEDED".to_string());
         "UNAVAILABLE"
+    } else if !dry_run && estimated_combinations > state.settings.research_sweep_execution_cap {
+        rationale_codes.push("EXECUTION_CAP_EXCEEDED".to_string());
+        "UNAVAILABLE"
     } else if dry_run {
         rationale_codes.push("RESEARCH_SWEEP_DRY_RUN_READY".to_string());
         "AVAILABLE"
     } else {
-        rationale_codes.push("RESEARCH_SWEEP_EXECUTION_NOT_IMPLEMENTED".to_string());
-        "UNAVAILABLE"
+        rationale_codes.push("RESEARCH_SWEEP_EXECUTION_STARTED".to_string());
+        "AVAILABLE"
     };
     if estimated_combinations > max_combinations {
         rationale_codes.push("RESEARCH_SWEEP_NOT_ACCEPTED".to_string());
+    }
+    if !dry_run && estimated_combinations > state.settings.research_sweep_execution_cap {
+        rationale_codes.push("RESEARCH_SWEEP_NOT_ACCEPTED".to_string());
+    }
+
+    let mut executed_combinations = 0usize;
+    let mut successful_combinations = 0usize;
+    let mut failed_combinations = 0usize;
+    let mut top_candidates = vec![];
+    let mut best_candidate = None;
+    let top_k = state.settings.research_sweep_top_k;
+
+    if status == "AVAILABLE" && !dry_run {
+        let mut pair_lookup = HashMap::new();
+        for pair in &state.settings.pairs {
+            pair_lookup.insert(pair.pair_id(), pair.clone());
+        }
+        let max_lookback = lookback_grid
+            .iter()
+            .copied()
+            .max()
+            .unwrap_or_else(|| analytics_model_bars(Timeframe::OneHour))
+            .saturating_add(32) as i64;
+        let mut dataset_cache: HashMap<(String, String), SweepDataset> = HashMap::new();
+        for timeframe in &timeframes {
+            let tf = Timeframe::parse(timeframe).ok_or_else(|| {
+                ApiError::BadRequest(format!(
+                    "invalid timeframe '{}' in research sweep request",
+                    timeframe
+                ))
+            })?;
+            for pair_id in &pair_ids {
+                let Some(pair) = pair_lookup.get(pair_id) else {
+                    return Err(ApiError::BadRequest(format!(
+                        "pair_id '{}' is not configured",
+                        pair_id
+                    )));
+                };
+                let left = state
+                    .repository
+                    .fetch_recent_closes(&pair.left, tf, max_lookback)
+                    .await
+                    .map_err(|error| ApiError::Upstream(error.to_string()))?;
+                let right = state
+                    .repository
+                    .fetch_recent_closes(&pair.right, tf, max_lookback)
+                    .await
+                    .map_err(|error| ApiError::Upstream(error.to_string()))?;
+                let (timestamps, left_closes, right_closes) = align_closes(left, right);
+                if timestamps.len() < 120 {
+                    continue;
+                }
+                let output = evaluate_pair_for_timeframe(
+                    &state,
+                    pair,
+                    tf,
+                    false,
+                    state.settings.trading_fee_bps,
+                )
+                .await
+                .map_err(|error| ApiError::Upstream(error.to_string()))?;
+                dataset_cache.insert(
+                    (timeframe.clone(), pair_id.clone()),
+                    SweepDataset {
+                        timestamps,
+                        left_closes,
+                        right_closes,
+                        hedge_ratio: output.hedge_ratio,
+                        round_trip_cost_bps: output.cue.cost_estimate_bps.max(0.0),
+                    },
+                );
+            }
+        }
+
+        let mut ranked = vec![];
+        for timeframe in &timeframes {
+            let tf = Timeframe::parse(timeframe).ok_or_else(|| {
+                ApiError::BadRequest(format!(
+                    "invalid timeframe '{}' in research sweep request",
+                    timeframe
+                ))
+            })?;
+            for pair_id in &pair_ids {
+                for z_method in &z_methods {
+                    for lookback in &lookback_grid {
+                        for entry in &entry_grid {
+                            for exit in &exit_grid {
+                                for stop in &stop_grid {
+                                    executed_combinations = executed_combinations.saturating_add(1);
+                                    let mut config = match parse_expectancy_config(
+                                        Some(*entry),
+                                        Some(*exit),
+                                        Some(*stop),
+                                        Some(z_method.as_str()),
+                                        Some(*lookback),
+                                        &state.settings,
+                                    ) {
+                                        Ok(value) => value,
+                                        Err(_) => {
+                                            failed_combinations =
+                                                failed_combinations.saturating_add(1);
+                                            continue;
+                                        }
+                                    };
+                                    config.lookback_bars =
+                                        config.lookback_bars.max(analytics_model_bars(tf));
+
+                                    let Some(dataset) =
+                                        dataset_cache.get(&(timeframe.clone(), pair_id.clone()))
+                                    else {
+                                        failed_combinations = failed_combinations.saturating_add(1);
+                                        continue;
+                                    };
+                                    let candidate =
+                                        build_sweep_candidate(tf, pair_id, &config, dataset);
+                                    if candidate.metrics.is_some() {
+                                        successful_combinations =
+                                            successful_combinations.saturating_add(1);
+                                        ranked.push(candidate);
+                                    } else {
+                                        failed_combinations = failed_combinations.saturating_add(1);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        ranked.sort_by(|left, right| {
+            right
+                .objective_score
+                .total_cmp(&left.objective_score)
+                .then_with(|| {
+                    right
+                        .metrics
+                        .as_ref()
+                        .map_or(0.0, |metrics| metrics.p50_net_bps)
+                        .total_cmp(
+                            &left
+                                .metrics
+                                .as_ref()
+                                .map_or(0.0, |metrics| metrics.p50_net_bps),
+                        )
+                })
+                .then_with(|| {
+                    right
+                        .metrics
+                        .as_ref()
+                        .map_or(0.0, |metrics| metrics.win_rate)
+                        .total_cmp(
+                            &left
+                                .metrics
+                                .as_ref()
+                                .map_or(0.0, |metrics| metrics.win_rate),
+                        )
+                })
+        });
+
+        top_candidates = ranked
+            .into_iter()
+            .take(top_k)
+            .enumerate()
+            .map(|(index, mut candidate)| {
+                candidate.rank = index + 1;
+                candidate
+            })
+            .collect::<Vec<_>>();
+        best_candidate = top_candidates.first().cloned();
+        if top_candidates.is_empty() {
+            status = "UNAVAILABLE";
+            rationale_codes.push("RESEARCH_SWEEP_NO_VALID_RESULTS".to_string());
+        } else {
+            rationale_codes.push("RESEARCH_SWEEP_EXECUTED".to_string());
+        }
+        info!(
+            request_id = %request_id,
+            dry_run = false,
+            estimated_combinations,
+            executed_combinations,
+            successful_combinations,
+            failed_combinations,
+            top_candidates = top_candidates.len(),
+            best_objective_score = best_candidate
+                .as_ref()
+                .map(|candidate| candidate.objective_score),
+            "research sweep execution completed"
+        );
     }
 
     Ok(Json(ResearchSweepResponse {
@@ -4610,6 +5063,12 @@ async fn pairs_research_sweep(
         timeframes,
         pair_ids,
         estimated_combinations,
+        executed_combinations,
+        successful_combinations,
+        failed_combinations,
+        top_k,
+        best_candidate,
+        top_candidates,
         max_combinations,
         rationale_codes,
     }))
@@ -5465,18 +5924,20 @@ fn parse_env_bool(key: &str, default: bool) -> bool {
 mod tests {
     use super::{
         artifact_download_path, bootstrap_deviation_exceeds_threshold, bootstrap_snapshot_is_fresh,
-        compute_expectancy_metrics, compute_pair_funding_bps_per_event,
+        classify_expectancy_result, compute_expectancy_metrics, compute_pair_funding_bps_per_event,
         compute_pair_slippage_sample_bps, days_covered, decide_champion_transition,
         derive_paper_trades_from_series, derive_replay_trades_from_series,
-        estimate_research_combinations, expected_funding_events_crossed, finalize_trade_gate,
-        normalize_funding_rate, parse_backtest_exit_mode, parse_expectancy_query,
+        estimate_research_combinations, expectancy_objective_score,
+        expected_funding_events_crossed, finalize_trade_gate, normalize_funding_rate,
+        parse_backtest_exit_mode, parse_expectancy_query,
         parse_opportunity_history_stats_timeframe, parse_opportunity_history_window,
         parse_paper_trades_window, parse_replay_trades_query, percentile,
         project_continuous_funding_bps, refresh_setup_gate, resolve_artifact_path,
-        resolve_taker_fee_bps, ChampionDecision, ExpectancyQuery, FundingRateInputMode,
-        MaintenanceAction, OpportunityHistoryQuery, OpportunityHistoryStatsQuery, PaperTradesQuery,
-        ReplayTradeEntry, ReplayTradePathSummary, ReplayTradesQuery, ResearchSweepRequest,
-        SampledSlippageStatus, SelectedSignalRow, StrategyMarketMetricsResponse, StrategySettings,
+        resolve_taker_fee_bps, ChampionDecision, ExpectancyMetrics, ExpectancyQuery,
+        FundingRateInputMode, MaintenanceAction, OpportunityHistoryQuery,
+        OpportunityHistoryStatsQuery, PaperTradesQuery, ReplayTradeEntry, ReplayTradePathSummary,
+        ReplayTradesQuery, ResearchSweepRequest, SampledSlippageStatus, SelectedSignalRow,
+        StrategyMarketMetricsResponse, StrategySettings,
     };
     use chrono::Utc;
     use common_types::Timeframe;
@@ -5824,7 +6285,7 @@ mod tests {
             max_combinations: None,
             dry_run: None,
         };
-        assert_eq!(estimate_research_combinations(&default_payload), 76_800);
+        assert_eq!(estimate_research_combinations(&default_payload), 19_200);
 
         let custom_payload = ResearchSweepRequest {
             timeframes: Some(vec!["1m".to_string(), "1h".to_string()]),
@@ -5841,6 +6302,65 @@ mod tests {
             dry_run: Some(true),
         };
         assert_eq!(estimate_research_combinations(&custom_payload), 288);
+    }
+
+    #[test]
+    fn classify_expectancy_result_maps_known_states() {
+        let strong = ExpectancyMetrics {
+            trades: 12,
+            win_rate: 0.67,
+            avg_net_bps: 24.0,
+            p25_net_bps: 3.0,
+            p50_net_bps: 20.0,
+            p75_net_bps: 32.0,
+            avg_hold_bars: 14.0,
+            avg_mae_bps: -11.0,
+            avg_mfe_bps: 29.0,
+            expected_min_lot_net_bps: 24.0,
+            expected_min_lot_net_usd: 3.2,
+        };
+        let (status, decision, reason, _codes) = classify_expectancy_result(Some(&strong));
+        assert_eq!(status, "AVAILABLE");
+        assert_eq!(decision, "TRADE_READY");
+        assert_eq!(reason, "EXPECTANCY_POSITIVE");
+
+        let weak = ExpectancyMetrics {
+            trades: 2,
+            win_rate: 0.5,
+            avg_net_bps: 6.0,
+            ..strong.clone()
+        };
+        let (_status, decision, reason, _codes) = classify_expectancy_result(Some(&weak));
+        assert_eq!(decision, "CAUTION");
+        assert_eq!(reason, "LOW_TRADE_COUNT");
+    }
+
+    #[test]
+    fn expectancy_objective_score_prefers_positive_expectancy_and_depth() {
+        let base = ExpectancyMetrics {
+            trades: 5,
+            win_rate: 0.55,
+            avg_net_bps: 10.0,
+            p25_net_bps: 2.0,
+            p50_net_bps: 8.0,
+            p75_net_bps: 12.0,
+            avg_hold_bars: 8.0,
+            avg_mae_bps: -6.0,
+            avg_mfe_bps: 14.0,
+            expected_min_lot_net_bps: 10.0,
+            expected_min_lot_net_usd: 1.0,
+        };
+        let deeper = ExpectancyMetrics {
+            trades: 20,
+            ..base.clone()
+        };
+        assert!(expectancy_objective_score(&deeper) > expectancy_objective_score(&base));
+
+        let negative = ExpectancyMetrics {
+            expected_min_lot_net_bps: -1.0,
+            ..base
+        };
+        assert!(expectancy_objective_score(&negative) < 0.0);
     }
 
     #[test]

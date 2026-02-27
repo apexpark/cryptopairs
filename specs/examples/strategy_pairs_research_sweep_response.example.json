@@ -2,15 +2,91 @@
   "generated_at": "2026-02-27T00:00:00Z",
   "status": "AVAILABLE",
   "request_id": "sweep-20260227T000000.000Z",
-  "dry_run": true,
-  "timeframes": ["1m", "15m", "1h"],
+  "dry_run": false,
+  "timeframes": ["1h"],
   "pair_ids": [
-    "PF_TAOUSD__PF_HYPEUSD",
-    "PF_XRPUSD__PF_ADAUSD"
+    "PF_TAOUSD__PF_HYPEUSD"
   ],
-  "estimated_combinations": 768,
+  "estimated_combinations": 75,
+  "executed_combinations": 75,
+  "successful_combinations": 41,
+  "failed_combinations": 34,
+  "top_k": 10,
+  "best_candidate": {
+    "rank": 1,
+    "timeframe": "1h",
+    "pair_id": "PF_TAOUSD__PF_HYPEUSD",
+    "config": {
+      "entry_z": 1.8,
+      "exit_z": 0.6,
+      "stop_z": 3.2,
+      "z_method": "ROBUST_Z",
+      "hedge_method": "HEDGE_RATIO_OLS",
+      "lookback_bars": 440
+    },
+    "status": "AVAILABLE",
+    "decision_state": "TRADE_READY",
+    "primary_reason_code": "EXPECTANCY_POSITIVE",
+    "objective_score": 40.2184,
+    "metrics": {
+      "trades": 16,
+      "win_rate": 0.6875,
+      "avg_net_bps": 22.314,
+      "p25_net_bps": 4.128,
+      "p50_net_bps": 16.771,
+      "p75_net_bps": 34.102,
+      "avg_hold_bars": 19.6,
+      "avg_mae_bps": -11.89,
+      "avg_mfe_bps": 40.62,
+      "expected_min_lot_net_bps": 22.314,
+      "expected_min_lot_net_usd": 2.91
+    },
+    "rationale_codes": [
+      "EXPECTANCY_COMPUTED",
+      "MIN_TRADES_MET",
+      "SWEEP_EXIT_MODE_MEAN_REVERT"
+    ]
+  },
+  "top_candidates": [
+    {
+      "rank": 1,
+      "timeframe": "1h",
+      "pair_id": "PF_TAOUSD__PF_HYPEUSD",
+      "config": {
+        "entry_z": 1.8,
+        "exit_z": 0.6,
+        "stop_z": 3.2,
+        "z_method": "ROBUST_Z",
+        "hedge_method": "HEDGE_RATIO_OLS",
+        "lookback_bars": 440
+      },
+      "status": "AVAILABLE",
+      "decision_state": "TRADE_READY",
+      "primary_reason_code": "EXPECTANCY_POSITIVE",
+      "objective_score": 40.2184,
+      "metrics": {
+        "trades": 16,
+        "win_rate": 0.6875,
+        "avg_net_bps": 22.314,
+        "p25_net_bps": 4.128,
+        "p50_net_bps": 16.771,
+        "p75_net_bps": 34.102,
+        "avg_hold_bars": 19.6,
+        "avg_mae_bps": -11.89,
+        "avg_mfe_bps": 40.62,
+        "expected_min_lot_net_bps": 22.314,
+        "expected_min_lot_net_usd": 2.91
+      },
+      "rationale_codes": [
+        "EXPECTANCY_COMPUTED",
+        "MIN_TRADES_MET",
+        "SWEEP_EXIT_MODE_MEAN_REVERT"
+      ]
+    }
+  ],
   "max_combinations": 20000,
   "rationale_codes": [
-    "RESEARCH_SWEEP_DRY_RUN_READY"
+    "RESEARCH_SWEEP_EXECUTION_STARTED",
+    "RESEARCH_SWEEP_EXECUTED"
   ]
 }

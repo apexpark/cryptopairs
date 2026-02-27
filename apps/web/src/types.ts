@@ -350,7 +350,26 @@ export interface StrategyPairsResearchSweepResponse {
   timeframes: Timeframe[];
   pair_ids: string[];
   estimated_combinations: number;
+  executed_combinations: number;
+  successful_combinations: number;
+  failed_combinations: number;
+  top_k: number;
+  best_candidate: StrategyPairsResearchSweepCandidate | null;
+  top_candidates: StrategyPairsResearchSweepCandidate[];
   max_combinations: number;
+  rationale_codes: string[];
+}
+
+export interface StrategyPairsResearchSweepCandidate {
+  rank: number;
+  timeframe: Timeframe;
+  pair_id: string;
+  config: StrategyExpectancyConfig;
+  status: "AVAILABLE" | "UNAVAILABLE";
+  decision_state: "TRADE_READY" | "CAUTION" | "BLOCKED";
+  primary_reason_code: string;
+  objective_score: number;
+  metrics: StrategyPairsExpectancyMetrics | null;
   rationale_codes: string[];
 }
 
