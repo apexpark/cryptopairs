@@ -1,4 +1,9 @@
-import type { Candle, ChartMarker, SpreadSeriesPoint } from "../types";
+import type { ChartMarker, SpreadSeriesPoint } from "../types";
+
+interface AnalyticsCandle {
+  ts: string;
+  close: number;
+}
 
 export function timeframeMinutes(timeframe: "1m" | "15m" | "1h"): number {
   if (timeframe === "1m") {
@@ -11,8 +16,8 @@ export function timeframeMinutes(timeframe: "1m" | "15m" | "1h"): number {
 }
 
 export function alignCandles(
-  left: Candle[],
-  right: Candle[]
+  left: AnalyticsCandle[],
+  right: AnalyticsCandle[]
 ): Array<{ ts: string; leftClose: number; rightClose: number }> {
   const rightMap = new Map<string, number>();
   for (const candle of right) {

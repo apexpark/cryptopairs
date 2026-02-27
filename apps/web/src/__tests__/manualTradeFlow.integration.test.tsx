@@ -25,7 +25,6 @@ const api = vi.hoisted(() => ({
   dispatchOrderIntent: vi.fn(),
   fetchExecutionDecision: vi.fn(),
   fetchExecutionPortfolioPositions: vi.fn(),
-  fetchIntegrityHistory: vi.fn(),
   fetchKillSwitchState: vi.fn(),
   fetchMarketMetrics: vi.fn(),
   fetchOrderIntentHistory: vi.fn(),
@@ -208,11 +207,6 @@ beforeEach(() => {
       drift_notional: 0,
       notes: "ok",
     },
-  });
-  api.fetchIntegrityHistory.mockResolvedValue({
-    instrument: LEFT,
-    timeframe: "1m",
-    rows: [],
   });
   api.fetchMarketMetrics.mockResolvedValue({
     instrument: LEFT,

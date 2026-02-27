@@ -1,10 +1,8 @@
 import type {
-  DataQueryResponse,
   DispatchIntentRequest,
   DispatchIntentResponse,
   ExecutionPortfolioPositionsResponse,
   ExecutionDecisionResponse,
-  IntegrityHistoryResponse,
   KillSwitchState,
   MarketMetricsResponse,
   OrderIntentHistoryResponse,
@@ -26,8 +24,6 @@ import type {
   Timeframe,
 } from "../types";
 
-const DATA_SERVICE_BASE_URL =
-  import.meta.env.VITE_DATA_SERVICE_BASE_URL ?? "http://127.0.0.1:8080";
 const ACCOUNT_SERVICE_BASE_URL =
   import.meta.env.VITE_ACCOUNT_SERVICE_BASE_URL ?? "http://127.0.0.1:8081";
 const EXECUTION_SERVICE_BASE_URL =
@@ -269,38 +265,6 @@ export async function fetchReconcile(
     exchange
   )}&account_id=${encodeURIComponent(accountId)}`;
   return parseJson<ReconcileResponse>(await fetch(url));
-}
-
-export async function queryCandles(
-  instrument: string,
-  timeframe: Timeframe,
-  startTs: string,
-  endTs: string
-): Promise<DataQueryResponse> {
-  const url = `${DATA_SERVICE_BASE_URL}/v1/data/query`;
-  return parseJson<DataQueryResponse>(
-    await fetch(url, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        instrument,
-        timeframe,
-        start_ts: startTs,
-        end_ts: endTs,
-      }),
-    })
-  );
-}
-
-export async function fetchIntegrityHistory(
-  instrument: string,
-  timeframe: Timeframe,
-  limit = 50
-): Promise<IntegrityHistoryResponse> {
-  const url = `${DATA_SERVICE_BASE_URL}/v1/integrity/history?instrument=${encodeURIComponent(
-    instrument
-  )}&timeframe=${timeframe}&limit=${limit}`;
-  return parseJson<IntegrityHistoryResponse>(await fetch(url));
 }
 
 export async function fetchMarketMetrics(

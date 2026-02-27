@@ -360,19 +360,6 @@ export interface StrategyUiAuthVerifyResponse {
   ok: boolean;
 }
 
-export interface IntegrityHistoryResponse {
-  instrument: string;
-  timeframe: Timeframe;
-  rows: Array<{
-    start_ts: string;
-    end_ts: string;
-    status: "COMPLETE" | "PARTIAL_BACKFILLED" | "INCOMPLETE" | "STALE" | "FAILED";
-    coverage_pct: number;
-    reason: string;
-    checked_at: string;
-  }>;
-}
-
 export interface MarketMetricsResponse {
   instrument: string;
   server_time: string;
@@ -384,30 +371,6 @@ export interface MarketMetricsResponse {
   funding_rate: number;
   open_interest: number;
   funding_interval_secs?: number;
-}
-
-export interface Candle {
-  ts: string;
-  open: number;
-  high: number;
-  low: number;
-  close: number;
-  volume: number;
-}
-
-export interface DataQueryResponse {
-  instrument: string;
-  timeframe: Timeframe;
-  start_ts: string;
-  end_ts: string;
-  candles: Candle[];
-  integrity: {
-    status: "COMPLETE" | "PARTIAL_BACKFILLED" | "INCOMPLETE" | "STALE" | "FAILED";
-    coverage_pct: number;
-    missing_ranges: Array<{ start_ts: string; end_ts: string; reason: string }>;
-    last_verified_at: string;
-    warnings: string[];
-  };
 }
 
 export interface KillSwitchState {
