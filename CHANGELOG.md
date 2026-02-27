@@ -172,10 +172,16 @@ This project follows SemVer as defined in `docs/02-versioning-and-releases.md`.
   - `execution-service` now signs the exact URL-encoded URI component (`path?query`) used on wire for private status requests.
   - Reduces risk of auth mismatch under Kraken’s encoded-URI signing enforcement updates.
 - Gate signaling clarity improvements for operator UX:
-  - `cost_gate.pass` is now preserved as economics-only pass/fail (expected edge minus fee/funding/slippage).
+  - `cost_gate.pass` is now preserved as economics-only pass/fail (expected edge minus modeled trade costs).
   - Added explicit cue diagnostics: `setup_gate` and `trade_gate` (with `blocked_by`) to separate setup constraints from economics constraints.
   - Trade/Analytics UI now reports setup, cost economics, and final trade readiness independently, reducing false “cost blocked” messaging when setup is the actual blocker.
   - Cost-gate API now includes `setup_pass`, `trade_ready`, and `trade_blocked_by` for downstream consumers.
+- Entry-gate simplification and messaging cleanup:
+  - Funding is now informational and no longer part of automated cost-gate pass/fail math (`net_edge_bps` now uses expected edge minus fee/slippage).
+  - Missing funding samples no longer fail-close advisory gates; funding diagnostics remain visible as informational rationale codes.
+  - Half-life and hedge-ratio stability are now advisory warnings rather than hard setup-entry blocks.
+  - Cost gate now uses selected-variant expected edge (reliability-adjusted) rather than raw opportunity ranking score.
+  - Analytics “Why blocked” copy now removes repetitive generic gate reasons and fixes hedge-ratio wording (`above preferred stability tolerance`).
 - Exchange minimum-lot/tick-size alignment hardening:
   - Added shared Kraken perp trading constraints (`min_lot`, `tick_size`) and symbol normalization in `common-types`.
   - `execution-service` now validates `ENTRY`/`EXIT` quantities against exchange lot-step and minimum lot constraints fail-closed before order-intent acceptance.

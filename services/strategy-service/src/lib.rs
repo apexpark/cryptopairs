@@ -630,7 +630,9 @@ pub fn evaluate_cost_gate(input: CostGateInput) -> CostGateDiagnostics {
         .max(0.0)
     };
 
-    let net_edge_bps = expected_edge_bps - fee_bps - funding_bps - slippage_bps;
+    // Funding is informational for operators and is no longer part of
+    // the automated cost-gate blocking decision.
+    let net_edge_bps = expected_edge_bps - fee_bps - slippage_bps;
     let pass = net_edge_bps > input.min_net_edge_bps.max(0.0);
     if !pass {
         rationale_codes.push("COST_GATE_BLOCKED".to_string());
@@ -958,13 +960,11 @@ pub fn evaluate_pair(input: PairEvaluationInput) -> anyhow::Result<PairEvaluatio
     let mut actionable = direction_hint != DirectionHint::None && selected.opportunity_score > 0.0;
 
     if !half_life_bars.is_finite() || half_life_bars > input.max_half_life_bars {
-        actionable = false;
-        direction_hint = DirectionHint::None;
+        // Advisory warning only: no longer a hard entry block.
         cue_rationale.push("HALF_LIFE_TOO_LONG".to_string());
     }
     if hedge_ratio_stability > 0.40 {
-        actionable = false;
-        direction_hint = DirectionHint::None;
+        // Advisory warning only: no longer a hard entry block.
         cue_rationale.push("HEDGE_RATIO_UNSTABLE".to_string());
     }
     if selected.sample_count < input.min_samples_target {
@@ -1644,7 +1644,7 @@ mod tests {
     }
 
     #[test]
-    fn evaluate_pair_can_reject_action_when_half_life_too_long() {
+    fn evaluate_pair_adds_half_life_warning_when_half_life_is_too_long() {
         let (timestamps, mut left, right) = synthetic_pair_series(240);
         for (idx, value) in left.iter_mut().enumerate() {
             *value *= 1.0 + (idx as f64 * 0.0012);
@@ -1668,8 +1668,11 @@ mod tests {
         })
         .expect("pair evaluation should succeed");
 
-        assert!(!result.cue.actionable);
-        assert_eq!(result.cue.direction_hint, DirectionHint::None.as_str());
+        assert!(result
+            .cue
+            .rationale_codes
+            .iter()
+            .any(|code| code == "HALF_LIFE_TOO_LONG"));
     }
 
     #[test]
@@ -1762,6 +1765,27 @@ mod tests {
         });
         assert!(diagnostics.pass);
         assert!((diagnostics.slippage_bps - 0.6).abs() < 1e-9);
+    }
+
+    #[test]
+    fn cost_gate_pass_is_not_reduced_by_funding_component() {
+        let diagnostics = evaluate_cost_gate(CostGateInput {
+            expected_edge_bps: 3.5,
+            fee_bps: 1.0,
+            funding_model: FundingModel::Dynamic,
+            funding_events: 3,
+            funding_bps_per_event: 2.0,
+            funding_bps: 6.0,
+            spread_vol_bps: 0.0,
+            spread_z: 0.0,
+            sampled_slippage_bps: Some(0.6),
+            slippage_base_bps: 0.0,
+            slippage_vol_multiplier: 0.0,
+            slippage_z_multiplier: 0.0,
+            min_net_edge_bps: 0.0,
+        });
+        assert!(diagnostics.pass);
+        assert!((diagnostics.net_edge_bps - 1.9).abs() < 1e-9);
     }
 
     #[test]
