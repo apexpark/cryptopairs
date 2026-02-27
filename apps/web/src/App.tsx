@@ -7,30 +7,22 @@ import {
 } from "./lib/orderLifecycle";
 import { buildActiveTradeAnchor, buildExecutionMarkers } from "./lib/chartMarkers";
 import {
-  buildStrategyMaintenanceArtifactUrl,
-  buildStrategyOpportunityHistoryUrl,
   fetchStrategyExpectancy,
   fetchStrategyReplayTrades,
   fetchStrategyUiAuthStatus,
   verifyStrategyUiAccess,
   fetchStrategyPaperTrades,
-  fetchStrategyOpportunityHistoryStats,
-  fetchStrategyMaintenanceLatest,
   runStrategyResearchSweep,
-  runStrategyMaintenanceAction,
   fetchExecutionPortfolioPositions,
   dispatchOrderIntent,
   fetchExecutionDecision,
-  fetchIntegrityHistory,
   fetchKillSwitchState,
   fetchMarketMetrics,
   fetchOrderIntentHistory,
   fetchReconcile,
   fetchStrategyBacktest,
-  fetchStrategyCostGates,
   fetchStrategyCues,
   fetchStrategyLiveZ,
-  fetchStrategyPortfolioPlan,
   submitOrderIntent,
 } from "./lib/api";
 import {
@@ -40,7 +32,6 @@ import {
   isEntryAllowed,
   isGateSafe,
   isReduceAllowed,
-  isStopConfigured,
 } from "./lib/tradeGuards";
 import type {
   ChartMarker,
@@ -48,22 +39,16 @@ import type {
   DispatchIntentResponse,
   DirectionHint,
   ExecutionAction,
-  IntegrityHistoryResponse,
   KillSwitchState,
   MarketMetricsResponse,
   OrderIntentHistoryResponse,
   ReconcileResponse,
   SpreadPosition,
-  StrategyPairsCostGateResponse,
   StrategyPairsCuesResponse,
   StrategyPairsExpectancyResponse,
   StrategyPairsPaperTradesResponse,
   StrategyPairsReplayTradesResponse,
   StrategyPairsResearchSweepResponse,
-  StrategyPairsOpportunityHistoryStatsResponse,
-  StrategyMaintenanceActionResponse,
-  StrategyMaintenanceLatestResponse,
-  StrategyPairsPortfolioPlanResponse,
   StrategyZMethod,
   Timeframe,
   TimelineEvent,
@@ -74,12 +59,7 @@ import logoLight from "./assets/logo-light.png";
 
 type PageId =
   | "trade"
-  | "how-it-works"
-  | "markets"
   | "analytics"
-  | "portfolio"
-  | "data-quality"
-  | "maintenance"
   | "settings";
 
 type ThemeMode = "dark" | "light";
@@ -105,147 +85,10 @@ interface LegExecutionOutcome {
   history: OrderIntentHistoryResponse | null;
 }
 
-interface ModelHealthSnapshot {
-  timeframe: Timeframe;
-  status: "AVAILABLE" | "UNAVAILABLE" | "NO_CUES" | "ERROR" | "LOADING";
-  rationaleCodes: string[];
-  sampledSlippageActive: boolean;
-  fundingModel: string | null;
-  fundingEvents: number | null;
-  fundingBpsPerEvent: number | null;
-  fundingBps: number | null;
-  message: string | null;
-  updatedAt: string | null;
-}
-
 const NAV_ITEMS: Array<{ id: PageId; label: string }> = [
   { id: "trade", label: "Trade" },
-  { id: "how-it-works", label: "How This Works" },
-  { id: "markets", label: "Markets" },
   { id: "analytics", label: "Analytics" },
-  { id: "portfolio", label: "Portfolio" },
-  { id: "data-quality", label: "Data Quality" },
-  { id: "maintenance", label: "Maintenance" },
   { id: "settings", label: "Settings" },
-];
-
-type HowItWorksTabId =
-  | "pairs-trading"
-  | "opportunity-engine"
-  | "hedge-ratio"
-  | "risks"
-  | "definitions"
-  | "reoptimise";
-
-const HOW_IT_WORKS_TABS: Array<{
-  id: HowItWorksTabId;
-  label: string;
-  title: string;
-  intro: string;
-  paragraphs: string[];
-  bullets: string[];
-}> = [
-  {
-    id: "pairs-trading",
-    label: "What Is Pairs Trading",
-    title: "What Is Pairs Trading",
-    intro:
-      "Pairs trading focuses on the relationship between two futures contracts, not a single market direction.",
-    paragraphs: [
-      "Think of two runners tied by a rope. They can separate for short periods, then pull back toward each other.",
-      "The platform measures that distance as a spread and flags unusual stretches as potential opportunities.",
-      "A spread trade opens opposite legs so your result is driven more by relationship movement than broad market trend.",
-    ],
-    bullets: [
-      "Long Spread: buy one leg and sell the other using model sizing.",
-      "Short Spread: reverse those legs when stretch is in the opposite direction.",
-      "Goal: capture spread convergence with controlled risk, not predict absolute price.",
-    ],
-  },
-  {
-    id: "opportunity-engine",
-    label: "Opportunity Engine",
-    title: "Opportunity Engine",
-    intro:
-      "The Opportunity Engine scans configured pairs and ranks potential setups on every cycle.",
-    paragraphs: [
-      "It evaluates multiple spread variants, not one fixed formula, then measures how far the spread is from recent normal behavior.",
-      "It applies cost and quality checks before a setup can be considered actionable, including fees, funding drag, slippage, and stability.",
-      "It then selects the best-performing variant from recent live behavior and publishes cue details for operator review.",
-    ],
-    bullets: [
-      "Inputs: spread signal, z-score stretch, regime, stability, and execution costs.",
-      "Output: direction hint, confidence, entry/exit/stop bands, and rationale tags.",
-      "Fail-safe: if quality or safety checks fail, cue remains non-actionable.",
-    ],
-  },
-  {
-    id: "hedge-ratio",
-    label: "Hedge Ratio",
-    title: "Hedge Ratio and Leg Sizing",
-    intro:
-      "The hedge ratio is the balance setting between the two legs that aims to neutralize shared market movement.",
-    paragraphs: [
-      "Its purpose is to isolate relative mispricing between the pair, so P&L is driven more by spread convergence or divergence and less by broad crypto direction.",
-      "When you set spread size, the system converts that into leg quantities using the current hedge ratio and contract constraints.",
-      "The ratio is recalculated over time as relationships evolve, so leg sizing adapts to new market structure.",
-    ],
-    bullets: [
-      "Example: 1.00 spread unit can become Long A 1.00 vs Short B 0.62.",
-      "Sizing is applied consistently for entry, add, reduce, and close actions.",
-      "If ratio stability degrades, the opportunity engine can downgrade or block entry.",
-    ],
-  },
-  {
-    id: "risks",
-    label: "Risks",
-    title: "Key Risks to Understand",
-    intro:
-      "Pairs trading reduces some directional exposure, but it does not remove risk.",
-    paragraphs: [
-      "Relationship risk: pairs can stop mean-reverting or shift into a new regime where historical behavior no longer applies.",
-      "Execution and cost risk: slippage, partial fills, fees, and funding can erase expected edge.",
-      "Data and model risk: stale or incomplete data can lead to poor cues, which is why integrity and reconciliation gates are enforced.",
-    ],
-    bullets: [
-      "Leverage and liquidation risk still apply if sizing is too aggressive.",
-      "Fail-closed mode blocks new entries when gates are unsafe.",
-      "Operator can still reduce or close open spread exposure during degraded conditions.",
-    ],
-  },
-  {
-    id: "definitions",
-    label: "Definitions",
-    title: "Trading Terms Used In This UI",
-    intro: "These are the plain-language meanings of the key fields shown on the Trade and Analytics pages.",
-    paragraphs: [
-      "These terms are computed each cycle from live market and strategy data, then displayed as decision support.",
-      "They do not guarantee profit on their own; they describe the current setup quality and gating status.",
-    ],
-    bullets: [
-      "Z: how far the spread is from its recent normal level, measured in standard deviations.",
-      "Edge: estimated advantage after expected spread behavior, usually compared against costs in basis points.",
-      "Gate: a pass/block safety check (cost, data quality, reconcile, kill switch, and model guards).",
-      "Opportunity Score: ranked setup quality number combining stretch, regime fit, costs, and stability.",
-      "Cost Estimate: expected execution friction (fees, funding, slippage) in basis points.",
-    ],
-  },
-  {
-    id: "reoptimise",
-    label: "Reoptimise",
-    title: "Reoptimise and Shadow Model Fields",
-    intro: "These diagnostics explain how the strategy chooses its active variant and validates it with shadow models.",
-    paragraphs: [
-      "Reoptimisation continuously re-evaluates candidate spread variants and promotes the best recent performer when policy allows.",
-      "Shadow metrics are advisory checks that reduce model-drift risk before changes are promoted.",
-    ],
-    bullets: [
-      "Champion Variant: currently selected strategy variant used for cues and bands.",
-      "Shadow Agreement: whether shadow model preference matches the active champion choice.",
-      "Cost Gate: pass/block outcome after fees, funding, and slippage are netted from expected edge.",
-      "Shadow ML Precision: recent hit-rate quality of the shadow model on labeled outcomes.",
-    ],
-  },
 ];
 
 const TIMEFRAMES: Timeframe[] = ["1m", "15m", "1h"];
@@ -265,21 +108,6 @@ function analyticsRefreshMs(timeframe: Timeframe): number {
     return 45_000;
   }
   return 90_000;
-}
-
-function loadingModelHealthSnapshot(timeframe: Timeframe): ModelHealthSnapshot {
-  return {
-    timeframe,
-    status: "LOADING",
-    rationaleCodes: [],
-    sampledSlippageActive: false,
-    fundingModel: null,
-    fundingEvents: null,
-    fundingBpsPerEvent: null,
-    fundingBps: null,
-    message: null,
-    updatedAt: null,
-  };
 }
 
 function usePersistentState<T>(key: string, fallback: T): [T, (updater: T | ((prev: T) => T)) => void] {
@@ -350,13 +178,6 @@ function formatMetricPrice(value: number | null | undefined): string {
     return value.toFixed(3);
   }
   return value.toFixed(6);
-}
-
-function formatMetricPercent(value: number | null | undefined): string {
-  if (value == null || !Number.isFinite(value)) {
-    return "--";
-  }
-  return `${value >= 0 ? "+" : ""}${value.toFixed(2)}%`;
 }
 
 function formatFundingRateBpsPerHour(
@@ -729,28 +550,6 @@ function explainPairActionability(
   };
 }
 
-function toneFromStatus(status?: string): "ok" | "warn" | "bad" {
-  if (status === "COMPLETE" || status === "OK") {
-    return "ok";
-  }
-  if (status === "PARTIAL_BACKFILLED" || status === "STALE") {
-    return "warn";
-  }
-  return "bad";
-}
-
-function formatMaintenanceStepLabel(stepKey: string): string {
-  const mapping: Record<string, string> = {
-    health: "Health checks",
-    baseline_report: "Baseline report",
-    candidate_apply_dry_run: "Candidate apply dry-run",
-    candidate_apply_live: "Candidate apply live",
-    candidate_report: "Candidate report",
-    restore_original: "Restore original profile",
-  };
-  return mapping[stepKey] ?? stepKey.replaceAll("_", " ");
-}
-
 function buildSpreadLegs(
   leftInstrument: string,
   rightInstrument: string,
@@ -800,10 +599,6 @@ function App(): JSX.Element {
     "cp.taker_commission_pct",
     ""
   );
-  const [apiKey, setApiKey] = useState<string>("");
-  const [apiSecret, setApiSecret] = useState<string>("");
-  const [apiPassphrase, setApiPassphrase] = useState<string>("");
-  const [showApiSecrets, setShowApiSecrets] = useState<boolean>(false);
   const [uiAuthLoading, setUiAuthLoading] = useState<boolean>(true);
   const [uiAuthEnabled, setUiAuthEnabled] = useState<boolean>(false);
   const [uiUnlocked, setUiUnlocked] = useState<boolean>(false);
@@ -811,8 +606,6 @@ function App(): JSX.Element {
   const [uiAuthError, setUiAuthError] = useState<string | null>(null);
 
   const [cuesResponse, setCuesResponse] = useState<StrategyPairsCuesResponse | null>(null);
-  const [costResponse, setCostResponse] = useState<StrategyPairsCostGateResponse | null>(null);
-  const [planResponse, setPlanResponse] = useState<StrategyPairsPortfolioPlanResponse | null>(null);
   const [coreError, setCoreError] = useState<string | null>(null);
   const [coreLoading, setCoreLoading] = useState(false);
 
@@ -823,9 +616,6 @@ function App(): JSX.Element {
   const [rightDecisionAllowed, setRightDecisionAllowed] = useState<boolean>(false);
   const [reconcileResponse, setReconcileResponse] = useState<ReconcileResponse | null>(null);
   const [gateError, setGateError] = useState<string | null>(null);
-
-  const [leftIntegrity, setLeftIntegrity] = useState<IntegrityHistoryResponse | null>(null);
-  const [rightIntegrity, setRightIntegrity] = useState<IntegrityHistoryResponse | null>(null);
 
   const [zSeries, setZSeries] = useState<number[]>([]);
   const [zTimestamps, setZTimestamps] = useState<string[]>([]);
@@ -883,29 +673,6 @@ function App(): JSX.Element {
   const [headerLeftMetrics, setHeaderLeftMetrics] = useState<MarketMetricsResponse | null>(null);
   const [headerRightMetrics, setHeaderRightMetrics] = useState<MarketMetricsResponse | null>(null);
   const [headerMetricsError, setHeaderMetricsError] = useState<string | null>(null);
-  const [maintenanceLatest, setMaintenanceLatest] =
-    useState<StrategyMaintenanceLatestResponse | null>(null);
-  const [maintenanceLoading, setMaintenanceLoading] = useState(false);
-  const [maintenanceError, setMaintenanceError] = useState<string | null>(null);
-  const [maintenanceActionLoading, setMaintenanceActionLoading] = useState(false);
-  const [maintenanceActionMessage, setMaintenanceActionMessage] = useState<string | null>(null);
-  const [historyStats, setHistoryStats] =
-    useState<StrategyPairsOpportunityHistoryStatsResponse | null>(null);
-  const [historyStatsLoading, setHistoryStatsLoading] = useState(false);
-  const [historyStatsError, setHistoryStatsError] = useState<string | null>(null);
-  const [modelHealthByTimeframe, setModelHealthByTimeframe] = useState<
-    Record<Timeframe, ModelHealthSnapshot>
-  >({
-    "1m": loadingModelHealthSnapshot("1m"),
-    "15m": loadingModelHealthSnapshot("15m"),
-    "1h": loadingModelHealthSnapshot("1h"),
-  });
-  const [modelHealthLoading, setModelHealthLoading] = useState(false);
-  const [modelHealthError, setModelHealthError] = useState<string | null>(null);
-
-  const [stopMethod, setStopMethod] = useState<"Z-Score" | "Dollar" | "Percent">("Z-Score");
-  const [stopValue, setStopValue] = useState<string>("3.2");
-  const [altStop, setAltStop] = useState<string>("150");
   const [spreadSize, setSpreadSize] = useState<string>("1.25");
   const [operatorConfirmed, setOperatorConfirmed] = useState<boolean>(false);
   const [tradeMessage, setTradeMessage] = useState<string>("No trade submitted yet.");
@@ -1001,7 +768,6 @@ function App(): JSX.Element {
     };
   }, []);
 
-  const stopValueNumber = Number.parseFloat(stopValue);
   const spreadSizeNumber = Number.parseFloat(spreadSize);
   const takerFeeBpsOverride = useMemo(
     () => parseCommissionPercentToBps(takerCommissionPct),
@@ -1030,7 +796,6 @@ function App(): JSX.Element {
     researchLimitNumber > 0 &&
     researchMaxCombinationsNumber > 0;
 
-  const stopConfigured = isStopConfigured(stopMethod, stopValueNumber);
   const gateState = useMemo(
     () => ({
       killSwitchActive: killSwitch?.active ?? true,
@@ -1042,7 +807,6 @@ function App(): JSX.Element {
   );
 
   const baseEntryGuard = {
-    stopConfigured,
     operatorConfirmed,
     operatorId,
     spreadSize: spreadSizeNumber,
@@ -1061,13 +825,11 @@ function App(): JSX.Element {
   const canCloseSpread = isCloseAllowed(currentPosition);
 
   const gateSafe = isGateSafe(gateState);
-  const latestLeftIntegrity = leftIntegrity?.rows?.[0] ?? null;
-  const latestRightIntegrity = rightIntegrity?.rows?.[0] ?? null;
   const startupStatus = useMemo(() => {
     if (coreLoading) {
       return {
         tone: "warn" as const,
-        text: "Market data is syncing. Backfill is running before trading gates open.",
+        text: "Market data is syncing. Strategy signals are warming up.",
       };
     }
     if (coreError) {
@@ -1076,38 +838,22 @@ function App(): JSX.Element {
         text: "Live strategy data is unavailable. Fail-closed mode is active.",
       };
     }
-    if (!selectedCueRow || !latestLeftIntegrity || !latestRightIntegrity) {
+    if (!selectedCueRow) {
       return {
         tone: "warn" as const,
-        text: "Waiting for first integrity checks and backfill confirmation.",
+        text: "Waiting for first strategy opportunities.",
       };
     }
-
-    const readyStatuses = new Set(["COMPLETE", "PARTIAL_BACKFILLED"]);
-    const leftReady =
-      readyStatuses.has(latestLeftIntegrity.status) && latestLeftIntegrity.coverage_pct >= 99.5;
-    const rightReady =
-      readyStatuses.has(latestRightIntegrity.status) && latestRightIntegrity.coverage_pct >= 99.5;
-    if (leftReady && rightReady) {
-      return {
-        tone: "ok" as const,
-        text: `Data sync complete. ${formatInstrumentLabel(
-          selectedCueRow.cue.left_instrument
-        )} ${latestLeftIntegrity.coverage_pct.toFixed(2)}%, ${formatInstrumentLabel(
-          selectedCueRow.cue.right_instrument
-        )} ${latestRightIntegrity.coverage_pct.toFixed(2)}%.`,
-      };
-    }
-
-    return {
-      tone: "warn" as const,
-      text: `Backfill in progress. ${formatInstrumentLabel(
-        selectedCueRow.cue.left_instrument
-      )} ${latestLeftIntegrity.coverage_pct.toFixed(2)}% (${latestLeftIntegrity.status}), ${formatInstrumentLabel(
-        selectedCueRow.cue.right_instrument
-      )} ${latestRightIntegrity.coverage_pct.toFixed(2)}% (${latestRightIntegrity.status}).`,
-    };
-  }, [coreLoading, coreError, latestLeftIntegrity, latestRightIntegrity, selectedCueRow]);
+    return gateSafe
+      ? {
+          tone: "ok" as const,
+          text: `Trade gates healthy for ${formatPairLabel(selectedCueRow.cue.pair_id)}.`,
+        }
+      : {
+          tone: "warn" as const,
+          text: "One or more execution gates are blocking entry.",
+        };
+  }, [coreLoading, coreError, selectedCueRow, gateSafe]);
 
   const refreshPositions = async (): Promise<void> => {
     const response = await fetchExecutionPortfolioPositions(exchange, accountId);
@@ -1141,29 +887,15 @@ function App(): JSX.Element {
       setCoreError(null);
 
       try {
-        const cuesRequest =
+        const cues =
           takerFeeBpsOverride == null
             ? fetchStrategyCues(timeframe, 20)
             : fetchStrategyCues(timeframe, 20, takerFeeBpsOverride);
-        const costGatesRequest =
-          takerFeeBpsOverride == null
-            ? fetchStrategyCostGates(timeframe)
-            : fetchStrategyCostGates(timeframe, takerFeeBpsOverride);
-        const planRequest =
-          takerFeeBpsOverride == null
-            ? fetchStrategyPortfolioPlan(timeframe)
-            : fetchStrategyPortfolioPlan(timeframe, takerFeeBpsOverride);
-        const [cues, costs, plan] = await Promise.all([
-          cuesRequest,
-          costGatesRequest,
-          planRequest,
-        ]);
+        const response = await cues;
         if (cancelled) {
           return;
         }
-        setCuesResponse(cues);
-        setCostResponse(costs);
-        setPlanResponse(plan);
+        setCuesResponse(response);
       } catch (error) {
         if (cancelled) {
           return;
@@ -1174,8 +906,6 @@ function App(): JSX.Element {
           }`
         );
         setCuesResponse(null);
-        setCostResponse(null);
-        setPlanResponse(null);
       } finally {
         if (!cancelled && firstLoad) {
           setCoreLoading(false);
@@ -1264,39 +994,6 @@ function App(): JSX.Element {
       window.clearInterval(intervalId);
     };
   }, [exchange, accountId, uiAccessGranted]);
-
-  useEffect(() => {
-    if (!uiAccessGranted) {
-      return;
-    }
-    if (!selectedCueRow) {
-      return;
-    }
-
-    let cancelled = false;
-    Promise.all([
-      fetchIntegrityHistory(selectedCueRow.cue.left_instrument, timeframe, 50),
-      fetchIntegrityHistory(selectedCueRow.cue.right_instrument, timeframe, 50),
-    ])
-      .then(([left, right]) => {
-        if (cancelled) {
-          return;
-        }
-        setLeftIntegrity(left);
-        setRightIntegrity(right);
-      })
-      .catch(() => {
-        if (cancelled) {
-          return;
-        }
-        setLeftIntegrity(null);
-        setRightIntegrity(null);
-      });
-
-    return () => {
-      cancelled = true;
-    };
-  }, [selectedCueRow, timeframe, uiAccessGranted]);
 
   useEffect(() => {
     if (!uiAccessGranted) {
@@ -1484,206 +1181,6 @@ function App(): JSX.Element {
       window.clearInterval(intervalId);
     };
   }, [selectedCueRow, timeframe, backtestExitMode, uiAccessGranted]);
-
-  const refreshMaintenanceReport = useCallback(async (firstLoad = false): Promise<void> => {
-    if (firstLoad) {
-      setMaintenanceLoading(true);
-    }
-    try {
-      const response = await fetchStrategyMaintenanceLatest();
-      setMaintenanceLatest(response);
-      setMaintenanceError(null);
-    } catch (error) {
-      setMaintenanceLatest(null);
-      setMaintenanceError(
-        `Maintenance report unavailable: ${error instanceof Error ? error.message : String(error)}`
-      );
-    } finally {
-      if (firstLoad) {
-        setMaintenanceLoading(false);
-      }
-    }
-  }, []);
-
-  useEffect(() => {
-    if (!uiAccessGranted) {
-      return;
-    }
-    void refreshMaintenanceReport(true);
-    const intervalId = window.setInterval(() => {
-      void refreshMaintenanceReport(false);
-    }, 60_000);
-
-    return () => {
-      window.clearInterval(intervalId);
-    };
-  }, [refreshMaintenanceReport, uiAccessGranted]);
-
-  const refreshHistoryStats = useCallback(async (firstLoad = false): Promise<void> => {
-    if (firstLoad) {
-      setHistoryStatsLoading(true);
-    }
-    try {
-      const response = await fetchStrategyOpportunityHistoryStats();
-      setHistoryStats(response);
-      setHistoryStatsError(null);
-    } catch (error) {
-      setHistoryStats(null);
-      setHistoryStatsError(
-        `Opportunity history stats unavailable: ${error instanceof Error ? error.message : String(error)}`
-      );
-    } finally {
-      if (firstLoad) {
-        setHistoryStatsLoading(false);
-      }
-    }
-  }, []);
-
-  useEffect(() => {
-    if (!uiAccessGranted) {
-      return;
-    }
-    void refreshHistoryStats(true);
-    const intervalId = window.setInterval(() => {
-      void refreshHistoryStats(false);
-    }, 60_000);
-
-    return () => {
-      window.clearInterval(intervalId);
-    };
-  }, [refreshHistoryStats, uiAccessGranted]);
-
-  const refreshModelHealth = useCallback(async (firstLoad = false): Promise<void> => {
-    if (firstLoad) {
-      setModelHealthLoading(true);
-    }
-    try {
-      const responses = await Promise.all(
-        TIMEFRAMES.map(async (tf) => {
-          const response =
-            takerFeeBpsOverride == null
-              ? await fetchStrategyCues(tf, 1)
-              : await fetchStrategyCues(tf, 1, takerFeeBpsOverride);
-          return { timeframe: tf, response };
-        })
-      );
-
-      const next: Record<Timeframe, ModelHealthSnapshot> = {
-        "1m": loadingModelHealthSnapshot("1m"),
-        "15m": loadingModelHealthSnapshot("15m"),
-        "1h": loadingModelHealthSnapshot("1h"),
-      };
-      const updatedAt = nowIso();
-
-      for (const item of responses) {
-        const selectedCue = item.response.cues[0]?.cue;
-        if (!selectedCue) {
-          next[item.timeframe] = {
-            timeframe: item.timeframe,
-            status: "NO_CUES",
-            rationaleCodes: [],
-            sampledSlippageActive: false,
-            fundingModel: null,
-            fundingEvents: null,
-            fundingBpsPerEvent: null,
-            fundingBps: null,
-            message: "No cues returned.",
-            updatedAt,
-          };
-          continue;
-        }
-        const costGate = selectedCue.cost_gate;
-        const rationaleCodes = costGate.rationale_codes ?? [];
-        next[item.timeframe] = {
-          timeframe: item.timeframe,
-          status: costGate.status === "AVAILABLE" ? "AVAILABLE" : "UNAVAILABLE",
-          rationaleCodes,
-          sampledSlippageActive:
-            rationaleCodes.includes("SLIPPAGE_SOURCE_SAMPLED") ||
-            rationaleCodes.includes("SLIPPAGE_SOURCE_BOOTSTRAPPED"),
-          fundingModel: costGate.funding_model ?? null,
-          fundingEvents: costGate.funding_events ?? null,
-          fundingBpsPerEvent: costGate.funding_bps_per_event ?? null,
-          fundingBps: costGate.funding_bps ?? null,
-          message: null,
-          updatedAt,
-        };
-      }
-      setModelHealthByTimeframe(next);
-      setModelHealthError(null);
-    } catch (error) {
-      setModelHealthError(
-        `Model health unavailable: ${error instanceof Error ? error.message : String(error)}`
-      );
-      const failedAt = nowIso();
-      setModelHealthByTimeframe((prev) => {
-        const next = { ...prev };
-        for (const tf of TIMEFRAMES) {
-          next[tf] = {
-            ...next[tf],
-            status: "ERROR",
-            message: "Unable to fetch cues.",
-            updatedAt: failedAt,
-          };
-        }
-        return next;
-      });
-    } finally {
-      if (firstLoad) {
-        setModelHealthLoading(false);
-      }
-    }
-  }, [takerFeeBpsOverride]);
-
-  useEffect(() => {
-    if (!uiAccessGranted || page !== "maintenance") {
-      return;
-    }
-    void refreshModelHealth(true);
-    const intervalId = window.setInterval(() => {
-      void refreshModelHealth(false);
-    }, 60_000);
-    return () => {
-      window.clearInterval(intervalId);
-    };
-  }, [page, refreshModelHealth, uiAccessGranted]);
-
-  const executeMaintenanceAction = useCallback(
-    async (action: "PROMOTE" | "REVERT"): Promise<StrategyMaintenanceActionResponse> => {
-      setMaintenanceActionLoading(true);
-      setMaintenanceActionMessage(null);
-      try {
-        const response = await runStrategyMaintenanceAction({
-          action,
-          operator_id: operatorId,
-          confirm: true,
-        });
-        const queueStatus = String(response.report?.status ?? "").toUpperCase();
-        if (response.pass) {
-          if (queueStatus === "QUEUED") {
-            setMaintenanceActionMessage(
-              `${response.action} queued successfully. Host worker will execute it shortly and publish the action report.`
-            );
-          } else {
-            setMaintenanceActionMessage(
-              `${response.action} completed successfully. Action report is available for download.`
-            );
-          }
-        } else {
-          setMaintenanceActionMessage(
-            response.error ??
-              `${response.action} completed with errors. Review the action report before retrying.`
-          );
-        }
-        await refreshMaintenanceReport(false);
-        await refreshHistoryStats(false);
-        return response;
-      } finally {
-        setMaintenanceActionLoading(false);
-      }
-    },
-    [operatorId, refreshMaintenanceReport, refreshHistoryStats]
-  );
 
   useEffect(() => {
     setExpectancyResult(null);
@@ -2272,19 +1769,12 @@ function App(): JSX.Element {
           intentHistory={currentIntentHistory}
           activeTradeAnchor={activeTradeAnchor}
           timeline={currentTimeline}
-          stopMethod={stopMethod}
-          stopValue={stopValue}
-          altStop={altStop}
           spreadSize={spreadSize}
           operatorConfirmed={operatorConfirmed}
           operatorId={operatorId}
-          setStopMethod={setStopMethod}
-          setStopValue={setStopValue}
-          setAltStop={setAltStop}
           setSpreadSize={setSpreadSize}
           setOperatorConfirmed={setOperatorConfirmed}
           setOperatorId={setOperatorId}
-          stopConfigured={stopConfigured}
           canLongEntry={canLongEntry}
           canShortEntry={canShortEntry}
           canAddExposure={canAddExposure}
@@ -2298,21 +1788,6 @@ function App(): JSX.Element {
           submitting={submitting}
           zChartHeight={tradeZChartHeight}
           onCommand={executeTradeCommand}
-        />
-      );
-    }
-
-    if (page === "how-it-works") {
-      return <HowThisWorksPage />;
-    }
-
-    if (page === "markets") {
-      return (
-        <MarketsPage
-          cues={cuesResponse}
-          costs={costResponse}
-          loading={coreLoading}
-          error={coreError}
         />
       );
     }
@@ -2372,49 +1847,6 @@ function App(): JSX.Element {
       );
     }
 
-    if (page === "portfolio") {
-      return (
-        <PortfolioPage
-          plan={planResponse}
-          positions={positions}
-          selectedPairId={currentPairId}
-          onSelectPair={setSelectedPairId}
-        />
-      );
-    }
-
-    if (page === "data-quality") {
-      return (
-        <DataQualityPage
-          selected={selectedCueRow}
-          left={leftIntegrity}
-          right={rightIntegrity}
-          gateState={gateState}
-        />
-      );
-    }
-
-    if (page === "maintenance") {
-      return (
-        <MaintenancePage
-          timeframe={timeframe}
-          historyStats={historyStats}
-          historyStatsLoading={historyStatsLoading}
-          historyStatsError={historyStatsError}
-          modelHealthByTimeframe={modelHealthByTimeframe}
-          modelHealthLoading={modelHealthLoading}
-          modelHealthError={modelHealthError}
-          maintenanceLatest={maintenanceLatest}
-          maintenanceLoading={maintenanceLoading}
-          maintenanceError={maintenanceError}
-          maintenanceActionLoading={maintenanceActionLoading}
-          maintenanceActionMessage={maintenanceActionMessage}
-          operatorId={operatorId}
-          onRunMaintenanceAction={executeMaintenanceAction}
-        />
-      );
-    }
-
     return (
       <SettingsPage
         theme={theme}
@@ -2427,17 +1859,9 @@ function App(): JSX.Element {
         effectiveTakerFeeBps={takerFeeBpsOverride}
         backtestExitMode={backtestExitMode}
         setBacktestExitMode={setBacktestExitMode}
-        apiKey={apiKey}
-        apiSecret={apiSecret}
-        apiPassphrase={apiPassphrase}
-        showApiSecrets={showApiSecrets}
         setExchange={setExchange}
         setAccountId={setAccountId}
         setOperatorId={setOperatorId}
-        setApiKey={setApiKey}
-        setApiSecret={setApiSecret}
-        setApiPassphrase={setApiPassphrase}
-        setShowApiSecrets={setShowApiSecrets}
         timeframe={timeframe}
       />
     );
@@ -2591,19 +2015,12 @@ function TradePage(props: {
   intentHistory: OrderIntentHistoryResponse[];
   activeTradeAnchor: { entryAt: string; entryZ: number; currentZ: number; deltaZ: number } | null;
   timeline: TimelineEvent[];
-  stopMethod: "Z-Score" | "Dollar" | "Percent";
-  stopValue: string;
-  altStop: string;
   spreadSize: string;
   operatorConfirmed: boolean;
   operatorId: string;
-  setStopMethod: (value: "Z-Score" | "Dollar" | "Percent") => void;
-  setStopValue: (value: string) => void;
-  setAltStop: (value: string) => void;
   setSpreadSize: (value: string) => void;
   setOperatorConfirmed: (value: boolean) => void;
   setOperatorId: (value: string) => void;
-  stopConfigured: boolean;
   canLongEntry: boolean;
   canShortEntry: boolean;
   canAddExposure: boolean;
@@ -2762,50 +2179,10 @@ function TradePage(props: {
 
       <SectionCard
         title="Spread Execution"
-        subtitle="Stop is prerequisite for entry actions"
+        subtitle="Manual actions with fail-closed execution gates"
         className="execution-panel"
       >
         <div className="execution-grid">
-          <div className="execution-block stop-block">
-            <h3>Stop Configuration (Required)</h3>
-            <label>
-              Method
-              <select
-                value={props.stopMethod}
-                onChange={(event) =>
-                  props.setStopMethod(event.target.value as "Z-Score" | "Dollar" | "Percent")
-                }
-              >
-                <option value="Z-Score">Z-Score</option>
-                <option value="Dollar">Dollar</option>
-                <option value="Percent">Percent</option>
-              </select>
-            </label>
-            <label>
-              Value
-              <input
-                type="number"
-                step="0.01"
-                min="0"
-                value={props.stopValue}
-                onChange={(event) => props.setStopValue(event.target.value)}
-              />
-            </label>
-            <label>
-              Alt stop
-              <input
-                type="number"
-                step="0.01"
-                min="0"
-                value={props.altStop}
-                onChange={(event) => props.setAltStop(event.target.value)}
-              />
-            </label>
-            <div className={`status-pill ${props.stopConfigured ? "ok" : "bad"}`}>
-              Stop ready: {props.stopConfigured ? "yes" : "no"}
-            </div>
-          </div>
-
           <div className="execution-block entry-block">
             <h3>Entry / Add Exposure</h3>
             <label>
@@ -2890,134 +2267,11 @@ function TradePage(props: {
                   Reconcile status: {props.reconcile.status} (drift {props.reconcile.drift_notional.toFixed(2)})
                 </div>
               ) : null}
+              <div className="small-text">Entries require operator confirmation and healthy execution gates.</div>
               {props.gateError ? <div className="tone-bad small-text">{props.gateError}</div> : null}
             </div>
           </div>
         </div>
-      </SectionCard>
-    </div>
-  );
-}
-
-function MarketsPage({
-  cues,
-  costs,
-  loading,
-  error,
-}: {
-  cues: StrategyPairsCuesResponse | null;
-  costs: StrategyPairsCostGateResponse | null;
-  loading: boolean;
-  error: string | null;
-}): JSX.Element {
-  return (
-    <div className="split-grid">
-      <SectionCard title="Markets" subtitle="Live strategy candidate overview">
-        {loading ? <p>Loading live data...</p> : null}
-        {error ? <p className="tone-bad">{error}</p> : null}
-
-        <div className="table-wrap">
-          <table>
-            <thead>
-              <tr>
-                <th>Pair</th>
-                <th>Regime</th>
-                <th>Score</th>
-                <th>Actionable</th>
-              </tr>
-            </thead>
-            <tbody>
-              {cues?.cues.map((entry) => (
-                <tr key={entry.cue.pair_id}>
-                  <td>{formatPairLabel(entry.cue.pair_id)}</td>
-                  <td>{entry.cue.regime}</td>
-                  <td>{entry.cue.opportunity_score.toFixed(2)}</td>
-                  <td className={entry.cue.actionable ? "tone-ok" : "tone-warn"}>
-                    {entry.cue.actionable ? "YES" : "NO"}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      </SectionCard>
-
-      <SectionCard title="Cost Gates" subtitle="Live edge versus cost diagnostics">
-        <div className="table-wrap">
-          <table>
-            <thead>
-              <tr>
-                <th>Pair</th>
-                <th>Net Edge</th>
-                <th>Pass</th>
-              </tr>
-            </thead>
-            <tbody>
-              {costs?.gates.map((gate) => (
-                <tr key={gate.pair_id}>
-                  <td>{formatPairLabel(gate.pair_id)}</td>
-                  <td>{formatSigned(gate.net_edge_bps)}bp</td>
-                  <td className={gate.pass ? "tone-ok" : "tone-bad"}>{gate.pass ? "PASS" : "BLOCK"}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      </SectionCard>
-    </div>
-  );
-}
-
-function HowThisWorksPage(): JSX.Element {
-  const [activeTab, setActiveTab] = useState<HowItWorksTabId>("pairs-trading");
-  const tab = HOW_IT_WORKS_TABS.find((item) => item.id === activeTab) ?? HOW_IT_WORKS_TABS[0];
-
-  return (
-    <div className="how-layout">
-      <SectionCard
-        title="How This Works"
-        subtitle="Layman explainer for manual-first spread trading"
-        className="how-main-panel"
-      >
-        <div className="how-tabs">
-          {HOW_IT_WORKS_TABS.map((item) => (
-            <button
-              key={item.id}
-              type="button"
-              className={`how-tab-button ${item.id === activeTab ? "active" : ""}`}
-              onClick={() => setActiveTab(item.id)}
-            >
-              {item.label}
-            </button>
-          ))}
-        </div>
-
-        <div className="how-tab-content">
-          <h3>{tab.title}</h3>
-          <p>{tab.intro}</p>
-          {tab.paragraphs.map((paragraph) => (
-            <p key={paragraph}>{paragraph}</p>
-          ))}
-          <ul>
-            {tab.bullets.map((item) => (
-              <li key={item}>{item}</li>
-            ))}
-          </ul>
-        </div>
-      </SectionCard>
-
-      <SectionCard title="Operator Workflow" subtitle="How decisions are made in this UI">
-        <ol className="how-steps">
-          <li>Select timeframe and pair.</li>
-          <li>Review opportunity cues, z-score chart, and rationale tags.</li>
-          <li>Set stop method and value before any entry can be sent.</li>
-          <li>Arm live trading, then submit long or short spread entry manually.</li>
-          <li>Monitor gates continuously and reduce/close if conditions degrade.</li>
-        </ol>
-        <p className="small-text">
-          Manual-first mode: the system informs and enforces guardrails, while the operator
-          decides when to act.
-        </p>
       </SectionCard>
     </div>
   );
@@ -3571,465 +2825,6 @@ function AnalyticsPage({
   );
 }
 
-function MaintenancePage({
-  timeframe,
-  historyStats,
-  historyStatsLoading,
-  historyStatsError,
-  modelHealthByTimeframe,
-  modelHealthLoading,
-  modelHealthError,
-  maintenanceLatest,
-  maintenanceLoading,
-  maintenanceError,
-  maintenanceActionLoading,
-  maintenanceActionMessage,
-  operatorId,
-  onRunMaintenanceAction,
-}: {
-  timeframe: Timeframe;
-  historyStats: StrategyPairsOpportunityHistoryStatsResponse | null;
-  historyStatsLoading: boolean;
-  historyStatsError: string | null;
-  modelHealthByTimeframe: Record<Timeframe, ModelHealthSnapshot>;
-  modelHealthLoading: boolean;
-  modelHealthError: string | null;
-  maintenanceLatest: StrategyMaintenanceLatestResponse | null;
-  maintenanceLoading: boolean;
-  maintenanceError: string | null;
-  maintenanceActionLoading: boolean;
-  maintenanceActionMessage: string | null;
-  operatorId: string;
-  onRunMaintenanceAction: (action: "PROMOTE" | "REVERT") => Promise<StrategyMaintenanceActionResponse>;
-}): JSX.Element {
-  const maintenanceReport = maintenanceLatest?.report ?? null;
-  const maintenanceStepEntries = maintenanceReport ? Object.entries(maintenanceReport.steps) : [];
-  const [maintenanceActionError, setMaintenanceActionError] = useState<string | null>(null);
-  const downloadHours = [24, 72, 168];
-  const selectedStats =
-    historyStats?.by_timeframe.find((entry) => entry.timeframe === timeframe) ?? null;
-
-  const runMaintenanceAction = async (action: "PROMOTE" | "REVERT"): Promise<void> => {
-    if (!operatorId.trim().length) {
-      setMaintenanceActionError("Operator ID is required before running PROMOTE/REVERT.");
-      return;
-    }
-    const confirmation = window.confirm(
-      `${action} will apply strategy tuning values and redeploy strategy-service. Continue?`
-    );
-    if (!confirmation) {
-      return;
-    }
-    try {
-      setMaintenanceActionError(null);
-      await onRunMaintenanceAction(action);
-    } catch (error) {
-      setMaintenanceActionError(
-        `Unable to execute ${action}: ${error instanceof Error ? error.message : String(error)}`
-      );
-    }
-  };
-
-  return (
-    <div className="split-grid">
-      <SectionCard
-        title="Opportunity History Downloads"
-        subtitle="Quantify tradeable activity and export PASS/all events by timeframe window"
-      >
-        {historyStatsLoading ? <p className="small-text">Loading history meter...</p> : null}
-        {historyStatsError ? <p className="small-text tone-bad">{historyStatsError}</p> : null}
-        {selectedStats ? (
-          <div className="mini-card">
-            <h3>Retention Meter ({timeframe})</h3>
-            <p>
-              Days covered: <span className="tone-info">{selectedStats.days_covered.toFixed(2)}</span>
-            </p>
-            <p>Total rows: {selectedStats.rows}</p>
-            <p>
-              Range:{" "}
-              {selectedStats.first_evaluated_at
-                ? formatLocalDateTime(selectedStats.first_evaluated_at)
-                : "n/a"}{" "}
-              to{" "}
-              {selectedStats.last_evaluated_at
-                ? formatLocalDateTime(selectedStats.last_evaluated_at)
-                : "n/a"}
-            </p>
-          </div>
-        ) : (
-          <p className="small-text">No history stats available yet for {timeframe}.</p>
-        )}
-        <div className="table-wrap">
-          <table>
-            <thead>
-              <tr>
-                <th>Window</th>
-                <th>PASS Only</th>
-                <th>All Rows</th>
-              </tr>
-            </thead>
-            <tbody>
-              {downloadHours.map((hours) => (
-                <tr key={hours}>
-                  <td>{hours === 168 ? "7d" : `${hours}h`}</td>
-                  <td>
-                    <a href={buildStrategyOpportunityHistoryUrl(timeframe, hours, true, 5000)}>
-                      Download
-                    </a>
-                  </td>
-                  <td>
-                    <a href={buildStrategyOpportunityHistoryUrl(timeframe, hours, false, 5000)}>
-                      Download
-                    </a>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      </SectionCard>
-
-      <SectionCard
-        title="Live Model Health"
-        subtitle="Sampled slippage and dynamic funding readiness by timeframe"
-      >
-        {modelHealthLoading ? <p className="small-text">Loading model health...</p> : null}
-        {modelHealthError ? <p className="small-text tone-bad">{modelHealthError}</p> : null}
-        <div className="table-wrap">
-          <table className="model-health-table">
-            <thead>
-              <tr>
-                <th>TF</th>
-                <th>Gate</th>
-                <th>Slippage</th>
-                <th>Funding</th>
-                <th>Details</th>
-              </tr>
-            </thead>
-            <tbody>
-              {TIMEFRAMES.map((tf) => {
-                const row = modelHealthByTimeframe[tf];
-                const gateClass =
-                  row.status === "AVAILABLE"
-                    ? "tone-ok"
-                    : row.status === "LOADING"
-                      ? "tone-warn"
-                      : "tone-bad";
-                const fundingLabel =
-                  row.fundingModel == null
-                    ? "--"
-                    : `${row.fundingModel} e=${row.fundingEvents ?? 0} bps/event=${
-                        row.fundingBpsPerEvent == null ? "--" : row.fundingBpsPerEvent.toFixed(3)
-                      }`;
-                const details =
-                  row.message ??
-                  (row.rationaleCodes.length
-                    ? row.rationaleCodes.slice(0, 2).join(", ")
-                    : "No rationale codes");
-                return (
-                  <tr key={tf}>
-                    <td>{tf}</td>
-                    <td className={gateClass}>{row.status}</td>
-                    <td className={row.sampledSlippageActive ? "tone-ok" : "tone-bad"}>
-                      {row.sampledSlippageActive ? "SAMPLED" : "UNAVAILABLE"}
-                    </td>
-                    <td>{fundingLabel}</td>
-                    <td>{details}</td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </div>
-        <p className="small-text">
-          Updated:{" "}
-          {modelHealthByTimeframe[timeframe]?.updatedAt
-            ? formatLocalDateTime(modelHealthByTimeframe[timeframe].updatedAt)
-            : "--"}
-        </p>
-      </SectionCard>
-
-      <SectionCard
-        title="Automated Daily Maintenance"
-        subtitle="Scheduled health checks and strategy tuning decision reports"
-        className="analytics-maintenance"
-      >
-        {maintenanceLoading ? <p className="small-text">Loading maintenance report...</p> : null}
-        {maintenanceError ? <p className="tone-bad small-text">{maintenanceError}</p> : null}
-        {maintenanceLatest && !maintenanceLatest.available ? (
-          <p className="small-text">
-            {maintenanceLatest.reason ?? "No maintenance report is available yet."}
-          </p>
-        ) : null}
-
-        {maintenanceReport ? (
-          <>
-            <div className={`status-pill ${maintenanceReport.status === "PASS" ? "ok" : "bad"}`}>
-              Latest cycle: {maintenanceReport.status}
-            </div>
-            <p className="small-text">
-              Run: {maintenanceReport.run_id} at {formatLocalDateTime(maintenanceReport.generated_at)}
-            </p>
-            <p className="small-text">
-              Decision:{" "}
-              <span className={maintenanceReport.decision === "PROMOTE" ? "tone-ok" : "tone-warn"}>
-                {maintenanceReport.decision}
-              </span>
-            </p>
-            <p className="small-text">
-              Operator: <span className="tone-info">{operatorId || "unset"}</span>
-            </p>
-
-            <div className="maintenance-actions">
-              <button
-                type="button"
-                disabled={maintenanceActionLoading}
-                onClick={() => void runMaintenanceAction("PROMOTE")}
-              >
-                One-Click Promote
-              </button>
-              <button
-                type="button"
-                className="danger"
-                disabled={maintenanceActionLoading}
-                onClick={() => void runMaintenanceAction("REVERT")}
-              >
-                One-Click Revert
-              </button>
-            </div>
-            {maintenanceActionLoading ? (
-              <p className="small-text">Running maintenance action...</p>
-            ) : null}
-            {maintenanceActionMessage ? (
-              <p className="small-text tone-info">{maintenanceActionMessage}</p>
-            ) : null}
-            {maintenanceActionError ? (
-              <p className="small-text tone-bad">{maintenanceActionError}</p>
-            ) : null}
-
-            {maintenanceReport.decision_reasons.length ? (
-              <ul className="analytics-explainer-list">
-                {maintenanceReport.decision_reasons.map((reason) => (
-                  <li key={reason}>{reason}</li>
-                ))}
-              </ul>
-            ) : null}
-
-            {maintenanceStepEntries.length ? (
-              <div className="maintenance-steps">
-                {maintenanceStepEntries.map(([stepName, stepResult]) => (
-                  <div key={stepName} className="maintenance-step-row">
-                    <span>{formatMaintenanceStepLabel(stepName)}</span>
-                    <span className={stepResult.pass ? "tone-ok" : "tone-bad"}>
-                      {stepResult.pass ? "PASS" : "FAIL"}
-                    </span>
-                  </div>
-                ))}
-              </div>
-            ) : null}
-
-            {maintenanceReport.downloads.length ? (
-              <>
-                <h3>Downloads</h3>
-                <ul className="maintenance-downloads">
-                  {maintenanceReport.downloads.map((item) => (
-                    <li key={`${item.label}-${item.path}`}>
-                      <a href={buildStrategyMaintenanceArtifactUrl(item.path)}>{item.label}</a>
-                    </li>
-                  ))}
-                </ul>
-              </>
-            ) : (
-              <p className="small-text">No downloadable artifacts found for the latest run.</p>
-            )}
-          </>
-        ) : null}
-      </SectionCard>
-    </div>
-  );
-}
-
-function PortfolioPage({
-  plan,
-  positions,
-  selectedPairId,
-  onSelectPair,
-}: {
-  plan: StrategyPairsPortfolioPlanResponse | null;
-  positions: Record<string, SpreadPosition>;
-  selectedPairId: string;
-  onSelectPair: (pairId: string) => void;
-}): JSX.Element {
-  const entries = Object.entries(positions);
-
-  return (
-    <div className="split-grid">
-      <SectionCard title="Portfolio" subtitle="Live open spread positions (server-truth execution ledger)">
-        <div className="table-wrap">
-          <table>
-            <thead>
-              <tr>
-                <th>Pair</th>
-                <th>Direction</th>
-                <th>Size</th>
-                <th>Avg Z</th>
-              </tr>
-            </thead>
-            <tbody>
-              {entries.length ? (
-                entries.map(([pairId, position]) => (
-                  <tr
-                    key={pairId}
-                    className={pairId === selectedPairId ? "selected-row" : ""}
-                    onClick={() => onSelectPair(pairId)}
-                  >
-                    <td>{formatPairLabel(pairId)}</td>
-                    <td>{position.direction}</td>
-                    <td>{position.totalSize.toFixed(2)}</td>
-                    <td>{position.avgEntryZ.toFixed(2)}</td>
-                  </tr>
-                ))
-              ) : (
-                <tr>
-                  <td colSpan={4} className="empty-text">
-                    No open spread positions in execution ledger.
-                  </td>
-                </tr>
-              )}
-            </tbody>
-          </table>
-        </div>
-      </SectionCard>
-
-      <SectionCard title="Portfolio Plan" subtitle="Live strategy advisory weights">
-        <div className="table-wrap">
-          <table>
-            <thead>
-              <tr>
-                <th>Pair</th>
-                <th>Target Weight</th>
-                <th>Risk Contribution</th>
-              </tr>
-            </thead>
-            <tbody>
-              {plan?.plan.weights.map((weight) => (
-                <tr key={weight.pair_id}>
-                  <td>{formatPairLabel(weight.pair_id)}</td>
-                  <td>{weight.target_weight.toFixed(2)}</td>
-                  <td>{(weight.risk_contribution * 100).toFixed(1)}%</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      </SectionCard>
-    </div>
-  );
-}
-
-function DataQualityPage({
-  selected,
-  left,
-  right,
-  gateState,
-}: {
-  selected: StrategyPairsCuesResponse["cues"][number] | null;
-  left: IntegrityHistoryResponse | null;
-  right: IntegrityHistoryResponse | null;
-  gateState: { killSwitchActive: boolean; leftAllowed: boolean; rightAllowed: boolean; reconcileOk: boolean };
-}): JSX.Element {
-  return (
-    <div className="split-grid">
-      <SectionCard title="Data Quality" subtitle="Integrity history from data-service">
-        <StatRow
-          label="Execution impact"
-          value={gateState.leftAllowed && gateState.rightAllowed ? "ENTRY ALLOWED" : "ENTRY BLOCKED"}
-          tone={gateState.leftAllowed && gateState.rightAllowed ? "ok" : "bad"}
-        />
-
-        <h3>
-          {selected?.cue.left_instrument
-            ? formatInstrumentLabel(selected.cue.left_instrument)
-            : "Left Instrument"}
-        </h3>
-        <IntegrityTable rows={left?.rows ?? []} />
-
-        <h3>
-          {selected?.cue.right_instrument
-            ? formatInstrumentLabel(selected.cue.right_instrument)
-            : "Right Instrument"}
-        </h3>
-        <IntegrityTable rows={right?.rows ?? []} />
-      </SectionCard>
-
-      <SectionCard title="Details" subtitle="Backfill and gating context">
-        <p>
-          Kill switch: <span className={gateState.killSwitchActive ? "tone-bad" : "tone-ok"}>{gateState.killSwitchActive ? "ACTIVE" : "OFF"}</span>
-        </p>
-        <p>
-          Left gate: <span className={gateState.leftAllowed ? "tone-ok" : "tone-bad"}>{gateState.leftAllowed ? "ALLOWED" : "BLOCKED"}</span>
-        </p>
-        <p>
-          Right gate: <span className={gateState.rightAllowed ? "tone-ok" : "tone-bad"}>{gateState.rightAllowed ? "ALLOWED" : "BLOCKED"}</span>
-        </p>
-        <p>
-          Reconcile gate: <span className={gateState.reconcileOk ? "tone-ok" : "tone-bad"}>{gateState.reconcileOk ? "OK" : "NOT_OK"}</span>
-        </p>
-      </SectionCard>
-    </div>
-  );
-}
-
-function IntegrityTable({
-  rows,
-}: {
-  rows: Array<{
-    start_ts: string;
-    end_ts: string;
-    status: "COMPLETE" | "PARTIAL_BACKFILLED" | "INCOMPLETE" | "STALE" | "FAILED";
-    coverage_pct: number;
-    reason: string;
-    checked_at: string;
-  }>;
-}): JSX.Element {
-  const visibleRows = rows.slice(0, 8);
-  return (
-    <>
-      <div className="table-wrap">
-        <table>
-          <thead>
-            <tr>
-              <th>Checked</th>
-              <th>Status</th>
-              <th>Coverage</th>
-            </tr>
-          </thead>
-          <tbody>
-            {rows.length ? (
-              visibleRows.map((row) => (
-                <tr key={`${row.checked_at}-${row.start_ts}`}>
-                  <td>{formatLocalTime(row.checked_at)}</td>
-                  <td className={`tone-${toneFromStatus(row.status)}`}>{row.status}</td>
-                  <td>{row.coverage_pct.toFixed(2)}%</td>
-                </tr>
-              ))
-            ) : (
-              <tr>
-                <td colSpan={3} className="empty-text">
-                  No live integrity rows available.
-                </td>
-              </tr>
-            )}
-          </tbody>
-        </table>
-      </div>
-      <p className="small-text">
-        Showing latest {visibleRows.length} checks (newest first) from {rows.length} stored rows.
-      </p>
-    </>
-  );
-}
-
 function SettingsPage({
   theme,
   setTheme,
@@ -4041,17 +2836,9 @@ function SettingsPage({
   effectiveTakerFeeBps,
   backtestExitMode,
   setBacktestExitMode,
-  apiKey,
-  apiSecret,
-  apiPassphrase,
-  showApiSecrets,
   setExchange,
   setAccountId,
   setOperatorId,
-  setApiKey,
-  setApiSecret,
-  setApiPassphrase,
-  setShowApiSecrets,
   timeframe,
 }: {
   theme: ThemeMode;
@@ -4064,17 +2851,9 @@ function SettingsPage({
   effectiveTakerFeeBps: number | null;
   backtestExitMode: BacktestExitMode;
   setBacktestExitMode: (value: BacktestExitMode) => void;
-  apiKey: string;
-  apiSecret: string;
-  apiPassphrase: string;
-  showApiSecrets: boolean;
   setExchange: (value: string) => void;
   setAccountId: (value: string) => void;
   setOperatorId: (value: string) => void;
-  setApiKey: (value: string) => void;
-  setApiSecret: (value: string) => void;
-  setApiPassphrase: (value: string) => void;
-  setShowApiSecrets: (value: boolean) => void;
   timeframe: Timeframe;
 }): JSX.Element {
   return (
@@ -4143,66 +2922,6 @@ function SettingsPage({
           <h3>Current global timeframe</h3>
           <p>{timeframe}</p>
         </div>
-      </SectionCard>
-
-      <SectionCard title="API Credentials" subtitle="Session-only fields for local operator testing">
-        <label>
-          Kraken API Key
-          <input
-            type={showApiSecrets ? "text" : "password"}
-            autoComplete="off"
-            value={apiKey}
-            onChange={(event) => setApiKey(event.target.value)}
-            placeholder="API key"
-          />
-        </label>
-
-        <label>
-          Kraken API Secret
-          <input
-            type={showApiSecrets ? "text" : "password"}
-            autoComplete="off"
-            value={apiSecret}
-            onChange={(event) => setApiSecret(event.target.value)}
-            placeholder="API secret"
-          />
-        </label>
-
-        <label>
-          Kraken API Passphrase
-          <input
-            type={showApiSecrets ? "text" : "password"}
-            autoComplete="off"
-            value={apiPassphrase}
-            onChange={(event) => setApiPassphrase(event.target.value)}
-            placeholder="Optional passphrase"
-          />
-        </label>
-
-        <label className="checkbox-row">
-          <input
-            type="checkbox"
-            checked={showApiSecrets}
-            onChange={(event) => setShowApiSecrets(event.target.checked)}
-          />
-          Show values in clear text
-        </label>
-
-        <button
-          type="button"
-          className="danger"
-          onClick={() => {
-            setApiKey("");
-            setApiSecret("");
-            setApiPassphrase("");
-          }}
-        >
-          Clear Session Keys
-        </button>
-
-        <p className="small-text">
-          Session only: keys stay in browser memory and are not written to repo files.
-        </p>
       </SectionCard>
 
       <SectionCard title="Safety Defaults" subtitle="Fail-closed behavior">

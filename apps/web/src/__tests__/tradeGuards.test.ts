@@ -7,7 +7,6 @@ import {
   isEntryAllowed,
   isGateSafe,
   isReduceAllowed,
-  isStopConfigured,
 } from "../lib/tradeGuards";
 
 const safeGate = {
@@ -26,10 +25,9 @@ describe("trade guards", () => {
     expect(isGateSafe({ ...safeGate, reconcileOk: false })).toBe(false);
   });
 
-  it("requires stop/operator/size/gates for entry", () => {
+  it("requires operator/size/gates for entry", () => {
     expect(
       isEntryAllowed({
-        stopConfigured: true,
         operatorConfirmed: true,
         operatorId: "operator-1",
         spreadSize: 1,
@@ -39,8 +37,7 @@ describe("trade guards", () => {
 
     expect(
       isEntryAllowed({
-        stopConfigured: false,
-        operatorConfirmed: true,
+        operatorConfirmed: false,
         operatorId: "operator-1",
         spreadSize: 1,
         gateState: safeGate,
@@ -58,7 +55,6 @@ describe("trade guards", () => {
 
     expect(
       isAddAllowed(pos, {
-        stopConfigured: true,
         operatorConfirmed: true,
         operatorId: "op",
         spreadSize: 1,
@@ -87,9 +83,4 @@ describe("trade guards", () => {
     expect(closed.totalSize).toBe(0);
   });
 
-  it("validates stop configuration", () => {
-    expect(isStopConfigured("Z-Score", 3.2)).toBe(true);
-    expect(isStopConfigured("", 3.2)).toBe(false);
-    expect(isStopConfigured("Z-Score", 0)).toBe(false);
-  });
 });

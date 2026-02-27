@@ -155,54 +155,6 @@ function buildCuesResponse(timeframe: Timeframe): any {
   };
 }
 
-function buildCostResponse(timeframe: Timeframe): any {
-  return {
-    timeframe,
-    generated_at: "2026-02-20T00:00:00Z",
-    gates: [
-      {
-        pair_id: PAIR_ID,
-        left_instrument: LEFT,
-        right_instrument: RIGHT,
-        timeframe,
-        expected_edge_bps: 4,
-        fee_bps: 1,
-        funding_bps: 0.6,
-        slippage_bps: 0.8,
-        net_edge_bps: 1.6,
-        pass: true,
-        rationale_codes: ["EDGE_POSITIVE"],
-      },
-    ],
-    skipped: [],
-  };
-}
-
-function buildPlanResponse(timeframe: Timeframe): any {
-  return {
-    timeframe,
-    generated_at: "2026-02-20T00:00:00Z",
-    plan: {
-      status: "AVAILABLE",
-      weights: [
-        {
-          pair_id: PAIR_ID,
-          target_weight: 0.3,
-          risk_contribution: 0.2,
-          cap_applied: false,
-        },
-      ],
-      constraints: {
-        dollar_neutral: true,
-        gross_cap: 1,
-        per_pair_cap: 0.35,
-      },
-      rationale_codes: ["WITHIN_CAP"],
-    },
-    skipped: [],
-  };
-}
-
 function buildLiveZResponse(timeframe: Timeframe): any {
   const points = Array.from({ length: 24 }).map((_, index) => ({
     ts: new Date(Date.parse("2026-02-20T00:00:00Z") + index * 60_000).toISOString(),
@@ -288,12 +240,6 @@ beforeEach(() => {
   api.fetchStrategyCues.mockImplementation(async (timeframe: Timeframe) =>
     buildCuesResponse(timeframe)
   );
-  api.fetchStrategyCostGates.mockImplementation(async (timeframe: Timeframe) =>
-    buildCostResponse(timeframe)
-  );
-  api.fetchStrategyPortfolioPlan.mockImplementation(async (timeframe: Timeframe) =>
-    buildPlanResponse(timeframe)
-  );
   api.fetchStrategyLiveZ.mockImplementation(async (timeframe: Timeframe) =>
     buildLiveZResponse(timeframe)
   );
@@ -367,7 +313,7 @@ beforeEach(() => {
 });
 
 describe("global timeframe switching", () => {
-  it("refetches strategy, gate, integrity, and analytics data with 15m", async () => {
+  it("refetches strategy, execution gates, and analytics data with 15m", async () => {
     render(<App />);
 
     await waitFor(() => {
@@ -400,12 +346,8 @@ describe("global timeframe switching", () => {
 
     await waitFor(() => {
       expect(api.fetchStrategyCues).toHaveBeenCalledWith("15m", 20);
-      expect(api.fetchStrategyCostGates).toHaveBeenCalledWith("15m");
-      expect(api.fetchStrategyPortfolioPlan).toHaveBeenCalledWith("15m");
       expect(api.fetchExecutionDecision).toHaveBeenCalledWith(LEFT, "15m");
       expect(api.fetchExecutionDecision).toHaveBeenCalledWith(RIGHT, "15m");
-      expect(api.fetchIntegrityHistory).toHaveBeenCalledWith(LEFT, "15m", 50);
-      expect(api.fetchIntegrityHistory).toHaveBeenCalledWith(RIGHT, "15m", 50);
       expect(api.fetchStrategyLiveZ).toHaveBeenCalledWith(
         "15m",
         PAIR_ID,
@@ -472,8 +414,6 @@ describe("global timeframe switching", () => {
 
     await waitFor(() => {
       expect(api.fetchStrategyCues).toHaveBeenCalledWith("1m", 20, 10);
-      expect(api.fetchStrategyCostGates).toHaveBeenCalledWith("1m", 10);
-      expect(api.fetchStrategyPortfolioPlan).toHaveBeenCalledWith("1m", 10);
       expect(api.fetchStrategyLiveZ).toHaveBeenCalledWith("1m", PAIR_ID, 300, 10, "mean_revert");
       expect(api.fetchStrategyBacktest).toHaveBeenCalledWith(
         "1m",
