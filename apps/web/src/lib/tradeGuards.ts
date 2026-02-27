@@ -8,15 +8,10 @@ export interface GateState {
 }
 
 export interface EntryGuardInput {
-  stopConfigured: boolean;
   operatorConfirmed: boolean;
   operatorId: string;
   spreadSize: number;
   gateState: GateState;
-}
-
-export function isStopConfigured(method: string, value: number): boolean {
-  return method.trim().length > 0 && Number.isFinite(value) && value > 0;
 }
 
 export function isGateSafe(gateState: GateState): boolean {
@@ -30,7 +25,6 @@ export function isGateSafe(gateState: GateState): boolean {
 
 export function isEntryAllowed(input: EntryGuardInput): boolean {
   return (
-    input.stopConfigured &&
     input.operatorConfirmed &&
     input.operatorId.trim().length > 0 &&
     Number.isFinite(input.spreadSize) &&

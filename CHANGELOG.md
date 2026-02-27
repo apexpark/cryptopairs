@@ -442,10 +442,11 @@ This project follows SemVer as defined in `docs/02-versioning-and-releases.md`.
 - Added replay fixtures for Kraken execution parser hardening:
   - `services/execution-service/tests/fixtures/kraken/openorders.success.json`
   - `services/execution-service/tests/fixtures/kraken/order_status.success.json`
-- Web operator console layout and controls:
-  - Analytics page now stacks Diagnostics under Strategy Metrics and splits remaining space between Equity and Historical Z-Score charts.
-  - Trade analysis chart now renders entry, mean (`z=0`), and stop thresholds with live polling refresh.
-  - Settings page now includes session-only Kraken API key/secret/passphrase fields (masked by default).
+- Web operator console simplified for operator-first flow:
+  - Side navigation now focuses on `Trade`, `Analytics`, and `Settings` only.
+  - Removed inactive runtime surfaces from the main app flow (`How This Works`, `Markets`, `Portfolio`, `Data Quality`, `Maintenance`).
+  - Removed session-only API credential inputs from Settings (keys are backend-managed).
+  - Trade entry arming now depends on operator confirmation + execution gate health only (no fake local stop prerequisite).
 - Web trade execution flow now consumes execution lifecycle endpoints:
   - after intent acceptance, UI dispatches each leg through `POST /v1/execution/order-intent/dispatch`
   - UI stores and displays lifecycle snapshots from `GET /v1/execution/order-intent/history`
