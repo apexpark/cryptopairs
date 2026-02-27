@@ -176,6 +176,11 @@ This project follows SemVer as defined in `docs/02-versioning-and-releases.md`.
   - Added explicit cue diagnostics: `setup_gate` and `trade_gate` (with `blocked_by`) to separate setup constraints from economics constraints.
   - Trade/Analytics UI now reports setup, cost economics, and final trade readiness independently, reducing false “cost blocked” messaging when setup is the actual blocker.
   - Cost-gate API now includes `setup_pass`, `trade_ready`, and `trade_blocked_by` for downstream consumers.
+- Exchange minimum-lot/tick-size alignment hardening:
+  - Added shared Kraken perp trading constraints (`min_lot`, `tick_size`) and symbol normalization in `common-types`.
+  - `execution-service` now validates `ENTRY`/`EXIT` quantities against exchange lot-step and minimum lot constraints fail-closed before order-intent acceptance.
+  - `strategy-service` analytics/backtest/replay paths now quantize leg prices to exchange tick sizes and use exchange min-lot sizing for expectancy minimum-notional projections.
+  - Added tests covering constraint lookup/normalization, execution lot-step enforcement, and min-lot-based expectancy projections.
 - Strategy module implementation spec derived from SSRN 151 Trading Strategies review: `docs/18-strategy-module-implementation-spec.md`.
 - Initial documentation suite and agent governance scaffolding.
 - Rust workspace foundation with:
