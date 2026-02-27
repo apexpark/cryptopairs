@@ -12,6 +12,12 @@
     "timeframes",
     "pair_ids",
     "estimated_combinations",
+    "executed_combinations",
+    "successful_combinations",
+    "failed_combinations",
+    "top_k",
+    "best_candidate",
+    "top_candidates",
     "max_combinations",
     "rationale_codes"
   ],
@@ -29,10 +35,108 @@
       "items": { "type": "string" }
     },
     "estimated_combinations": { "type": "integer", "minimum": 0 },
+    "executed_combinations": { "type": "integer", "minimum": 0 },
+    "successful_combinations": { "type": "integer", "minimum": 0 },
+    "failed_combinations": { "type": "integer", "minimum": 0 },
+    "top_k": { "type": "integer", "minimum": 1 },
+    "best_candidate": {
+      "anyOf": [
+        { "$ref": "#/$defs/researchSweepCandidate" },
+        { "type": "null" }
+      ]
+    },
+    "top_candidates": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/researchSweepCandidate" }
+    },
     "max_combinations": { "type": "integer", "minimum": 1 },
     "rationale_codes": {
       "type": "array",
       "items": { "type": "string" }
+    }
+  },
+  "$defs": {
+    "expectancyConfig": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["entry_z", "exit_z", "stop_z", "z_method", "hedge_method", "lookback_bars"],
+      "properties": {
+        "entry_z": { "type": "number" },
+        "exit_z": { "type": "number" },
+        "stop_z": { "type": "number" },
+        "z_method": {
+          "type": "string",
+          "enum": ["COINTEGRATION_Z", "ROBUST_Z", "VOL_NORMALIZED", "FUNDING_ADJUSTED"]
+        },
+        "hedge_method": { "type": "string" },
+        "lookback_bars": { "type": "integer", "minimum": 120 }
+      }
+    },
+    "expectancyMetrics": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "trades",
+        "win_rate",
+        "avg_net_bps",
+        "p25_net_bps",
+        "p50_net_bps",
+        "p75_net_bps",
+        "avg_hold_bars",
+        "avg_mae_bps",
+        "avg_mfe_bps",
+        "expected_min_lot_net_bps",
+        "expected_min_lot_net_usd"
+      ],
+      "properties": {
+        "trades": { "type": "integer", "minimum": 0 },
+        "win_rate": { "type": "number" },
+        "avg_net_bps": { "type": "number" },
+        "p25_net_bps": { "type": "number" },
+        "p50_net_bps": { "type": "number" },
+        "p75_net_bps": { "type": "number" },
+        "avg_hold_bars": { "type": "number" },
+        "avg_mae_bps": { "type": "number" },
+        "avg_mfe_bps": { "type": "number" },
+        "expected_min_lot_net_bps": { "type": "number" },
+        "expected_min_lot_net_usd": { "type": "number" }
+      }
+    },
+    "researchSweepCandidate": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "rank",
+        "timeframe",
+        "pair_id",
+        "config",
+        "status",
+        "decision_state",
+        "primary_reason_code",
+        "objective_score",
+        "metrics",
+        "rationale_codes"
+      ],
+      "properties": {
+        "rank": { "type": "integer", "minimum": 1 },
+        "timeframe": { "type": "string", "enum": ["1m", "15m", "1h"] },
+        "pair_id": { "type": "string" },
+        "config": { "$ref": "#/$defs/expectancyConfig" },
+        "status": { "type": "string", "enum": ["AVAILABLE", "UNAVAILABLE"] },
+        "decision_state": { "type": "string", "enum": ["TRADE_READY", "CAUTION", "BLOCKED"] },
+        "primary_reason_code": { "type": "string" },
+        "objective_score": { "type": "number" },
+        "metrics": {
+          "anyOf": [
+            { "$ref": "#/$defs/expectancyMetrics" },
+            { "type": "null" }
+          ]
+        },
+        "rationale_codes": {
+          "type": "array",
+          "items": { "type": "string" }
+        }
+      }
     }
   }
 }

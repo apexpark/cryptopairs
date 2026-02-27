@@ -87,6 +87,13 @@ This project follows SemVer as defined in `docs/02-versioning-and-releases.md`.
   - `GET /v1/strategy/pairs/expectancy` returns computed expectancy metrics (win rate, p25/p50/p75 net bps, hold/path stats, min-lot net projection).
   - Both endpoints fail closed for unsupported z-methods (`ROBUST_Z` only in this slice) and insufficient aligned candle history.
   - `POST /v1/strategy/pairs/research-sweep` now performs deterministic dry-run validation and returns `AVAILABLE`/`UNAVAILABLE` based on combination limits and z-method support.
+- Strategy research sweep execution (slice E):
+  - `POST /v1/strategy/pairs/research-sweep` now executes full parameter sweeps when `dry_run=false` and guardrails pass.
+  - Sweep execution is fail-closed with explicit rationale codes for unsupported methods, max-combination breaches, and execution-cap breaches.
+  - Response now includes execution counters (`executed_combinations`, `successful_combinations`, `failed_combinations`) and ranked optimization outputs (`best_candidate`, `top_candidates`).
+  - Added bounded runtime settings:
+    - `STRATEGY_RESEARCH_SWEEP_EXECUTION_CAP` (default `20000`)
+    - `STRATEGY_RESEARCH_SWEEP_TOP_K` (default `10`)
 - UI now provides 24h/72h/7d opportunity-history downloads (PASS/all) plus retention meter (days covered).
 - Automated Daily Maintenance panel moved to dedicated `Maintenance` page in side navigation (under `Data Quality`).
 - Maintenance cron installer scripts now support explicit `CRON_TZ` timezone configuration (`--timezone`).

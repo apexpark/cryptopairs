@@ -1782,7 +1782,7 @@ function App(): JSX.Element {
     timeframe,
   ]);
 
-  const runResearchSweepDryRun = useCallback(async (): Promise<void> => {
+  const runResearchSweep = useCallback(async (dryRun: boolean): Promise<void> => {
     if (!selectedCueRow) {
       setResearchSweepError("No pair selected.");
       return;
@@ -1803,7 +1803,7 @@ function App(): JSX.Element {
         z_methods: [researchZMethod],
         lookback_bars_grid: [researchLookbackBarsNumber],
         max_combinations: researchMaxCombinationsNumber,
-        dry_run: true,
+        dry_run: dryRun,
       });
       setResearchSweepResult(response);
     } catch (error) {
@@ -2362,7 +2362,8 @@ function App(): JSX.Element {
           onApplyCueBands={applyCueBandsToResearch}
           onRunExpectancy={runExpectancyResearch}
           onRunReplay={runReplayResearch}
-          onRunSweep={runResearchSweepDryRun}
+          onRunSweepDryRun={() => runResearchSweep(true)}
+          onRunSweepExecute={() => runResearchSweep(false)}
           onDownloadExpectancy={downloadExpectancyResult}
           onDownloadReplay={downloadReplayResult}
           onDownloadSweep={downloadResearchSweepResult}
@@ -3065,7 +3066,8 @@ function AnalyticsPage({
   onApplyCueBands,
   onRunExpectancy,
   onRunReplay,
-  onRunSweep,
+  onRunSweepDryRun,
+  onRunSweepExecute,
   onDownloadExpectancy,
   onDownloadReplay,
   onDownloadSweep,
@@ -3113,7 +3115,8 @@ function AnalyticsPage({
   onApplyCueBands: () => void;
   onRunExpectancy: () => Promise<void>;
   onRunReplay: () => Promise<void>;
-  onRunSweep: () => Promise<void>;
+  onRunSweepDryRun: () => Promise<void>;
+  onRunSweepExecute: () => Promise<void>;
   onDownloadExpectancy: () => void;
   onDownloadReplay: () => void;
   onDownloadSweep: () => void;
@@ -3360,10 +3363,17 @@ function AnalyticsPage({
             </button>
             <button
               type="button"
-              onClick={() => void onRunSweep()}
+              onClick={() => void onRunSweepDryRun()}
               disabled={!researchInputsValid || researchSweepLoading}
             >
               {researchSweepLoading ? "Running..." : "Run Sweep Dry-Run"}
+            </button>
+            <button
+              type="button"
+              onClick={() => void onRunSweepExecute()}
+              disabled={!researchInputsValid || researchSweepLoading}
+            >
+              {researchSweepLoading ? "Running..." : "Run Sweep Execute"}
             </button>
           </div>
 
@@ -3425,7 +3435,7 @@ function AnalyticsPage({
             </div>
 
             <div className="mini-card">
-              <h3>Sweep Dry-Run</h3>
+              <h3>Sweep</h3>
               {researchSweepError ? <p className="small-text tone-bad">{researchSweepError}</p> : null}
               {researchSweepResult ? (
                 <>
@@ -3438,10 +3448,37 @@ function AnalyticsPage({
                     </span>
                   </p>
                   <p>Request: {researchSweepResult.request_id}</p>
+                  <p>Mode: {researchSweepResult.dry_run ? "Dry-run" : "Execute"}</p>
                   <p>
                     Combos: {researchSweepResult.estimated_combinations} /{" "}
                     {researchSweepResult.max_combinations}
                   </p>
+                  <p>
+                    Executed: {researchSweepResult.executed_combinations} | Success:{" "}
+                    {researchSweepResult.successful_combinations} | Failed:{" "}
+                    {researchSweepResult.failed_combinations}
+                  </p>
+                  {researchSweepResult.best_candidate ? (
+                    <>
+                      <p className="small-text tone-info">
+                        Best: {formatPairLabel(researchSweepResult.best_candidate.pair_id)}{" "}
+                        {researchSweepResult.best_candidate.timeframe} | entry{" "}
+                        {researchSweepResult.best_candidate.config.entry_z.toFixed(2)} exit{" "}
+                        {researchSweepResult.best_candidate.config.exit_z.toFixed(2)} stop{" "}
+                        {researchSweepResult.best_candidate.config.stop_z.toFixed(2)} | lookback{" "}
+                        {researchSweepResult.best_candidate.config.lookback_bars}
+                      </p>
+                      <p className="small-text">
+                        Objective: {formatSigned(researchSweepResult.best_candidate.objective_score)} | Trades:{" "}
+                        {researchSweepResult.best_candidate.metrics?.trades ?? 0} | Win rate:{" "}
+                        {researchSweepResult.best_candidate.metrics
+                          ? `${(researchSweepResult.best_candidate.metrics.win_rate * 100).toFixed(
+                              2
+                            )}%`
+                          : "--"}
+                      </p>
+                    </>
+                  ) : null}
                   <button type="button" onClick={onDownloadSweep}>
                     Download Sweep JSON
                   </button>
