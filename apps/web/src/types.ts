@@ -129,52 +129,6 @@ export interface StrategyPairsCuesResponse {
   skipped: Array<{ pair_id: string; reason: string }>;
 }
 
-export interface StrategyPairsCostGateResponse {
-  timeframe: Timeframe;
-  generated_at: string;
-  gates: Array<{
-    pair_id: string;
-    left_instrument: string;
-    right_instrument: string;
-    timeframe: Timeframe;
-    expected_edge_bps: number;
-    fee_bps: number;
-    funding_model: "STATIC" | "DYNAMIC";
-    funding_events: number;
-    funding_bps_per_event: number;
-    funding_bps: number;
-    slippage_bps: number;
-    net_edge_bps: number;
-    pass: boolean;
-    setup_pass?: boolean;
-    trade_ready?: boolean;
-    trade_blocked_by?: "NONE" | "SETUP" | "COST" | "MULTIPLE" | "UNAVAILABLE";
-    rationale_codes: string[];
-  }>;
-  skipped: Array<{ pair_id: string; reason: string }>;
-}
-
-export interface StrategyPairsPortfolioPlanResponse {
-  timeframe: Timeframe;
-  generated_at: string;
-  plan: {
-    status: "AVAILABLE" | "UNAVAILABLE";
-    weights: Array<{
-      pair_id: string;
-      target_weight: number;
-      risk_contribution: number;
-      cap_applied: boolean;
-    }>;
-    constraints: {
-      dollar_neutral: boolean;
-      gross_cap: number;
-      per_pair_cap: number;
-    };
-    rationale_codes: string[];
-  };
-  skipped: Array<{ pair_id: string; reason: string }>;
-}
-
 export interface StrategyPairsOpportunityHistoryResponse {
   timeframe: Timeframe;
   generated_at: string;
@@ -197,24 +151,6 @@ export interface StrategyPairsOpportunityHistoryResponse {
     cost_gate_rationale_codes: string[];
     evaluated_at: string;
   }>;
-}
-
-export interface OpportunityHistoryStatsEntry {
-  timeframe: Timeframe;
-  rows: number;
-  first_evaluated_at: string | null;
-  last_evaluated_at: string | null;
-  days_covered: number;
-}
-
-export interface StrategyPairsOpportunityHistoryStatsResponse {
-  generated_at: string;
-  timeframe_filter: Timeframe | null;
-  total_rows: number;
-  first_evaluated_at: string | null;
-  last_evaluated_at: string | null;
-  days_covered: number;
-  by_timeframe: OpportunityHistoryStatsEntry[];
 }
 
 export interface StrategyPairsPaperTradesResponse {
@@ -410,59 +346,6 @@ export interface StrategyPairsLiveZResponse {
   }>;
   markers: ChartMarker[];
   rationale_codes: string[];
-}
-
-export interface StrategyMaintenanceDownload {
-  label: string;
-  path: string;
-}
-
-export interface StrategyMaintenanceStepResult {
-  pass: boolean;
-  skipped?: boolean;
-  reason?: string;
-  [key: string]: unknown;
-}
-
-export interface StrategyMaintenanceCycleReport {
-  generated_at: string;
-  run_id: string;
-  status: "PASS" | "FAIL";
-  decision: "PROMOTE" | "HOLD" | "REVERT" | "UNKNOWN";
-  decision_reasons: string[];
-  policy_path: string;
-  env_file: string;
-  original_values: Record<string, number>;
-  baseline_values: Record<string, number>;
-  candidate_values: Record<string, number>;
-  steps: Record<string, StrategyMaintenanceStepResult>;
-  artifacts: Record<string, string>;
-  downloads: StrategyMaintenanceDownload[];
-}
-
-export interface StrategyMaintenanceLatestResponse {
-  available: boolean;
-  generated_at: string;
-  report: StrategyMaintenanceCycleReport | null;
-  reason: string | null;
-  artifact_download_route: string;
-}
-
-export interface StrategyMaintenanceActionRequest {
-  action: "PROMOTE" | "REVERT";
-  operator_id: string;
-  confirm: boolean;
-}
-
-export interface StrategyMaintenanceActionResponse {
-  accepted: boolean;
-  action: "PROMOTE" | "REVERT";
-  operator_id: string;
-  pass: boolean;
-  generated_at: string;
-  report_download_path: string;
-  report: Record<string, unknown> | null;
-  error: string | null;
 }
 
 export interface StrategyUiAuthStatusResponse {
