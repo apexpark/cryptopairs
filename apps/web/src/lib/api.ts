@@ -143,7 +143,9 @@ export async function fetchStrategyExpectancy(
   exitZ: number,
   stopZ: number,
   zMethod: string,
-  lookbackBars: number
+  lookbackBars: number,
+  trainBars?: number,
+  validationBars?: number
 ): Promise<StrategyPairsExpectancyResponse> {
   const params = new URLSearchParams();
   params.set("timeframe", timeframe);
@@ -153,6 +155,12 @@ export async function fetchStrategyExpectancy(
   params.set("stop_z", stopZ.toString());
   params.set("z_method", zMethod);
   params.set("lookback_bars", lookbackBars.toString());
+  if (trainBars && Number.isFinite(trainBars) && trainBars > 0) {
+    params.set("train_bars", Math.floor(trainBars).toString());
+  }
+  if (validationBars && Number.isFinite(validationBars) && validationBars > 0) {
+    params.set("validation_bars", Math.floor(validationBars).toString());
+  }
   const url = `${STRATEGY_SERVICE_BASE_URL}/v1/strategy/pairs/expectancy?${params.toString()}`;
   return parseJson<StrategyPairsExpectancyResponse>(await fetch(url));
 }
@@ -167,7 +175,9 @@ export async function fetchStrategyReplayTrades(
   exitZ: number,
   stopZ: number,
   zMethod: string,
-  lookbackBars: number
+  lookbackBars: number,
+  trainBars?: number,
+  validationBars?: number
 ): Promise<StrategyPairsReplayTradesResponse> {
   const params = new URLSearchParams();
   params.set("timeframe", timeframe);
@@ -180,6 +190,12 @@ export async function fetchStrategyReplayTrades(
   params.set("stop_z", stopZ.toString());
   params.set("z_method", zMethod);
   params.set("lookback_bars", lookbackBars.toString());
+  if (trainBars && Number.isFinite(trainBars) && trainBars > 0) {
+    params.set("train_bars", Math.floor(trainBars).toString());
+  }
+  if (validationBars && Number.isFinite(validationBars) && validationBars > 0) {
+    params.set("validation_bars", Math.floor(validationBars).toString());
+  }
   const url = `${STRATEGY_SERVICE_BASE_URL}/v1/strategy/pairs/replay-trades?${params.toString()}`;
   return parseJson<StrategyPairsReplayTradesResponse>(await fetch(url));
 }

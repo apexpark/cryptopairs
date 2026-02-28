@@ -45,7 +45,7 @@ Acceptance:
 
 ### Slice B: Explicit IS/OOS Window Contracts
 
-Status: Planned
+Status: Completed (v1 contract + parser + API metadata)
 
 Contracts:
 - `specs/contracts/strategy_pairs_research_sweep_response.schema.json` (add window metadata)

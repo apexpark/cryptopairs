@@ -22,7 +22,9 @@
       "stop_z": 3.2,
       "z_method": "ROBUST_Z",
       "hedge_method": "HEDGE_RATIO_OLS",
-      "lookback_bars": 440
+      "lookback_bars": 440,
+      "train_bars": 17520,
+      "validation_bars": 4320
     },
     "status": "AVAILABLE",
     "decision_state": "TRADE_READY",
@@ -44,7 +46,8 @@
     "rationale_codes": [
       "EXPECTANCY_COMPUTED",
       "MIN_TRADES_MET",
-      "SWEEP_EXIT_MODE_MEAN_REVERT"
+      "SWEEP_EXIT_MODE_MEAN_REVERT",
+      "IS_OOS_WINDOW_APPLIED"
     ]
   },
   "top_candidates": [
@@ -58,7 +61,9 @@
         "stop_z": 3.2,
         "z_method": "ROBUST_Z",
         "hedge_method": "HEDGE_RATIO_OLS",
-        "lookback_bars": 440
+        "lookback_bars": 440,
+        "train_bars": 17520,
+        "validation_bars": 4320
       },
       "status": "AVAILABLE",
       "decision_state": "TRADE_READY",
@@ -80,7 +85,8 @@
       "rationale_codes": [
         "EXPECTANCY_COMPUTED",
         "MIN_TRADES_MET",
-        "SWEEP_EXIT_MODE_MEAN_REVERT"
+        "SWEEP_EXIT_MODE_MEAN_REVERT",
+        "IS_OOS_WINDOW_APPLIED"
       ]
     }
   ],

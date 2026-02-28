@@ -11,7 +11,9 @@
     "stop_z": 3.2,
     "z_method": "ROBUST_Z",
     "hedge_method": "HEDGE_RATIO_OLS",
-    "lookback_bars": 220
+    "lookback_bars": 220,
+    "train_bars": 17520,
+    "validation_bars": 4320
   },
   "metrics": {
     "trades": 12,
@@ -28,6 +30,7 @@
   },
   "rationale_codes": [
     "EXPECTANCY_COMPUTED",
-    "MIN_TRADES_MET"
+    "MIN_TRADES_MET",
+    "IS_OOS_WINDOW_APPLIED"
   ]
 }

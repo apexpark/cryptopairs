@@ -13,11 +13,14 @@
     "stop_z": 3.2,
     "z_method": "ROBUST_Z",
     "hedge_method": "HEDGE_RATIO_OLS",
-    "lookback_bars": 220
+    "lookback_bars": 220,
+    "train_bars": 17520,
+    "validation_bars": 4320
   },
   "rationale_codes": [
     "REPLAY_COMPUTED",
-    "BACKTEST_MARKERS_DERIVED"
+    "BACKTEST_MARKERS_DERIVED",
+    "IS_OOS_WINDOW_APPLIED"
   ],
   "rows": [
     {

@@ -29,7 +29,16 @@
     "config": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["entry_z", "exit_z", "stop_z", "z_method", "hedge_method", "lookback_bars"],
+      "required": [
+        "entry_z",
+        "exit_z",
+        "stop_z",
+        "z_method",
+        "hedge_method",
+        "lookback_bars",
+        "train_bars",
+        "validation_bars"
+      ],
       "properties": {
         "entry_z": { "type": "number", "exclusiveMinimum": 0 },
         "exit_z": { "type": "number", "minimum": 0 },
@@ -39,7 +48,9 @@
           "enum": ["COINTEGRATION_Z", "ROBUST_Z", "VOL_NORMALIZED", "FUNDING_ADJUSTED"]
         },
         "hedge_method": { "type": "string" },
-        "lookback_bars": { "type": "integer", "minimum": 1 }
+        "lookback_bars": { "type": "integer", "minimum": 1 },
+        "train_bars": { "type": "integer", "minimum": 1 },
+        "validation_bars": { "type": "integer", "minimum": 1 }
       }
     },
     "rationale_codes": {
