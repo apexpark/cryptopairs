@@ -16,6 +16,13 @@ This project follows SemVer as defined in `docs/02-versioning-and-releases.md`.
   - Added strategy env defaults for optimizer windows:
     - `STRATEGY_OPT_TRAIN_DAYS_1M/15M/1H`
     - `STRATEGY_OPT_VALIDATE_DAYS_1M/15M/1H`
+- Strategy research walk-forward scoring (Slice C):
+  - Research sweep candidate ranking now uses validation-window walk-forward fold scoring.
+  - Added fail-closed fold sufficiency gate with rationale code `WALK_FORWARD_INSUFFICIENT_TRADES`.
+  - Added candidate `walk_forward` diagnostics in sweep response contracts/examples.
+  - Added runtime controls:
+    - `STRATEGY_WF_FOLDS`
+    - `STRATEGY_WF_MIN_TRADES_PER_FOLD`
 - Autonomous optimizer implementation roadmap and slice checklist:
   - `docs/23-autonomous-optimizer-roadmap.md`
 - Strategy tuning governance and interruption recovery package:

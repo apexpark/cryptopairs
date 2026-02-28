@@ -69,7 +69,7 @@ Acceptance:
 
 ### Slice C: Walk-Forward Execution Engine
 
-Status: Planned
+Status: Completed (deterministic fold scoring + sufficiency gate)
 
 Files:
 - `services/strategy-service/src/main.rs` (sweep execution path)

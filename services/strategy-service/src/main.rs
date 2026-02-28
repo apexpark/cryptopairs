@@ -105,6 +105,8 @@ struct StrategySettings {
     block_on_champion_drift: bool,
     research_sweep_execution_cap: usize,
     research_sweep_top_k: usize,
+    walk_forward_folds: usize,
+    walk_forward_min_trades_per_fold: usize,
     maintenance_report_path: String,
     maintenance_artifacts_root: String,
     maintenance_apply_script_path: String,
@@ -227,6 +229,9 @@ impl StrategySettings {
             parse_env_usize("STRATEGY_RESEARCH_SWEEP_EXECUTION_CAP", 20_000).clamp(1, 1_000_000);
         let research_sweep_top_k =
             parse_env_usize("STRATEGY_RESEARCH_SWEEP_TOP_K", 10).clamp(1, 100);
+        let walk_forward_folds = parse_env_usize("STRATEGY_WF_FOLDS", 4).clamp(1, 24);
+        let walk_forward_min_trades_per_fold =
+            parse_env_usize("STRATEGY_WF_MIN_TRADES_PER_FOLD", 1).clamp(1, 100);
         let maintenance_report_path = std::env::var("STRATEGY_MAINTENANCE_REPORT_PATH")
             .unwrap_or_else(|_| {
                 "artifacts/strategy_tuning/latest_maintenance_report.json".to_string()
@@ -310,6 +315,8 @@ impl StrategySettings {
             block_on_champion_drift,
             research_sweep_execution_cap,
             research_sweep_top_k,
+            walk_forward_folds,
+            walk_forward_min_trades_per_fold,
             maintenance_report_path,
             maintenance_artifacts_root,
             maintenance_apply_script_path,
@@ -2563,6 +2570,18 @@ struct ReplayTradesResponse {
 }
 
 #[derive(Debug, Clone, Serialize)]
+struct WalkForwardSummary {
+    folds_requested: usize,
+    folds_evaluated: usize,
+    folds_completed: usize,
+    min_trades_per_fold: usize,
+    pass: bool,
+    avg_objective_score: f64,
+    fold_trade_counts: Vec<usize>,
+    rationale_codes: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
 struct ResearchSweepCandidateResponse {
     rank: usize,
     timeframe: String,
@@ -2573,6 +2592,7 @@ struct ResearchSweepCandidateResponse {
     primary_reason_code: String,
     objective_score: f64,
     metrics: Option<ExpectancyMetrics>,
+    walk_forward: WalkForwardSummary,
     rationale_codes: Vec<String>,
 }
 
@@ -2848,6 +2868,8 @@ async fn main() -> anyhow::Result<()> {
         block_on_champion_drift = settings.block_on_champion_drift,
         research_sweep_execution_cap = settings.research_sweep_execution_cap,
         research_sweep_top_k = settings.research_sweep_top_k,
+        walk_forward_folds = settings.walk_forward_folds,
+        walk_forward_min_trades_per_fold = settings.walk_forward_min_trades_per_fold,
         opt_train_days_1m = settings.opt_train_days_1m,
         opt_train_days_15m = settings.opt_train_days_15m,
         opt_train_days_1h = settings.opt_train_days_1h,
@@ -3957,6 +3979,7 @@ fn classify_expectancy_result(
     }
 }
 
+#[cfg(test)]
 fn expectancy_objective_score(metrics: &ExpectancyMetrics) -> f64 {
     let trade_weight = (metrics.trades as f64).ln_1p().max(1.0);
     metrics.expected_min_lot_net_bps * metrics.win_rate * trade_weight
@@ -4962,11 +4985,89 @@ struct SweepDataset {
     round_trip_cost_bps: f64,
 }
 
+fn compute_walk_forward_summary(
+    rows: &[ReplayTradeEntry],
+    validation_timestamps: &[DateTime<Utc>],
+    folds_requested: usize,
+    min_trades_per_fold: usize,
+) -> WalkForwardSummary {
+    let bars = validation_timestamps.len().saturating_sub(1);
+    let folds_evaluated = folds_requested.clamp(1, bars.max(1));
+    let mut fold_trade_counts = Vec::with_capacity(folds_evaluated);
+    let mut fold_scores = Vec::with_capacity(folds_evaluated);
+    let mut folds_completed = 0usize;
+
+    for fold in 0..folds_evaluated {
+        let start_bar = fold.saturating_mul(bars).div_euclid(folds_evaluated);
+        let mut end_bar = (fold + 1).saturating_mul(bars).div_euclid(folds_evaluated);
+        if end_bar <= start_bar {
+            end_bar = (start_bar + 1).min(bars);
+        }
+        let start_ts = validation_timestamps
+            .get(start_bar)
+            .copied()
+            .unwrap_or_else(Utc::now);
+        let end_ts = validation_timestamps
+            .get(end_bar)
+            .copied()
+            .or_else(|| validation_timestamps.last().copied())
+            .unwrap_or(start_ts);
+
+        let fold_rows = rows
+            .iter()
+            .filter(|row| {
+                if fold + 1 == folds_evaluated {
+                    row.entry_ts >= start_ts && row.entry_ts <= end_ts
+                } else {
+                    row.entry_ts >= start_ts && row.entry_ts < end_ts
+                }
+            })
+            .collect::<Vec<_>>();
+        let trades = fold_rows.len();
+        fold_trade_counts.push(trades);
+        if trades < min_trades_per_fold {
+            continue;
+        }
+        folds_completed = folds_completed.saturating_add(1);
+        let wins = fold_rows.iter().filter(|row| row.net_bps > 0.0).count() as f64;
+        let win_rate = (wins / trades as f64).clamp(0.0, 1.0);
+        let avg_net_bps = fold_rows.iter().map(|row| row.net_bps).sum::<f64>() / trades as f64;
+        let trade_weight = (trades as f64).ln_1p().max(1.0);
+        fold_scores.push(avg_net_bps * win_rate * trade_weight);
+    }
+
+    let pass = folds_completed == folds_evaluated;
+    let avg_objective_score = if pass && !fold_scores.is_empty() {
+        fold_scores.iter().sum::<f64>() / fold_scores.len() as f64
+    } else {
+        f64::NEG_INFINITY
+    };
+    let mut rationale_codes = vec![];
+    if pass {
+        rationale_codes.push("WALK_FORWARD_PASS".to_string());
+    } else {
+        rationale_codes.push("WALK_FORWARD_INSUFFICIENT_TRADES".to_string());
+    }
+
+    WalkForwardSummary {
+        folds_requested,
+        folds_evaluated,
+        folds_completed,
+        min_trades_per_fold,
+        pass,
+        avg_objective_score,
+        fold_trade_counts,
+        rationale_codes,
+    }
+}
+
 fn build_sweep_candidate(
     timeframe: Timeframe,
     pair_id: &str,
     config: &ExpectancyConfig,
     dataset: &SweepDataset,
+    wf_folds: usize,
+    wf_min_trades_per_fold: usize,
 ) -> ResearchSweepCandidateResponse {
     let required_points = config
         .train_bars
@@ -4986,6 +5087,19 @@ fn build_sweep_candidate(
             primary_reason_code: "INSUFFICIENT_MODEL_WINDOW".to_string(),
             objective_score: f64::NEG_INFINITY,
             metrics: None,
+            walk_forward: WalkForwardSummary {
+                folds_requested: wf_folds,
+                folds_evaluated: 0,
+                folds_completed: 0,
+                min_trades_per_fold: wf_min_trades_per_fold,
+                pass: false,
+                avg_objective_score: f64::NEG_INFINITY,
+                fold_trade_counts: vec![],
+                rationale_codes: vec![
+                    "INSUFFICIENT_MODEL_WINDOW".to_string(),
+                    "WALK_FORWARD_NOT_EVALUATED".to_string(),
+                ],
+            },
             rationale_codes: vec![
                 "INSUFFICIENT_MODEL_WINDOW".to_string(),
                 "SWEEP_CANDIDATE_NOT_COMPUTED".to_string(),
@@ -5017,10 +5131,17 @@ fn build_sweep_candidate(
     );
     let replay_rows = derive_replay_trades_from_series(pair_id, timeframe, &series, config.entry_z);
     let validation_start = timestamps[config.train_bars.min(timestamps.len().saturating_sub(1))];
+    let validation_slice = &timestamps[config.train_bars.min(timestamps.len().saturating_sub(1))..];
     let validation_rows = replay_rows
         .into_iter()
         .filter(|row| row.entry_ts >= validation_start)
         .collect::<Vec<_>>();
+    let walk_forward = compute_walk_forward_summary(
+        &validation_rows,
+        validation_slice,
+        wf_folds,
+        wf_min_trades_per_fold,
+    );
     let metrics = compute_expectancy_metrics(
         &validation_rows,
         *left_closes.last().unwrap_or(&0.0),
@@ -5031,12 +5152,22 @@ fn build_sweep_candidate(
     );
     let (status, decision_state, primary_reason_code, mut rationale_codes) =
         classify_expectancy_result(metrics.as_ref());
-    let objective_score = metrics
-        .as_ref()
-        .map(expectancy_objective_score)
-        .unwrap_or(f64::NEG_INFINITY);
+    let mut status = status;
+    let mut decision_state = decision_state;
+    let mut primary_reason_code = primary_reason_code;
+    let objective_score = if walk_forward.pass {
+        walk_forward.avg_objective_score
+    } else {
+        f64::NEG_INFINITY
+    };
+    if !walk_forward.pass {
+        status = "UNAVAILABLE".to_string();
+        decision_state = "CAUTION".to_string();
+        primary_reason_code = "WALK_FORWARD_INSUFFICIENT_TRADES".to_string();
+    }
     rationale_codes.push("SWEEP_EXIT_MODE_MEAN_REVERT".to_string());
     rationale_codes.push("IS_OOS_WINDOW_APPLIED".to_string());
+    rationale_codes.extend(walk_forward.rationale_codes.iter().cloned());
 
     ResearchSweepCandidateResponse {
         rank: 0,
@@ -5048,6 +5179,7 @@ fn build_sweep_candidate(
         primary_reason_code,
         objective_score,
         metrics,
+        walk_forward,
         rationale_codes,
     }
 }
@@ -5175,6 +5307,8 @@ async fn pairs_research_sweep(
         max_combinations,
         estimated_combinations,
         execution_cap = state.settings.research_sweep_execution_cap,
+        wf_folds = state.settings.walk_forward_folds,
+        wf_min_trades_per_fold = state.settings.walk_forward_min_trades_per_fold,
         unsupported_z_method,
         timeframe_count = timeframes.len(),
         pair_count = pair_ids.len(),
@@ -5329,8 +5463,14 @@ async fn pairs_research_sweep(
                                         failed_combinations = failed_combinations.saturating_add(1);
                                         continue;
                                     };
-                                    let candidate =
-                                        build_sweep_candidate(tf, pair_id, &config, dataset);
+                                    let candidate = build_sweep_candidate(
+                                        tf,
+                                        pair_id,
+                                        &config,
+                                        dataset,
+                                        state.settings.walk_forward_folds,
+                                        state.settings.walk_forward_min_trades_per_fold,
+                                    );
                                     if candidate.metrics.is_some() {
                                         successful_combinations =
                                             successful_combinations.saturating_add(1);
@@ -6259,11 +6399,12 @@ mod tests {
     use super::{
         artifact_download_path, bootstrap_deviation_exceeds_threshold, bootstrap_snapshot_is_fresh,
         classify_expectancy_result, compute_expectancy_metrics, compute_pair_funding_bps_per_event,
-        compute_pair_slippage_sample_bps, days_covered, decide_champion_transition,
-        derive_paper_trades_from_series, derive_replay_trades_from_series,
-        estimate_research_combinations, evaluate_recent_performance_gate,
-        expectancy_objective_score, expected_funding_events_crossed, finalize_trade_gate,
-        normalize_funding_rate, parse_backtest_exit_mode, parse_expectancy_query,
+        compute_pair_slippage_sample_bps, compute_walk_forward_summary, days_covered,
+        decide_champion_transition, derive_paper_trades_from_series,
+        derive_replay_trades_from_series, estimate_research_combinations,
+        evaluate_recent_performance_gate, expectancy_objective_score,
+        expected_funding_events_crossed, finalize_trade_gate, normalize_funding_rate,
+        parse_backtest_exit_mode, parse_expectancy_query,
         parse_opportunity_history_stats_timeframe, parse_opportunity_history_window,
         parse_paper_trades_window, parse_replay_trades_query, percentile,
         project_continuous_funding_bps, refresh_setup_gate, resolve_artifact_path,
@@ -6866,6 +7007,128 @@ mod tests {
         assert!((row.net_bps - 200.0).abs() < 1e-9);
         assert!((row.path.mae_bps - (-100.0)).abs() < 1e-9);
         assert!((row.path.mfe_bps - 200.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn walk_forward_summary_passes_with_sufficient_fold_trades() {
+        let start = Utc::now();
+        let validation_timestamps = vec![
+            start,
+            start + chrono::Duration::hours(1),
+            start + chrono::Duration::hours(2),
+            start + chrono::Duration::hours(3),
+            start + chrono::Duration::hours(4),
+        ];
+        let rows = vec![
+            ReplayTradeEntry {
+                trade_id: "f1".to_string(),
+                entry_ts: start + chrono::Duration::minutes(10),
+                exit_ts: start + chrono::Duration::minutes(50),
+                direction: "LONG_SPREAD".to_string(),
+                entry_z: -2.0,
+                exit_z: -0.2,
+                net_bps: 40.0,
+                path: ReplayTradePathSummary {
+                    mae_bps: -5.0,
+                    mfe_bps: 45.0,
+                    bars_underwater: 1,
+                    bars_held: 1,
+                },
+            },
+            ReplayTradeEntry {
+                trade_id: "f2".to_string(),
+                entry_ts: start + chrono::Duration::hours(1) + chrono::Duration::minutes(5),
+                exit_ts: start + chrono::Duration::hours(1) + chrono::Duration::minutes(40),
+                direction: "SHORT_SPREAD".to_string(),
+                entry_z: 2.0,
+                exit_z: 0.1,
+                net_bps: 35.0,
+                path: ReplayTradePathSummary {
+                    mae_bps: -4.0,
+                    mfe_bps: 36.0,
+                    bars_underwater: 0,
+                    bars_held: 1,
+                },
+            },
+            ReplayTradeEntry {
+                trade_id: "f3".to_string(),
+                entry_ts: start + chrono::Duration::hours(2) + chrono::Duration::minutes(12),
+                exit_ts: start + chrono::Duration::hours(2) + chrono::Duration::minutes(45),
+                direction: "LONG_SPREAD".to_string(),
+                entry_z: -2.1,
+                exit_z: -0.4,
+                net_bps: 42.0,
+                path: ReplayTradePathSummary {
+                    mae_bps: -6.0,
+                    mfe_bps: 43.0,
+                    bars_underwater: 1,
+                    bars_held: 1,
+                },
+            },
+            ReplayTradeEntry {
+                trade_id: "f4".to_string(),
+                entry_ts: start + chrono::Duration::hours(3) + chrono::Duration::minutes(8),
+                exit_ts: start + chrono::Duration::hours(3) + chrono::Duration::minutes(42),
+                direction: "SHORT_SPREAD".to_string(),
+                entry_z: 2.2,
+                exit_z: 0.0,
+                net_bps: 38.0,
+                path: ReplayTradePathSummary {
+                    mae_bps: -3.0,
+                    mfe_bps: 40.0,
+                    bars_underwater: 0,
+                    bars_held: 1,
+                },
+            },
+        ];
+
+        let summary = compute_walk_forward_summary(&rows, &validation_timestamps, 4, 1);
+        assert!(summary.pass);
+        assert_eq!(summary.folds_requested, 4);
+        assert_eq!(summary.folds_evaluated, 4);
+        assert_eq!(summary.folds_completed, 4);
+        assert_eq!(summary.fold_trade_counts, vec![1, 1, 1, 1]);
+        assert!(summary.avg_objective_score.is_finite());
+        assert!(summary
+            .rationale_codes
+            .iter()
+            .any(|code| code == "WALK_FORWARD_PASS"));
+    }
+
+    #[test]
+    fn walk_forward_summary_fails_when_fold_trades_are_insufficient() {
+        let start = Utc::now();
+        let validation_timestamps = vec![
+            start,
+            start + chrono::Duration::hours(1),
+            start + chrono::Duration::hours(2),
+            start + chrono::Duration::hours(3),
+        ];
+        let rows = vec![ReplayTradeEntry {
+            trade_id: "f1".to_string(),
+            entry_ts: start + chrono::Duration::minutes(10),
+            exit_ts: start + chrono::Duration::minutes(40),
+            direction: "LONG_SPREAD".to_string(),
+            entry_z: -2.0,
+            exit_z: -0.3,
+            net_bps: 20.0,
+            path: ReplayTradePathSummary {
+                mae_bps: -2.0,
+                mfe_bps: 22.0,
+                bars_underwater: 0,
+                bars_held: 1,
+            },
+        }];
+
+        let summary = compute_walk_forward_summary(&rows, &validation_timestamps, 3, 1);
+        assert!(!summary.pass);
+        assert_eq!(summary.folds_evaluated, 3);
+        assert!(summary.folds_completed < summary.folds_evaluated);
+        assert_eq!(summary.avg_objective_score, f64::NEG_INFINITY);
+        assert!(summary
+            .rationale_codes
+            .iter()
+            .any(|code| code == "WALK_FORWARD_INSUFFICIENT_TRADES"));
     }
 
     #[test]

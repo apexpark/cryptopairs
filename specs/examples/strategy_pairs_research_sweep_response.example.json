@@ -43,6 +43,16 @@
       "expected_min_lot_net_bps": 22.314,
       "expected_min_lot_net_usd": 2.91
     },
+    "walk_forward": {
+      "folds_requested": 4,
+      "folds_evaluated": 4,
+      "folds_completed": 4,
+      "min_trades_per_fold": 1,
+      "pass": true,
+      "avg_objective_score": 40.2184,
+      "fold_trade_counts": [4, 4, 5, 3],
+      "rationale_codes": ["WALK_FORWARD_PASS"]
+    },
     "rationale_codes": [
       "EXPECTANCY_COMPUTED",
       "MIN_TRADES_MET",
@@ -81,6 +91,16 @@
         "avg_mfe_bps": 40.62,
         "expected_min_lot_net_bps": 22.314,
         "expected_min_lot_net_usd": 2.91
+      },
+      "walk_forward": {
+        "folds_requested": 4,
+        "folds_evaluated": 4,
+        "folds_completed": 4,
+        "min_trades_per_fold": 1,
+        "pass": true,
+        "avg_objective_score": 40.2184,
+        "fold_trade_counts": [4, 4, 5, 3],
+        "rationale_codes": ["WALK_FORWARD_PASS"]
       },
       "rationale_codes": [
         "EXPECTANCY_COMPUTED",
