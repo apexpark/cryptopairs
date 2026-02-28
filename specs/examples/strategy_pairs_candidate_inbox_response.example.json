@@ -1,0 +1,71 @@
+{
+  "generated_at": "2026-02-28T00:00:00Z",
+  "timeframe_filter": "1h",
+  "limit": 3,
+  "rows": [
+    {
+      "pair_id": "PF_TAOUSD__PF_HYPEUSD",
+      "timeframe": "1h",
+      "candidate_id": "sweep-20260228T000000.000Z:1h:PF_TAOUSD__PF_HYPEUSD:1",
+      "candidate_state": "PROMOTION_READY",
+      "request_id": "sweep-20260228T000000.000Z",
+      "rank": 1,
+      "candidate_variant": "ROBUST_Z",
+      "status": "AVAILABLE",
+      "decision_state": "TRADE_READY",
+      "primary_reason_code": "EXPECTANCY_POSITIVE",
+      "objective_score": 42.18,
+      "objective_delta": 6.45,
+      "config": {
+        "entry_z": 1.8,
+        "exit_z": 0.6,
+        "stop_z": 3.2,
+        "z_method": "ROBUST_Z",
+        "hedge_method": "HEDGE_RATIO_OLS",
+        "lookback_bars": 440,
+        "train_bars": 17520,
+        "validation_bars": 4320
+      },
+      "metrics": {
+        "trades": 18,
+        "win_rate": 0.66,
+        "avg_net_bps": 24.2,
+        "p25_net_bps": 5.1,
+        "p50_net_bps": 19.7,
+        "p75_net_bps": 33.8,
+        "avg_hold_bars": 17.4,
+        "avg_mae_bps": -10.2,
+        "avg_mfe_bps": 41.8,
+        "expected_min_lot_net_bps": 24.2,
+        "expected_min_lot_net_usd": 3.44
+      },
+      "walk_forward": {
+        "folds_requested": 4,
+        "folds_evaluated": 4,
+        "folds_completed": 4,
+        "min_trades_per_fold": 1,
+        "pass": true,
+        "avg_objective_score": 42.18,
+        "fold_trade_counts": [5, 4, 5, 4],
+        "rationale_codes": ["WALK_FORWARD_PASS"]
+      },
+      "rationale_codes": [
+        "EXPECTANCY_COMPUTED",
+        "MIN_TRADES_MET",
+        "SWEEP_EXIT_MODE_MEAN_REVERT",
+        "IS_OOS_WINDOW_APPLIED"
+      ],
+      "champion_variant": "COINTEGRATION_Z",
+      "champion_score": 35.73,
+      "started_at": "2026-02-25T00:00:00Z",
+      "updated_at": "2026-02-28T00:00:00Z",
+      "eligible_after": "2026-02-28T00:00:00Z",
+      "probation_samples": 72,
+      "promotable": true,
+      "last_reason": "PROBATION_PASS_OBJECTIVE_DELTA",
+      "last_candidate_score": 39.12,
+      "last_champion_score": 33.01,
+      "last_objective_delta": 6.11
+    }
+  ]
+}

@@ -1,0 +1,17 @@
+{
+  "$id": "https://cryptopairs/specs/contracts/strategy_pairs_candidate_action_request.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Strategy Pairs Candidate Action Request",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["pair_id", "timeframe", "action", "operator_id", "confirm"],
+  "properties": {
+    "pair_id": { "type": "string", "minLength": 1 },
+    "timeframe": { "type": "string", "enum": ["1m", "15m", "1h"] },
+    "candidate_id": { "type": ["string", "null"] },
+    "action": { "type": "string", "enum": ["PROMOTE", "HOLD", "REJECT"] },
+    "operator_id": { "type": "string", "minLength": 1 },
+    "note": { "type": ["string", "null"] },
+    "confirm": { "type": "boolean" }
+  }
+}

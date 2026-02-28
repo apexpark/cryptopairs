@@ -1,0 +1,187 @@
+{
+  "$id": "https://cryptopairs/specs/contracts/strategy_pairs_candidate_inbox_response.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Strategy Pairs Candidate Inbox Response",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["generated_at", "timeframe_filter", "limit", "rows"],
+  "properties": {
+    "generated_at": { "type": "string", "format": "date-time" },
+    "timeframe_filter": {
+      "anyOf": [
+        { "type": "string", "enum": ["1m", "15m", "1h"] },
+        { "type": "null" }
+      ]
+    },
+    "limit": { "type": "integer", "minimum": 1, "maximum": 100 },
+    "rows": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/candidateInboxEntry" }
+    }
+  },
+  "$defs": {
+    "expectancyConfig": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "entry_z",
+        "exit_z",
+        "stop_z",
+        "z_method",
+        "hedge_method",
+        "lookback_bars",
+        "train_bars",
+        "validation_bars"
+      ],
+      "properties": {
+        "entry_z": { "type": "number" },
+        "exit_z": { "type": "number" },
+        "stop_z": { "type": "number" },
+        "z_method": {
+          "type": "string",
+          "enum": ["COINTEGRATION_Z", "ROBUST_Z", "VOL_NORMALIZED", "FUNDING_ADJUSTED"]
+        },
+        "hedge_method": { "type": "string" },
+        "lookback_bars": { "type": "integer", "minimum": 120 },
+        "train_bars": { "type": "integer", "minimum": 1 },
+        "validation_bars": { "type": "integer", "minimum": 1 }
+      }
+    },
+    "expectancyMetrics": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "trades",
+        "win_rate",
+        "avg_net_bps",
+        "p25_net_bps",
+        "p50_net_bps",
+        "p75_net_bps",
+        "avg_hold_bars",
+        "avg_mae_bps",
+        "avg_mfe_bps",
+        "expected_min_lot_net_bps",
+        "expected_min_lot_net_usd"
+      ],
+      "properties": {
+        "trades": { "type": "integer", "minimum": 0 },
+        "win_rate": { "type": "number" },
+        "avg_net_bps": { "type": "number" },
+        "p25_net_bps": { "type": "number" },
+        "p50_net_bps": { "type": "number" },
+        "p75_net_bps": { "type": "number" },
+        "avg_hold_bars": { "type": "number" },
+        "avg_mae_bps": { "type": "number" },
+        "avg_mfe_bps": { "type": "number" },
+        "expected_min_lot_net_bps": { "type": "number" },
+        "expected_min_lot_net_usd": { "type": "number" }
+      }
+    },
+    "walkForwardSummary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "folds_requested",
+        "folds_evaluated",
+        "folds_completed",
+        "min_trades_per_fold",
+        "pass",
+        "avg_objective_score",
+        "fold_trade_counts",
+        "rationale_codes"
+      ],
+      "properties": {
+        "folds_requested": { "type": "integer", "minimum": 1 },
+        "folds_evaluated": { "type": "integer", "minimum": 0 },
+        "folds_completed": { "type": "integer", "minimum": 0 },
+        "min_trades_per_fold": { "type": "integer", "minimum": 1 },
+        "pass": { "type": "boolean" },
+        "avg_objective_score": { "type": "number" },
+        "fold_trade_counts": {
+          "type": "array",
+          "items": { "type": "integer", "minimum": 0 }
+        },
+        "rationale_codes": {
+          "type": "array",
+          "items": { "type": "string" }
+        }
+      }
+    },
+    "candidateInboxEntry": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "pair_id",
+        "timeframe",
+        "candidate_id",
+        "candidate_state",
+        "request_id",
+        "rank",
+        "candidate_variant",
+        "status",
+        "decision_state",
+        "primary_reason_code",
+        "objective_score",
+        "objective_delta",
+        "config",
+        "metrics",
+        "walk_forward",
+        "rationale_codes",
+        "champion_variant",
+        "champion_score",
+        "started_at",
+        "updated_at",
+        "eligible_after",
+        "probation_samples",
+        "promotable",
+        "last_reason",
+        "last_candidate_score",
+        "last_champion_score",
+        "last_objective_delta"
+      ],
+      "properties": {
+        "pair_id": { "type": "string" },
+        "timeframe": { "type": "string", "enum": ["1m", "15m", "1h"] },
+        "candidate_id": { "type": "string" },
+        "candidate_state": {
+          "type": "string",
+          "enum": ["CHALLENGER", "PROMOTION_READY", "CHAMPION", "HOLD", "REJECTED"]
+        },
+        "request_id": { "type": "string" },
+        "rank": { "type": "integer", "minimum": 1 },
+        "candidate_variant": {
+          "type": "string",
+          "enum": ["COINTEGRATION_Z", "ROBUST_Z", "VOL_NORMALIZED", "FUNDING_ADJUSTED"]
+        },
+        "status": { "type": "string", "enum": ["AVAILABLE", "UNAVAILABLE"] },
+        "decision_state": { "type": "string", "enum": ["TRADE_READY", "CAUTION", "BLOCKED"] },
+        "primary_reason_code": { "type": "string" },
+        "objective_score": { "type": "number" },
+        "objective_delta": { "type": "number" },
+        "config": { "$ref": "#/$defs/expectancyConfig" },
+        "metrics": {
+          "anyOf": [
+            { "$ref": "#/$defs/expectancyMetrics" },
+            { "type": "null" }
+          ]
+        },
+        "walk_forward": { "$ref": "#/$defs/walkForwardSummary" },
+        "rationale_codes": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "champion_variant": { "type": "string" },
+        "champion_score": { "type": "number" },
+        "started_at": { "type": "string", "format": "date-time" },
+        "updated_at": { "type": "string", "format": "date-time" },
+        "eligible_after": { "type": "string", "format": "date-time" },
+        "probation_samples": { "type": "integer", "minimum": 0 },
+        "promotable": { "type": "boolean" },
+        "last_reason": { "type": "string" },
+        "last_candidate_score": { "type": "number" },
+        "last_champion_score": { "type": "number" },
+        "last_objective_delta": { "type": "number" }
+      }
+    }
+  }
+}

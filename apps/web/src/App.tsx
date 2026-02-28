@@ -12,7 +12,9 @@ import {
   fetchStrategyUiAuthStatus,
   verifyStrategyUiAccess,
   fetchStrategyPaperTrades,
+  fetchStrategyCandidateInbox,
   runStrategyResearchSweep,
+  submitStrategyCandidateAction,
   fetchExecutionPortfolioPositions,
   dispatchOrderIntent,
   fetchExecutionDecision,
@@ -45,6 +47,7 @@ import type {
   ReconcileResponse,
   SpreadPosition,
   StrategyPairsCuesResponse,
+  StrategyPairsCandidateInboxResponse,
   StrategyPairsExpectancyResponse,
   StrategyPairsPaperTradesResponse,
   StrategyPairsReplayTradesResponse,
@@ -725,6 +728,12 @@ function App(): JSX.Element {
     useState<StrategyPairsResearchSweepResponse | null>(null);
   const [researchSweepLoading, setResearchSweepLoading] = useState(false);
   const [researchSweepError, setResearchSweepError] = useState<string | null>(null);
+  const [candidateInbox, setCandidateInbox] =
+    useState<StrategyPairsCandidateInboxResponse | null>(null);
+  const [candidateInboxLoading, setCandidateInboxLoading] = useState(false);
+  const [candidateInboxError, setCandidateInboxError] = useState<string | null>(null);
+  const [candidateActionBusyId, setCandidateActionBusyId] = useState<string | null>(null);
+  const [candidateActionMessage, setCandidateActionMessage] = useState<string | null>(null);
   const [headerLeftMetrics, setHeaderLeftMetrics] = useState<MarketMetricsResponse | null>(null);
   const [headerRightMetrics, setHeaderRightMetrics] = useState<MarketMetricsResponse | null>(null);
   const [headerMetricsError, setHeaderMetricsError] = useState<string | null>(null);
@@ -1238,12 +1247,63 @@ function App(): JSX.Element {
   }, [selectedCueRow, timeframe, backtestExitMode, uiAccessGranted]);
 
   useEffect(() => {
+    if (!uiAccessGranted || page !== "analytics") {
+      return;
+    }
+    let cancelled = false;
+    let inFlight = false;
+    setCandidateInboxLoading(true);
+
+    const runCandidateInboxRefresh = async (firstLoad = false): Promise<void> => {
+      if (cancelled || inFlight) {
+        return;
+      }
+      inFlight = true;
+      if (firstLoad) {
+        setCandidateInboxLoading(true);
+      }
+      try {
+        const response = await fetchStrategyCandidateInbox(timeframe, 3);
+        if (cancelled) {
+          return;
+        }
+        setCandidateInbox(response);
+        setCandidateInboxError(null);
+      } catch (error) {
+        if (cancelled) {
+          return;
+        }
+        setCandidateInbox(null);
+        setCandidateInboxError(
+          `Candidate inbox unavailable: ${error instanceof Error ? error.message : String(error)}`
+        );
+      } finally {
+        if (!cancelled && firstLoad) {
+          setCandidateInboxLoading(false);
+        }
+        inFlight = false;
+      }
+    };
+
+    void runCandidateInboxRefresh(true);
+    const intervalId = window.setInterval(() => {
+      void runCandidateInboxRefresh(false);
+    }, analyticsRefreshMs(timeframe));
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(intervalId);
+    };
+  }, [page, timeframe, uiAccessGranted]);
+
+  useEffect(() => {
     setExpectancyResult(null);
     setReplayResult(null);
     setResearchSweepResult(null);
     setExpectancyError(null);
     setReplayError(null);
     setResearchSweepError(null);
+    setCandidateActionMessage(null);
   }, [currentPairId, timeframe, backtestExitMode]);
 
   const runExpectancyResearch = useCallback(async (): Promise<void> => {
@@ -1358,6 +1418,11 @@ function App(): JSX.Element {
         dry_run: dryRun,
       });
       setResearchSweepResult(response);
+      if (!dryRun) {
+        const inbox = await fetchStrategyCandidateInbox(timeframe, 3);
+        setCandidateInbox(inbox);
+        setCandidateInboxError(null);
+      }
     } catch (error) {
       setResearchSweepResult(null);
       setResearchSweepError(
@@ -1377,6 +1442,54 @@ function App(): JSX.Element {
     selectedCueRow,
     timeframe,
   ]);
+
+  const runCandidateAction = useCallback(
+    async (
+      candidateId: string,
+      action: "PROMOTE" | "HOLD" | "REJECT",
+      note?: string
+    ): Promise<void> => {
+      if (!operatorId.trim().length) {
+        setCandidateActionMessage("Operator ID is required to action candidates.");
+        return;
+      }
+      const row = candidateInbox?.rows.find((entry) => entry.candidate_id === candidateId);
+      if (!row) {
+        setCandidateActionMessage("Candidate no longer available. Refresh and retry.");
+        return;
+      }
+      const confirmMessage = `${action} ${formatPairLabel(row.pair_id)} ${row.timeframe} candidate?`;
+      if (!window.confirm(confirmMessage)) {
+        return;
+      }
+
+      setCandidateActionBusyId(candidateId);
+      setCandidateActionMessage(null);
+      try {
+        const response = await submitStrategyCandidateAction({
+          pair_id: row.pair_id,
+          timeframe: row.timeframe,
+          candidate_id: row.candidate_id,
+          action,
+          operator_id: operatorId,
+          note: note ?? null,
+          confirm: true,
+        });
+        const inbox = await fetchStrategyCandidateInbox(timeframe, 3);
+        setCandidateInbox(inbox);
+        setCandidateActionMessage(
+          `${response.action} ${formatPairLabel(response.pair_id)} ${response.timeframe}: ${response.state_before} -> ${response.state_after}`
+        );
+      } catch (error) {
+        setCandidateActionMessage(
+          `Candidate action failed: ${error instanceof Error ? error.message : String(error)}`
+        );
+      } finally {
+        setCandidateActionBusyId(null);
+      }
+    },
+    [candidateInbox, operatorId, timeframe]
+  );
 
   const applyCueBandsToResearch = useCallback((): void => {
     if (!selectedCueRow) {
@@ -1881,6 +1994,11 @@ function App(): JSX.Element {
           researchSweepResult={researchSweepResult}
           researchSweepLoading={researchSweepLoading}
           researchSweepError={researchSweepError}
+          candidateInbox={candidateInbox}
+          candidateInboxLoading={candidateInboxLoading}
+          candidateInboxError={candidateInboxError}
+          candidateActionBusyId={candidateActionBusyId}
+          candidateActionMessage={candidateActionMessage}
           setResearchEntryZ={setResearchEntryZ}
           setResearchExitZ={setResearchExitZ}
           setResearchStopZ={setResearchStopZ}
@@ -1894,6 +2012,7 @@ function App(): JSX.Element {
           onRunReplay={runReplayResearch}
           onRunSweepDryRun={() => runResearchSweep(true)}
           onRunSweepExecute={() => runResearchSweep(false)}
+          onCandidateAction={runCandidateAction}
           onDownloadExpectancy={downloadExpectancyResult}
           onDownloadReplay={downloadReplayResult}
           onDownloadSweep={downloadResearchSweepResult}
@@ -2365,6 +2484,11 @@ function AnalyticsPage({
   researchSweepResult,
   researchSweepLoading,
   researchSweepError,
+  candidateInbox,
+  candidateInboxLoading,
+  candidateInboxError,
+  candidateActionBusyId,
+  candidateActionMessage,
   setResearchEntryZ,
   setResearchExitZ,
   setResearchStopZ,
@@ -2378,6 +2502,7 @@ function AnalyticsPage({
   onRunReplay,
   onRunSweepDryRun,
   onRunSweepExecute,
+  onCandidateAction,
   onDownloadExpectancy,
   onDownloadReplay,
   onDownloadSweep,
@@ -2414,6 +2539,11 @@ function AnalyticsPage({
   researchSweepResult: StrategyPairsResearchSweepResponse | null;
   researchSweepLoading: boolean;
   researchSweepError: string | null;
+  candidateInbox: StrategyPairsCandidateInboxResponse | null;
+  candidateInboxLoading: boolean;
+  candidateInboxError: string | null;
+  candidateActionBusyId: string | null;
+  candidateActionMessage: string | null;
   setResearchEntryZ: (value: string) => void;
   setResearchExitZ: (value: string) => void;
   setResearchStopZ: (value: string) => void;
@@ -2427,6 +2557,11 @@ function AnalyticsPage({
   onRunReplay: () => Promise<void>;
   onRunSweepDryRun: () => Promise<void>;
   onRunSweepExecute: () => Promise<void>;
+  onCandidateAction: (
+    candidateId: string,
+    action: "PROMOTE" | "HOLD" | "REJECT",
+    note?: string
+  ) => Promise<void>;
   onDownloadExpectancy: () => void;
   onDownloadReplay: () => void;
   onDownloadSweep: () => void;
@@ -2833,6 +2968,84 @@ function AnalyticsPage({
                     <p className="small-text">No sweep result loaded.</p>
                   )}
                 </div>
+              </div>
+
+              <div className="candidate-inbox-card">
+                <h3>Candidate Inbox</h3>
+                {candidateInboxLoading ? (
+                  <p className="small-text">Loading candidate inbox...</p>
+                ) : null}
+                {candidateInboxError ? (
+                  <p className="small-text tone-bad">{candidateInboxError}</p>
+                ) : null}
+                {candidateActionMessage ? (
+                  <p className="small-text tone-info">{candidateActionMessage}</p>
+                ) : null}
+                {!candidateInboxLoading && !candidateInboxError && candidateInbox?.rows.length === 0 ? (
+                  <p className="small-text">No active challengers in the inbox.</p>
+                ) : null}
+                {candidateInbox?.rows.length ? (
+                  <div className="table-wrap">
+                    <table>
+                      <thead>
+                        <tr>
+                          <th>Pair</th>
+                          <th>State</th>
+                          <th>Variant</th>
+                          <th>Obj Δ</th>
+                          <th>Samples</th>
+                          <th>Next</th>
+                          <th>Action</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {candidateInbox.rows.map((row) => {
+                          const busy = candidateActionBusyId === row.candidate_id;
+                          return (
+                            <tr key={row.candidate_id}>
+                              <td>{formatPairLabel(row.pair_id)}</td>
+                              <td className={row.promotable ? "tone-ok" : "tone-warn"}>
+                                {row.candidate_state}
+                              </td>
+                              <td>{row.candidate_variant}</td>
+                              <td className={row.objective_delta >= 0 ? "tone-ok" : "tone-bad"}>
+                                {formatSigned(row.objective_delta)}
+                              </td>
+                              <td>{row.probation_samples}</td>
+                              <td>{formatLocalTime(row.eligible_after)}</td>
+                              <td>
+                                <div className="candidate-action-buttons">
+                                  <button
+                                    type="button"
+                                    disabled={busy || !row.promotable}
+                                    onClick={() => void onCandidateAction(row.candidate_id, "PROMOTE")}
+                                  >
+                                    Promote
+                                  </button>
+                                  <button
+                                    type="button"
+                                    disabled={busy}
+                                    onClick={() => void onCandidateAction(row.candidate_id, "HOLD")}
+                                  >
+                                    Hold
+                                  </button>
+                                  <button
+                                    type="button"
+                                    className="danger"
+                                    disabled={busy}
+                                    onClick={() => void onCandidateAction(row.candidate_id, "REJECT")}
+                                  >
+                                    Reject
+                                  </button>
+                                </div>
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                ) : null}
               </div>
             </div>
           </details>

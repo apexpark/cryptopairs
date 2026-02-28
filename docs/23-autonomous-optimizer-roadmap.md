@@ -90,7 +90,7 @@ Acceptance:
 
 ### Slice D: Candidate Lifecycle + Probation
 
-Status: Planned
+Status: Implemented
 
 DB schema (proposal):
 - `strategy_candidate_runs`
@@ -111,7 +111,7 @@ Acceptance:
 
 ### Slice E: Operator Candidate Inbox
 
-Status: Planned
+Status: Implemented
 
 Contracts (proposal):
 - `specs/contracts/strategy_pairs_candidate_inbox_response.schema.json`
@@ -135,7 +135,7 @@ Acceptance:
 
 ### Slice F: Observability + Runbook Hardening
 
-Status: Planned
+Status: Implemented
 
 Docs:
 - `docs/15-observability-and-alerting.md`

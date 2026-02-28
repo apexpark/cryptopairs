@@ -1,0 +1,12 @@
+{
+  "generated_at": "2026-02-28T00:05:00Z",
+  "accepted": true,
+  "pair_id": "PF_TAOUSD__PF_HYPEUSD",
+  "timeframe": "1h",
+  "candidate_id": "sweep-20260228T000000.000Z:1h:PF_TAOUSD__PF_HYPEUSD:1",
+  "action": "PROMOTE",
+  "state_before": "PROMOTION_READY",
+  "state_after": "CHAMPION",
+  "promotable": false,
+  "message": "candidate promoted to champion"
+}

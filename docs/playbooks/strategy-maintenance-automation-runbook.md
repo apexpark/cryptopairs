@@ -71,6 +71,9 @@ Analytics tab reads:
 - `GET /v1/strategy/maintenance/latest`
 - artifact downloads via `GET /v1/strategy/maintenance/artifact?path=...`
 - manual one-click actions via `POST /v1/strategy/maintenance/action` (enqueue only)
+- optimizer candidate inbox via:
+  - `GET /v1/strategy/pairs/candidate-inbox?timeframe=<optional>&limit=<n>`
+  - `POST /v1/strategy/pairs/candidate-action` (`PROMOTE|HOLD|REJECT`, `confirm=true` required)
 - opportunity history downloads via:
   - `GET /v1/strategy/pairs/opportunity-history?timeframe=<1m|15m|1h>&hours=<n>&only_pass=<bool>&limit=<n>`
   - `GET /v1/strategy/pairs/opportunity-history/download?timeframe=<1m|15m|1h>&hours=<n>&only_pass=<bool>&limit=<n>`

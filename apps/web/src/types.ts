@@ -323,6 +323,75 @@ export interface StrategyPairsResearchSweepCandidate {
   rationale_codes: string[];
 }
 
+export interface StrategyPairsCandidateInboxEntry {
+  pair_id: string;
+  timeframe: Timeframe;
+  candidate_id: string;
+  candidate_state: "CHALLENGER" | "PROMOTION_READY" | "CHAMPION" | "HOLD" | "REJECTED";
+  request_id: string;
+  rank: number;
+  candidate_variant: StrategyZMethod;
+  status: "AVAILABLE" | "UNAVAILABLE";
+  decision_state: "TRADE_READY" | "CAUTION" | "BLOCKED";
+  primary_reason_code: string;
+  objective_score: number;
+  objective_delta: number;
+  config: StrategyExpectancyConfig;
+  metrics: StrategyPairsExpectancyMetrics | null;
+  walk_forward: {
+    folds_requested: number;
+    folds_evaluated: number;
+    folds_completed: number;
+    min_trades_per_fold: number;
+    pass: boolean;
+    avg_objective_score: number;
+    fold_trade_counts: number[];
+    rationale_codes: string[];
+  };
+  rationale_codes: string[];
+  champion_variant: string;
+  champion_score: number;
+  started_at: string;
+  updated_at: string;
+  eligible_after: string;
+  probation_samples: number;
+  promotable: boolean;
+  last_reason: string;
+  last_candidate_score: number;
+  last_champion_score: number;
+  last_objective_delta: number;
+}
+
+export interface StrategyPairsCandidateInboxResponse {
+  generated_at: string;
+  timeframe_filter: Timeframe | null;
+  limit: number;
+  rows: StrategyPairsCandidateInboxEntry[];
+}
+
+export interface StrategyPairsCandidateActionRequest {
+  pair_id: string;
+  timeframe: Timeframe;
+  candidate_id?: string | null;
+  action: "PROMOTE" | "HOLD" | "REJECT";
+  operator_id: string;
+  note?: string | null;
+  confirm: boolean;
+}
+
+export interface StrategyPairsCandidateActionResponse {
+  generated_at: string;
+  accepted: boolean;
+  pair_id: string;
+  timeframe: Timeframe;
+  candidate_id: string;
+  action: "PROMOTE" | "HOLD" | "REJECT";
+  state_before: "CHALLENGER" | "PROMOTION_READY" | "CHAMPION" | "HOLD" | "REJECTED";
+  state_after: "CHALLENGER" | "PROMOTION_READY" | "CHAMPION" | "HOLD" | "REJECTED";
+  promotable: boolean;
+  message: string;
+}
+
 export interface StrategyPairsBacktestResponse {
   timeframe: Timeframe;
   pair_id: string;

@@ -40,6 +40,9 @@ Current baseline contracts:
 - `specs/contracts/strategy_pairs_expectancy_response.schema.json`
 - `specs/contracts/strategy_pairs_replay_trades_response.schema.json`
 - `specs/contracts/strategy_pairs_research_sweep_response.schema.json`
+- `specs/contracts/strategy_pairs_candidate_inbox_response.schema.json`
+- `specs/contracts/strategy_pairs_candidate_action_request.schema.json`
+- `specs/contracts/strategy_pairs_candidate_action_response.schema.json`
 - `specs/contracts/strategy_pairs_portfolio_plan_response.schema.json`
 - `specs/contracts/strategy_tuning_report.schema.json`
 - `specs/contracts/strategy_maintenance_latest_response.schema.json`
