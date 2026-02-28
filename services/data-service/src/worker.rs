@@ -1,4 +1,4 @@
-use crate::{normalize_request_window, AppState};
+use crate::{config::TimeframeDays, normalize_request_window, AppState};
 use chrono::{DateTime, Duration, Utc};
 use common_types::{DataQueryRequest, Timeframe};
 use tokio::time::{sleep, Duration as TokioDuration};
@@ -10,8 +10,12 @@ pub fn spawn_backfill_worker(
     state: AppState,
     symbols: Vec<String>,
     interval_seconds: u64,
+    backfill_window_days: TimeframeDays,
+    candles_retention_days: TimeframeDays,
+    prune_interval_seconds: u64,
 ) -> tokio::task::JoinHandle<()> {
     tokio::spawn(async move {
+        let mut last_prune_at: Option<DateTime<Utc>> = None;
         loop {
             for symbol in &symbols {
                 for timeframe in [
@@ -20,11 +24,7 @@ pub fn spawn_backfill_worker(
                     Timeframe::OneHour,
                 ] {
                     let now = Utc::now();
-                    let window_start = match timeframe {
-                        Timeframe::OneMinute => now - Duration::hours(24),
-                        Timeframe::FifteenMinutes => now - Duration::days(30),
-                        Timeframe::OneHour => now - Duration::days(120),
-                    };
+                    let window_start = backfill_window_start(now, timeframe, backfill_window_days);
                     let request = DataQueryRequest {
                         instrument: symbol.clone(),
                         timeframe,
@@ -38,6 +38,21 @@ pub fn spawn_backfill_worker(
                             timeframe = ?timeframe,
                             error = %error,
                             "backfill worker failed for window"
+                        );
+                    }
+                }
+            }
+
+            let now = Utc::now();
+            if should_run_retention_prune(last_prune_at, now, prune_interval_seconds) {
+                match prune_expired_candles(&state, now, candles_retention_days).await {
+                    Ok(_) => {
+                        last_prune_at = Some(now);
+                    }
+                    Err(error) => {
+                        warn!(
+                            error = %error,
+                            "candle retention prune failed"
                         );
                     }
                 }
@@ -124,6 +139,54 @@ async fn backfill_window(state: &AppState, request: &DataQueryRequest) -> anyhow
     Ok(())
 }
 
+fn backfill_window_start(
+    now: DateTime<Utc>,
+    timeframe: Timeframe,
+    backfill_window_days: TimeframeDays,
+) -> DateTime<Utc> {
+    now - Duration::days(backfill_window_days.days_for(timeframe))
+}
+
+fn should_run_retention_prune(
+    last_prune_at: Option<DateTime<Utc>>,
+    now: DateTime<Utc>,
+    prune_interval_seconds: u64,
+) -> bool {
+    match last_prune_at {
+        None => true,
+        Some(last) => {
+            now.signed_duration_since(last).num_seconds() >= prune_interval_seconds.max(60) as i64
+        }
+    }
+}
+
+async fn prune_expired_candles(
+    state: &AppState,
+    now: DateTime<Utc>,
+    retention_days: TimeframeDays,
+) -> anyhow::Result<()> {
+    for timeframe in [
+        Timeframe::OneMinute,
+        Timeframe::FifteenMinutes,
+        Timeframe::OneHour,
+    ] {
+        let days = retention_days.days_for(timeframe);
+        let cutoff_ts = now - Duration::days(days);
+        let deleted = state
+            .repository
+            .delete_candles_older_than(timeframe, cutoff_ts)
+            .await?;
+        info!(
+            timeframe = ?timeframe,
+            retention_days = days,
+            cutoff_ts = %cutoff_ts,
+            rows_deleted = deleted,
+            "candle retention prune completed"
+        );
+    }
+    Ok(())
+}
+
 fn split_range_into_segments(
     start_ts: DateTime<Utc>,
     end_ts: DateTime<Utc>,
@@ -147,8 +210,10 @@ fn split_range_into_segments(
 
 #[cfg(test)]
 mod tests {
-    use super::split_range_into_segments;
+    use super::{backfill_window_start, should_run_retention_prune, split_range_into_segments};
+    use crate::config::TimeframeDays;
     use chrono::{TimeZone, Utc};
+    use common_types::Timeframe;
 
     #[test]
     fn split_range_respects_page_depth_limit() {
@@ -182,5 +247,42 @@ mod tests {
         assert!(split_range_into_segments(start, end, 60, 2_000).is_empty());
         assert!(split_range_into_segments(start, start, 0, 2_000).is_empty());
         assert!(split_range_into_segments(start, start, 60, 1).is_empty());
+    }
+
+    #[test]
+    fn backfill_window_start_uses_timeframe_day_config() {
+        let now = Utc
+            .timestamp_opt(1_700_000_000, 0)
+            .single()
+            .expect("valid timestamp");
+        let days = TimeframeDays {
+            one_minute: 120,
+            fifteen_minutes: 540,
+            one_hour: 1_095,
+        };
+
+        let one_minute_start = backfill_window_start(now, Timeframe::OneMinute, days);
+        let fifteen_minute_start = backfill_window_start(now, Timeframe::FifteenMinutes, days);
+        let one_hour_start = backfill_window_start(now, Timeframe::OneHour, days);
+
+        assert_eq!(now.signed_duration_since(one_minute_start).num_days(), 120);
+        assert_eq!(
+            now.signed_duration_since(fifteen_minute_start).num_days(),
+            540
+        );
+        assert_eq!(now.signed_duration_since(one_hour_start).num_days(), 1_095);
+    }
+
+    #[test]
+    fn retention_prune_interval_respected() {
+        let now = Utc
+            .timestamp_opt(1_700_000_000, 0)
+            .single()
+            .expect("valid timestamp");
+        let last = now - chrono::Duration::seconds(1_000);
+
+        assert!(should_run_retention_prune(None, now, 3_600));
+        assert!(!should_run_retention_prune(Some(last), now, 3_600));
+        assert!(should_run_retention_prune(Some(last), now, 900));
     }
 }

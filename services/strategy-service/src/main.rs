@@ -59,6 +59,12 @@ struct StrategySettings {
     lookback_bars_1m: usize,
     lookback_bars_15m: usize,
     lookback_bars_1h: usize,
+    opt_train_days_1m: usize,
+    opt_train_days_15m: usize,
+    opt_train_days_1h: usize,
+    opt_validate_days_1m: usize,
+    opt_validate_days_15m: usize,
+    opt_validate_days_1h: usize,
     paper_trade_persist_bars: usize,
     hold_bars_1m: usize,
     hold_bars_15m: usize,
@@ -99,6 +105,8 @@ struct StrategySettings {
     block_on_champion_drift: bool,
     research_sweep_execution_cap: usize,
     research_sweep_top_k: usize,
+    walk_forward_folds: usize,
+    walk_forward_min_trades_per_fold: usize,
     maintenance_report_path: String,
     maintenance_artifacts_root: String,
     maintenance_apply_script_path: String,
@@ -221,6 +229,9 @@ impl StrategySettings {
             parse_env_usize("STRATEGY_RESEARCH_SWEEP_EXECUTION_CAP", 20_000).clamp(1, 1_000_000);
         let research_sweep_top_k =
             parse_env_usize("STRATEGY_RESEARCH_SWEEP_TOP_K", 10).clamp(1, 100);
+        let walk_forward_folds = parse_env_usize("STRATEGY_WF_FOLDS", 4).clamp(1, 24);
+        let walk_forward_min_trades_per_fold =
+            parse_env_usize("STRATEGY_WF_MIN_TRADES_PER_FOLD", 1).clamp(1, 100);
         let maintenance_report_path = std::env::var("STRATEGY_MAINTENANCE_REPORT_PATH")
             .unwrap_or_else(|_| {
                 "artifacts/strategy_tuning/latest_maintenance_report.json".to_string()
@@ -258,6 +269,12 @@ impl StrategySettings {
             lookback_bars_1m: parse_env_usize("STRATEGY_LOOKBACK_BARS_1M", 520),
             lookback_bars_15m: parse_env_usize("STRATEGY_LOOKBACK_BARS_15M", 720),
             lookback_bars_1h: parse_env_usize("STRATEGY_LOOKBACK_BARS_1H", 900),
+            opt_train_days_1m: parse_env_usize("STRATEGY_OPT_TRAIN_DAYS_1M", 45).max(1),
+            opt_train_days_15m: parse_env_usize("STRATEGY_OPT_TRAIN_DAYS_15M", 270).max(1),
+            opt_train_days_1h: parse_env_usize("STRATEGY_OPT_TRAIN_DAYS_1H", 730).max(1),
+            opt_validate_days_1m: parse_env_usize("STRATEGY_OPT_VALIDATE_DAYS_1M", 21).max(1),
+            opt_validate_days_15m: parse_env_usize("STRATEGY_OPT_VALIDATE_DAYS_15M", 75).max(1),
+            opt_validate_days_1h: parse_env_usize("STRATEGY_OPT_VALIDATE_DAYS_1H", 180).max(1),
             paper_trade_persist_bars: parse_env_usize("STRATEGY_PAPER_TRADE_PERSIST_BARS", 5000),
             hold_bars_1m: parse_env_usize("STRATEGY_HOLD_BARS_1M", 20),
             hold_bars_15m: parse_env_usize("STRATEGY_HOLD_BARS_15M", 14),
@@ -298,6 +315,8 @@ impl StrategySettings {
             block_on_champion_drift,
             research_sweep_execution_cap,
             research_sweep_top_k,
+            walk_forward_folds,
+            walk_forward_min_trades_per_fold,
             maintenance_report_path,
             maintenance_artifacts_root,
             maintenance_apply_script_path,
@@ -325,6 +344,24 @@ impl StrategySettings {
             Timeframe::FifteenMinutes => self.hold_bars_15m,
             Timeframe::OneHour => self.hold_bars_1h,
         }
+    }
+
+    fn optimizer_train_bars(&self, timeframe: Timeframe) -> usize {
+        let days = match timeframe {
+            Timeframe::OneMinute => self.opt_train_days_1m,
+            Timeframe::FifteenMinutes => self.opt_train_days_15m,
+            Timeframe::OneHour => self.opt_train_days_1h,
+        };
+        days_to_bars(timeframe, days)
+    }
+
+    fn optimizer_validation_bars(&self, timeframe: Timeframe) -> usize {
+        let days = match timeframe {
+            Timeframe::OneMinute => self.opt_validate_days_1m,
+            Timeframe::FifteenMinutes => self.opt_validate_days_15m,
+            Timeframe::OneHour => self.opt_validate_days_1h,
+        };
+        days_to_bars(timeframe, days)
     }
 
     fn max_half_life_bars(&self, timeframe: Timeframe) -> f64 {
@@ -1261,6 +1298,8 @@ struct ExpectancyQuery {
     stop_z: Option<f64>,
     z_method: Option<String>,
     lookback_bars: Option<usize>,
+    train_bars: Option<usize>,
+    validation_bars: Option<usize>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -1275,6 +1314,8 @@ struct ReplayTradesQuery {
     stop_z: Option<f64>,
     z_method: Option<String>,
     lookback_bars: Option<usize>,
+    train_bars: Option<usize>,
+    validation_bars: Option<usize>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -1286,6 +1327,8 @@ struct ResearchSweepRequest {
     stop_z_grid: Option<Vec<f64>>,
     z_methods: Option<Vec<String>>,
     lookback_bars_grid: Option<Vec<usize>>,
+    train_bars: Option<usize>,
+    validation_bars: Option<usize>,
     max_combinations: Option<usize>,
     dry_run: Option<bool>,
 }
@@ -2459,6 +2502,8 @@ struct ExpectancyConfig {
     z_method: String,
     hedge_method: String,
     lookback_bars: usize,
+    train_bars: usize,
+    validation_bars: usize,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -2525,6 +2570,18 @@ struct ReplayTradesResponse {
 }
 
 #[derive(Debug, Clone, Serialize)]
+struct WalkForwardSummary {
+    folds_requested: usize,
+    folds_evaluated: usize,
+    folds_completed: usize,
+    min_trades_per_fold: usize,
+    pass: bool,
+    avg_objective_score: f64,
+    fold_trade_counts: Vec<usize>,
+    rationale_codes: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
 struct ResearchSweepCandidateResponse {
     rank: usize,
     timeframe: String,
@@ -2535,6 +2592,7 @@ struct ResearchSweepCandidateResponse {
     primary_reason_code: String,
     objective_score: f64,
     metrics: Option<ExpectancyMetrics>,
+    walk_forward: WalkForwardSummary,
     rationale_codes: Vec<String>,
 }
 
@@ -2810,6 +2868,14 @@ async fn main() -> anyhow::Result<()> {
         block_on_champion_drift = settings.block_on_champion_drift,
         research_sweep_execution_cap = settings.research_sweep_execution_cap,
         research_sweep_top_k = settings.research_sweep_top_k,
+        walk_forward_folds = settings.walk_forward_folds,
+        walk_forward_min_trades_per_fold = settings.walk_forward_min_trades_per_fold,
+        opt_train_days_1m = settings.opt_train_days_1m,
+        opt_train_days_15m = settings.opt_train_days_15m,
+        opt_train_days_1h = settings.opt_train_days_1h,
+        opt_validate_days_1m = settings.opt_validate_days_1m,
+        opt_validate_days_15m = settings.opt_validate_days_15m,
+        opt_validate_days_1h = settings.opt_validate_days_1h,
         maintenance_report_path = %settings.maintenance_report_path,
         maintenance_artifacts_root = %settings.maintenance_artifacts_root,
         maintenance_apply_script_path = %settings.maintenance_apply_script_path,
@@ -3694,12 +3760,19 @@ fn parse_z_method(raw: Option<&str>) -> Result<String, ApiError> {
     }
 }
 
+struct ExpectancyWindowParams {
+    lookback_bars: Option<usize>,
+    train_bars: Option<usize>,
+    validation_bars: Option<usize>,
+}
+
 fn parse_expectancy_config(
+    timeframe: Timeframe,
     entry_z: Option<f64>,
     exit_z: Option<f64>,
     stop_z: Option<f64>,
     z_method: Option<&str>,
-    lookback_bars: Option<usize>,
+    windows: ExpectancyWindowParams,
     settings: &StrategySettings,
 ) -> Result<ExpectancyConfig, ApiError> {
     let entry = entry_z.unwrap_or(settings.entry_band.abs());
@@ -3724,8 +3797,23 @@ fn parse_expectancy_config(
     }
 
     let z_method = parse_z_method(z_method)?;
-    let lookback = lookback_bars.unwrap_or(analytics_model_bars(Timeframe::OneHour));
+    let lookback = windows
+        .lookback_bars
+        .unwrap_or(analytics_model_bars(timeframe));
     let lookback = lookback.clamp(120, 10_000);
+    let train = windows
+        .train_bars
+        .unwrap_or_else(|| settings.optimizer_train_bars(timeframe))
+        .clamp(120, 500_000);
+    if train < lookback {
+        return Err(ApiError::BadRequest(format!(
+            "invalid train_bars; expected value in range [{lookback}, 500000]"
+        )));
+    }
+    let validation = windows
+        .validation_bars
+        .unwrap_or_else(|| settings.optimizer_validation_bars(timeframe))
+        .clamp(1, 500_000);
 
     Ok(ExpectancyConfig {
         entry_z: entry,
@@ -3734,6 +3822,8 @@ fn parse_expectancy_config(
         z_method,
         hedge_method: "HEDGE_RATIO_OLS".to_string(),
         lookback_bars: lookback,
+        train_bars: train,
+        validation_bars: validation,
     })
 }
 
@@ -3749,11 +3839,16 @@ fn parse_expectancy_query(
         return Err(ApiError::BadRequest("pair_id is required".to_string()));
     }
     let mut config = parse_expectancy_config(
+        timeframe,
         query.entry_z,
         query.exit_z,
         query.stop_z,
         query.z_method.as_deref(),
-        query.lookback_bars,
+        ExpectancyWindowParams {
+            lookback_bars: query.lookback_bars,
+            train_bars: query.train_bars,
+            validation_bars: query.validation_bars,
+        },
         settings,
     )?;
     config.lookback_bars = config.lookback_bars.max(analytics_model_bars(timeframe));
@@ -3777,11 +3872,16 @@ fn parse_replay_trades_query(
         .as_str()
         .to_string();
     let mut config = parse_expectancy_config(
+        timeframe,
         query.entry_z,
         query.exit_z,
         query.stop_z,
         query.z_method.as_deref(),
-        query.lookback_bars,
+        ExpectancyWindowParams {
+            lookback_bars: query.lookback_bars,
+            train_bars: query.train_bars,
+            validation_bars: query.validation_bars,
+        },
         settings,
     )?;
     config.lookback_bars = config.lookback_bars.max(analytics_model_bars(timeframe));
@@ -3879,6 +3979,7 @@ fn classify_expectancy_result(
     }
 }
 
+#[cfg(test)]
 fn expectancy_objective_score(metrics: &ExpectancyMetrics) -> f64 {
     let trade_weight = (metrics.trades as f64).ln_1p().max(1.0);
     metrics.expected_min_lot_net_bps * metrics.win_rate * trade_weight
@@ -3964,6 +4065,17 @@ fn analytics_model_bars(timeframe: Timeframe) -> usize {
         Timeframe::FifteenMinutes => 280,
         Timeframe::OneHour => 220,
     }
+}
+
+fn days_to_bars(timeframe: Timeframe, days: usize) -> usize {
+    let safe_days = days.max(1) as i64;
+    let step_seconds = timeframe.step_seconds().max(1);
+    let total_seconds = safe_days.saturating_mul(86_400);
+    total_seconds
+        .div_euclid(step_seconds)
+        .max(1)
+        .try_into()
+        .unwrap_or(usize::MAX)
 }
 
 fn days_covered(first: Option<DateTime<Utc>>, last: Option<DateTime<Utc>>) -> f64 {
@@ -4578,7 +4690,14 @@ async fn pairs_expectancy(
             pair_id
         )));
     };
-    let lookback = (config.lookback_bars.saturating_add(32).max(120)) as i64;
+    let required_points = config
+        .train_bars
+        .saturating_add(config.validation_bars)
+        .saturating_add(1);
+    let lookback = (required_points
+        .max(config.lookback_bars.saturating_add(1))
+        .saturating_add(32)
+        .max(120)) as i64;
     let left = state
         .repository
         .fetch_recent_closes(&pair.left, timeframe, lookback)
@@ -4590,40 +4709,38 @@ async fn pairs_expectancy(
         .await
         .map_err(|error| ApiError::Upstream(error.to_string()))?;
     let (timestamps, left_closes, right_closes) = align_closes(left, right);
-    if timestamps.len() < 120 {
+    if timestamps.len() < required_points {
         return Ok(Json(ExpectancyResponse {
             timeframe: timeframe.as_str().to_string(),
             pair_id,
             generated_at: Utc::now(),
             status: "UNAVAILABLE".to_string(),
             decision_state: "CAUTION".to_string(),
-            primary_reason_code: "INSUFFICIENT_ALIGNED_CANDLES".to_string(),
+            primary_reason_code: "INSUFFICIENT_TRAIN_VALIDATION_WINDOW".to_string(),
             config,
             metrics: None,
             rationale_codes: vec![
-                "INSUFFICIENT_ALIGNED_CANDLES".to_string(),
+                "INSUFFICIENT_TRAIN_VALIDATION_WINDOW".to_string(),
                 "EXPECTANCY_NOT_COMPUTED".to_string(),
             ],
         }));
     }
-    let start_idx = timestamps
-        .len()
-        .saturating_sub(config.lookback_bars.saturating_add(1));
+    let start_idx = timestamps.len().saturating_sub(required_points);
     let timestamps = &timestamps[start_idx..];
     let left_closes = &left_closes[start_idx..];
     let right_closes = &right_closes[start_idx..];
-    if timestamps.len() < 2 {
+    if timestamps.len() < required_points {
         return Ok(Json(ExpectancyResponse {
             timeframe: timeframe.as_str().to_string(),
             pair_id,
             generated_at: Utc::now(),
             status: "UNAVAILABLE".to_string(),
             decision_state: "CAUTION".to_string(),
-            primary_reason_code: "INSUFFICIENT_MODEL_WINDOW".to_string(),
+            primary_reason_code: "INSUFFICIENT_TRAIN_VALIDATION_WINDOW".to_string(),
             config,
             metrics: None,
             rationale_codes: vec![
-                "INSUFFICIENT_MODEL_WINDOW".to_string(),
+                "INSUFFICIENT_TRAIN_VALIDATION_WINDOW".to_string(),
                 "EXPECTANCY_NOT_COMPUTED".to_string(),
             ],
         }));
@@ -4656,8 +4773,13 @@ async fn pairs_expectancy(
     );
     let replay_rows =
         derive_replay_trades_from_series(&pair_id, timeframe, &series, config.entry_z);
+    let validation_start = timestamps[config.train_bars.min(timestamps.len().saturating_sub(1))];
+    let validation_rows = replay_rows
+        .into_iter()
+        .filter(|row| row.entry_ts >= validation_start)
+        .collect::<Vec<_>>();
     let metrics = compute_expectancy_metrics(
-        &replay_rows,
+        &validation_rows,
         *left_closes.last().unwrap_or(&0.0),
         *right_closes.last().unwrap_or(&0.0),
         output.hedge_ratio,
@@ -4672,12 +4794,15 @@ async fn pairs_expectancy(
         stop_z = config.stop_z,
         z_method = %config.z_method,
         lookback_bars = config.lookback_bars,
-        replay_rows = replay_rows.len(),
+        train_bars = config.train_bars,
+        validation_bars = config.validation_bars,
+        replay_rows = validation_rows.len(),
         status = if metrics.is_some() { "AVAILABLE" } else { "UNAVAILABLE" },
         "expectancy query computed"
     );
-    let (status, decision_state, primary_reason_code, rationale_codes) =
+    let (status, decision_state, primary_reason_code, mut rationale_codes) =
         classify_expectancy_result(metrics.as_ref());
+    rationale_codes.push("IS_OOS_WINDOW_APPLIED".to_string());
     Ok(Json(ExpectancyResponse {
         timeframe: timeframe.as_str().to_string(),
         pair_id,
@@ -4731,7 +4856,10 @@ async fn pairs_replay_trades(
         .div_euclid(timeframe.step_seconds())
         .max(120) as usize)
         .max(config.lookback_bars);
-    let lookback = requested_bars.saturating_add(32) as i64;
+    let required_bars =
+        requested_bars.max(config.train_bars.saturating_add(config.validation_bars));
+    let required_points = required_bars.saturating_add(1);
+    let lookback = required_points.saturating_add(32) as i64;
     let left = state
         .repository
         .fetch_recent_closes(&pair.left, timeframe, lookback)
@@ -4743,7 +4871,7 @@ async fn pairs_replay_trades(
         .await
         .map_err(|error| ApiError::Upstream(error.to_string()))?;
     let (timestamps, left_closes, right_closes) = align_closes(left, right);
-    if timestamps.len() < 120 {
+    if timestamps.len() < required_points {
         return Ok(Json(ReplayTradesResponse {
             timeframe: timeframe.as_str().to_string(),
             pair_id,
@@ -4755,15 +4883,13 @@ async fn pairs_replay_trades(
             exit_mode,
             config,
             rationale_codes: vec![
-                "INSUFFICIENT_ALIGNED_CANDLES".to_string(),
+                "INSUFFICIENT_TRAIN_VALIDATION_WINDOW".to_string(),
                 "REPLAY_NOT_COMPUTED".to_string(),
             ],
             rows: vec![],
         }));
     }
-    let start_idx = timestamps
-        .len()
-        .saturating_sub(requested_bars.saturating_add(1));
+    let start_idx = timestamps.len().saturating_sub(required_points);
     let timestamps = &timestamps[start_idx..];
     let left_closes = &left_closes[start_idx..];
     let right_closes = &right_closes[start_idx..];
@@ -4793,9 +4919,11 @@ async fn pairs_replay_trades(
             right_constraints,
         },
     );
+    let validation_start = timestamps[config.train_bars.min(timestamps.len().saturating_sub(1))];
     let cutoff = Utc::now() - chrono::Duration::hours(hours);
     let mut rows = derive_replay_trades_from_series(&pair_id, timeframe, &series, config.entry_z)
         .into_iter()
+        .filter(|row| row.entry_ts >= validation_start)
         .filter(|row| row.exit_ts >= cutoff)
         .collect::<Vec<_>>();
     rows.sort_by(|left, right| right.exit_ts.cmp(&left.exit_ts));
@@ -4807,11 +4935,13 @@ async fn pairs_replay_trades(
         limit,
         exit_mode = %exit_mode,
         lookback_bars = config.lookback_bars,
+        train_bars = config.train_bars,
+        validation_bars = config.validation_bars,
         replay_rows = rows.len(),
         status = if rows.is_empty() { "UNAVAILABLE" } else { "AVAILABLE" },
         "replay-trades query computed"
     );
-    let (status, rationale_codes) = if rows.is_empty() {
+    let (status, mut rationale_codes) = if rows.is_empty() {
         (
             "UNAVAILABLE".to_string(),
             vec![
@@ -4828,6 +4958,7 @@ async fn pairs_replay_trades(
             ],
         )
     };
+    rationale_codes.push("IS_OOS_WINDOW_APPLIED".to_string());
     Ok(Json(ReplayTradesResponse {
         timeframe: timeframe.as_str().to_string(),
         pair_id,
@@ -4854,13 +4985,94 @@ struct SweepDataset {
     round_trip_cost_bps: f64,
 }
 
+fn compute_walk_forward_summary(
+    rows: &[ReplayTradeEntry],
+    validation_timestamps: &[DateTime<Utc>],
+    folds_requested: usize,
+    min_trades_per_fold: usize,
+) -> WalkForwardSummary {
+    let bars = validation_timestamps.len().saturating_sub(1);
+    let folds_evaluated = folds_requested.clamp(1, bars.max(1));
+    let mut fold_trade_counts = Vec::with_capacity(folds_evaluated);
+    let mut fold_scores = Vec::with_capacity(folds_evaluated);
+    let mut folds_completed = 0usize;
+
+    for fold in 0..folds_evaluated {
+        let start_bar = fold.saturating_mul(bars).div_euclid(folds_evaluated);
+        let mut end_bar = (fold + 1).saturating_mul(bars).div_euclid(folds_evaluated);
+        if end_bar <= start_bar {
+            end_bar = (start_bar + 1).min(bars);
+        }
+        let start_ts = validation_timestamps
+            .get(start_bar)
+            .copied()
+            .unwrap_or_else(Utc::now);
+        let end_ts = validation_timestamps
+            .get(end_bar)
+            .copied()
+            .or_else(|| validation_timestamps.last().copied())
+            .unwrap_or(start_ts);
+
+        let fold_rows = rows
+            .iter()
+            .filter(|row| {
+                if fold + 1 == folds_evaluated {
+                    row.entry_ts >= start_ts && row.entry_ts <= end_ts
+                } else {
+                    row.entry_ts >= start_ts && row.entry_ts < end_ts
+                }
+            })
+            .collect::<Vec<_>>();
+        let trades = fold_rows.len();
+        fold_trade_counts.push(trades);
+        if trades < min_trades_per_fold {
+            continue;
+        }
+        folds_completed = folds_completed.saturating_add(1);
+        let wins = fold_rows.iter().filter(|row| row.net_bps > 0.0).count() as f64;
+        let win_rate = (wins / trades as f64).clamp(0.0, 1.0);
+        let avg_net_bps = fold_rows.iter().map(|row| row.net_bps).sum::<f64>() / trades as f64;
+        let trade_weight = (trades as f64).ln_1p().max(1.0);
+        fold_scores.push(avg_net_bps * win_rate * trade_weight);
+    }
+
+    let pass = folds_completed == folds_evaluated;
+    let avg_objective_score = if pass && !fold_scores.is_empty() {
+        fold_scores.iter().sum::<f64>() / fold_scores.len() as f64
+    } else {
+        f64::NEG_INFINITY
+    };
+    let mut rationale_codes = vec![];
+    if pass {
+        rationale_codes.push("WALK_FORWARD_PASS".to_string());
+    } else {
+        rationale_codes.push("WALK_FORWARD_INSUFFICIENT_TRADES".to_string());
+    }
+
+    WalkForwardSummary {
+        folds_requested,
+        folds_evaluated,
+        folds_completed,
+        min_trades_per_fold,
+        pass,
+        avg_objective_score,
+        fold_trade_counts,
+        rationale_codes,
+    }
+}
+
 fn build_sweep_candidate(
     timeframe: Timeframe,
     pair_id: &str,
     config: &ExpectancyConfig,
     dataset: &SweepDataset,
+    wf_folds: usize,
+    wf_min_trades_per_fold: usize,
 ) -> ResearchSweepCandidateResponse {
-    let required_points = config.lookback_bars.saturating_add(1);
+    let required_points = config
+        .train_bars
+        .saturating_add(config.validation_bars)
+        .saturating_add(1);
     if dataset.timestamps.len() < required_points
         || dataset.left_closes.len() != dataset.timestamps.len()
         || dataset.right_closes.len() != dataset.timestamps.len()
@@ -4875,6 +5087,19 @@ fn build_sweep_candidate(
             primary_reason_code: "INSUFFICIENT_MODEL_WINDOW".to_string(),
             objective_score: f64::NEG_INFINITY,
             metrics: None,
+            walk_forward: WalkForwardSummary {
+                folds_requested: wf_folds,
+                folds_evaluated: 0,
+                folds_completed: 0,
+                min_trades_per_fold: wf_min_trades_per_fold,
+                pass: false,
+                avg_objective_score: f64::NEG_INFINITY,
+                fold_trade_counts: vec![],
+                rationale_codes: vec![
+                    "INSUFFICIENT_MODEL_WINDOW".to_string(),
+                    "WALK_FORWARD_NOT_EVALUATED".to_string(),
+                ],
+            },
             rationale_codes: vec![
                 "INSUFFICIENT_MODEL_WINDOW".to_string(),
                 "SWEEP_CANDIDATE_NOT_COMPUTED".to_string(),
@@ -4905,8 +5130,20 @@ fn build_sweep_candidate(
         },
     );
     let replay_rows = derive_replay_trades_from_series(pair_id, timeframe, &series, config.entry_z);
+    let validation_start = timestamps[config.train_bars.min(timestamps.len().saturating_sub(1))];
+    let validation_slice = &timestamps[config.train_bars.min(timestamps.len().saturating_sub(1))..];
+    let validation_rows = replay_rows
+        .into_iter()
+        .filter(|row| row.entry_ts >= validation_start)
+        .collect::<Vec<_>>();
+    let walk_forward = compute_walk_forward_summary(
+        &validation_rows,
+        validation_slice,
+        wf_folds,
+        wf_min_trades_per_fold,
+    );
     let metrics = compute_expectancy_metrics(
-        &replay_rows,
+        &validation_rows,
         *left_closes.last().unwrap_or(&0.0),
         *right_closes.last().unwrap_or(&0.0),
         dataset.hedge_ratio,
@@ -4915,11 +5152,22 @@ fn build_sweep_candidate(
     );
     let (status, decision_state, primary_reason_code, mut rationale_codes) =
         classify_expectancy_result(metrics.as_ref());
-    let objective_score = metrics
-        .as_ref()
-        .map(expectancy_objective_score)
-        .unwrap_or(f64::NEG_INFINITY);
+    let mut status = status;
+    let mut decision_state = decision_state;
+    let mut primary_reason_code = primary_reason_code;
+    let objective_score = if walk_forward.pass {
+        walk_forward.avg_objective_score
+    } else {
+        f64::NEG_INFINITY
+    };
+    if !walk_forward.pass {
+        status = "UNAVAILABLE".to_string();
+        decision_state = "CAUTION".to_string();
+        primary_reason_code = "WALK_FORWARD_INSUFFICIENT_TRADES".to_string();
+    }
     rationale_codes.push("SWEEP_EXIT_MODE_MEAN_REVERT".to_string());
+    rationale_codes.push("IS_OOS_WINDOW_APPLIED".to_string());
+    rationale_codes.extend(walk_forward.rationale_codes.iter().cloned());
 
     ResearchSweepCandidateResponse {
         rank: 0,
@@ -4931,6 +5179,7 @@ fn build_sweep_candidate(
         primary_reason_code,
         objective_score,
         metrics,
+        walk_forward,
         rationale_codes,
     }
 }
@@ -5058,6 +5307,8 @@ async fn pairs_research_sweep(
         max_combinations,
         estimated_combinations,
         execution_cap = state.settings.research_sweep_execution_cap,
+        wf_folds = state.settings.walk_forward_folds,
+        wf_min_trades_per_fold = state.settings.walk_forward_min_trades_per_fold,
         unsupported_z_method,
         timeframe_count = timeframes.len(),
         pair_count = pair_ids.len(),
@@ -5100,12 +5351,6 @@ async fn pairs_research_sweep(
         for pair in &state.settings.pairs {
             pair_lookup.insert(pair.pair_id(), pair.clone());
         }
-        let max_lookback = lookback_grid
-            .iter()
-            .copied()
-            .max()
-            .unwrap_or_else(|| analytics_model_bars(Timeframe::OneHour))
-            .saturating_add(32) as i64;
         let mut dataset_cache: HashMap<(String, String), SweepDataset> = HashMap::new();
         for timeframe in &timeframes {
             let tf = Timeframe::parse(timeframe).ok_or_else(|| {
@@ -5114,6 +5359,21 @@ async fn pairs_research_sweep(
                     timeframe
                 ))
             })?;
+            let max_lookback = lookback_grid
+                .iter()
+                .copied()
+                .max()
+                .unwrap_or_else(|| analytics_model_bars(tf));
+            let train_bars = payload
+                .train_bars
+                .unwrap_or_else(|| state.settings.optimizer_train_bars(tf));
+            let validation_bars = payload
+                .validation_bars
+                .unwrap_or_else(|| state.settings.optimizer_validation_bars(tf));
+            let required_points = max_lookback
+                .max(train_bars.saturating_add(validation_bars))
+                .saturating_add(1);
+            let fetch_depth = required_points.saturating_add(32) as i64;
             for pair_id in &pair_ids {
                 let Some(pair) = pair_lookup.get(pair_id) else {
                     return Err(ApiError::BadRequest(format!(
@@ -5123,12 +5383,12 @@ async fn pairs_research_sweep(
                 };
                 let left = state
                     .repository
-                    .fetch_recent_closes(&pair.left, tf, max_lookback)
+                    .fetch_recent_closes(&pair.left, tf, fetch_depth)
                     .await
                     .map_err(|error| ApiError::Upstream(error.to_string()))?;
                 let right = state
                     .repository
-                    .fetch_recent_closes(&pair.right, tf, max_lookback)
+                    .fetch_recent_closes(&pair.right, tf, fetch_depth)
                     .await
                     .map_err(|error| ApiError::Upstream(error.to_string()))?;
                 let (timestamps, left_closes, right_closes) = align_closes(left, right);
@@ -5175,11 +5435,16 @@ async fn pairs_research_sweep(
                                 for stop in &stop_grid {
                                     executed_combinations = executed_combinations.saturating_add(1);
                                     let mut config = match parse_expectancy_config(
+                                        tf,
                                         Some(*entry),
                                         Some(*exit),
                                         Some(*stop),
                                         Some(z_method.as_str()),
-                                        Some(*lookback),
+                                        ExpectancyWindowParams {
+                                            lookback_bars: Some(*lookback),
+                                            train_bars: payload.train_bars,
+                                            validation_bars: payload.validation_bars,
+                                        },
                                         &state.settings,
                                     ) {
                                         Ok(value) => value,
@@ -5198,8 +5463,14 @@ async fn pairs_research_sweep(
                                         failed_combinations = failed_combinations.saturating_add(1);
                                         continue;
                                     };
-                                    let candidate =
-                                        build_sweep_candidate(tf, pair_id, &config, dataset);
+                                    let candidate = build_sweep_candidate(
+                                        tf,
+                                        pair_id,
+                                        &config,
+                                        dataset,
+                                        state.settings.walk_forward_folds,
+                                        state.settings.walk_forward_min_trades_per_fold,
+                                    );
                                     if candidate.metrics.is_some() {
                                         successful_combinations =
                                             successful_combinations.saturating_add(1);
@@ -6128,11 +6399,12 @@ mod tests {
     use super::{
         artifact_download_path, bootstrap_deviation_exceeds_threshold, bootstrap_snapshot_is_fresh,
         classify_expectancy_result, compute_expectancy_metrics, compute_pair_funding_bps_per_event,
-        compute_pair_slippage_sample_bps, days_covered, decide_champion_transition,
-        derive_paper_trades_from_series, derive_replay_trades_from_series,
-        estimate_research_combinations, evaluate_recent_performance_gate,
-        expectancy_objective_score, expected_funding_events_crossed, finalize_trade_gate,
-        normalize_funding_rate, parse_backtest_exit_mode, parse_expectancy_query,
+        compute_pair_slippage_sample_bps, compute_walk_forward_summary, days_covered,
+        decide_champion_transition, derive_paper_trades_from_series,
+        derive_replay_trades_from_series, estimate_research_combinations,
+        evaluate_recent_performance_gate, expectancy_objective_score,
+        expected_funding_events_crossed, finalize_trade_gate, normalize_funding_rate,
+        parse_backtest_exit_mode, parse_expectancy_query,
         parse_opportunity_history_stats_timeframe, parse_opportunity_history_window,
         parse_paper_trades_window, parse_replay_trades_query, percentile,
         project_continuous_funding_bps, refresh_setup_gate, resolve_artifact_path,
@@ -6422,6 +6694,8 @@ mod tests {
             stop_z: Some(3.2),
             z_method: Some("robust_z".to_string()),
             lookback_bars: Some(50),
+            train_bars: None,
+            validation_bars: None,
         };
         let (timeframe, pair_id, config) =
             parse_expectancy_query(&query, &settings).expect("parse expectancy query");
@@ -6429,6 +6703,45 @@ mod tests {
         assert_eq!(pair_id, "PF_TAOUSD__PF_HYPEUSD");
         assert_eq!(config.z_method, "ROBUST_Z");
         assert!(config.lookback_bars >= 300);
+        assert!(config.train_bars >= config.lookback_bars);
+        assert!(config.validation_bars >= 1);
+    }
+
+    #[test]
+    fn expectancy_query_accepts_explicit_is_oos_windows() {
+        let settings = StrategySettings::from_env();
+        let query = ExpectancyQuery {
+            timeframe: "1h".to_string(),
+            pair_id: "PF_TAOUSD__PF_HYPEUSD".to_string(),
+            entry_z: None,
+            exit_z: None,
+            stop_z: None,
+            z_method: Some("ROBUST_Z".to_string()),
+            lookback_bars: Some(220),
+            train_bars: Some(500),
+            validation_bars: Some(100),
+        };
+        let (_timeframe, _pair_id, config) =
+            parse_expectancy_query(&query, &settings).expect("parse expectancy query");
+        assert_eq!(config.train_bars, 500);
+        assert_eq!(config.validation_bars, 100);
+    }
+
+    #[test]
+    fn expectancy_query_rejects_train_below_lookback() {
+        let settings = StrategySettings::from_env();
+        let query = ExpectancyQuery {
+            timeframe: "1h".to_string(),
+            pair_id: "PF_TAOUSD__PF_HYPEUSD".to_string(),
+            entry_z: None,
+            exit_z: None,
+            stop_z: None,
+            z_method: Some("ROBUST_Z".to_string()),
+            lookback_bars: Some(500),
+            train_bars: Some(220),
+            validation_bars: Some(100),
+        };
+        assert!(parse_expectancy_query(&query, &settings).is_err());
     }
 
     #[test]
@@ -6445,6 +6758,8 @@ mod tests {
             stop_z: Some(3.5),
             z_method: Some("vol_normalized".to_string()),
             lookback_bars: Some(150),
+            train_bars: None,
+            validation_bars: None,
         };
         let (timeframe, pair_id, hours, limit, exit_mode, config) =
             parse_replay_trades_query(&query, &settings).expect("parse replay query");
@@ -6455,6 +6770,8 @@ mod tests {
         assert_eq!(exit_mode, "opposite_extreme");
         assert_eq!(config.z_method, "VOL_NORMALIZED");
         assert!(config.lookback_bars >= 220);
+        assert!(config.train_bars >= config.lookback_bars);
+        assert!(config.validation_bars >= 1);
     }
 
     #[test]
@@ -6471,6 +6788,8 @@ mod tests {
             stop_z: None,
             z_method: None,
             lookback_bars: None,
+            train_bars: None,
+            validation_bars: None,
         };
         assert!(parse_replay_trades_query(&query, &settings).is_err());
     }
@@ -6485,6 +6804,8 @@ mod tests {
             stop_z_grid: None,
             z_methods: None,
             lookback_bars_grid: None,
+            train_bars: None,
+            validation_bars: None,
             max_combinations: None,
             dry_run: None,
         };
@@ -6501,6 +6822,8 @@ mod tests {
             stop_z_grid: Some(vec![2.8, 3.2, 3.6]),
             z_methods: Some(vec!["ROBUST_Z".to_string(), "VOL_NORMALIZED".to_string()]),
             lookback_bars_grid: Some(vec![220, 440]),
+            train_bars: None,
+            validation_bars: None,
             max_combinations: Some(10_000),
             dry_run: Some(true),
         };
@@ -6684,6 +7007,128 @@ mod tests {
         assert!((row.net_bps - 200.0).abs() < 1e-9);
         assert!((row.path.mae_bps - (-100.0)).abs() < 1e-9);
         assert!((row.path.mfe_bps - 200.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn walk_forward_summary_passes_with_sufficient_fold_trades() {
+        let start = Utc::now();
+        let validation_timestamps = vec![
+            start,
+            start + chrono::Duration::hours(1),
+            start + chrono::Duration::hours(2),
+            start + chrono::Duration::hours(3),
+            start + chrono::Duration::hours(4),
+        ];
+        let rows = vec![
+            ReplayTradeEntry {
+                trade_id: "f1".to_string(),
+                entry_ts: start + chrono::Duration::minutes(10),
+                exit_ts: start + chrono::Duration::minutes(50),
+                direction: "LONG_SPREAD".to_string(),
+                entry_z: -2.0,
+                exit_z: -0.2,
+                net_bps: 40.0,
+                path: ReplayTradePathSummary {
+                    mae_bps: -5.0,
+                    mfe_bps: 45.0,
+                    bars_underwater: 1,
+                    bars_held: 1,
+                },
+            },
+            ReplayTradeEntry {
+                trade_id: "f2".to_string(),
+                entry_ts: start + chrono::Duration::hours(1) + chrono::Duration::minutes(5),
+                exit_ts: start + chrono::Duration::hours(1) + chrono::Duration::minutes(40),
+                direction: "SHORT_SPREAD".to_string(),
+                entry_z: 2.0,
+                exit_z: 0.1,
+                net_bps: 35.0,
+                path: ReplayTradePathSummary {
+                    mae_bps: -4.0,
+                    mfe_bps: 36.0,
+                    bars_underwater: 0,
+                    bars_held: 1,
+                },
+            },
+            ReplayTradeEntry {
+                trade_id: "f3".to_string(),
+                entry_ts: start + chrono::Duration::hours(2) + chrono::Duration::minutes(12),
+                exit_ts: start + chrono::Duration::hours(2) + chrono::Duration::minutes(45),
+                direction: "LONG_SPREAD".to_string(),
+                entry_z: -2.1,
+                exit_z: -0.4,
+                net_bps: 42.0,
+                path: ReplayTradePathSummary {
+                    mae_bps: -6.0,
+                    mfe_bps: 43.0,
+                    bars_underwater: 1,
+                    bars_held: 1,
+                },
+            },
+            ReplayTradeEntry {
+                trade_id: "f4".to_string(),
+                entry_ts: start + chrono::Duration::hours(3) + chrono::Duration::minutes(8),
+                exit_ts: start + chrono::Duration::hours(3) + chrono::Duration::minutes(42),
+                direction: "SHORT_SPREAD".to_string(),
+                entry_z: 2.2,
+                exit_z: 0.0,
+                net_bps: 38.0,
+                path: ReplayTradePathSummary {
+                    mae_bps: -3.0,
+                    mfe_bps: 40.0,
+                    bars_underwater: 0,
+                    bars_held: 1,
+                },
+            },
+        ];
+
+        let summary = compute_walk_forward_summary(&rows, &validation_timestamps, 4, 1);
+        assert!(summary.pass);
+        assert_eq!(summary.folds_requested, 4);
+        assert_eq!(summary.folds_evaluated, 4);
+        assert_eq!(summary.folds_completed, 4);
+        assert_eq!(summary.fold_trade_counts, vec![1, 1, 1, 1]);
+        assert!(summary.avg_objective_score.is_finite());
+        assert!(summary
+            .rationale_codes
+            .iter()
+            .any(|code| code == "WALK_FORWARD_PASS"));
+    }
+
+    #[test]
+    fn walk_forward_summary_fails_when_fold_trades_are_insufficient() {
+        let start = Utc::now();
+        let validation_timestamps = vec![
+            start,
+            start + chrono::Duration::hours(1),
+            start + chrono::Duration::hours(2),
+            start + chrono::Duration::hours(3),
+        ];
+        let rows = vec![ReplayTradeEntry {
+            trade_id: "f1".to_string(),
+            entry_ts: start + chrono::Duration::minutes(10),
+            exit_ts: start + chrono::Duration::minutes(40),
+            direction: "LONG_SPREAD".to_string(),
+            entry_z: -2.0,
+            exit_z: -0.3,
+            net_bps: 20.0,
+            path: ReplayTradePathSummary {
+                mae_bps: -2.0,
+                mfe_bps: 22.0,
+                bars_underwater: 0,
+                bars_held: 1,
+            },
+        }];
+
+        let summary = compute_walk_forward_summary(&rows, &validation_timestamps, 3, 1);
+        assert!(!summary.pass);
+        assert_eq!(summary.folds_evaluated, 3);
+        assert!(summary.folds_completed < summary.folds_evaluated);
+        assert_eq!(summary.avg_objective_score, f64::NEG_INFINITY);
+        assert!(summary
+            .rationale_codes
+            .iter()
+            .any(|code| code == "WALK_FORWARD_INSUFFICIENT_TRADES"));
     }
 
     #[test]

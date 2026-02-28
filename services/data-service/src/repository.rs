@@ -1,5 +1,6 @@
 use anyhow::{anyhow, Result};
 use async_trait::async_trait;
+use chrono::{DateTime, Utc};
 use common_types::{Candle, DataIntegrityReport, DataQueryRequest, Timeframe, TradeTick};
 use tokio_postgres::Row;
 use tokio_postgres::{types::ToSql, Client, NoTls};
@@ -25,6 +26,11 @@ pub trait MarketDataRepository: Send + Sync {
         timeframe: Timeframe,
         limit: i64,
     ) -> Result<Vec<IntegrityHistoryEntry>>;
+    async fn delete_candles_older_than(
+        &self,
+        timeframe: Timeframe,
+        cutoff_ts: DateTime<Utc>,
+    ) -> Result<u64>;
 }
 
 #[derive(Debug, Clone)]
@@ -90,6 +96,17 @@ impl MarketDataRepository for UnconfiguredRepository {
         let _ = (instrument, timeframe, limit);
         Err(anyhow!(
             "market data repository is not configured; integrity history unavailable"
+        ))
+    }
+
+    async fn delete_candles_older_than(
+        &self,
+        timeframe: Timeframe,
+        cutoff_ts: DateTime<Utc>,
+    ) -> Result<u64> {
+        let _ = (timeframe, cutoff_ts);
+        Err(anyhow!(
+            "market data repository is not configured; candle retention prune unavailable"
         ))
     }
 }
@@ -272,6 +289,23 @@ impl MarketDataRepository for PostgresMarketDataRepository {
             )
             .await?;
         Ok(rows.into_iter().map(map_integrity_history_row).collect())
+    }
+
+    async fn delete_candles_older_than(
+        &self,
+        timeframe: Timeframe,
+        cutoff_ts: DateTime<Utc>,
+    ) -> Result<u64> {
+        let deleted = self
+            .client
+            .execute(
+                "DELETE FROM candles
+                 WHERE timeframe = $1
+                   AND ts < $2",
+                &[&timeframe_string(timeframe), &cutoff_ts],
+            )
+            .await?;
+        Ok(deleted)
     }
 }
 

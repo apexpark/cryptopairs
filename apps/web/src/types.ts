@@ -206,6 +206,8 @@ export interface StrategyExpectancyConfig {
   z_method: StrategyZMethod;
   hedge_method: string;
   lookback_bars: number;
+  train_bars: number;
+  validation_bars: number;
 }
 
 export interface StrategyPairsExpectancyMetrics {
@@ -274,6 +276,8 @@ export interface StrategyPairsResearchSweepRequest {
   stop_z_grid?: number[];
   z_methods?: StrategyZMethod[];
   lookback_bars_grid?: number[];
+  train_bars?: number;
+  validation_bars?: number;
   max_combinations?: number;
   dry_run?: boolean;
 }
@@ -306,6 +310,16 @@ export interface StrategyPairsResearchSweepCandidate {
   primary_reason_code: string;
   objective_score: number;
   metrics: StrategyPairsExpectancyMetrics | null;
+  walk_forward: {
+    folds_requested: number;
+    folds_evaluated: number;
+    folds_completed: number;
+    min_trades_per_fold: number;
+    pass: boolean;
+    avg_objective_score: number;
+    fold_trade_counts: number[];
+    rationale_codes: string[];
+  };
   rationale_codes: string[];
 }
 
