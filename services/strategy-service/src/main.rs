@@ -107,6 +107,13 @@ struct StrategySettings {
     research_sweep_top_k: usize,
     walk_forward_folds: usize,
     walk_forward_min_trades_per_fold: usize,
+    candidate_probation_days_1m: usize,
+    candidate_probation_days_15m: usize,
+    candidate_probation_days_1h: usize,
+    candidate_probation_min_samples: usize,
+    candidate_probation_max_samples: usize,
+    candidate_promotion_min_objective_delta: f64,
+    candidate_inbox_default_limit: usize,
     maintenance_report_path: String,
     maintenance_artifacts_root: String,
     maintenance_apply_script_path: String,
@@ -232,6 +239,20 @@ impl StrategySettings {
         let walk_forward_folds = parse_env_usize("STRATEGY_WF_FOLDS", 4).clamp(1, 24);
         let walk_forward_min_trades_per_fold =
             parse_env_usize("STRATEGY_WF_MIN_TRADES_PER_FOLD", 1).clamp(1, 100);
+        let candidate_probation_days_1m =
+            parse_env_usize("STRATEGY_CANDIDATE_PROBATION_DAYS_1M", 3).max(1);
+        let candidate_probation_days_15m =
+            parse_env_usize("STRATEGY_CANDIDATE_PROBATION_DAYS_15M", 7).max(1);
+        let candidate_probation_days_1h =
+            parse_env_usize("STRATEGY_CANDIDATE_PROBATION_DAYS_1H", 14).max(1);
+        let candidate_probation_min_samples =
+            parse_env_usize("STRATEGY_CANDIDATE_PROBATION_MIN_SAMPLES", 12).max(1);
+        let candidate_probation_max_samples =
+            parse_env_usize("STRATEGY_CANDIDATE_PROBATION_MAX_SAMPLES", 336).max(1);
+        let candidate_promotion_min_objective_delta =
+            parse_env_f64("STRATEGY_CANDIDATE_PROMOTION_MIN_OBJECTIVE_DELTA", 0.25);
+        let candidate_inbox_default_limit =
+            parse_env_usize("STRATEGY_CANDIDATE_INBOX_DEFAULT_LIMIT", 3).clamp(1, 100);
         let maintenance_report_path = std::env::var("STRATEGY_MAINTENANCE_REPORT_PATH")
             .unwrap_or_else(|_| {
                 "artifacts/strategy_tuning/latest_maintenance_report.json".to_string()
@@ -317,6 +338,13 @@ impl StrategySettings {
             research_sweep_top_k,
             walk_forward_folds,
             walk_forward_min_trades_per_fold,
+            candidate_probation_days_1m,
+            candidate_probation_days_15m,
+            candidate_probation_days_1h,
+            candidate_probation_min_samples,
+            candidate_probation_max_samples,
+            candidate_promotion_min_objective_delta,
+            candidate_inbox_default_limit,
             maintenance_report_path,
             maintenance_artifacts_root,
             maintenance_apply_script_path,
@@ -372,6 +400,15 @@ impl StrategySettings {
         }
     }
 
+    fn candidate_probation_duration(&self, timeframe: Timeframe) -> chrono::Duration {
+        let days = match timeframe {
+            Timeframe::OneMinute => self.candidate_probation_days_1m,
+            Timeframe::FifteenMinutes => self.candidate_probation_days_15m,
+            Timeframe::OneHour => self.candidate_probation_days_1h,
+        };
+        chrono::Duration::days(days as i64)
+    }
+
     fn ui_access_enabled(&self) -> bool {
         !self.ui_access_password.trim().is_empty()
     }
@@ -423,6 +460,126 @@ struct ChampionTransition {
     challenger_score: f64,
     score_delta: f64,
     decision: ChampionDecision,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CandidateLifecycleState {
+    Challenger,
+    PromotionReady,
+    Champion,
+    Hold,
+    Rejected,
+}
+
+impl CandidateLifecycleState {
+    fn parse(raw: &str) -> Option<Self> {
+        match raw.trim().to_ascii_uppercase().as_str() {
+            "CHALLENGER" => Some(Self::Challenger),
+            "PROMOTION_READY" => Some(Self::PromotionReady),
+            "CHAMPION" => Some(Self::Champion),
+            "HOLD" => Some(Self::Hold),
+            "REJECTED" => Some(Self::Rejected),
+            _ => None,
+        }
+    }
+
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Challenger => "CHALLENGER",
+            Self::PromotionReady => "PROMOTION_READY",
+            Self::Champion => "CHAMPION",
+            Self::Hold => "HOLD",
+            Self::Rejected => "REJECTED",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CandidateOperatorAction {
+    Promote,
+    Hold,
+    Reject,
+}
+
+impl CandidateOperatorAction {
+    fn parse(raw: &str) -> Option<Self> {
+        match raw.trim().to_ascii_uppercase().as_str() {
+            "PROMOTE" => Some(Self::Promote),
+            "HOLD" => Some(Self::Hold),
+            "REJECT" => Some(Self::Reject),
+            _ => None,
+        }
+    }
+
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Promote => "PROMOTE",
+            Self::Hold => "HOLD",
+            Self::Reject => "REJECT",
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+struct CandidateProbationRow {
+    pair_id: String,
+    timeframe: Timeframe,
+    candidate_id: String,
+    candidate_variant: String,
+    objective_score: f64,
+    state: CandidateLifecycleState,
+    eligible_after: DateTime<Utc>,
+    probation_samples: usize,
+    promotable: bool,
+    last_candidate_score: f64,
+    last_champion_score: f64,
+    last_objective_delta: f64,
+}
+
+#[derive(Debug, Default, Clone)]
+struct CandidateProbationAdvanceResult {
+    transitioned_to_ready: bool,
+    transitioned_to_failed: bool,
+    fail_reason: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+struct CandidateProbationDecision {
+    next_state: CandidateLifecycleState,
+    promotable: bool,
+    reason: String,
+    transitioned_to_ready: bool,
+    transitioned_to_failed: bool,
+}
+
+#[derive(Debug, Clone)]
+struct CandidateProbationInputs {
+    has_candidate_score: bool,
+    next_samples: usize,
+    now: DateTime<Utc>,
+    eligible_after: DateTime<Utc>,
+    min_samples: usize,
+    max_samples: usize,
+    objective_delta: f64,
+    min_objective_delta: f64,
+}
+
+struct CandidateActionEvent<'a> {
+    action: &'a str,
+    state_before: &'a str,
+    state_after: &'a str,
+    reason: &'a str,
+    operator_id: &'a str,
+}
+
+struct CandidateProbationUpdate<'a> {
+    next_state: CandidateLifecycleState,
+    probation_samples: usize,
+    promotable: bool,
+    last_reason: &'a str,
+    last_candidate_score: f64,
+    last_champion_score: f64,
+    last_objective_delta: f64,
 }
 
 #[derive(Debug)]
@@ -559,6 +716,58 @@ impl StrategyRepository {
                     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
                     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
                     PRIMARY KEY (pair_id, timeframe, exit_mode, entry_ts, exit_ts, exit_kind)
+                 );
+                 CREATE TABLE IF NOT EXISTS strategy_candidate_runs (
+                    candidate_id TEXT PRIMARY KEY,
+                    request_id TEXT NOT NULL,
+                    pair_id TEXT NOT NULL,
+                    timeframe TEXT NOT NULL,
+                    rank INTEGER NOT NULL,
+                    candidate_variant TEXT NOT NULL,
+                    status TEXT NOT NULL,
+                    decision_state TEXT NOT NULL,
+                    primary_reason_code TEXT NOT NULL,
+                    objective_score DOUBLE PRECISION NOT NULL,
+                    objective_delta DOUBLE PRECISION NOT NULL,
+                    config_json TEXT NOT NULL,
+                    metrics_json TEXT,
+                    walk_forward_json TEXT NOT NULL,
+                    rationale_codes TEXT NOT NULL DEFAULT '',
+                    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                 );
+                 CREATE INDEX IF NOT EXISTS idx_strategy_candidate_runs_pair_timeframe_created
+                 ON strategy_candidate_runs (pair_id, timeframe, created_at DESC);
+                 CREATE INDEX IF NOT EXISTS idx_strategy_candidate_runs_request
+                 ON strategy_candidate_runs (request_id);
+                 CREATE TABLE IF NOT EXISTS strategy_candidate_probation (
+                    pair_id TEXT NOT NULL,
+                    timeframe TEXT NOT NULL,
+                    candidate_id TEXT NOT NULL REFERENCES strategy_candidate_runs(candidate_id) ON DELETE CASCADE,
+                    state TEXT NOT NULL,
+                    started_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                    eligible_after TIMESTAMPTZ NOT NULL,
+                    probation_samples INTEGER NOT NULL DEFAULT 0,
+                    promotable BOOLEAN NOT NULL DEFAULT FALSE,
+                    last_reason TEXT NOT NULL DEFAULT '',
+                    last_candidate_score DOUBLE PRECISION NOT NULL DEFAULT 0,
+                    last_champion_score DOUBLE PRECISION NOT NULL DEFAULT 0,
+                    last_objective_delta DOUBLE PRECISION NOT NULL DEFAULT 0,
+                    PRIMARY KEY (pair_id, timeframe)
+                 );
+                 CREATE INDEX IF NOT EXISTS idx_strategy_candidate_probation_state
+                 ON strategy_candidate_probation (state, promotable, updated_at DESC);
+                 CREATE TABLE IF NOT EXISTS strategy_candidate_actions (
+                    id BIGSERIAL PRIMARY KEY,
+                    pair_id TEXT NOT NULL,
+                    timeframe TEXT NOT NULL,
+                    candidate_id TEXT NOT NULL,
+                    action TEXT NOT NULL,
+                    state_before TEXT NOT NULL,
+                    state_after TEXT NOT NULL,
+                    reason TEXT NOT NULL DEFAULT '',
+                    operator_id TEXT NOT NULL,
+                    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
                  );",
             )
             .await?;
@@ -991,6 +1200,463 @@ impl StrategyRepository {
         Ok(rows.into_iter().map(|row| row.get(0)).collect())
     }
 
+    async fn upsert_candidate_run(
+        &self,
+        request_id: &str,
+        candidate: &ResearchSweepCandidateResponse,
+    ) -> anyhow::Result<String> {
+        let timeframe = Timeframe::parse(&candidate.timeframe).ok_or_else(|| {
+            anyhow::anyhow!(
+                "invalid candidate timeframe '{}' for pair '{}'",
+                candidate.timeframe,
+                candidate.pair_id
+            )
+        })?;
+        let candidate_id = format!(
+            "{}:{}:{}:{}",
+            request_id, candidate.timeframe, candidate.pair_id, candidate.rank
+        );
+        let champion_score = self
+            .fetch_selected_signal(&candidate.pair_id, timeframe)
+            .await?
+            .map(|row| row.opportunity_score)
+            .unwrap_or(0.0);
+        let objective_delta = candidate.objective_score - champion_score;
+        let config_json = serde_json::to_string(&candidate.config)?;
+        let metrics_json = candidate
+            .metrics
+            .as_ref()
+            .map(serde_json::to_string)
+            .transpose()?;
+        let walk_forward_json = serde_json::to_string(&candidate.walk_forward)?;
+        let rationale_codes = candidate.rationale_codes.join("|");
+        let written = self
+            .client
+            .execute(
+                "INSERT INTO strategy_candidate_runs
+                 (candidate_id, request_id, pair_id, timeframe, rank, candidate_variant, status,
+                  decision_state, primary_reason_code, objective_score, objective_delta,
+                  config_json, metrics_json, walk_forward_json, rationale_codes)
+                 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
+                 ON CONFLICT (candidate_id)
+                 DO UPDATE SET
+                    request_id = EXCLUDED.request_id,
+                    pair_id = EXCLUDED.pair_id,
+                    timeframe = EXCLUDED.timeframe,
+                    rank = EXCLUDED.rank,
+                    candidate_variant = EXCLUDED.candidate_variant,
+                    status = EXCLUDED.status,
+                    decision_state = EXCLUDED.decision_state,
+                    primary_reason_code = EXCLUDED.primary_reason_code,
+                    objective_score = EXCLUDED.objective_score,
+                    objective_delta = EXCLUDED.objective_delta,
+                    config_json = EXCLUDED.config_json,
+                    metrics_json = EXCLUDED.metrics_json,
+                    walk_forward_json = EXCLUDED.walk_forward_json,
+                    rationale_codes = EXCLUDED.rationale_codes",
+                &[
+                    &candidate_id as &(dyn ToSql + Sync),
+                    &request_id,
+                    &candidate.pair_id,
+                    &candidate.timeframe,
+                    &(candidate.rank as i32),
+                    &candidate.config.z_method,
+                    &candidate.status,
+                    &candidate.decision_state,
+                    &candidate.primary_reason_code,
+                    &candidate.objective_score,
+                    &objective_delta,
+                    &config_json,
+                    &metrics_json,
+                    &walk_forward_json,
+                    &rationale_codes,
+                ],
+            )
+            .await?;
+        if written == 0 {
+            anyhow::bail!(
+                "candidate run upsert affected zero rows for pair={} timeframe={}",
+                candidate.pair_id,
+                candidate.timeframe
+            );
+        }
+        Ok(candidate_id)
+    }
+
+    async fn record_candidate_action(
+        &self,
+        pair_id: &str,
+        timeframe: Timeframe,
+        candidate_id: &str,
+        event: &CandidateActionEvent<'_>,
+    ) -> anyhow::Result<u64> {
+        let written = self
+            .client
+            .execute(
+                "INSERT INTO strategy_candidate_actions
+                 (pair_id, timeframe, candidate_id, action, state_before, state_after, reason, operator_id)
+                 VALUES ($1,$2,$3,$4,$5,$6,$7,$8)",
+                &[
+                    &pair_id as &(dyn ToSql + Sync),
+                    &timeframe.as_str(),
+                    &candidate_id,
+                    &event.action,
+                    &event.state_before,
+                    &event.state_after,
+                    &event.reason,
+                    &event.operator_id,
+                ],
+            )
+            .await?;
+        Ok(written)
+    }
+
+    async fn activate_candidate_probation(
+        &self,
+        pair_id: &str,
+        timeframe: Timeframe,
+        candidate_id: &str,
+        eligible_after: DateTime<Utc>,
+    ) -> anyhow::Result<()> {
+        let existing = self
+            .client
+            .query_opt(
+                "SELECT candidate_id, state
+                 FROM strategy_candidate_probation
+                 WHERE pair_id=$1 AND timeframe=$2",
+                &[&pair_id, &timeframe.as_str()],
+            )
+            .await?;
+        let now = Utc::now();
+        match existing {
+            Some(row) => {
+                let existing_candidate_id: String = row.get(0);
+                let existing_state: String = row.get(1);
+                if existing_candidate_id == candidate_id {
+                    self.client
+                        .execute(
+                            "UPDATE strategy_candidate_probation
+                             SET updated_at = $1,
+                                 last_reason = $2
+                             WHERE pair_id = $3 AND timeframe = $4",
+                            &[
+                                &now as &(dyn ToSql + Sync),
+                                &"CHALLENGER_REFRESHED",
+                                &pair_id,
+                                &timeframe.as_str(),
+                            ],
+                        )
+                        .await?;
+                    let _ = self
+                        .record_candidate_action(
+                            pair_id,
+                            timeframe,
+                            candidate_id,
+                            &CandidateActionEvent {
+                                action: "SYSTEM_REFRESH_CANDIDATE",
+                                state_before: &existing_state,
+                                state_after: &existing_state,
+                                reason: "candidate refreshed from latest sweep execution",
+                                operator_id: "system",
+                            },
+                        )
+                        .await?;
+                    return Ok(());
+                }
+                self.client
+                    .execute(
+                        "UPDATE strategy_candidate_probation
+                         SET candidate_id = $1,
+                             state = $2,
+                             started_at = $3,
+                             updated_at = $3,
+                             eligible_after = $4,
+                             probation_samples = 0,
+                             promotable = FALSE,
+                             last_reason = $5,
+                             last_candidate_score = 0,
+                             last_champion_score = 0,
+                             last_objective_delta = 0
+                         WHERE pair_id = $6 AND timeframe = $7",
+                        &[
+                            &candidate_id as &(dyn ToSql + Sync),
+                            &CandidateLifecycleState::Challenger.as_str(),
+                            &now,
+                            &eligible_after,
+                            &"NEW_CHALLENGER_FROM_SWEEP",
+                            &pair_id,
+                            &timeframe.as_str(),
+                        ],
+                    )
+                    .await?;
+                let _ = self
+                    .record_candidate_action(
+                        pair_id,
+                        timeframe,
+                        candidate_id,
+                        &CandidateActionEvent {
+                            action: "SYSTEM_REPLACE_CANDIDATE",
+                            state_before: &existing_state,
+                            state_after: CandidateLifecycleState::Challenger.as_str(),
+                            reason: "candidate replaced by latest sweep winner",
+                            operator_id: "system",
+                        },
+                    )
+                    .await?;
+            }
+            None => {
+                self.client
+                    .execute(
+                        "INSERT INTO strategy_candidate_probation
+                         (pair_id, timeframe, candidate_id, state, started_at, updated_at, eligible_after,
+                          probation_samples, promotable, last_reason, last_candidate_score,
+                          last_champion_score, last_objective_delta)
+                         VALUES ($1,$2,$3,$4,$5,$5,$6,0,FALSE,$7,0,0,0)",
+                        &[
+                            &pair_id as &(dyn ToSql + Sync),
+                            &timeframe.as_str(),
+                            &candidate_id,
+                            &CandidateLifecycleState::Challenger.as_str(),
+                            &now,
+                            &eligible_after,
+                            &"NEW_CHALLENGER_FROM_SWEEP",
+                        ],
+                    )
+                    .await?;
+                let _ = self
+                    .record_candidate_action(
+                        pair_id,
+                        timeframe,
+                        candidate_id,
+                        &CandidateActionEvent {
+                            action: "SYSTEM_NEW_CANDIDATE",
+                            state_before: "NONE",
+                            state_after: CandidateLifecycleState::Challenger.as_str(),
+                            reason: "candidate activated for probation",
+                            operator_id: "system",
+                        },
+                    )
+                    .await?;
+            }
+        }
+        Ok(())
+    }
+
+    async fn fetch_active_candidate_probation(
+        &self,
+        pair_id: &str,
+        timeframe: Timeframe,
+    ) -> anyhow::Result<Option<CandidateProbationRow>> {
+        let row = self
+            .client
+            .query_opt(
+                "SELECT p.pair_id,
+                        p.timeframe,
+                        p.candidate_id,
+                        r.candidate_variant,
+                        r.objective_score,
+                        p.state,
+                        p.started_at,
+                        p.updated_at,
+                        p.eligible_after,
+                        p.probation_samples,
+                        p.promotable,
+                        p.last_reason,
+                        p.last_candidate_score,
+                        p.last_champion_score,
+                        p.last_objective_delta
+                 FROM strategy_candidate_probation p
+                 JOIN strategy_candidate_runs r ON r.candidate_id = p.candidate_id
+                 WHERE p.pair_id = $1 AND p.timeframe = $2",
+                &[&pair_id, &timeframe.as_str()],
+            )
+            .await?;
+
+        let Some(row) = row else {
+            return Ok(None);
+        };
+        let state_raw: String = row.get(5);
+        let state = CandidateLifecycleState::parse(&state_raw).ok_or_else(|| {
+            anyhow::anyhow!(
+                "invalid candidate probation state '{}' for pair={} timeframe={}",
+                state_raw,
+                pair_id,
+                timeframe.as_str()
+            )
+        })?;
+        Ok(Some(CandidateProbationRow {
+            pair_id: row.get(0),
+            timeframe: timeframe_from_str(row.get::<usize, String>(1).as_str())?,
+            candidate_id: row.get(2),
+            candidate_variant: row.get(3),
+            objective_score: row.get(4),
+            state,
+            eligible_after: row.get(8),
+            probation_samples: row.get::<usize, i32>(9).max(0) as usize,
+            promotable: row.get(10),
+            last_candidate_score: row.get(12),
+            last_champion_score: row.get(13),
+            last_objective_delta: row.get(14),
+        }))
+    }
+
+    async fn update_candidate_probation_state(
+        &self,
+        row: &CandidateProbationRow,
+        update: &CandidateProbationUpdate<'_>,
+    ) -> anyhow::Result<()> {
+        self.client
+            .execute(
+                "UPDATE strategy_candidate_probation
+                 SET state = $1,
+                     updated_at = $2,
+                     probation_samples = $3,
+                     promotable = $4,
+                     last_reason = $5,
+                     last_candidate_score = $6,
+                     last_champion_score = $7,
+                     last_objective_delta = $8
+                 WHERE pair_id = $9 AND timeframe = $10 AND candidate_id = $11",
+                &[
+                    &update.next_state.as_str() as &(dyn ToSql + Sync),
+                    &Utc::now(),
+                    &(update.probation_samples as i32),
+                    &update.promotable,
+                    &update.last_reason,
+                    &update.last_candidate_score,
+                    &update.last_champion_score,
+                    &update.last_objective_delta,
+                    &row.pair_id,
+                    &row.timeframe.as_str(),
+                    &row.candidate_id,
+                ],
+            )
+            .await?;
+        Ok(())
+    }
+
+    async fn count_promotable_candidates(&self, timeframe: Timeframe) -> anyhow::Result<i64> {
+        let row = self
+            .client
+            .query_one(
+                "SELECT COUNT(*)::BIGINT
+                 FROM strategy_candidate_probation
+                 WHERE timeframe = $1
+                   AND state = $2
+                   AND promotable = TRUE",
+                &[
+                    &timeframe.as_str() as &(dyn ToSql + Sync),
+                    &CandidateLifecycleState::PromotionReady.as_str(),
+                ],
+            )
+            .await?;
+        Ok(row.get(0))
+    }
+
+    async fn fetch_candidate_inbox(
+        &self,
+        timeframe_filter: Option<Timeframe>,
+        limit: i64,
+    ) -> anyhow::Result<Vec<CandidateInboxEntry>> {
+        let timeframe_param = timeframe_filter.map(|value| value.as_str().to_string());
+        let rows = self
+            .client
+            .query(
+                "SELECT p.pair_id,
+                        p.timeframe,
+                        p.candidate_id,
+                        p.state,
+                        p.started_at,
+                        p.updated_at,
+                        p.eligible_after,
+                        p.probation_samples,
+                        p.promotable,
+                        p.last_reason,
+                        p.last_candidate_score,
+                        p.last_champion_score,
+                        p.last_objective_delta,
+                        r.request_id,
+                        r.rank,
+                        r.candidate_variant,
+                        r.status,
+                        r.decision_state,
+                        r.primary_reason_code,
+                        r.objective_score,
+                        r.objective_delta,
+                        r.config_json,
+                        r.metrics_json,
+                        r.walk_forward_json,
+                        r.rationale_codes,
+                        s.signal_variant,
+                        s.opportunity_score
+                 FROM strategy_candidate_probation p
+                 JOIN strategy_candidate_runs r ON r.candidate_id = p.candidate_id
+                 LEFT JOIN strategy_selected_signal s
+                    ON s.pair_id = p.pair_id
+                   AND s.timeframe = p.timeframe
+                 WHERE ($1::TEXT IS NULL OR p.timeframe = $1)
+                 ORDER BY p.promotable DESC,
+                          r.objective_delta DESC,
+                          r.objective_score DESC,
+                          p.updated_at DESC
+                 LIMIT $2",
+                &[&timeframe_param, &limit],
+            )
+            .await?;
+
+        let mut result = vec![];
+        for row in rows {
+            let state_raw: String = row.get(3);
+            let state = CandidateLifecycleState::parse(&state_raw).ok_or_else(|| {
+                anyhow::anyhow!(
+                    "invalid candidate state '{}' for pair={} timeframe={}",
+                    state_raw,
+                    row.get::<usize, String>(0),
+                    row.get::<usize, String>(1)
+                )
+            })?;
+            let config: ExpectancyConfig = serde_json::from_str(&row.get::<usize, String>(21))?;
+            let metrics = row
+                .get::<usize, Option<String>>(22)
+                .map(|value| serde_json::from_str::<ExpectancyMetrics>(&value))
+                .transpose()?;
+            let walk_forward: WalkForwardSummary =
+                serde_json::from_str(&row.get::<usize, String>(23))?;
+            result.push(CandidateInboxEntry {
+                pair_id: row.get(0),
+                timeframe: row.get(1),
+                candidate_id: row.get(2),
+                candidate_state: state.as_str().to_string(),
+                request_id: row.get(13),
+                rank: row.get::<usize, i32>(14).max(0) as usize,
+                candidate_variant: row.get(15),
+                status: row.get(16),
+                decision_state: row.get(17),
+                primary_reason_code: row.get(18),
+                objective_score: row.get(19),
+                objective_delta: row.get(20),
+                config,
+                metrics,
+                walk_forward,
+                rationale_codes: split_codes(row.get::<usize, String>(24)),
+                champion_variant: row
+                    .get::<usize, Option<String>>(25)
+                    .unwrap_or_else(|| "UNSET".to_string()),
+                champion_score: row.get::<usize, Option<f64>>(26).unwrap_or(0.0),
+                started_at: row.get(4),
+                updated_at: row.get(5),
+                eligible_after: row.get(6),
+                probation_samples: row.get::<usize, i32>(7).max(0) as usize,
+                promotable: row.get(8),
+                last_reason: row.get(9),
+                last_candidate_score: row.get(10),
+                last_champion_score: row.get(11),
+                last_objective_delta: row.get(12),
+            });
+        }
+        Ok(result)
+    }
+
     async fn upsert_selected_signal(
         &self,
         pair_id: &str,
@@ -1331,6 +1997,23 @@ struct ResearchSweepRequest {
     validation_bars: Option<usize>,
     max_combinations: Option<usize>,
     dry_run: Option<bool>,
+}
+
+#[derive(Debug, Deserialize)]
+struct CandidateInboxQuery {
+    timeframe: Option<String>,
+    limit: Option<usize>,
+}
+
+#[derive(Debug, Deserialize)]
+struct CandidateActionRequest {
+    pair_id: String,
+    timeframe: String,
+    candidate_id: Option<String>,
+    action: String,
+    operator_id: String,
+    note: Option<String>,
+    confirm: bool,
 }
 
 #[derive(Debug, Deserialize)]
@@ -2494,7 +3177,7 @@ struct PaperTradesResponse {
     rows: Vec<PaperTradeEntry>,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 struct ExpectancyConfig {
     entry_z: f64,
     exit_z: f64,
@@ -2506,7 +3189,7 @@ struct ExpectancyConfig {
     validation_bars: usize,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 struct ExpectancyMetrics {
     trades: usize,
     win_rate: f64,
@@ -2569,7 +3252,7 @@ struct ReplayTradesResponse {
     rows: Vec<ReplayTradeEntry>,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 struct WalkForwardSummary {
     folds_requested: usize,
     folds_evaluated: usize,
@@ -2613,6 +3296,59 @@ struct ResearchSweepResponse {
     top_candidates: Vec<ResearchSweepCandidateResponse>,
     max_combinations: usize,
     rationale_codes: Vec<String>,
+}
+
+#[derive(Debug, Serialize)]
+struct CandidateInboxEntry {
+    pair_id: String,
+    timeframe: String,
+    candidate_id: String,
+    candidate_state: String,
+    request_id: String,
+    rank: usize,
+    candidate_variant: String,
+    status: String,
+    decision_state: String,
+    primary_reason_code: String,
+    objective_score: f64,
+    objective_delta: f64,
+    config: ExpectancyConfig,
+    metrics: Option<ExpectancyMetrics>,
+    walk_forward: WalkForwardSummary,
+    rationale_codes: Vec<String>,
+    champion_variant: String,
+    champion_score: f64,
+    started_at: DateTime<Utc>,
+    updated_at: DateTime<Utc>,
+    eligible_after: DateTime<Utc>,
+    probation_samples: usize,
+    promotable: bool,
+    last_reason: String,
+    last_candidate_score: f64,
+    last_champion_score: f64,
+    last_objective_delta: f64,
+}
+
+#[derive(Debug, Serialize)]
+struct CandidateInboxResponse {
+    generated_at: DateTime<Utc>,
+    timeframe_filter: Option<String>,
+    limit: usize,
+    rows: Vec<CandidateInboxEntry>,
+}
+
+#[derive(Debug, Serialize)]
+struct CandidateActionResponse {
+    generated_at: DateTime<Utc>,
+    accepted: bool,
+    pair_id: String,
+    timeframe: String,
+    candidate_id: String,
+    action: String,
+    state_before: String,
+    state_after: String,
+    promotable: bool,
+    message: String,
 }
 
 #[derive(Debug, Serialize)]
@@ -2796,6 +3532,14 @@ async fn main() -> anyhow::Result<()> {
             "/v1/strategy/pairs/research-sweep",
             post(pairs_research_sweep),
         )
+        .route(
+            "/v1/strategy/pairs/candidate-inbox",
+            get(pairs_candidate_inbox),
+        )
+        .route(
+            "/v1/strategy/pairs/candidate-action",
+            post(pairs_candidate_action),
+        )
         .route("/v1/strategy/pairs/paper-trades", get(pairs_paper_trades))
         .route(
             "/v1/strategy/pairs/paper-trades/download",
@@ -2870,6 +3614,13 @@ async fn main() -> anyhow::Result<()> {
         research_sweep_top_k = settings.research_sweep_top_k,
         walk_forward_folds = settings.walk_forward_folds,
         walk_forward_min_trades_per_fold = settings.walk_forward_min_trades_per_fold,
+        candidate_probation_days_1m = settings.candidate_probation_days_1m,
+        candidate_probation_days_15m = settings.candidate_probation_days_15m,
+        candidate_probation_days_1h = settings.candidate_probation_days_1h,
+        candidate_probation_min_samples = settings.candidate_probation_min_samples,
+        candidate_probation_max_samples = settings.candidate_probation_max_samples,
+        candidate_promotion_min_objective_delta = settings.candidate_promotion_min_objective_delta,
+        candidate_inbox_default_limit = settings.candidate_inbox_default_limit,
         opt_train_days_1m = settings.opt_train_days_1m,
         opt_train_days_15m = settings.opt_train_days_15m,
         opt_train_days_1h = settings.opt_train_days_1h,
@@ -2990,6 +3741,9 @@ fn spawn_reoptimize_worker(state: AppState) -> tokio::task::JoinHandle<()> {
             let mut portfolio_advice_unavailable = 0usize;
 
             for timeframe in &state.settings.timeframes {
+                let mut candidate_probation_pass_total = 0usize;
+                let mut candidate_probation_fail_total = 0usize;
+                let mut candidate_probation_fail_reasons: HashMap<String, usize> = HashMap::new();
                 let (outputs, skipped, plan) = evaluate_timeframe_outputs(
                     &state,
                     *timeframe,
@@ -3094,7 +3848,59 @@ fn spawn_reoptimize_worker(state: AppState) -> tokio::task::JoinHandle<()> {
                             "failed to persist paper trade rows"
                         );
                     }
+                    match advance_candidate_probation_for_output(&state, *timeframe, &output).await
+                    {
+                        Ok(result) => {
+                            if result.transitioned_to_ready {
+                                candidate_probation_pass_total =
+                                    candidate_probation_pass_total.saturating_add(1);
+                            }
+                            if result.transitioned_to_failed {
+                                candidate_probation_fail_total =
+                                    candidate_probation_fail_total.saturating_add(1);
+                                if let Some(reason) = result.fail_reason {
+                                    *candidate_probation_fail_reasons.entry(reason).or_insert(0) +=
+                                        1;
+                                }
+                            }
+                        }
+                        Err(error) => {
+                            tracing::warn!(
+                                pair_id = %output.cue.pair_id,
+                                timeframe = %timeframe.as_str(),
+                                error = %error,
+                                "failed to advance candidate probation"
+                            );
+                        }
+                    }
                 }
+                let promotable_total = match state
+                    .repository
+                    .count_promotable_candidates(*timeframe)
+                    .await
+                {
+                    Ok(value) => value,
+                    Err(error) => {
+                        tracing::warn!(
+                            timeframe = %timeframe.as_str(),
+                            error = %error,
+                            "failed to count promotable candidates"
+                        );
+                        0
+                    }
+                };
+                let rejected_total: usize = candidate_probation_fail_reasons.values().sum();
+                info!(
+                    timeframe = %timeframe.as_str(),
+                    optimizer_cycle_total = 1usize,
+                    optimizer_cycle_status = "success",
+                    optimizer_candidate_promotable_total = promotable_total,
+                    optimizer_candidate_rejected_total = rejected_total,
+                    candidate_probation_pass_total,
+                    candidate_probation_fail_total,
+                    candidate_probation_fail_reasons = ?candidate_probation_fail_reasons,
+                    "optimizer timeframe cycle observability"
+                );
             }
 
             info!(
@@ -3309,6 +4115,11 @@ fn split_codes(raw: String) -> Vec<String> {
             }
         })
         .collect()
+}
+
+fn timeframe_from_str(value: &str) -> anyhow::Result<Timeframe> {
+    Timeframe::parse(value)
+        .ok_or_else(|| anyhow::anyhow!("invalid timeframe '{}'; expected 1m, 15m, 1h", value))
 }
 
 fn write_json_atomic(path: &Path, value: &impl Serialize) -> Result<(), ApiError> {
@@ -3743,6 +4554,23 @@ fn parse_paper_trades_window(
         .as_str()
         .to_string();
     Ok((timeframe, pair_id, exit_mode, hours, limit))
+}
+
+fn parse_candidate_inbox_query(
+    query: &CandidateInboxQuery,
+    default_limit: usize,
+) -> Result<(Option<Timeframe>, usize), ApiError> {
+    let timeframe = query
+        .timeframe
+        .as_ref()
+        .map(|value| {
+            Timeframe::parse(value).ok_or_else(|| {
+                ApiError::BadRequest("invalid timeframe; expected 1m, 15m, 1h".to_string())
+            })
+        })
+        .transpose()?;
+    let limit = query.limit.unwrap_or(default_limit).clamp(1, 100);
+    Ok((timeframe, limit))
 }
 
 fn parse_z_method(raw: Option<&str>) -> Result<String, ApiError> {
@@ -5345,6 +6173,9 @@ async fn pairs_research_sweep(
     let mut top_candidates = vec![];
     let mut best_candidate = None;
     let top_k = state.settings.research_sweep_top_k;
+    let mut lifecycle_candidates_generated = 0usize;
+    let mut lifecycle_probation_activated = 0usize;
+    let mut generated_by_timeframe: HashMap<String, usize> = HashMap::new();
 
     if status == "AVAILABLE" && !dry_run {
         let mut pair_lookup = HashMap::new();
@@ -5531,6 +6362,51 @@ async fn pairs_research_sweep(
             rationale_codes.push("RESEARCH_SWEEP_NO_VALID_RESULTS".to_string());
         } else {
             rationale_codes.push("RESEARCH_SWEEP_EXECUTED".to_string());
+            let mut activated_pairs = HashSet::new();
+            for candidate in &top_candidates {
+                let candidate_id = state
+                    .repository
+                    .upsert_candidate_run(&request_id, candidate)
+                    .await
+                    .map_err(|error| {
+                        ApiError::Upstream(format!(
+                            "candidate lifecycle persist failed for pair={} timeframe={}: {error}",
+                            candidate.pair_id, candidate.timeframe
+                        ))
+                    })?;
+                lifecycle_candidates_generated += 1;
+                *generated_by_timeframe
+                    .entry(candidate.timeframe.clone())
+                    .or_insert(0) += 1;
+                let pair_key = format!("{}::{}", candidate.pair_id, candidate.timeframe);
+                if activated_pairs.insert(pair_key) {
+                    let timeframe = Timeframe::parse(&candidate.timeframe).ok_or_else(|| {
+                        ApiError::Upstream(format!(
+                            "invalid candidate timeframe '{}' for pair '{}'",
+                            candidate.timeframe, candidate.pair_id
+                        ))
+                    })?;
+                    let eligible_after =
+                        Utc::now() + state.settings.candidate_probation_duration(timeframe);
+                    state
+                        .repository
+                        .activate_candidate_probation(
+                            &candidate.pair_id,
+                            timeframe,
+                            &candidate_id,
+                            eligible_after,
+                        )
+                        .await
+                        .map_err(|error| {
+                            ApiError::Upstream(format!(
+                                "candidate probation activation failed for pair={} timeframe={}: {error}",
+                                candidate.pair_id, candidate.timeframe
+                            ))
+                        })?;
+                    lifecycle_probation_activated += 1;
+                }
+            }
+            rationale_codes.push("CANDIDATE_LIFECYCLE_UPDATED".to_string());
         }
         info!(
             request_id = %request_id,
@@ -5540,11 +6416,23 @@ async fn pairs_research_sweep(
             successful_combinations,
             failed_combinations,
             top_candidates = top_candidates.len(),
+            optimizer_candidate_generated_total = lifecycle_candidates_generated,
+            optimizer_candidate_promotable_total = 0usize,
+            optimizer_candidate_rejected_total = 0usize,
+            candidate_probation_activated = lifecycle_probation_activated,
             best_objective_score = best_candidate
                 .as_ref()
                 .map(|candidate| candidate.objective_score),
             "research sweep execution completed"
         );
+        for (timeframe, generated) in generated_by_timeframe {
+            info!(
+                request_id = %request_id,
+                timeframe = %timeframe,
+                optimizer_candidate_generated_total = generated,
+                "research sweep candidate generation by timeframe"
+            );
+        }
     }
 
     Ok(Json(ResearchSweepResponse {
@@ -5563,6 +6451,164 @@ async fn pairs_research_sweep(
         top_candidates,
         max_combinations,
         rationale_codes,
+    }))
+}
+
+async fn pairs_candidate_inbox(
+    State(state): State<AppState>,
+    Query(query): Query<CandidateInboxQuery>,
+) -> Result<Json<CandidateInboxResponse>, ApiError> {
+    let (timeframe_filter, limit) =
+        parse_candidate_inbox_query(&query, state.settings.candidate_inbox_default_limit)?;
+    let rows = state
+        .repository
+        .fetch_candidate_inbox(timeframe_filter, limit as i64)
+        .await
+        .map_err(|error| ApiError::Upstream(error.to_string()))?;
+
+    Ok(Json(CandidateInboxResponse {
+        generated_at: Utc::now(),
+        timeframe_filter: timeframe_filter.map(|value| value.as_str().to_string()),
+        limit,
+        rows,
+    }))
+}
+
+async fn pairs_candidate_action(
+    State(state): State<AppState>,
+    Json(request): Json<CandidateActionRequest>,
+) -> Result<Json<CandidateActionResponse>, ApiError> {
+    if !request.confirm {
+        return Err(ApiError::BadRequest(
+            "confirm=true is required to mutate candidate state".to_string(),
+        ));
+    }
+    let pair_id = request.pair_id.trim().to_string();
+    if pair_id.is_empty() {
+        return Err(ApiError::BadRequest("pair_id is required".to_string()));
+    }
+    let operator_id = request.operator_id.trim().to_string();
+    if operator_id.is_empty() {
+        return Err(ApiError::BadRequest("operator_id is required".to_string()));
+    }
+    let timeframe = Timeframe::parse(&request.timeframe).ok_or_else(|| {
+        ApiError::BadRequest("invalid timeframe; expected 1m, 15m, 1h".to_string())
+    })?;
+    let action = CandidateOperatorAction::parse(&request.action).ok_or_else(|| {
+        ApiError::BadRequest("invalid action; expected PROMOTE, HOLD, REJECT".to_string())
+    })?;
+    let note = request
+        .note
+        .as_ref()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty());
+
+    let probation = state
+        .repository
+        .fetch_active_candidate_probation(&pair_id, timeframe)
+        .await
+        .map_err(|error| ApiError::Upstream(error.to_string()))?
+        .ok_or_else(|| {
+            ApiError::BadRequest(format!(
+                "no candidate probation row exists for pair={} timeframe={}",
+                pair_id,
+                timeframe.as_str()
+            ))
+        })?;
+    if let Some(candidate_id) = request.candidate_id.as_ref().map(|value| value.trim()) {
+        if !candidate_id.is_empty() && candidate_id != probation.candidate_id {
+            return Err(ApiError::BadRequest(format!(
+                "candidate_id mismatch for pair={} timeframe={}",
+                pair_id,
+                timeframe.as_str()
+            )));
+        }
+    }
+
+    let state_before = probation.state;
+    let (next_state, promotable, default_reason, message) = match action {
+        CandidateOperatorAction::Promote => {
+            if probation.state != CandidateLifecycleState::PromotionReady || !probation.promotable {
+                return Err(ApiError::BadRequest(
+                    "candidate is not promotion-ready; use HOLD or REJECT".to_string(),
+                ));
+            }
+            state
+                .repository
+                .upsert_selected_signal(
+                    &pair_id,
+                    timeframe,
+                    &probation.candidate_variant,
+                    probation.objective_score,
+                    Utc::now(),
+                )
+                .await
+                .map_err(|error| ApiError::Upstream(error.to_string()))?;
+            (
+                CandidateLifecycleState::Champion,
+                false,
+                "PROMOTED_BY_OPERATOR".to_string(),
+                "candidate promoted to champion".to_string(),
+            )
+        }
+        CandidateOperatorAction::Hold => (
+            CandidateLifecycleState::Hold,
+            false,
+            "HELD_BY_OPERATOR".to_string(),
+            "candidate placed on hold".to_string(),
+        ),
+        CandidateOperatorAction::Reject => (
+            CandidateLifecycleState::Rejected,
+            false,
+            "REJECTED_BY_OPERATOR".to_string(),
+            "candidate rejected by operator".to_string(),
+        ),
+    };
+    let reason = note.unwrap_or(default_reason);
+    state
+        .repository
+        .update_candidate_probation_state(
+            &probation,
+            &CandidateProbationUpdate {
+                next_state,
+                probation_samples: probation.probation_samples,
+                promotable,
+                last_reason: &reason,
+                last_candidate_score: probation.last_candidate_score,
+                last_champion_score: probation.last_champion_score,
+                last_objective_delta: probation.last_objective_delta,
+            },
+        )
+        .await
+        .map_err(|error| ApiError::Upstream(error.to_string()))?;
+    state
+        .repository
+        .record_candidate_action(
+            &pair_id,
+            timeframe,
+            &probation.candidate_id,
+            &CandidateActionEvent {
+                action: action.as_str(),
+                state_before: state_before.as_str(),
+                state_after: next_state.as_str(),
+                reason: &reason,
+                operator_id: &operator_id,
+            },
+        )
+        .await
+        .map_err(|error| ApiError::Upstream(error.to_string()))?;
+
+    Ok(Json(CandidateActionResponse {
+        generated_at: Utc::now(),
+        accepted: true,
+        pair_id,
+        timeframe: timeframe.as_str().to_string(),
+        candidate_id: probation.candidate_id,
+        action: action.as_str().to_string(),
+        state_before: state_before.as_str().to_string(),
+        state_after: next_state.as_str().to_string(),
+        promotable,
+        message,
     }))
 }
 
@@ -5878,6 +6924,9 @@ async fn reoptimize(
     let mut errors = vec![];
 
     for timeframe in &requested_timeframes {
+        let mut candidate_probation_pass_total = 0usize;
+        let mut candidate_probation_fail_total = 0usize;
+        let mut candidate_probation_fail_reasons: HashMap<String, usize> = HashMap::new();
         let (outputs, skipped, plan) = evaluate_timeframe_outputs(
             &state,
             *timeframe,
@@ -5973,7 +7022,44 @@ async fn reoptimize(
                     error: format!("paper trade history persist failed: {error}"),
                 });
             }
+            match advance_candidate_probation_for_output(&state, *timeframe, &output).await {
+                Ok(result) => {
+                    if result.transitioned_to_ready {
+                        candidate_probation_pass_total =
+                            candidate_probation_pass_total.saturating_add(1);
+                    }
+                    if result.transitioned_to_failed {
+                        candidate_probation_fail_total =
+                            candidate_probation_fail_total.saturating_add(1);
+                        if let Some(reason) = result.fail_reason {
+                            *candidate_probation_fail_reasons.entry(reason).or_insert(0) += 1;
+                        }
+                    }
+                }
+                Err(error) => errors.push(ReoptError {
+                    pair_id: output.cue.pair_id.clone(),
+                    timeframe: timeframe.as_str().to_string(),
+                    error: format!("candidate probation update failed: {error}"),
+                }),
+            }
         }
+        let promotable_total = state
+            .repository
+            .count_promotable_candidates(*timeframe)
+            .await
+            .unwrap_or(0);
+        let rejected_total: usize = candidate_probation_fail_reasons.values().sum();
+        info!(
+            timeframe = %timeframe.as_str(),
+            optimizer_cycle_total = 1usize,
+            optimizer_cycle_status = "manual_reoptimize",
+            optimizer_candidate_promotable_total = promotable_total,
+            optimizer_candidate_rejected_total = rejected_total,
+            candidate_probation_pass_total,
+            candidate_probation_fail_total,
+            candidate_probation_fail_reasons = ?candidate_probation_fail_reasons,
+            "manual reoptimize timeframe observability"
+        );
     }
 
     Ok(Json(ReoptimizeResponse {
@@ -6161,6 +7247,145 @@ async fn evaluate_pair_for_timeframe(
     finalize_trade_gate(&mut output.cue);
 
     Ok(output)
+}
+
+fn decide_candidate_probation_transition(
+    input: CandidateProbationInputs,
+) -> CandidateProbationDecision {
+    if !input.has_candidate_score && input.next_samples >= input.max_samples {
+        return CandidateProbationDecision {
+            next_state: CandidateLifecycleState::Hold,
+            promotable: false,
+            reason: "PROBATION_VARIANT_MISSING_MAX_SAMPLES".to_string(),
+            transitioned_to_ready: false,
+            transitioned_to_failed: true,
+        };
+    }
+    if !input.has_candidate_score {
+        return CandidateProbationDecision {
+            next_state: CandidateLifecycleState::Challenger,
+            promotable: false,
+            reason: "PROBATION_VARIANT_MISSING".to_string(),
+            transitioned_to_ready: false,
+            transitioned_to_failed: false,
+        };
+    }
+    if input.now >= input.eligible_after
+        && input.next_samples >= input.min_samples
+        && input.objective_delta >= input.min_objective_delta
+    {
+        return CandidateProbationDecision {
+            next_state: CandidateLifecycleState::PromotionReady,
+            promotable: true,
+            reason: "PROBATION_PASS_OBJECTIVE_DELTA".to_string(),
+            transitioned_to_ready: true,
+            transitioned_to_failed: false,
+        };
+    }
+    if input.next_samples >= input.max_samples {
+        return CandidateProbationDecision {
+            next_state: CandidateLifecycleState::Hold,
+            promotable: false,
+            reason: "PROBATION_MAX_SAMPLES_WITHOUT_EDGE".to_string(),
+            transitioned_to_ready: false,
+            transitioned_to_failed: true,
+        };
+    }
+    CandidateProbationDecision {
+        next_state: CandidateLifecycleState::Challenger,
+        promotable: false,
+        reason: "PROBATION_TRACKING".to_string(),
+        transitioned_to_ready: false,
+        transitioned_to_failed: false,
+    }
+}
+
+async fn advance_candidate_probation_for_output(
+    state: &AppState,
+    timeframe: Timeframe,
+    output: &PairEvaluationOutput,
+) -> anyhow::Result<CandidateProbationAdvanceResult> {
+    let Some(probation) = state
+        .repository
+        .fetch_active_candidate_probation(&output.cue.pair_id, timeframe)
+        .await?
+    else {
+        return Ok(CandidateProbationAdvanceResult::default());
+    };
+    if probation.state != CandidateLifecycleState::Challenger {
+        return Ok(CandidateProbationAdvanceResult::default());
+    }
+
+    let next_samples = probation.probation_samples.saturating_add(1);
+    let max_samples = state.settings.candidate_probation_max_samples.max(1);
+    let now = Utc::now();
+    let maybe_candidate_score = output
+        .variants
+        .iter()
+        .find(|variant| variant.variant == probation.candidate_variant)
+        .map(|variant| variant.opportunity_score);
+    let selected_signal = state
+        .repository
+        .fetch_selected_signal(&output.cue.pair_id, timeframe)
+        .await?;
+    let champion_variant = selected_signal
+        .as_ref()
+        .map(|row| row.signal_variant.clone())
+        .unwrap_or_else(|| output.cue.selected_variant.clone());
+    let champion_score =
+        resolve_variant_score(output, &champion_variant, output.cue.opportunity_score);
+    let candidate_score = maybe_candidate_score.unwrap_or(probation.last_candidate_score);
+    let objective_delta = candidate_score - champion_score;
+    let decision = decide_candidate_probation_transition(CandidateProbationInputs {
+        has_candidate_score: maybe_candidate_score.is_some(),
+        next_samples,
+        now,
+        eligible_after: probation.eligible_after,
+        min_samples: state.settings.candidate_probation_min_samples,
+        max_samples,
+        objective_delta,
+        min_objective_delta: state.settings.candidate_promotion_min_objective_delta,
+    });
+
+    state
+        .repository
+        .update_candidate_probation_state(
+            &probation,
+            &CandidateProbationUpdate {
+                next_state: decision.next_state,
+                probation_samples: next_samples,
+                promotable: decision.promotable,
+                last_reason: &decision.reason,
+                last_candidate_score: candidate_score,
+                last_champion_score: champion_score,
+                last_objective_delta: objective_delta,
+            },
+        )
+        .await?;
+
+    if decision.next_state != probation.state {
+        state
+            .repository
+            .record_candidate_action(
+                &probation.pair_id,
+                timeframe,
+                &probation.candidate_id,
+                &CandidateActionEvent {
+                    action: "SYSTEM_PROBATION_STATE_CHANGE",
+                    state_before: probation.state.as_str(),
+                    state_after: decision.next_state.as_str(),
+                    reason: &decision.reason,
+                    operator_id: "system",
+                },
+            )
+            .await?;
+    }
+
+    Ok(CandidateProbationAdvanceResult {
+        transitioned_to_ready: decision.transitioned_to_ready,
+        transitioned_to_failed: decision.transitioned_to_failed,
+        fail_reason: decision.transitioned_to_failed.then_some(decision.reason),
+    })
 }
 
 fn is_cost_reason(code: &str) -> bool {
@@ -6400,19 +7625,21 @@ mod tests {
         artifact_download_path, bootstrap_deviation_exceeds_threshold, bootstrap_snapshot_is_fresh,
         classify_expectancy_result, compute_expectancy_metrics, compute_pair_funding_bps_per_event,
         compute_pair_slippage_sample_bps, compute_walk_forward_summary, days_covered,
-        decide_champion_transition, derive_paper_trades_from_series,
-        derive_replay_trades_from_series, estimate_research_combinations,
-        evaluate_recent_performance_gate, expectancy_objective_score,
-        expected_funding_events_crossed, finalize_trade_gate, normalize_funding_rate,
-        parse_backtest_exit_mode, parse_expectancy_query,
-        parse_opportunity_history_stats_timeframe, parse_opportunity_history_window,
-        parse_paper_trades_window, parse_replay_trades_query, percentile,
-        project_continuous_funding_bps, refresh_setup_gate, resolve_artifact_path,
-        resolve_taker_fee_bps, summarize_recent_performance, ChampionDecision, ExpectancyMetrics,
-        ExpectancyQuery, FundingCostEstimate, FundingRateInputMode, MaintenanceAction,
-        OpportunityHistoryQuery, OpportunityHistoryStatsQuery, PaperTradesQuery, ReplayTradeEntry,
-        ReplayTradePathSummary, ReplayTradesQuery, ResearchSweepRequest, SampledSlippageStatus,
-        SelectedSignalRow, StrategyMarketMetricsResponse, StrategySettings,
+        decide_candidate_probation_transition, decide_champion_transition,
+        derive_paper_trades_from_series, derive_replay_trades_from_series,
+        estimate_research_combinations, evaluate_recent_performance_gate,
+        expectancy_objective_score, expected_funding_events_crossed, finalize_trade_gate,
+        normalize_funding_rate, parse_backtest_exit_mode, parse_candidate_inbox_query,
+        parse_expectancy_query, parse_opportunity_history_stats_timeframe,
+        parse_opportunity_history_window, parse_paper_trades_window, parse_replay_trades_query,
+        percentile, project_continuous_funding_bps, refresh_setup_gate, resolve_artifact_path,
+        resolve_taker_fee_bps, summarize_recent_performance, CandidateInboxQuery,
+        CandidateLifecycleState, CandidateOperatorAction, CandidateProbationInputs,
+        ChampionDecision, ExpectancyMetrics, ExpectancyQuery, FundingCostEstimate,
+        FundingRateInputMode, MaintenanceAction, OpportunityHistoryQuery,
+        OpportunityHistoryStatsQuery, PaperTradesQuery, ReplayTradeEntry, ReplayTradePathSummary,
+        ReplayTradesQuery, ResearchSweepRequest, SampledSlippageStatus, SelectedSignalRow,
+        StrategyMarketMetricsResponse, StrategySettings,
     };
     use chrono::Utc;
     use common_types::Timeframe;
@@ -6828,6 +8055,88 @@ mod tests {
             dry_run: Some(true),
         };
         assert_eq!(estimate_research_combinations(&custom_payload), 288);
+    }
+
+    #[test]
+    fn candidate_inbox_query_defaults_and_bounds() {
+        let query = CandidateInboxQuery {
+            timeframe: Some("1h".to_string()),
+            limit: Some(999),
+        };
+        let (timeframe, limit) =
+            parse_candidate_inbox_query(&query, 3).expect("parse candidate inbox query");
+        assert_eq!(timeframe.expect("timeframe").as_str(), "1h");
+        assert_eq!(limit, 100);
+
+        let default_query = CandidateInboxQuery {
+            timeframe: None,
+            limit: None,
+        };
+        let (timeframe, limit) =
+            parse_candidate_inbox_query(&default_query, 3).expect("parse default candidate inbox");
+        assert!(timeframe.is_none());
+        assert_eq!(limit, 3);
+    }
+
+    #[test]
+    fn candidate_operator_action_parse_known_values() {
+        assert_eq!(
+            CandidateOperatorAction::parse("promote")
+                .expect("parse promote")
+                .as_str(),
+            "PROMOTE"
+        );
+        assert_eq!(
+            CandidateOperatorAction::parse("HOLD")
+                .expect("parse hold")
+                .as_str(),
+            "HOLD"
+        );
+        assert_eq!(
+            CandidateOperatorAction::parse("reject")
+                .expect("parse reject")
+                .as_str(),
+            "REJECT"
+        );
+        assert!(CandidateOperatorAction::parse("noop").is_none());
+    }
+
+    #[test]
+    fn candidate_probation_transition_marks_promotion_ready() {
+        let now = Utc::now();
+        let decision = decide_candidate_probation_transition(CandidateProbationInputs {
+            has_candidate_score: true,
+            next_samples: 16,
+            now,
+            eligible_after: now - chrono::Duration::minutes(1),
+            min_samples: 12,
+            max_samples: 100,
+            objective_delta: 0.42,
+            min_objective_delta: 0.25,
+        });
+        assert_eq!(decision.next_state, CandidateLifecycleState::PromotionReady);
+        assert!(decision.promotable);
+        assert!(decision.transitioned_to_ready);
+        assert!(!decision.transitioned_to_failed);
+    }
+
+    #[test]
+    fn candidate_probation_transition_holds_after_max_samples_without_edge() {
+        let now = Utc::now();
+        let decision = decide_candidate_probation_transition(CandidateProbationInputs {
+            has_candidate_score: true,
+            next_samples: 50,
+            now,
+            eligible_after: now - chrono::Duration::hours(1),
+            min_samples: 12,
+            max_samples: 50,
+            objective_delta: -0.10,
+            min_objective_delta: 0.25,
+        });
+        assert_eq!(decision.next_state, CandidateLifecycleState::Hold);
+        assert!(!decision.promotable);
+        assert!(!decision.transitioned_to_ready);
+        assert!(decision.transitioned_to_failed);
     }
 
     #[test]

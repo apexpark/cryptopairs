@@ -1,0 +1,37 @@
+{
+  "$id": "https://cryptopairs/specs/contracts/strategy_pairs_candidate_action_response.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Strategy Pairs Candidate Action Response",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "generated_at",
+    "accepted",
+    "pair_id",
+    "timeframe",
+    "candidate_id",
+    "action",
+    "state_before",
+    "state_after",
+    "promotable",
+    "message"
+  ],
+  "properties": {
+    "generated_at": { "type": "string", "format": "date-time" },
+    "accepted": { "type": "boolean" },
+    "pair_id": { "type": "string" },
+    "timeframe": { "type": "string", "enum": ["1m", "15m", "1h"] },
+    "candidate_id": { "type": "string" },
+    "action": { "type": "string", "enum": ["PROMOTE", "HOLD", "REJECT"] },
+    "state_before": {
+      "type": "string",
+      "enum": ["CHALLENGER", "PROMOTION_READY", "CHAMPION", "HOLD", "REJECTED"]
+    },
+    "state_after": {
+      "type": "string",
+      "enum": ["CHALLENGER", "PROMOTION_READY", "CHAMPION", "HOLD", "REJECTED"]
+    },
+    "promotable": { "type": "boolean" },
+    "message": { "type": "string" }
+  }
+}

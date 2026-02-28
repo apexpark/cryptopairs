@@ -10,6 +10,9 @@ import type {
   OrderIntentResponse,
   ReconcileResponse,
   StrategyPairsBacktestResponse,
+  StrategyPairsCandidateActionRequest,
+  StrategyPairsCandidateActionResponse,
+  StrategyPairsCandidateInboxResponse,
   StrategyPairsCuesResponse,
   StrategyPairsExpectancyResponse,
   StrategyPairsPaperTradesResponse,
@@ -205,6 +208,32 @@ export async function runStrategyResearchSweep(
 ): Promise<StrategyPairsResearchSweepResponse> {
   const url = `${STRATEGY_SERVICE_BASE_URL}/v1/strategy/pairs/research-sweep`;
   return parseJson<StrategyPairsResearchSweepResponse>(
+    await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    })
+  );
+}
+
+export async function fetchStrategyCandidateInbox(
+  timeframe?: Timeframe,
+  limit = 3
+): Promise<StrategyPairsCandidateInboxResponse> {
+  const params = new URLSearchParams();
+  if (timeframe) {
+    params.set("timeframe", timeframe);
+  }
+  params.set("limit", limit.toString());
+  const url = `${STRATEGY_SERVICE_BASE_URL}/v1/strategy/pairs/candidate-inbox?${params.toString()}`;
+  return parseJson<StrategyPairsCandidateInboxResponse>(await fetch(url));
+}
+
+export async function submitStrategyCandidateAction(
+  payload: StrategyPairsCandidateActionRequest
+): Promise<StrategyPairsCandidateActionResponse> {
+  const url = `${STRATEGY_SERVICE_BASE_URL}/v1/strategy/pairs/candidate-action`;
+  return parseJson<StrategyPairsCandidateActionResponse>(
     await fetch(url, {
       method: "POST",
       headers: { "Content-Type": "application/json" },

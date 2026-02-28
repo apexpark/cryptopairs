@@ -34,6 +34,10 @@ Define required telemetry, health signals, and alert policies.
 - Shadow model availability/unavailability counts by timeframe
 - Cost gate pass/fail counts by timeframe and reason
 - Portfolio advisory availability/unavailability by timeframe
+- Optimizer candidate generation count by timeframe (`optimizer_candidate_generated_total`)
+- Optimizer promotable-candidate count by timeframe (`optimizer_candidate_promotable_total`)
+- Optimizer rejected-candidate count by timeframe/reason (`optimizer_candidate_rejected_total`)
+- Candidate probation pass/fail counts by timeframe/reason (`candidate_probation_pass_total`, `candidate_probation_fail_total`)
 
 4. Execution and risk:
 - Order ack latency
@@ -59,6 +63,10 @@ Define required telemetry, health signals, and alert policies.
 1. Alerts are routed and actionable with context fields.
 2. Dashboards show integrity and execution health at a glance.
 3. Incident timeline can be reconstructed from logs and events.
+4. Optimizer/candidate lifecycle logs include:
+- `request_id`, `timeframe`, `pair_id`
+- probation transition state before/after
+- rejection reasons and promotable counts per timeframe
 
 ## Out Of Scope
 

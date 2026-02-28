@@ -106,6 +106,25 @@ Security note:
 1. Docker socket access is privileged and should be limited to trusted single-tenant hosts.
 2. Keep API access restricted and monitor maintenance action artifacts for operator/audit review.
 
+## Optimizer Candidate Inbox Actions
+
+Candidate lifecycle control is exposed via strategy-service:
+1. `GET /v1/strategy/pairs/candidate-inbox` for active challengers/promotable candidates.
+2. `POST /v1/strategy/pairs/candidate-action` for manual `PROMOTE`, `HOLD`, `REJECT`.
+
+Validation command:
+
+```bash
+curl -s "http://127.0.0.1:8083/v1/strategy/pairs/candidate-inbox?limit=3" | jq '.rows | length'
+curl -i -s -X POST "http://127.0.0.1:8083/v1/strategy/pairs/candidate-action" \
+  -H "Content-Type: application/json" \
+  --data '{"pair_id":"PF_TAOUSD__PF_HYPEUSD","timeframe":"1h","action":"HOLD","operator_id":"diag","confirm":false}'
+```
+
+Expected result:
+1. Inbox endpoint returns `200` with rows array (possibly empty).
+2. Action endpoint returns `400` with `confirm=true is required ...` when confirmation is omitted.
+
 ## Validation Commands
 
 ```bash

@@ -23,6 +23,31 @@ This project follows SemVer as defined in `docs/02-versioning-and-releases.md`.
   - Added runtime controls:
     - `STRATEGY_WF_FOLDS`
     - `STRATEGY_WF_MIN_TRADES_PER_FOLD`
+- Autonomous optimizer candidate lifecycle (Slices D/E/F):
+  - Added candidate lifecycle persistence tables:
+    - `strategy_candidate_runs`
+    - `strategy_candidate_probation`
+    - `strategy_candidate_actions`
+  - Research sweep execution now persists top candidates and activates one challenger probation record per pair/timeframe.
+  - Reoptimize cycles now advance challenger probation to `PROMOTION_READY` or `HOLD` with structured transition audit logs.
+  - Added operator candidate APIs:
+    - `GET /v1/strategy/pairs/candidate-inbox`
+    - `POST /v1/strategy/pairs/candidate-action` (`PROMOTE|HOLD|REJECT`, confirm required)
+  - Added contracts/examples:
+    - `specs/contracts/strategy_pairs_candidate_inbox_response.schema.json`
+    - `specs/contracts/strategy_pairs_candidate_action_request.schema.json`
+    - `specs/contracts/strategy_pairs_candidate_action_response.schema.json`
+    - `specs/examples/strategy_pairs_candidate_inbox_response.example.json`
+    - `specs/examples/strategy_pairs_candidate_action_request.example.json`
+    - `specs/examples/strategy_pairs_candidate_action_response.example.json`
+  - Added Analytics candidate inbox panel with promote/hold/reject controls.
+  - Added candidate probation and inbox env controls:
+    - `STRATEGY_CANDIDATE_PROBATION_DAYS_1M/15M/1H`
+    - `STRATEGY_CANDIDATE_PROBATION_MIN_SAMPLES`
+    - `STRATEGY_CANDIDATE_PROBATION_MAX_SAMPLES`
+    - `STRATEGY_CANDIDATE_PROMOTION_MIN_OBJECTIVE_DELTA`
+    - `STRATEGY_CANDIDATE_INBOX_DEFAULT_LIMIT`
+  - Expanded observability and runbooks for optimizer candidate lifecycle metrics and operator actions.
 - Autonomous optimizer implementation roadmap and slice checklist:
   - `docs/23-autonomous-optimizer-roadmap.md`
 - Strategy tuning governance and interruption recovery package:

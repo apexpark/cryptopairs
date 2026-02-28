@@ -483,6 +483,23 @@ input {
   margin-top: 6px;
 }
 
+.candidate-inbox-card {
+  margin-top: 10px;
+  display: grid;
+  gap: 8px;
+}
+
+.candidate-action-buttons {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.candidate-action-buttons button {
+  padding: 4px 8px;
+  font-size: 0.72rem;
+}
+
 .panel-card {
   background: var(--panel);
   border: 1px solid var(--line-soft);
