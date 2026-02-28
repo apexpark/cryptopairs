@@ -40,6 +40,9 @@ async fn main() -> anyhow::Result<()> {
         state.clone(),
         settings.symbols.clone(),
         settings.backfill_interval_seconds,
+        settings.backfill_window_days,
+        settings.candles_retention_days,
+        settings.candles_prune_interval_seconds,
     );
     let _trade_ingest_worker = spawn_trade_ingest_worker(state.clone(), settings.symbols.clone());
 
@@ -53,6 +56,13 @@ async fn main() -> anyhow::Result<()> {
         kraken_history_bounds_path = %settings.kraken_history_bounds_path,
         symbols = ?settings.symbols,
         backfill_interval_seconds = settings.backfill_interval_seconds,
+        backfill_window_days_1m = settings.backfill_window_days.one_minute,
+        backfill_window_days_15m = settings.backfill_window_days.fifteen_minutes,
+        backfill_window_days_1h = settings.backfill_window_days.one_hour,
+        candles_retention_days_1m = settings.candles_retention_days.one_minute,
+        candles_retention_days_15m = settings.candles_retention_days.fifteen_minutes,
+        candles_retention_days_1h = settings.candles_retention_days.one_hour,
+        candles_prune_interval_seconds = settings.candles_prune_interval_seconds,
         integrity_threshold_pct = settings.integrity_threshold_pct,
         "data-service started"
     );

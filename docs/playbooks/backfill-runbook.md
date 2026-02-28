@@ -23,6 +23,9 @@ Operational procedure for diagnosing and repairing missing market data.
 1. Historical Bounds File (`KRAKEN_HISTORY_BOUNDS_PATH`)
 2. Exchange API Base URL (`KRAKEN_BASE_URL`)
 3. Integrity Coverage Threshold (%) (`DATA_INTEGRITY_THRESHOLD_PCT`)
+4. Backfill Window Days 1m/15m/1h (`BACKFILL_WINDOW_DAYS_1M`, `BACKFILL_WINDOW_DAYS_15M`, `BACKFILL_WINDOW_DAYS_1H`)
+5. Candle Retention Days 1m/15m/1h (`CANDLES_RETENTION_DAYS_1M`, `CANDLES_RETENTION_DAYS_15M`, `CANDLES_RETENTION_DAYS_1H`)
+6. Candle Prune Interval Seconds (`CANDLES_PRUNE_INTERVAL_SECONDS`)
 
 ## Procedure
 

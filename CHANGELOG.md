@@ -5,6 +5,12 @@ This project follows SemVer as defined in `docs/02-versioning-and-releases.md`.
 
 ## Unreleased
 ### Added
+- Data horizon and retention controls for `data-service` candles:
+  - Configurable backfill windows by timeframe (`1m/15m/1h`) with defaults aligned to long-horizon research (`120d/540d/1095d`).
+  - Configurable candle retention pruning by timeframe plus periodic prune interval.
+  - Structured prune logs and operator runbook updates for horizon/retention settings.
+- Autonomous optimizer implementation roadmap and slice checklist:
+  - `docs/23-autonomous-optimizer-roadmap.md`
 - Strategy tuning governance and interruption recovery package:
   - `docs/22-strategy-tuning-control.md`
   - `plans/strategy_tuning_plan.json`
