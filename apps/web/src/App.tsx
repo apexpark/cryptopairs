@@ -1142,6 +1142,10 @@ function App(): JSX.Element {
         }
 
         const zValues = liveZ.points.map((point) => point.z);
+        // Keep chart endpoint aligned with the current cue snapshot so "now" is canonical.
+        if (zValues.length > 0 && Number.isFinite(selectedCueRow.cue.spread_z)) {
+          zValues[zValues.length - 1] = selectedCueRow.cue.spread_z;
+        }
         const zTimes = liveZ.points.map((point) => point.ts);
         const equity = backtest.points.map((point) => point.equity);
         const equityTimes = backtest.points.map((point) => point.ts);
@@ -1182,6 +1186,28 @@ function App(): JSX.Element {
       window.clearInterval(refreshIntervalId);
     };
   }, [selectedCueRow, timeframe, uiAccessGranted, takerFeeBpsOverride, backtestExitMode]);
+
+  useEffect(() => {
+    if (!selectedCueRow || zSeries.length === 0) {
+      return;
+    }
+    const canonicalZ = selectedCueRow.cue.spread_z;
+    if (!Number.isFinite(canonicalZ)) {
+      return;
+    }
+    const latest = zSeries[zSeries.length - 1];
+    if (Math.abs(latest - canonicalZ) < 1e-9) {
+      return;
+    }
+    setZSeries((prev) => {
+      if (prev.length === 0) {
+        return prev;
+      }
+      const next = [...prev];
+      next[next.length - 1] = canonicalZ;
+      return next;
+    });
+  }, [selectedCueRow, zSeries]);
 
   useEffect(() => {
     if (!uiAccessGranted) {
