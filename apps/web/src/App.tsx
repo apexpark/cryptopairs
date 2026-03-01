@@ -335,7 +335,7 @@ function formatPairLabel(pairId: string): string {
 
 function deriveOpportunityStatus(
   cue: StrategyPairsCuesResponse["cues"][number]["cue"]
-): { label: "READY" | "WAIT" | "UNTESTED"; toneClass: "tone-ok" | "tone-warn" | "tone-info" } {
+): { label: "READY" | "WAIT" | "<TWO"; toneClass: "tone-ok" | "tone-warn" | "tone-info" } {
   const tradePass = cue.trade_gate?.pass ?? cue.actionable;
   if (tradePass) {
     return { label: "READY", toneClass: "tone-ok" };
@@ -347,7 +347,7 @@ function deriveOpportunityStatus(
     ...(cue.setup_gate?.rationale_codes ?? cue.rationale_codes),
   ]);
   if (reasons.has("PERFORMANCE_HISTORY_WAIT")) {
-    return { label: "UNTESTED", toneClass: "tone-info" };
+    return { label: "<TWO", toneClass: "tone-info" };
   }
 
   return { label: "WAIT", toneClass: "tone-warn" };
