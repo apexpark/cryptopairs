@@ -316,7 +316,7 @@ describe("manual trade flow", () => {
 
     await waitFor(() => {
       expect(
-        screen.getByText(/Spread dispatched and acknowledged\./i)
+        screen.getByText(/LONG-ENTRY accepted=2 blocked=0 dispatch=ACKNOWLEDGED/i)
       ).toBeInTheDocument();
       expect(api.fetchExecutionPortfolioPositions).toHaveBeenCalledWith(
         "kraken_futures",

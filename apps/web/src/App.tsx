@@ -2365,7 +2365,7 @@ function TradePage(props: {
         </div>
 
         <div className="timeline-card">
-          <h3>Intent timeline</h3>
+          <h3>Historical Trades</h3>
           {props.timeline.length ? (
             props.timeline.map((event, index) => (
               <p key={`${event.ts}-${index}`} className={`tone-${event.tone}`}>
@@ -2373,7 +2373,7 @@ function TradePage(props: {
               </p>
             ))
           ) : (
-            <p className="empty-text">No live intent events yet.</p>
+            <p className="empty-text">No historical trades yet.</p>
           )}
         </div>
       </SectionCard>
@@ -2426,50 +2426,22 @@ function TradePage(props: {
             <button disabled={!props.canAddExposure || props.submitting} onClick={() => execute("add-exposure")}>
               Add Exposure to Open Spread
             </button>
-          </div>
 
-          <div className="execution-block reduce-block">
-            <h3>Reduce / Close</h3>
-            <button disabled={!props.canReduceExposure || props.submitting} onClick={() => execute("reduce-exposure")}>
-              Reduce Exposure (partial)
-            </button>
-            <button
-              className="danger"
-              disabled={!props.canCloseSpread || props.submitting}
-              onClick={() => execute("close-spread")}
-            >
-              Close Spread (all open in pair)
-            </button>
-          </div>
-
-          <div className="execution-status-block">
-            <div className="gate-grid">
-              <div className={`status-pill ${props.gateState.killSwitchActive ? "bad" : "ok"}`}>
-                Kill switch: {props.gateState.killSwitchActive ? "ACTIVE" : "OFF"}
-              </div>
-              <div className={`status-pill ${props.gateState.leftAllowed ? "ok" : "bad"}`}>
-                Left integrity gate: {props.gateState.leftAllowed ? "ALLOWED" : "BLOCKED"}
-              </div>
-              <div className={`status-pill ${props.gateState.rightAllowed ? "ok" : "bad"}`}>
-                Right integrity gate: {props.gateState.rightAllowed ? "ALLOWED" : "BLOCKED"}
-              </div>
-              <div className={`status-pill ${props.gateState.reconcileOk ? "ok" : "bad"}`}>
-                Reconcile gate: {props.gateState.reconcileOk ? "OK" : "NOT_OK"}
-              </div>
-            </div>
-
-            <div className="message-box">
-              <strong>Result:</strong> {props.tradeMessage}
-              {props.killSwitch ? (
-                <div className="small-text">Kill switch reason: {props.killSwitch.reason}</div>
-              ) : null}
-              {props.reconcile ? (
-                <div className="small-text">
-                  Reconcile status: {props.reconcile.status} (drift {props.reconcile.drift_notional.toFixed(2)})
-                </div>
-              ) : null}
-              <div className="small-text">Entries require operator confirmation and healthy execution gates.</div>
-              {props.gateError ? <div className="tone-bad small-text">{props.gateError}</div> : null}
+            <div className="execution-block reduce-block">
+              <h3>Reduce / Close</h3>
+              <button
+                disabled={!props.canReduceExposure || props.submitting}
+                onClick={() => execute("reduce-exposure")}
+              >
+                Reduce Exposure (partial)
+              </button>
+              <button
+                className="danger"
+                disabled={!props.canCloseSpread || props.submitting}
+                onClick={() => execute("close-spread")}
+              >
+                Close Spread (all open in pair)
+              </button>
             </div>
           </div>
         </div>
