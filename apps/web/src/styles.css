@@ -321,7 +321,7 @@ input {
 
 .trade-grid {
   display: grid;
-  grid-template-columns: minmax(230px, 1fr) minmax(480px, 2.2fr) minmax(360px, 1.45fr);
+  grid-template-columns: minmax(230px, 1fr) minmax(620px, 2.8fr) minmax(320px, 1.1fr);
   gap: 10px;
   align-items: start;
   height: 100%;
@@ -906,24 +906,9 @@ button:disabled {
 
 .execution-grid {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: 1fr;
   gap: 8px;
   align-items: start;
-}
-
-.execution-status-block {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-
-.execution-status-block .message-box {
-  margin-top: 0;
-}
-
-.execution-status-block .message-box .small-text {
-  font-size: 0.94rem;
-  line-height: 1.35;
 }
 
 @media (max-width: 1500px) {
