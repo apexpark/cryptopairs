@@ -2603,10 +2603,12 @@ function AnalyticsPage({
   const selected = cues?.cues.find((entry) => entry.cue.pair_id === selectedPairId) ?? cues?.cues[0];
   const pairCount = cues?.cues.length ?? 0;
   const pairDrivenChartHeight = useMemo(
-    () => Math.round(clampNumber(pairCount * 31, 320, 900)),
+    () => Math.round(clampNumber(pairCount * 33, 350, 980)),
     [pairCount]
   );
-  const primaryPanelHeight = pairDrivenChartHeight + 130;
+  const primaryPanelHeight = pairDrivenChartHeight + 120;
+  const zScorePlotHeight = Math.max(240, primaryPanelHeight - 100);
+  const equityPlotHeight = Math.max(220, primaryPanelHeight - 185);
   const displayEquitySeries = useMemo(() => scaleEquityAbsolute(equitySeries, 100), [equitySeries]);
   const equityWindowStats = useMemo(() => {
     if (!displayEquitySeries.length || !equityTimestamps.length) {
@@ -2642,7 +2644,7 @@ function AnalyticsPage({
             title="Pair"
             subtitle="Select pair"
             className="analytics-primary-panel"
-            style={{ minHeight: `${primaryPanelHeight}px` }}
+            style={{ height: `${primaryPanelHeight}px` }}
           >
             <div className="table-wrap analytics-pair-list">
               <table>
@@ -3016,7 +3018,7 @@ function AnalyticsPage({
               title="Hypothetical Equity Curve"
               subtitle="Absolute mode (equity x $100) from live candles and current strategy bands"
               className="analytics-primary-panel"
-              style={{ minHeight: `${primaryPanelHeight}px` }}
+              style={{ height: `${primaryPanelHeight}px` }}
             >
               <div className="mini-card">
                 <div className="research-results-grid">
@@ -3058,7 +3060,7 @@ function AnalyticsPage({
               <LineChart
                 values={displayEquitySeries}
                 timestamps={equityTimestamps}
-                height={pairDrivenChartHeight}
+                height={equityPlotHeight}
                 title="Hypothetical equity (absolute, equity x $100)"
                 unavailableText={loading ? "Loading live candles..." : error ?? "No data"}
                 yAxisFormatter={formatUsdAxisValue}
@@ -3181,7 +3183,7 @@ function AnalyticsPage({
               title="Historical Z-Score (Entries / Exits / Stops)"
               subtitle="Derived from live spread history"
               className="analytics-primary-panel"
-              style={{ minHeight: `${primaryPanelHeight}px` }}
+              style={{ height: `${primaryPanelHeight}px` }}
             >
               <LineChart
                 values={zSeries}
@@ -3198,7 +3200,7 @@ function AnalyticsPage({
                       ]
                     : []
                 }
-                height={pairDrivenChartHeight}
+                height={zScorePlotHeight}
                 title="Entry=green, Exit=amber, Stop=red"
                 unavailableText={loading ? "Loading live candles..." : error ?? "No data"}
                 yAxisFormatter={(value) => value.toFixed(2)}
