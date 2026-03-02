@@ -366,8 +366,7 @@ input {
 }
 
 .analytics-pair-list {
-  max-height: 420px;
-  overflow: auto;
+  overflow: visible;
 }
 
 .analytics-pair-list table td {
