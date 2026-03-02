@@ -401,8 +401,12 @@ function describeRationaleCode(code: string): string {
       "Waiting for enough completed paper trades before enabling the profitability gate.",
     PERFORMANCE_GATE_BLOCKED:
       "Recent completed paper trades are not profitable enough to open new entries.",
-    PERFORMANCE_GATE_SOURCE_PAPER_TRADES:
-      "Cost gate uses recent completed paper-trade profitability for pass/block decisions.",
+    PERFORMANCE_GATE_SOURCE_ROLLING_PAPER_TRADES:
+      "Cost gate uses rolling recent paper-trade profitability for pass/block decisions.",
+    PERFORMANCE_GATE_SOURCE_CUMULATIVE_PAPER_TRADES:
+      "Cost gate is using cumulative persisted paper-trade profitability as fallback.",
+    PERFORMANCE_GATE_FALLBACK_CUMULATIVE:
+      "Rolling recent trades were insufficient, so cumulative persisted trade history is used.",
     NEGATIVE_EXPECTED_EDGE: "Expected edge is negative after cost adjustments.",
     NEGATIVE_EDGE: "Recent edge estimate is negative for this setup.",
     HEDGE_RATIO_UNSTABLE:

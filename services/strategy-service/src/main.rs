@@ -717,6 +717,40 @@ impl StrategyRepository {
                     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
                     PRIMARY KEY (pair_id, timeframe, exit_mode, entry_ts, exit_ts, exit_kind)
                  );
+                 CREATE TABLE IF NOT EXISTS strategy_paper_trades_history (
+                    pair_id TEXT NOT NULL,
+                    timeframe TEXT NOT NULL,
+                    exit_mode TEXT NOT NULL,
+                    left_instrument TEXT NOT NULL,
+                    right_instrument TEXT NOT NULL,
+                    selected_variant TEXT NOT NULL,
+                    entry_ts TIMESTAMPTZ NOT NULL,
+                    exit_ts TIMESTAMPTZ NOT NULL,
+                    bars_held INTEGER NOT NULL,
+                    direction TEXT NOT NULL,
+                    exit_kind TEXT NOT NULL,
+                    entry_z DOUBLE PRECISION NOT NULL,
+                    exit_z DOUBLE PRECISION NOT NULL,
+                    entry_index INTEGER NOT NULL,
+                    exit_index INTEGER NOT NULL,
+                    left_entry DOUBLE PRECISION NOT NULL,
+                    left_exit DOUBLE PRECISION NOT NULL,
+                    right_entry DOUBLE PRECISION NOT NULL,
+                    right_exit DOUBLE PRECISION NOT NULL,
+                    left_leg_bps DOUBLE PRECISION NOT NULL,
+                    right_leg_bps DOUBLE PRECISION NOT NULL,
+                    gross_bps DOUBLE PRECISION NOT NULL,
+                    round_trip_cost_bps DOUBLE PRECISION NOT NULL,
+                    net_bps DOUBLE PRECISION NOT NULL,
+                    equity_pre_entry DOUBLE PRECISION NOT NULL,
+                    equity_exit DOUBLE PRECISION NOT NULL,
+                    equity_trade_bps DOUBLE PRECISION NOT NULL,
+                    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                    PRIMARY KEY (pair_id, timeframe, exit_mode, entry_ts, exit_ts, exit_kind)
+                 );
+                 CREATE INDEX IF NOT EXISTS idx_strategy_paper_trades_history_recent
+                 ON strategy_paper_trades_history (pair_id, timeframe, exit_mode, exit_ts DESC);
                  CREATE TABLE IF NOT EXISTS strategy_candidate_runs (
                     candidate_id TEXT PRIMARY KEY,
                     request_id TEXT NOT NULL,
@@ -1109,6 +1143,70 @@ impl StrategyRepository {
                     ],
                 )
                 .await?;
+            self.client
+                .execute(
+                    "INSERT INTO strategy_paper_trades_history
+                     (pair_id, timeframe, exit_mode, left_instrument, right_instrument, selected_variant,
+                      entry_ts, exit_ts, bars_held, direction, exit_kind, entry_z, exit_z, entry_index, exit_index,
+                      left_entry, left_exit, right_entry, right_exit, left_leg_bps, right_leg_bps, gross_bps,
+                      round_trip_cost_bps, net_bps, equity_pre_entry, equity_exit, equity_trade_bps)
+                     VALUES
+                     ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27)
+                     ON CONFLICT (pair_id, timeframe, exit_mode, entry_ts, exit_ts, exit_kind)
+                     DO UPDATE SET
+                       left_instrument = EXCLUDED.left_instrument,
+                       right_instrument = EXCLUDED.right_instrument,
+                       selected_variant = EXCLUDED.selected_variant,
+                       bars_held = EXCLUDED.bars_held,
+                       direction = EXCLUDED.direction,
+                       entry_z = EXCLUDED.entry_z,
+                       exit_z = EXCLUDED.exit_z,
+                       entry_index = EXCLUDED.entry_index,
+                       exit_index = EXCLUDED.exit_index,
+                       left_entry = EXCLUDED.left_entry,
+                       left_exit = EXCLUDED.left_exit,
+                       right_entry = EXCLUDED.right_entry,
+                       right_exit = EXCLUDED.right_exit,
+                       left_leg_bps = EXCLUDED.left_leg_bps,
+                       right_leg_bps = EXCLUDED.right_leg_bps,
+                       gross_bps = EXCLUDED.gross_bps,
+                       round_trip_cost_bps = EXCLUDED.round_trip_cost_bps,
+                       net_bps = EXCLUDED.net_bps,
+                       equity_pre_entry = EXCLUDED.equity_pre_entry,
+                       equity_exit = EXCLUDED.equity_exit,
+                       equity_trade_bps = EXCLUDED.equity_trade_bps,
+                       updated_at = NOW()",
+                    &[
+                        &row.pair_id as &(dyn ToSql + Sync),
+                        &row.timeframe,
+                        &row.exit_mode,
+                        &row.left_instrument,
+                        &row.right_instrument,
+                        &row.selected_variant,
+                        &row.entry_ts,
+                        &row.exit_ts,
+                        &row.bars_held,
+                        &row.direction,
+                        &row.exit_kind,
+                        &row.entry_z,
+                        &row.exit_z,
+                        &row.entry_index,
+                        &row.exit_index,
+                        &row.left_entry,
+                        &row.left_exit,
+                        &row.right_entry,
+                        &row.right_exit,
+                        &row.left_leg_bps,
+                        &row.right_leg_bps,
+                        &row.gross_bps,
+                        &row.round_trip_cost_bps,
+                        &row.net_bps,
+                        &row.equity_pre_entry,
+                        &row.equity_exit,
+                        &row.equity_trade_bps,
+                    ],
+                )
+                .await?;
             total_written += written;
         }
         Ok(total_written)
@@ -1189,6 +1287,29 @@ impl StrategyRepository {
             .query(
                 "SELECT net_bps
                  FROM strategy_paper_trades
+                 WHERE pair_id = $1
+                   AND timeframe = $2
+                   AND exit_mode = $3
+                 ORDER BY exit_ts DESC
+                 LIMIT $4",
+                &[&pair_id, &timeframe.as_str(), &exit_mode, &limit],
+            )
+            .await?;
+        Ok(rows.into_iter().map(|row| row.get(0)).collect())
+    }
+
+    async fn fetch_recent_paper_trade_net_bps_history(
+        &self,
+        pair_id: &str,
+        timeframe: Timeframe,
+        exit_mode: &str,
+        limit: i64,
+    ) -> anyhow::Result<Vec<f64>> {
+        let rows = self
+            .client
+            .query(
+                "SELECT net_bps
+                 FROM strategy_paper_trades_history
                  WHERE pair_id = $1
                    AND timeframe = $2
                    AND exit_mode = $3
@@ -2883,8 +3004,13 @@ fn evaluate_recent_performance_gate(
     taker_fee_bps: f64,
     sampled_slippage_bps: f64,
     funding_estimate: FundingCostEstimate,
+    source_code: &str,
+    used_cumulative_fallback: bool,
 ) -> strategy_service::CostGateDiagnostics {
-    let mut rationale_codes = vec!["PERFORMANCE_GATE_SOURCE_PAPER_TRADES".to_string()];
+    let mut rationale_codes = vec![source_code.to_string()];
+    if used_cumulative_fallback {
+        rationale_codes.push("PERFORMANCE_GATE_FALLBACK_CUMULATIVE".to_string());
+    }
     let Some(stats) = stats else {
         rationale_codes.push("PERFORMANCE_HISTORY_WAIT".to_string());
         return strategy_service::CostGateDiagnostics {
@@ -7204,12 +7330,48 @@ async fn evaluate_pair_for_timeframe(
                 }
             };
             let performance_stats = summarize_recent_performance(&recent_net_bps);
+            let rolling_trade_count = performance_stats.map_or(0, |stats| stats.trades);
+            let mut selected_performance_stats = performance_stats;
+            let mut performance_source_code = "PERFORMANCE_GATE_SOURCE_ROLLING_PAPER_TRADES";
+            let mut used_cumulative_fallback = false;
+            if rolling_trade_count < state.settings.performance_gate_min_trades.max(1) {
+                let cumulative_net_bps = match state
+                    .repository
+                    .fetch_recent_paper_trade_net_bps_history(
+                        &output.cue.pair_id,
+                        timeframe,
+                        &state.settings.performance_gate_exit_mode,
+                        state.settings.performance_gate_lookback_trades as i64,
+                    )
+                    .await
+                {
+                    Ok(values) => values,
+                    Err(error) => {
+                        tracing::warn!(
+                            pair_id = %output.cue.pair_id,
+                            timeframe = %timeframe.as_str(),
+                            error = %error,
+                            "unable to load cumulative paper-trade performance window for cost gate"
+                        );
+                        vec![]
+                    }
+                };
+                let cumulative_stats = summarize_recent_performance(&cumulative_net_bps);
+                let cumulative_trade_count = cumulative_stats.map_or(0, |stats| stats.trades);
+                if cumulative_trade_count >= state.settings.performance_gate_min_trades.max(1) {
+                    selected_performance_stats = cumulative_stats;
+                    performance_source_code = "PERFORMANCE_GATE_SOURCE_CUMULATIVE_PAPER_TRADES";
+                    used_cumulative_fallback = true;
+                }
+            }
             let mut cost_gate = evaluate_recent_performance_gate(
-                performance_stats,
+                selected_performance_stats,
                 state.settings.performance_gate_min_trades,
                 taker_fee_bps,
                 sampled.selected_slippage_bps,
                 funding_estimate,
+                performance_source_code,
+                used_cumulative_fallback,
             );
             if sampled.source == Some(SampledSlippageSource::Bootstrapped) {
                 cost_gate
@@ -7394,7 +7556,9 @@ fn is_cost_reason(code: &str) -> bool {
         "COST_GATE_BLOCKED"
             | "PERFORMANCE_HISTORY_WAIT"
             | "PERFORMANCE_GATE_BLOCKED"
-            | "PERFORMANCE_GATE_SOURCE_PAPER_TRADES"
+            | "PERFORMANCE_GATE_SOURCE_ROLLING_PAPER_TRADES"
+            | "PERFORMANCE_GATE_SOURCE_CUMULATIVE_PAPER_TRADES"
+            | "PERFORMANCE_GATE_FALLBACK_CUMULATIVE"
             | "SLIPPAGE_SOURCE_SAMPLED"
             | "SLIPPAGE_SOURCE_BOOTSTRAPPED"
             | "SLIPPAGE_DATA_WARMING"
@@ -8883,7 +9047,15 @@ mod tests {
             bps_per_event: 0.0,
             total_bps: 0.0,
         };
-        let gate = evaluate_recent_performance_gate(None, 2, 1.2, 0.7, funding);
+        let gate = evaluate_recent_performance_gate(
+            None,
+            2,
+            1.2,
+            0.7,
+            funding,
+            "PERFORMANCE_GATE_SOURCE_ROLLING_PAPER_TRADES",
+            false,
+        );
         assert_eq!(gate.status, "WAIT");
         assert!(!gate.pass);
         assert!(gate
@@ -8901,7 +9073,15 @@ mod tests {
             total_bps: 0.2,
         };
         let stats = summarize_recent_performance(&[-2.0, 3.0, -1.5]).expect("stats");
-        let gate = evaluate_recent_performance_gate(Some(stats), 2, 1.2, 0.7, funding);
+        let gate = evaluate_recent_performance_gate(
+            Some(stats),
+            2,
+            1.2,
+            0.7,
+            funding,
+            "PERFORMANCE_GATE_SOURCE_ROLLING_PAPER_TRADES",
+            false,
+        );
         assert_eq!(gate.status, "AVAILABLE");
         assert!(!gate.pass);
         assert!(gate
@@ -8919,7 +9099,15 @@ mod tests {
             total_bps: 0.1,
         };
         let stats = summarize_recent_performance(&[1.5, 2.0, 3.0]).expect("stats");
-        let gate = evaluate_recent_performance_gate(Some(stats), 2, 1.2, 0.7, funding);
+        let gate = evaluate_recent_performance_gate(
+            Some(stats),
+            2,
+            1.2,
+            0.7,
+            funding,
+            "PERFORMANCE_GATE_SOURCE_ROLLING_PAPER_TRADES",
+            false,
+        );
         assert_eq!(gate.status, "AVAILABLE");
         assert!(gate.pass);
         assert!(gate.net_edge_bps > 0.0);
