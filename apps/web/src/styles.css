@@ -372,6 +372,14 @@ input {
   min-height: 0;
 }
 
+.analytics-chart-top-spacer {
+  min-height: 78px;
+  margin-bottom: 0;
+  border-color: transparent;
+  background: transparent;
+  box-shadow: none;
+}
+
 .analytics-paper-trades-table table th,
 .analytics-paper-trades-table table td {
   font-size: 0.78rem;

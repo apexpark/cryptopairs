@@ -3214,6 +3214,7 @@ function AnalyticsPage({
             title="Historical Z-Score (Entries / Exits / Stops)"
             subtitle="Derived from live spread history"
           >
+            <div className="mini-card analytics-chart-top-spacer" aria-hidden="true" />
             <LineChart
               values={zSeries}
               timestamps={zTimestamps}
