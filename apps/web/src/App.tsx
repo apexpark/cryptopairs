@@ -2031,15 +2031,17 @@ function SectionCard({
   subtitle,
   children,
   className,
+  style,
 }: {
-  title: string;
+  title?: string;
   subtitle?: string;
   children: React.ReactNode;
   className?: string;
+  style?: React.CSSProperties;
 }): JSX.Element {
   return (
-    <section className={`panel-card ${className ?? ""}`.trim()}>
-      <h2>{title}</h2>
+    <section className={`panel-card ${className ?? ""}`.trim()} style={style}>
+      {title ? <h2>{title}</h2> : null}
       {subtitle ? <p className="panel-subtitle">{subtitle}</p> : null}
       {children}
     </section>
@@ -2604,6 +2606,7 @@ function AnalyticsPage({
     () => Math.round(clampNumber(pairCount * 31, 320, 900)),
     [pairCount]
   );
+  const primaryPanelHeight = pairDrivenChartHeight + 130;
   const displayEquitySeries = useMemo(() => scaleEquityAbsolute(equitySeries, 100), [equitySeries]);
   const equityWindowStats = useMemo(() => {
     if (!displayEquitySeries.length || !equityTimestamps.length) {
@@ -2635,7 +2638,12 @@ function AnalyticsPage({
     <div className="analytics-layout">
       <div className="analytics-left-stack">
         <div className="analytics-top-left-split">
-          <SectionCard title="Pair" subtitle="Select pair">
+          <SectionCard
+            title="Pair"
+            subtitle="Select pair"
+            className="analytics-primary-panel"
+            style={{ minHeight: `${primaryPanelHeight}px` }}
+          >
             <div className="table-wrap analytics-pair-list">
               <table>
                 <tbody>
@@ -2667,10 +2675,7 @@ function AnalyticsPage({
           </SectionCard>
         </div>
 
-        <SectionCard
-          title="Research Controls"
-          subtitle="Optional advanced diagnostics and parameter exploration"
-        >
+        <SectionCard>
           <details className="research-controls-panel">
             <summary>
               <span>Advanced Research (Optional)</span>
@@ -3010,6 +3015,8 @@ function AnalyticsPage({
             <SectionCard
               title="Hypothetical Equity Curve"
               subtitle="Absolute mode (equity x $100) from live candles and current strategy bands"
+              className="analytics-primary-panel"
+              style={{ minHeight: `${primaryPanelHeight}px` }}
             >
               <div className="mini-card">
                 <div className="research-results-grid">
@@ -3059,7 +3066,7 @@ function AnalyticsPage({
               />
             </SectionCard>
 
-            <SectionCard title="Paper Trades" subtitle="Persisted paper-trade inspection">
+            <SectionCard>
               <details className="research-controls-panel">
                 <summary>
                   <span>Paper Trades (Optional)</span>
@@ -3173,6 +3180,8 @@ function AnalyticsPage({
             <SectionCard
               title="Historical Z-Score (Entries / Exits / Stops)"
               subtitle="Derived from live spread history"
+              className="analytics-primary-panel"
+              style={{ minHeight: `${primaryPanelHeight}px` }}
             >
               <LineChart
                 values={zSeries}
@@ -3201,7 +3210,7 @@ function AnalyticsPage({
               />
             </SectionCard>
 
-            <SectionCard title="Diagnostics" subtitle="Live model and gate state">
+            <SectionCard>
               <details className="research-controls-panel">
                 <summary>
                   <span>Diagnostics (Optional)</span>

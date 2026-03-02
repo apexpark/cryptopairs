@@ -365,8 +365,9 @@ input {
   align-items: start;
 }
 
-.analytics-pair-list {
+.table-wrap.analytics-pair-list {
   overflow: visible;
+  max-height: none;
 }
 
 .analytics-pair-list table td {
@@ -386,6 +387,10 @@ input {
   grid-template-rows: auto auto;
   gap: 10px;
   min-height: 0;
+}
+
+.analytics-primary-panel {
+  height: auto;
 }
 
 .analytics-right-stack {
