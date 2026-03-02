@@ -5021,6 +5021,12 @@ fn analytics_model_bars(timeframe: Timeframe) -> usize {
     }
 }
 
+fn paper_trade_persist_bars(timeframe: Timeframe, configured_bars: usize) -> usize {
+    let floor = analytics_model_bars(timeframe).max(120);
+    let capped = configured_bars.max(floor);
+    capped.min(250_000)
+}
+
 fn days_to_bars(timeframe: Timeframe, days: usize) -> usize {
     let safe_days = days.max(1) as i64;
     let step_seconds = timeframe.step_seconds().max(1);
@@ -5415,7 +5421,15 @@ async fn compute_and_record_paper_trades_for_output(
     timeframe: Timeframe,
     output: &PairEvaluationOutput,
 ) -> anyhow::Result<u64> {
-    let lookback = analytics_model_bars(timeframe).max(120) as i64;
+    let lookback_bars =
+        paper_trade_persist_bars(timeframe, state.settings.paper_trade_persist_bars);
+    tracing::debug!(
+        pair_id = output.cue.pair_id,
+        timeframe = timeframe.as_str(),
+        lookback_bars,
+        "paper trade generation lookback bars"
+    );
+    let lookback = lookback_bars as i64;
     let left = state
         .repository
         .fetch_recent_closes(&pair.left, timeframe, lookback)
@@ -8367,6 +8381,22 @@ mod tests {
         assert_eq!(super::analytics_model_bars(Timeframe::OneMinute), 300);
         assert_eq!(super::analytics_model_bars(Timeframe::FifteenMinutes), 280);
         assert_eq!(super::analytics_model_bars(Timeframe::OneHour), 220);
+    }
+
+    #[test]
+    fn paper_trade_persist_bars_honors_floor_and_cap() {
+        assert_eq!(
+            super::paper_trade_persist_bars(Timeframe::OneMinute, 10),
+            300
+        );
+        assert_eq!(
+            super::paper_trade_persist_bars(Timeframe::OneMinute, 5_000),
+            5_000
+        );
+        assert_eq!(
+            super::paper_trade_persist_bars(Timeframe::OneMinute, 999_999),
+            250_000
+        );
     }
 
     #[test]
