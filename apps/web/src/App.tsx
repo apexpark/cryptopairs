@@ -2599,6 +2599,11 @@ function AnalyticsPage({
   chartHeight: number;
 }): JSX.Element {
   const selected = cues?.cues.find((entry) => entry.cue.pair_id === selectedPairId) ?? cues?.cues[0];
+  const pairCount = cues?.cues.length ?? 0;
+  const pairDrivenChartHeight = useMemo(
+    () => Math.round(clampNumber(pairCount * 31, 320, 900)),
+    [pairCount]
+  );
   const displayEquitySeries = useMemo(() => scaleEquityAbsolute(equitySeries, 100), [equitySeries]);
   const equityWindowStats = useMemo(() => {
     if (!displayEquitySeries.length || !equityTimestamps.length) {
@@ -3046,7 +3051,7 @@ function AnalyticsPage({
               <LineChart
                 values={displayEquitySeries}
                 timestamps={equityTimestamps}
-                height={chartHeight}
+                height={pairDrivenChartHeight}
                 title="Hypothetical equity (absolute, equity x $100)"
                 unavailableText={loading ? "Loading live candles..." : error ?? "No data"}
                 yAxisFormatter={formatUsdAxisValue}
@@ -3055,104 +3060,112 @@ function AnalyticsPage({
             </SectionCard>
 
             <SectionCard title="Paper Trades" subtitle="Persisted paper-trade inspection">
-              <div className="research-controls-grid">
-                <label>
-                  Chart Bars
-                  <input
-                    type="number"
-                    min="120"
-                    max="2000"
-                    step="1"
-                    value={analyticsChartBars}
-                    onChange={(event) =>
-                      onAnalyticsChartBarsChange(
-                        clampAnalyticsChartBars(Number.parseInt(event.target.value, 10) || 120)
-                      )
-                    }
-                  />
-                </label>
-                <label>
-                  Paper Hours
-                  <input
-                    type="number"
-                    min="1"
-                    max="175200"
-                    step="1"
-                    value={analyticsPaperHours}
-                    onChange={(event) =>
-                      onAnalyticsPaperHoursChange(
-                        clampAnalyticsPaperHours(Number.parseInt(event.target.value, 10) || 1)
-                      )
-                    }
-                  />
-                </label>
-                <label>
-                  Paper Limit
-                  <input
-                    type="number"
-                    min="1"
-                    max="20000"
-                    step="1"
-                    value={analyticsPaperLimit}
-                    onChange={(event) =>
-                      onAnalyticsPaperLimitChange(
-                        clampAnalyticsPaperLimit(Number.parseInt(event.target.value, 10) || 1)
-                      )
-                    }
-                  />
-                </label>
-              </div>
-              <p className="small-text tone-info">
-                Active window: chart={clampAnalyticsChartBars(analyticsChartBars)} bars, paper=
-                {clampAnalyticsPaperHours(analyticsPaperHours)}h, limit=
-                {clampAnalyticsPaperLimit(analyticsPaperLimit)}.
-              </p>
-              {paperTrades?.model_bars ? (
-                <p className="small-text tone-info">Model window: {paperTrades.model_bars} bars</p>
-              ) : null}
-              {paperTradesLoading ? <p className="small-text">Loading persisted paper trades...</p> : null}
-              {paperTradesError ? <p className="small-text tone-bad">{paperTradesError}</p> : null}
-              {!paperTradesLoading && !paperTradesError && paperTrades?.rows.length === 0 ? (
-                <p className="small-text">No persisted paper trades found for this pair/timeframe window.</p>
-              ) : null}
-              {paperTrades?.rows.length ? (
-                <div className="table-wrap analytics-paper-trades-table">
-                  <table>
-                    <thead>
-                      <tr>
-                        <th>Exit</th>
-                        <th>Dir</th>
-                        <th>Hold</th>
-                        <th>Left</th>
-                        <th>Right</th>
-                        <th>Net</th>
-                        <th>Equity</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {paperTrades.rows.map((row) => (
-                        <tr key={`${row.entry_ts}-${row.exit_ts}-${row.exit_kind}`}>
-                          <td>{formatLocalTime(row.exit_ts)}</td>
-                          <td>{row.direction === "LONG_SPREAD" ? "LONG" : "SHORT"}</td>
-                          <td>{row.bars_held}</td>
-                          <td className={row.left_leg_bps >= 0 ? "tone-ok" : "tone-bad"}>
-                            {formatSigned(row.left_leg_bps)}bp
-                          </td>
-                          <td className={row.right_leg_bps >= 0 ? "tone-ok" : "tone-bad"}>
-                            {formatSigned(row.right_leg_bps)}bp
-                          </td>
-                          <td className={row.net_bps >= 0 ? "tone-ok" : "tone-bad"}>
-                            {formatSigned(row.net_bps)}bp
-                          </td>
-                          <td className={row.equity_trade_bps >= 0 ? "tone-ok" : "tone-bad"}>
-                            {formatSigned(row.equity_trade_bps)}bp
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
+              <details className="research-controls-panel">
+                <summary>
+                  <span>Paper Trades (Optional)</span>
+                  <span className="small-text">Persisted paper-trade inspection</span>
+                </summary>
+                <div className="research-controls-body">
+                  <div className="research-controls-grid">
+                    <label>
+                      Chart Bars
+                      <input
+                        type="number"
+                        min="120"
+                        max="2000"
+                        step="1"
+                        value={analyticsChartBars}
+                        onChange={(event) =>
+                          onAnalyticsChartBarsChange(
+                            clampAnalyticsChartBars(Number.parseInt(event.target.value, 10) || 120)
+                          )
+                        }
+                      />
+                    </label>
+                    <label>
+                      Paper Hours
+                      <input
+                        type="number"
+                        min="1"
+                        max="175200"
+                        step="1"
+                        value={analyticsPaperHours}
+                        onChange={(event) =>
+                          onAnalyticsPaperHoursChange(
+                            clampAnalyticsPaperHours(Number.parseInt(event.target.value, 10) || 1)
+                          )
+                        }
+                      />
+                    </label>
+                    <label>
+                      Paper Limit
+                      <input
+                        type="number"
+                        min="1"
+                        max="20000"
+                        step="1"
+                        value={analyticsPaperLimit}
+                        onChange={(event) =>
+                          onAnalyticsPaperLimitChange(
+                            clampAnalyticsPaperLimit(Number.parseInt(event.target.value, 10) || 1)
+                          )
+                        }
+                      />
+                    </label>
+                  </div>
+                  <p className="small-text tone-info">
+                    Active window: chart={clampAnalyticsChartBars(analyticsChartBars)} bars, paper=
+                    {clampAnalyticsPaperHours(analyticsPaperHours)}h, limit=
+                    {clampAnalyticsPaperLimit(analyticsPaperLimit)}.
+                  </p>
+                  {paperTrades?.model_bars ? (
+                    <p className="small-text tone-info">Model window: {paperTrades.model_bars} bars</p>
+                  ) : null}
+                  {paperTradesLoading ? <p className="small-text">Loading persisted paper trades...</p> : null}
+                  {paperTradesError ? <p className="small-text tone-bad">{paperTradesError}</p> : null}
+                  {!paperTradesLoading && !paperTradesError && paperTrades?.rows.length === 0 ? (
+                    <p className="small-text">No persisted paper trades found for this pair/timeframe window.</p>
+                  ) : null}
+                  {paperTrades?.rows.length ? (
+                    <div className="table-wrap analytics-paper-trades-table">
+                      <table>
+                        <thead>
+                          <tr>
+                            <th>Exit</th>
+                            <th>Dir</th>
+                            <th>Hold</th>
+                            <th>Left</th>
+                            <th>Right</th>
+                            <th>Net</th>
+                            <th>Equity</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {paperTrades.rows.map((row) => (
+                            <tr key={`${row.entry_ts}-${row.exit_ts}-${row.exit_kind}`}>
+                              <td>{formatLocalTime(row.exit_ts)}</td>
+                              <td>{row.direction === "LONG_SPREAD" ? "LONG" : "SHORT"}</td>
+                              <td>{row.bars_held}</td>
+                              <td className={row.left_leg_bps >= 0 ? "tone-ok" : "tone-bad"}>
+                                {formatSigned(row.left_leg_bps)}bp
+                              </td>
+                              <td className={row.right_leg_bps >= 0 ? "tone-ok" : "tone-bad"}>
+                                {formatSigned(row.right_leg_bps)}bp
+                              </td>
+                              <td className={row.net_bps >= 0 ? "tone-ok" : "tone-bad"}>
+                                {formatSigned(row.net_bps)}bp
+                              </td>
+                              <td className={row.equity_trade_bps >= 0 ? "tone-ok" : "tone-bad"}>
+                                {formatSigned(row.equity_trade_bps)}bp
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  ) : null}
                 </div>
-              ) : null}
+              </details>
             </SectionCard>
           </div>
 
@@ -3176,7 +3189,7 @@ function AnalyticsPage({
                       ]
                     : []
                 }
-                height={chartHeight}
+                height={pairDrivenChartHeight}
                 title="Entry=green, Exit=amber, Stop=red"
                 unavailableText={loading ? "Loading live candles..." : error ?? "No data"}
                 yAxisFormatter={(value) => value.toFixed(2)}
@@ -3189,45 +3202,53 @@ function AnalyticsPage({
             </SectionCard>
 
             <SectionCard title="Diagnostics" subtitle="Live model and gate state">
-              {selected ? (
-                <>
-                  <StatRow label="Champion Variant" value={selected.cue.selected_variant} />
-                  <StatRow
-                    label="Shadow Agreement"
-                    value={selected.cue.shadow_ml.agrees_with_selected ? "YES" : "NO"}
-                    tone={selected.cue.shadow_ml.agrees_with_selected ? "ok" : "warn"}
-                  />
-                  <StatRow
-                    label="Setup Gate"
-                    value={
-                      (selected.cue.setup_gate?.pass ??
-                      selected.cue.setup_actionable ??
-                      selected.cue.actionable)
-                        ? "PASS"
-                        : "BLOCK"
-                    }
-                    tone={
-                      (selected.cue.setup_gate?.pass ??
-                      selected.cue.setup_actionable ??
-                      selected.cue.actionable)
-                        ? "ok"
-                        : "bad"
-                    }
-                  />
-                  <StatRow
-                    label="Cost Economics"
-                    value={selected.cue.cost_gate.pass ? "PASS" : "BLOCK"}
-                    tone={selected.cue.cost_gate.pass ? "ok" : "bad"}
-                  />
-                  <StatRow
-                    label="Trade Ready"
-                    value={(selected.cue.trade_gate?.pass ?? selected.cue.actionable) ? "PASS" : "BLOCK"}
-                    tone={(selected.cue.trade_gate?.pass ?? selected.cue.actionable) ? "ok" : "bad"}
-                  />
-                </>
-              ) : (
-                <p className="empty-text">No diagnostics available.</p>
-              )}
+              <details className="research-controls-panel">
+                <summary>
+                  <span>Diagnostics (Optional)</span>
+                  <span className="small-text">Live model and gate state</span>
+                </summary>
+                <div className="research-controls-body">
+                  {selected ? (
+                    <>
+                      <StatRow label="Champion Variant" value={selected.cue.selected_variant} />
+                      <StatRow
+                        label="Shadow Agreement"
+                        value={selected.cue.shadow_ml.agrees_with_selected ? "YES" : "NO"}
+                        tone={selected.cue.shadow_ml.agrees_with_selected ? "ok" : "warn"}
+                      />
+                      <StatRow
+                        label="Setup Gate"
+                        value={
+                          (selected.cue.setup_gate?.pass ??
+                          selected.cue.setup_actionable ??
+                          selected.cue.actionable)
+                            ? "PASS"
+                            : "BLOCK"
+                        }
+                        tone={
+                          (selected.cue.setup_gate?.pass ??
+                          selected.cue.setup_actionable ??
+                          selected.cue.actionable)
+                            ? "ok"
+                            : "bad"
+                        }
+                      />
+                      <StatRow
+                        label="Cost Economics"
+                        value={selected.cue.cost_gate.pass ? "PASS" : "BLOCK"}
+                        tone={selected.cue.cost_gate.pass ? "ok" : "bad"}
+                      />
+                      <StatRow
+                        label="Trade Ready"
+                        value={(selected.cue.trade_gate?.pass ?? selected.cue.actionable) ? "PASS" : "BLOCK"}
+                        tone={(selected.cue.trade_gate?.pass ?? selected.cue.actionable) ? "ok" : "bad"}
+                      />
+                    </>
+                  ) : (
+                    <p className="empty-text">No diagnostics available.</p>
+                  )}
+                </div>
+              </details>
             </SectionCard>
           </div>
         </div>
