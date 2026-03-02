@@ -368,6 +368,7 @@ input {
 .table-wrap.analytics-pair-list {
   overflow: visible;
   max-height: none;
+  flex: 1 1 auto;
 }
 
 .analytics-pair-list table td {
@@ -391,6 +392,9 @@ input {
 
 .analytics-primary-panel {
   height: auto;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
 }
 
 .analytics-right-stack {
