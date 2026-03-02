@@ -113,6 +113,48 @@ function analyticsRefreshMs(timeframe: Timeframe): number {
   return 90_000;
 }
 
+function defaultAnalyticsChartBars(timeframe: Timeframe): number {
+  if (timeframe === "1m") {
+    return 2000;
+  }
+  if (timeframe === "15m") {
+    return 1600;
+  }
+  return 1200;
+}
+
+function defaultAnalyticsPaperHours(timeframe: Timeframe): number {
+  if (timeframe === "1m") {
+    return 2160;
+  }
+  if (timeframe === "15m") {
+    return 8760;
+  }
+  return 35040;
+}
+
+function defaultAnalyticsPaperLimit(timeframe: Timeframe): number {
+  if (timeframe === "1m") {
+    return 500;
+  }
+  if (timeframe === "15m") {
+    return 1000;
+  }
+  return 2000;
+}
+
+function clampAnalyticsChartBars(value: number): number {
+  return Math.floor(clampNumber(value, 120, 2000));
+}
+
+function clampAnalyticsPaperHours(value: number): number {
+  return Math.floor(clampNumber(value, 1, 175_200));
+}
+
+function clampAnalyticsPaperLimit(value: number): number {
+  return Math.floor(clampNumber(value, 1, 20_000));
+}
+
 function usePersistentState<T>(key: string, fallback: T): [T, (updater: T | ((prev: T) => T)) => void] {
   const [state, setState] = useState<T>(() => {
     try {
@@ -689,6 +731,15 @@ function App(): JSX.Element {
   const [paperTrades, setPaperTrades] = useState<StrategyPairsPaperTradesResponse | null>(null);
   const [paperTradesError, setPaperTradesError] = useState<string | null>(null);
   const [paperTradesLoading, setPaperTradesLoading] = useState(false);
+  const [analyticsChartBars, setAnalyticsChartBars] = useState<number>(() =>
+    defaultAnalyticsChartBars("1m")
+  );
+  const [analyticsPaperHours, setAnalyticsPaperHours] = useState<number>(() =>
+    defaultAnalyticsPaperHours("1m")
+  );
+  const [analyticsPaperLimit, setAnalyticsPaperLimit] = useState<number>(() =>
+    defaultAnalyticsPaperLimit("1m")
+  );
   const [researchEntryZ, setResearchEntryZ] = usePersistentState<string>(
     "cp.research.entry_z",
     "1.8"
@@ -1080,7 +1131,7 @@ function App(): JSX.Element {
         setAnalyticsLoading(true);
       }
 
-      const bars = timeframe === "1m" ? 300 : timeframe === "15m" ? 280 : 220;
+      const bars = clampAnalyticsChartBars(analyticsChartBars);
 
       try {
         const liveZRequest =
@@ -1178,7 +1229,14 @@ function App(): JSX.Element {
       cancelled = true;
       window.clearInterval(refreshIntervalId);
     };
-  }, [selectedCueRow, timeframe, uiAccessGranted, takerFeeBpsOverride, backtestExitMode]);
+  }, [
+    selectedCueRow,
+    timeframe,
+    uiAccessGranted,
+    takerFeeBpsOverride,
+    backtestExitMode,
+    analyticsChartBars,
+  ]);
 
   useEffect(() => {
     if (!selectedCueRow || zSeries.length === 0) {
@@ -1229,8 +1287,8 @@ function App(): JSX.Element {
         const response = await fetchStrategyPaperTrades(
           timeframe,
           selectedCueRow.cue.pair_id,
-          720,
-          24,
+          clampAnalyticsPaperHours(analyticsPaperHours),
+          clampAnalyticsPaperLimit(analyticsPaperLimit),
           backtestExitMode
         );
         if (cancelled) {
@@ -1263,7 +1321,14 @@ function App(): JSX.Element {
       cancelled = true;
       window.clearInterval(intervalId);
     };
-  }, [selectedCueRow, timeframe, backtestExitMode, uiAccessGranted]);
+  }, [
+    selectedCueRow,
+    timeframe,
+    backtestExitMode,
+    uiAccessGranted,
+    analyticsPaperHours,
+    analyticsPaperLimit,
+  ]);
 
   useEffect(() => {
     if (!uiAccessGranted || page !== "analytics") {
@@ -1580,6 +1645,12 @@ function App(): JSX.Element {
     headerRightMetrics?.funding_interval_secs ??
     null;
   const pairLotSizes = derivePairLotSizes(headerHedgeRatio);
+
+  useEffect(() => {
+    setAnalyticsChartBars(defaultAnalyticsChartBars(timeframe));
+    setAnalyticsPaperHours(defaultAnalyticsPaperHours(timeframe));
+    setAnalyticsPaperLimit(defaultAnalyticsPaperLimit(timeframe));
+  }, [timeframe]);
 
   useEffect(() => {
     if (!uiAccessGranted) {
@@ -1995,6 +2066,12 @@ function App(): JSX.Element {
           paperTrades={paperTrades}
           paperTradesLoading={paperTradesLoading}
           paperTradesError={paperTradesError}
+          analyticsChartBars={analyticsChartBars}
+          analyticsPaperHours={analyticsPaperHours}
+          analyticsPaperLimit={analyticsPaperLimit}
+          onAnalyticsChartBarsChange={setAnalyticsChartBars}
+          onAnalyticsPaperHoursChange={setAnalyticsPaperHours}
+          onAnalyticsPaperLimitChange={setAnalyticsPaperLimit}
           researchEntryZ={researchEntryZ}
           researchExitZ={researchExitZ}
           researchStopZ={researchStopZ}
@@ -2635,6 +2712,12 @@ function AnalyticsPage({
   paperTrades,
   paperTradesLoading,
   paperTradesError,
+  analyticsChartBars,
+  analyticsPaperHours,
+  analyticsPaperLimit,
+  onAnalyticsChartBarsChange,
+  onAnalyticsPaperHoursChange,
+  onAnalyticsPaperLimitChange,
   researchEntryZ,
   researchExitZ,
   researchStopZ,
@@ -2690,6 +2773,12 @@ function AnalyticsPage({
   paperTrades: StrategyPairsPaperTradesResponse | null;
   paperTradesLoading: boolean;
   paperTradesError: string | null;
+  analyticsChartBars: number;
+  analyticsPaperHours: number;
+  analyticsPaperLimit: number;
+  onAnalyticsChartBarsChange: (value: number) => void;
+  onAnalyticsPaperHoursChange: (value: number) => void;
+  onAnalyticsPaperLimitChange: (value: number) => void;
   researchEntryZ: string;
   researchExitZ: string;
   researchStopZ: string;
@@ -2834,6 +2923,58 @@ function AnalyticsPage({
               <span>Paper Trades (Optional)</span>
             </summary>
             <div className="analytics-advanced-body">
+              <div className="research-controls-grid">
+                <label>
+                  Chart Bars
+                  <input
+                    type="number"
+                    min="120"
+                    max="2000"
+                    step="1"
+                    value={analyticsChartBars}
+                    onChange={(event) =>
+                      onAnalyticsChartBarsChange(
+                        clampAnalyticsChartBars(Number.parseInt(event.target.value, 10) || 120)
+                      )
+                    }
+                  />
+                </label>
+                <label>
+                  Paper Hours
+                  <input
+                    type="number"
+                    min="1"
+                    max="175200"
+                    step="1"
+                    value={analyticsPaperHours}
+                    onChange={(event) =>
+                      onAnalyticsPaperHoursChange(
+                        clampAnalyticsPaperHours(Number.parseInt(event.target.value, 10) || 1)
+                      )
+                    }
+                  />
+                </label>
+                <label>
+                  Paper Limit
+                  <input
+                    type="number"
+                    min="1"
+                    max="20000"
+                    step="1"
+                    value={analyticsPaperLimit}
+                    onChange={(event) =>
+                      onAnalyticsPaperLimitChange(
+                        clampAnalyticsPaperLimit(Number.parseInt(event.target.value, 10) || 1)
+                      )
+                    }
+                  />
+                </label>
+              </div>
+              <p className="small-text tone-info">
+                Active window: chart={clampAnalyticsChartBars(analyticsChartBars)} bars, paper=
+                {clampAnalyticsPaperHours(analyticsPaperHours)}h, limit=
+                {clampAnalyticsPaperLimit(analyticsPaperLimit)}.
+              </p>
               {paperTrades?.model_bars ? (
                 <p className="small-text tone-info">Model window: {paperTrades.model_bars} bars</p>
               ) : null}
