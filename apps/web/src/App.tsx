@@ -74,8 +74,6 @@ type TradeCommand =
   | "reduce-exposure"
   | "close-spread";
 
-type EquityChartMode = "rebased" | "absolute";
-
 interface SpreadLeg {
   instrument: string;
   side: TradeSide;
@@ -264,18 +262,6 @@ function formatUsdAxisValue(value: number): string {
   return `$${value.toFixed(2)}`;
 }
 
-function scaleEquityForDisplay(
-  values: number[],
-  baseUsd = 100,
-  deltaMultiplier = 110
-): number[] {
-  if (!values.length) {
-    return values;
-  }
-  const anchor = values[0];
-  return values.map((value) => baseUsd + (value - anchor) * deltaMultiplier);
-}
-
 function scaleEquityAbsolute(values: number[], baseUsd = 100): number[] {
   if (!values.length) {
     return values;
@@ -440,228 +426,6 @@ async function fetchMarketMetricsWithFallback(
   throw new Error(`No market metrics available for ${instrument}`);
 }
 
-function describeRationaleCode(code: string): string {
-  const mapping: Record<string, string> = {
-    BELOW_ENTRY_BAND: "Spread z-score is inside the entry trigger band (|z| is below entry threshold).",
-    AT_OR_BEYOND_STOP_BAND:
-      "Spread is at or beyond the configured stop band, so new entries are blocked.",
-    RETRACE_COOLDOWN_ACTIVE:
-      "A recent stop breach triggered cooldown; entry re-arms only after 25% retrace from stop toward entry.",
-    COST_GATE_BLOCKED: "Recent realized paper-trade performance does not pass the profitability gate.",
-    PERFORMANCE_HISTORY_WAIT:
-      "Waiting for enough completed paper trades before enabling the profitability gate.",
-    PERFORMANCE_GATE_BLOCKED:
-      "Recent completed paper trades are not profitable enough to open new entries.",
-    PERFORMANCE_GATE_SOURCE_ROLLING_PAPER_TRADES:
-      "Cost gate uses rolling recent paper-trade profitability for pass/block decisions.",
-    PERFORMANCE_GATE_SOURCE_CUMULATIVE_PAPER_TRADES:
-      "Cost gate is using cumulative persisted paper-trade profitability as fallback.",
-    PERFORMANCE_GATE_FALLBACK_CUMULATIVE:
-      "Rolling recent trades were insufficient, so cumulative persisted trade history is used.",
-    NEGATIVE_EXPECTED_EDGE: "Expected edge is negative after cost adjustments.",
-    NEGATIVE_EDGE: "Recent edge estimate is negative for this setup.",
-    HEDGE_RATIO_UNSTABLE:
-      "Hedge ratio drift is elevated, so pair balancing reliability is reduced.",
-    LOW_SAMPLE: "Recent sample size is limited, reducing confidence.",
-    CHAMPION_DRIFT: "Best-performing model selection is drifting.",
-    CHAMPION_DRIFT_BLOCKED: "Model drift guard is active, so entries are blocked.",
-    PAIR_NOT_IN_PORTFOLIO_PLAN: "Pair is currently outside the advisory portfolio plan.",
-    INSUFFICIENT_TRAINING_HISTORY: "Shadow ML history is still building and not used for approvals.",
-    SLIPPAGE_SOURCE_SAMPLED:
-      "Cost gate uses live sampled slippage estimates from bid/ask/index quotes.",
-    SLIPPAGE_SOURCE_BOOTSTRAPPED:
-      "Cost gate is temporarily using a warm-start sampled slippage checkpoint until live samples confirm it.",
-    SLIPPAGE_DATA_WARMING:
-      "Live slippage feed is still warming up; entry remains blocked until enough samples are collected.",
-    SLIPPAGE_DATA_STALE:
-      "Live slippage feed is stale; entry remains blocked until fresh quotes are restored.",
-    SLIPPAGE_DATA_UNAVAILABLE:
-      "Live slippage feed is unavailable; entry remains blocked in fail-closed mode.",
-    SETUP_GATE_BLOCKED: "Setup conditions for entry are not currently satisfied.",
-    TRADE_GATE_BLOCKED: "Combined setup/cost gate did not pass.",
-    FUNDING_MODEL_DYNAMIC:
-      "Funding model is dynamic (reference-only in this gate mode).",
-    FUNDING_CONTINUOUS_ACCRUAL:
-      "Funding impact is projected as continuous accrual over expected hold time (reference-only).",
-    FUNDING_DATA_UNAVAILABLE_INFO:
-      "Funding sample was unavailable; shown as zero for operator reference.",
-  };
-  return mapping[code] ?? code.replaceAll("_", " ").toLowerCase();
-}
-
-function explainPairActionability(
-  selected: StrategyPairsCuesResponse["cues"][number] | undefined
-): {
-  headline: string;
-  tone: "ok" | "bad" | "warn";
-  details: string[];
-  reasons: string[];
-} {
-  if (!selected) {
-    return {
-      headline: "No pair selected.",
-      tone: "warn",
-      details: ["Select a pair to view live entry blocking reasons."],
-      reasons: [],
-    };
-  }
-
-  const { cue, hedge_ratio_stability } = selected;
-  const setupReasons = cue.setup_gate?.rationale_codes ?? cue.rationale_codes;
-  const costReasons = cue.cost_gate.rationale_codes ?? [];
-  const tradeGate = cue.trade_gate ?? {
-    status: cue.cost_gate.status === "AVAILABLE" ? "AVAILABLE" : "WAIT",
-    pass: cue.actionable,
-    blocked_by: cue.actionable ? "NONE" : "WAIT",
-    rationale_codes: cue.actionable
-      ? []
-      : Array.from(new Set([...setupReasons, ...costReasons])),
-  };
-  const tradeReasons = tradeGate.rationale_codes ?? [];
-  const mergedReasons = Array.from(new Set([...setupReasons, ...costReasons, ...tradeReasons]));
-  const reasonSet = new Set(mergedReasons);
-  if (reasonSet.has("SETUP_GATE_BLOCKED") && mergedReasons.length > 1) {
-    reasonSet.delete("SETUP_GATE_BLOCKED");
-  }
-  if (reasonSet.has("TRADE_GATE_BLOCKED") && mergedReasons.length > 1) {
-    reasonSet.delete("TRADE_GATE_BLOCKED");
-  }
-  const displayReasons = Array.from(reasonSet);
-  const costWaiting = cue.cost_gate.status === "WAIT";
-  const costUnavailable = cue.cost_gate.status !== "AVAILABLE" && !costWaiting;
-  const costBlocked =
-    costWaiting ||
-    costUnavailable ||
-    costReasons.includes("COST_GATE_BLOCKED") ||
-    costReasons.includes("PERFORMANCE_GATE_BLOCKED") ||
-    (cue.cost_gate.status === "AVAILABLE" && !cue.cost_gate.pass);
-
-  const details: string[] = [];
-  if (setupReasons.includes("BELOW_ENTRY_BAND")) {
-    details.push(
-      `Current spread z-score is ${cue.spread_z.toFixed(2)}, inside the entry trigger at ±${cue.entry_band.toFixed(2)}.`
-    );
-  }
-  if (setupReasons.includes("AT_OR_BEYOND_STOP_BAND")) {
-    details.push(
-      `Current spread z-score is ${cue.spread_z.toFixed(2)}, at or beyond the stop level ±${cue.stop_band.toFixed(2)}; entries are disabled until it moves back inside stop limits.`
-    );
-  }
-  if (setupReasons.includes("RETRACE_COOLDOWN_ACTIVE")) {
-    const rearmLevel = cue.stop_band - (cue.stop_band - cue.entry_band) * 0.25;
-    details.push(
-      `Recent stop breach detected. New entries stay blocked until z-score retraces to ±${rearmLevel.toFixed(2)} (25% back from stop toward entry).`
-    );
-  }
-  if (costWaiting) {
-    details.push(
-      "Profitability gate is in WAIT mode until enough completed paper trades are available."
-    );
-  } else if (costUnavailable) {
-    details.push("Cost/performance gate is unavailable right now, so trading remains fail-closed.");
-  } else if (costBlocked) {
-    details.push(
-      `Recent paper-trade median net performance is ${formatSigned(cue.cost_gate.net_edge_bps)}bp, so the profitability gate remains blocked.`
-    );
-  } else {
-    details.push(
-      `Recent paper-trade median net performance is ${formatSigned(cue.cost_gate.net_edge_bps)}bp, so the profitability gate currently passes.`
-    );
-  }
-  if (setupReasons.includes("HEDGE_RATIO_UNSTABLE")) {
-    details.push(
-      `Hedge ratio drift is ${(hedge_ratio_stability * 100).toFixed(1)}%, above preferred stability tolerance for neutral sizing.`
-    );
-  }
-  if (setupReasons.includes("LOW_SAMPLE")) {
-    details.push("Recent setup history is limited, so confidence is intentionally reduced.");
-  }
-  if (setupReasons.includes("CHAMPION_DRIFT_BLOCKED")) {
-    details.push("Variant drift guard is active until model selection stabilizes.");
-  }
-
-  if (!details.length) {
-    details.push(
-      tradeGate.pass
-        ? "Setup and cost gates are currently passing."
-        : "At least one strategy or safety gate is currently blocking entry."
-    );
-  }
-
-  if (tradeGate.pass) {
-    return {
-      headline: "Allowed: setup and cost economics are currently passing.",
-      tone: "ok",
-      details,
-      reasons: displayReasons,
-    };
-  }
-
-  if (tradeGate.blocked_by === "SETUP" && setupReasons.includes("AT_OR_BEYOND_STOP_BAND")) {
-    return {
-      headline: "Blocked for now: spread is at/through stop level, so entry is disabled.",
-      tone: "bad",
-      details,
-      reasons: displayReasons,
-    };
-  }
-  if (tradeGate.blocked_by === "SETUP" && setupReasons.includes("RETRACE_COOLDOWN_ACTIVE")) {
-    return {
-      headline: "Blocked for now: waiting for 25% retrace after stop breach before re-entry.",
-      tone: "bad",
-      details,
-      reasons: displayReasons,
-    };
-  }
-
-  if (tradeGate.blocked_by === "SETUP" && setupReasons.includes("BELOW_ENTRY_BAND")) {
-    return {
-      headline: "Blocked for now: spread stretch is not yet at entry level.",
-      tone: "bad",
-      details,
-      reasons: displayReasons,
-    };
-  }
-  if (tradeGate.blocked_by === "COST") {
-    return {
-      headline: "Blocked for now: recent paper-trade profitability does not pass gate rules.",
-      tone: "bad",
-      details,
-      reasons: displayReasons,
-    };
-  }
-  if (tradeGate.blocked_by === "WAIT") {
-    return {
-      headline: "Blocked for now: waiting for gate readiness before allowing entries.",
-      tone: "warn",
-      details,
-      reasons: displayReasons,
-    };
-  }
-  if (tradeGate.blocked_by === "MULTIPLE") {
-    return {
-      headline: "Blocked for now: both setup conditions and profitability gate are failing.",
-      tone: "bad",
-      details,
-      reasons: displayReasons,
-    };
-  }
-  if (tradeGate.blocked_by === "SETUP" && setupReasons.includes("HEDGE_RATIO_UNSTABLE")) {
-    return {
-      headline: "Blocked for now: hedge sizing is unstable for reliable spread neutrality.",
-      tone: "bad",
-      details,
-      reasons: displayReasons,
-    };
-  }
-
-  return {
-    headline: "Blocked for now: one or more strategy gates are not satisfied.",
-    tone: "bad",
-    details,
-    reasons: displayReasons,
-  };
-}
 
 function buildSpreadLegs(
   leftInstrument: string,
@@ -703,10 +467,6 @@ function App(): JSX.Element {
   const [backtestExitMode, setBacktestExitMode] = usePersistentState<BacktestExitMode>(
     "cp.backtest_exit_mode",
     "mean_revert"
-  );
-  const [equityChartMode, setEquityChartMode] = usePersistentState<EquityChartMode>(
-    "cp.analytics.equity_mode",
-    "rebased"
   );
 
   const [exchange, setExchange] = usePersistentState<string>("cp.exchange", "kraken_futures");
@@ -2085,8 +1845,6 @@ function App(): JSX.Element {
           onAnalyticsChartBarsChange={setAnalyticsChartBars}
           onAnalyticsPaperHoursChange={setAnalyticsPaperHours}
           onAnalyticsPaperLimitChange={setAnalyticsPaperLimit}
-          equityChartMode={equityChartMode}
-          onEquityChartModeChange={setEquityChartMode}
           researchEntryZ={researchEntryZ}
           researchExitZ={researchExitZ}
           researchStopZ={researchStopZ}
@@ -2733,8 +2491,6 @@ function AnalyticsPage({
   onAnalyticsChartBarsChange,
   onAnalyticsPaperHoursChange,
   onAnalyticsPaperLimitChange,
-  equityChartMode,
-  onEquityChartModeChange,
   researchEntryZ,
   researchExitZ,
   researchStopZ,
@@ -2796,8 +2552,6 @@ function AnalyticsPage({
   onAnalyticsChartBarsChange: (value: number) => void;
   onAnalyticsPaperHoursChange: (value: number) => void;
   onAnalyticsPaperLimitChange: (value: number) => void;
-  equityChartMode: EquityChartMode;
-  onEquityChartModeChange: (value: EquityChartMode) => void;
   researchEntryZ: string;
   researchExitZ: string;
   researchStopZ: string;
@@ -2845,13 +2599,32 @@ function AnalyticsPage({
   chartHeight: number;
 }): JSX.Element {
   const selected = cues?.cues.find((entry) => entry.cue.pair_id === selectedPairId) ?? cues?.cues[0];
-  const actionabilityExplanation = explainPairActionability(selected);
-  const displayEquitySeries = useMemo(() => {
-    if (equityChartMode === "absolute") {
-      return scaleEquityAbsolute(equitySeries, 100);
+  const displayEquitySeries = useMemo(() => scaleEquityAbsolute(equitySeries, 100), [equitySeries]);
+  const equityWindowStats = useMemo(() => {
+    if (!displayEquitySeries.length || !equityTimestamps.length) {
+      return { returnPct: null, daysRepresented: null, annualizedReturnPct: null };
     }
-    return scaleEquityForDisplay(equitySeries, 100, 110);
-  }, [equitySeries, equityChartMode]);
+    const startValue = displayEquitySeries[0];
+    const endValue = displayEquitySeries[displayEquitySeries.length - 1];
+    const returnPct =
+      Number.isFinite(startValue) && startValue > 0 && Number.isFinite(endValue)
+        ? ((endValue / startValue) - 1) * 100
+        : null;
+    const startTs = Date.parse(equityTimestamps[0]);
+    const endTs = Date.parse(equityTimestamps[equityTimestamps.length - 1]);
+    const daysRepresented =
+      Number.isFinite(startTs) && Number.isFinite(endTs) && endTs >= startTs
+        ? (endTs - startTs) / 86_400_000
+        : null;
+    const annualizedReturnPct =
+      returnPct != null &&
+      daysRepresented != null &&
+      daysRepresented > 0 &&
+      Number.isFinite(returnPct)
+        ? (Math.pow(1 + returnPct / 100, 365 / daysRepresented) - 1) * 100
+        : null;
+    return { returnPct, daysRepresented, annualizedReturnPct };
+  }, [displayEquitySeries, equityTimestamps]);
 
   return (
     <div className="analytics-layout">
@@ -3387,37 +3160,50 @@ function AnalyticsPage({
         <div className="analytics-chart-split">
           <SectionCard
             title="Hypothetical Equity Curve"
-            subtitle={
-              equityChartMode === "absolute"
-                ? "Absolute mode (equity x $100) from live candles and current strategy bands"
-                : "Rebased mode (base $100, 110x scaled deltas) from live candles and current strategy bands"
-            }
+            subtitle="Absolute mode (equity x $100) from live candles and current strategy bands"
           >
-            <div className="research-controls-actions">
-              <button
-                type="button"
-                className={equityChartMode === "rebased" ? "primary" : "secondary"}
-                onClick={() => onEquityChartModeChange("rebased")}
-              >
-                Rebased
-              </button>
-              <button
-                type="button"
-                className={equityChartMode === "absolute" ? "primary" : "secondary"}
-                onClick={() => onEquityChartModeChange("absolute")}
-              >
-                Absolute
-              </button>
+            <div className="mini-card">
+              <div className="research-results-grid">
+                <div>
+                  <p className="small-text">Return (window)</p>
+                  <p
+                    className={
+                      equityWindowStats.returnPct != null && equityWindowStats.returnPct >= 0
+                        ? "tone-ok"
+                        : "tone-bad"
+                    }
+                  >
+                    {equityWindowStats.returnPct != null
+                      ? `${formatSigned(equityWindowStats.returnPct, 2)}%`
+                      : "--"}
+                  </p>
+                </div>
+                <div>
+                  <p className="small-text">Days represented</p>
+                  <p>{equityWindowStats.daysRepresented != null ? equityWindowStats.daysRepresented.toFixed(2) : "--"}</p>
+                </div>
+                <div>
+                  <p className="small-text">Annualized return</p>
+                  <p
+                    className={
+                      equityWindowStats.annualizedReturnPct != null &&
+                      equityWindowStats.annualizedReturnPct >= 0
+                        ? "tone-ok"
+                        : "tone-bad"
+                    }
+                  >
+                    {equityWindowStats.annualizedReturnPct != null
+                      ? `${formatSigned(equityWindowStats.annualizedReturnPct, 2)}%`
+                      : "--"}
+                  </p>
+                </div>
+              </div>
             </div>
             <LineChart
               values={displayEquitySeries}
               timestamps={equityTimestamps}
               height={chartHeight}
-              title={
-                equityChartMode === "absolute"
-                  ? "Hypothetical equity (absolute, equity x $100)"
-                  : "Hypothetical equity (rebased base $100, 110x scaled deltas)"
-              }
+              title="Hypothetical equity (absolute, equity x $100)"
               unavailableText={loading ? "Loading live candles..." : error ?? "No data"}
               yAxisFormatter={formatUsdAxisValue}
               valueScaleMode="full"
@@ -3455,33 +3241,6 @@ function AnalyticsPage({
             />
           </SectionCard>
         </div>
-        <SectionCard
-          title="Why This Pair Is Allowed / Blocked"
-          subtitle="Plain-language gate explanation for the selected pair"
-          className="analytics-explainer"
-        >
-          <div className={`status-pill ${actionabilityExplanation.tone === "ok" ? "ok" : "bad"}`}>
-            {actionabilityExplanation.headline}
-          </div>
-
-          <ul className="analytics-explainer-list">
-            {actionabilityExplanation.details.map((detail) => (
-              <li key={detail}>{detail}</li>
-            ))}
-          </ul>
-
-          {actionabilityExplanation.reasons.length ? (
-            <>
-              <h3>Gate reasons</h3>
-              <ul className="analytics-explainer-list">
-                {actionabilityExplanation.reasons.map((reason) => (
-                  <li key={reason}>{describeRationaleCode(reason)}</li>
-                ))}
-              </ul>
-            </>
-          ) : null}
-        </SectionCard>
-
       </div>
     </div>
   );
