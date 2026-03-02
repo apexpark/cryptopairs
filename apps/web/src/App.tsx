@@ -74,6 +74,8 @@ type TradeCommand =
   | "reduce-exposure"
   | "close-spread";
 
+type EquityChartMode = "rebased" | "absolute";
+
 interface SpreadLeg {
   instrument: string;
   side: TradeSide;
@@ -272,6 +274,13 @@ function scaleEquityForDisplay(
   }
   const anchor = values[0];
   return values.map((value) => baseUsd + (value - anchor) * deltaMultiplier);
+}
+
+function scaleEquityAbsolute(values: number[], baseUsd = 100): number[] {
+  if (!values.length) {
+    return values;
+  }
+  return values.map((value) => value * baseUsd);
 }
 
 function formatLocalDateTime(value: string | number | Date): string {
@@ -694,6 +703,10 @@ function App(): JSX.Element {
   const [backtestExitMode, setBacktestExitMode] = usePersistentState<BacktestExitMode>(
     "cp.backtest_exit_mode",
     "mean_revert"
+  );
+  const [equityChartMode, setEquityChartMode] = usePersistentState<EquityChartMode>(
+    "cp.analytics.equity_mode",
+    "rebased"
   );
 
   const [exchange, setExchange] = usePersistentState<string>("cp.exchange", "kraken_futures");
@@ -2072,6 +2085,8 @@ function App(): JSX.Element {
           onAnalyticsChartBarsChange={setAnalyticsChartBars}
           onAnalyticsPaperHoursChange={setAnalyticsPaperHours}
           onAnalyticsPaperLimitChange={setAnalyticsPaperLimit}
+          equityChartMode={equityChartMode}
+          onEquityChartModeChange={setEquityChartMode}
           researchEntryZ={researchEntryZ}
           researchExitZ={researchExitZ}
           researchStopZ={researchStopZ}
@@ -2718,6 +2733,8 @@ function AnalyticsPage({
   onAnalyticsChartBarsChange,
   onAnalyticsPaperHoursChange,
   onAnalyticsPaperLimitChange,
+  equityChartMode,
+  onEquityChartModeChange,
   researchEntryZ,
   researchExitZ,
   researchStopZ,
@@ -2779,6 +2796,8 @@ function AnalyticsPage({
   onAnalyticsChartBarsChange: (value: number) => void;
   onAnalyticsPaperHoursChange: (value: number) => void;
   onAnalyticsPaperLimitChange: (value: number) => void;
+  equityChartMode: EquityChartMode;
+  onEquityChartModeChange: (value: EquityChartMode) => void;
   researchEntryZ: string;
   researchExitZ: string;
   researchStopZ: string;
@@ -2827,10 +2846,12 @@ function AnalyticsPage({
 }): JSX.Element {
   const selected = cues?.cues.find((entry) => entry.cue.pair_id === selectedPairId) ?? cues?.cues[0];
   const actionabilityExplanation = explainPairActionability(selected);
-  const displayEquitySeries = useMemo(
-    () => scaleEquityForDisplay(equitySeries, 100, 110),
-    [equitySeries]
-  );
+  const displayEquitySeries = useMemo(() => {
+    if (equityChartMode === "absolute") {
+      return scaleEquityAbsolute(equitySeries, 100);
+    }
+    return scaleEquityForDisplay(equitySeries, 100, 110);
+  }, [equitySeries, equityChartMode]);
 
   return (
     <div className="analytics-layout">
@@ -3366,13 +3387,37 @@ function AnalyticsPage({
         <div className="analytics-chart-split">
           <SectionCard
             title="Hypothetical Equity Curve"
-            subtitle="Derived from live candles and current strategy bands"
+            subtitle={
+              equityChartMode === "absolute"
+                ? "Absolute mode (equity x $100) from live candles and current strategy bands"
+                : "Rebased mode (base $100, 110x scaled deltas) from live candles and current strategy bands"
+            }
           >
+            <div className="research-controls-actions">
+              <button
+                type="button"
+                className={equityChartMode === "rebased" ? "primary" : "secondary"}
+                onClick={() => onEquityChartModeChange("rebased")}
+              >
+                Rebased
+              </button>
+              <button
+                type="button"
+                className={equityChartMode === "absolute" ? "primary" : "secondary"}
+                onClick={() => onEquityChartModeChange("absolute")}
+              >
+                Absolute
+              </button>
+            </div>
             <LineChart
               values={displayEquitySeries}
               timestamps={equityTimestamps}
               height={chartHeight}
-              title="Hypothetical equity (base $100, 110x scaled deltas)"
+              title={
+                equityChartMode === "absolute"
+                  ? "Hypothetical equity (absolute, equity x $100)"
+                  : "Hypothetical equity (rebased base $100, 110x scaled deltas)"
+              }
               unavailableText={loading ? "Loading live candles..." : error ?? "No data"}
               yAxisFormatter={formatUsdAxisValue}
               valueScaleMode="trimmed"
