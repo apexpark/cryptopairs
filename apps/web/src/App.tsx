@@ -902,22 +902,11 @@ function App(): JSX.Element {
         text: "Live strategy data is unavailable. Fail-closed mode is active.",
       };
     }
-    if (!selectedCueRow) {
-      return {
-        tone: "warn" as const,
-        text: "Waiting for first strategy opportunities.",
-      };
-    }
-    return gateSafe
-      ? {
-          tone: "ok" as const,
-          text: `Trade gates healthy for ${formatPairLabel(selectedCueRow.cue.pair_id)}.`,
-        }
-      : {
-          tone: "warn" as const,
-          text: "One or more execution gates are blocking entry.",
-        };
-  }, [coreLoading, coreError, selectedCueRow, gateSafe]);
+    return {
+      tone: "ok" as const,
+      text: "Market data is live.",
+    };
+  }, [coreLoading, coreError]);
 
   const refreshPositions = async (): Promise<void> => {
     const response = await fetchExecutionPortfolioPositions(exchange, accountId);
