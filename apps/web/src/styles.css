@@ -655,8 +655,29 @@ button {
   border: 1px solid transparent;
 }
 
+button.primary {
+  background: color-mix(in srgb, var(--tone-ok) 65%, #ffffff 0%);
+  color: #fff;
+}
+
+button.secondary {
+  background: color-mix(in srgb, var(--tone-info) 68%, #ffffff 0%);
+  color: #fff;
+}
+
+button.neutral {
+  background: var(--panel);
+  color: var(--text);
+  border-color: var(--line-soft);
+}
+
 button.danger {
   background: color-mix(in srgb, var(--tone-bad) 78%, #ffffff 0%);
+}
+
+button.danger.confirm-armed {
+  background: color-mix(in srgb, var(--tone-bad) 92%, #ffffff 0%);
+  border-color: color-mix(in srgb, var(--tone-bad) 60%, #ffffff 0%);
 }
 
 button:disabled {
@@ -965,6 +986,19 @@ button:disabled {
   margin: 8px 0 2px 0;
   font-size: 0.8rem;
   color: var(--muted);
+}
+
+.confirm-row {
+  margin-top: 6px;
+  border: 1px dashed var(--line-soft);
+  border-radius: 8px;
+  padding: 6px;
+}
+
+.confirm-hint {
+  margin: 0 0 6px 0;
+  color: var(--tone-warn);
+  font-size: 0.78rem;
 }
 
 .execution-grid {

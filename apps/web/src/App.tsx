@@ -2224,6 +2224,7 @@ function TradePage(props: {
   zChartHeight: number;
   onCommand: (command: TradeCommand) => Promise<void>;
 }): JSX.Element {
+  const [closeConfirmArmed, setCloseConfirmArmed] = useState(false);
   const selectedCue =
     props.cues?.cues.find((entry) => entry.cue.pair_id === props.selectedPairId) ??
     props.cues?.cues[0] ??
@@ -2340,7 +2341,35 @@ function TradePage(props: {
     ? "Action in progress."
     : props.currentPosition.direction === "NONE" || props.currentPosition.totalSize <= 0
       ? "No open spread position to close."
-      : null;
+            : null;
+
+  useEffect(() => {
+    setCloseConfirmArmed(false);
+  }, [props.currentPosition.direction, props.currentPosition.totalSize, props.selectedPairId, props.submitting]);
+
+  useEffect(() => {
+    if (!closeConfirmArmed) {
+      return;
+    }
+    const timeoutId = window.setTimeout(() => {
+      setCloseConfirmArmed(false);
+    }, 8_000);
+    return () => {
+      window.clearTimeout(timeoutId);
+    };
+  }, [closeConfirmArmed]);
+
+  const handleCloseSpread = () => {
+    if (closeSpreadDisabled) {
+      return;
+    }
+    if (!closeConfirmArmed) {
+      setCloseConfirmArmed(true);
+      return;
+    }
+    setCloseConfirmArmed(false);
+    execute("close-spread");
+  };
 
   const execute = (command: TradeCommand) => {
     void props.onCommand(command);
@@ -2534,19 +2563,19 @@ function TradePage(props: {
               </p>
             </div>
 
-            <button disabled={longEntryDisabled} onClick={() => execute("long-entry")}>
+            <button className="primary" disabled={longEntryDisabled} onClick={() => execute("long-entry")}>
               Long Spread Entry
             </button>
             {longEntryDisabled ? <p className="action-disabled-reason">{longEntryDisabledReason}</p> : null}
             <button
-              className="danger"
+              className="secondary"
               disabled={shortEntryDisabled}
               onClick={() => execute("short-entry")}
             >
               Short Spread Entry
             </button>
             {shortEntryDisabled ? <p className="action-disabled-reason">{shortEntryDisabledReason}</p> : null}
-            <button disabled={addExposureDisabled} onClick={() => execute("add-exposure")}>
+            <button className="secondary" disabled={addExposureDisabled} onClick={() => execute("add-exposure")}>
               Add Exposure to Open Spread
             </button>
             {addExposureDisabled ? <p className="action-disabled-reason">{addExposureDisabledReason}</p> : null}
@@ -2554,6 +2583,7 @@ function TradePage(props: {
             <div className="execution-block reduce-block">
               <h3>Reduce / Close</h3>
               <button
+                className="neutral"
                 disabled={reduceExposureDisabled}
                 onClick={() => execute("reduce-exposure")}
               >
@@ -2563,13 +2593,21 @@ function TradePage(props: {
                 <p className="action-disabled-reason">{reduceExposureDisabledReason}</p>
               ) : null}
               <button
-                className="danger"
+                className={`danger ${closeConfirmArmed ? "confirm-armed" : ""}`.trim()}
                 disabled={closeSpreadDisabled}
-                onClick={() => execute("close-spread")}
+                onClick={handleCloseSpread}
               >
-                Close Spread (all open in pair)
+                {closeConfirmArmed ? "Confirm Close Spread" : "Close Spread (all open in pair)"}
               </button>
               {closeSpreadDisabled ? <p className="action-disabled-reason">{closeSpreadDisabledReason}</p> : null}
+              {!closeSpreadDisabled && closeConfirmArmed ? (
+                <div className="confirm-row">
+                  <p className="confirm-hint">Press confirm to close all open legs for this pair.</p>
+                  <button className="neutral" onClick={() => setCloseConfirmArmed(false)}>
+                    Cancel Close
+                  </button>
+                </div>
+              ) : null}
             </div>
             <p className="execution-last-action">Last action: {props.tradeMessage}</p>
           </div>
@@ -3359,6 +3397,22 @@ function SettingsPage({
         <p className="small-text tone-info">
           Execution guardrails are enforced in Trade regardless of Settings page visibility.
         </p>
+      </SectionCard>
+
+      <SectionCard title="API Credentials" subtitle="Per-user API keys (planned)">
+        <label>
+          Kraken API Key
+          <input value="Not yet available apart from primary user" disabled readOnly />
+        </label>
+        <label>
+          Kraken API Secret
+          <input value="Not yet available apart from primary user" disabled readOnly />
+        </label>
+        <label>
+          Kraken API Passphrase
+          <input value="Not yet available apart from primary user" disabled readOnly />
+        </label>
+        <p className="small-text tone-warn">Not yet available apart from primary user</p>
       </SectionCard>
     </div>
   );
