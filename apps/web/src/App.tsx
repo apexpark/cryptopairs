@@ -2228,6 +2228,119 @@ function TradePage(props: {
     props.cues?.cues.find((entry) => entry.cue.pair_id === props.selectedPairId) ??
     props.cues?.cues[0] ??
     null;
+  const spreadSizeNumber = Number.parseFloat(props.spreadSize);
+  const normalizedSpreadSize =
+    Number.isFinite(spreadSizeNumber) && spreadSizeNumber > 0 ? spreadSizeNumber : 0;
+  const pairLots = derivePairLotSizes(selectedCue?.hedge_ratio);
+  const leftInstrument = selectedCue?.cue.left_instrument ?? "LEFT";
+  const rightInstrument = selectedCue?.cue.right_instrument ?? "RIGHT";
+  const longLeftQty = normalizedSpreadSize * pairLots.leftSize;
+  const longRightQty = normalizedSpreadSize * pairLots.rightSize;
+  const shortLeftQty = longLeftQty;
+  const shortRightQty = longRightQty;
+
+  const tradeGatePass = selectedCue ? selectedCue.cue.trade_gate?.pass ?? selectedCue.cue.actionable : false;
+  const tradeGateReasons = selectedCue
+    ? new Set<string>([
+        ...(selectedCue.cue.trade_gate?.rationale_codes ?? []),
+        ...(selectedCue.cue.setup_gate?.rationale_codes ?? selectedCue.cue.rationale_codes),
+        ...(selectedCue.cue.cost_gate?.rationale_codes ?? []),
+      ])
+    : new Set<string>();
+
+  const commonEntryDisableReason = (): string | null => {
+    if (props.submitting) {
+      return "Action in progress.";
+    }
+    if (!props.operatorConfirmed) {
+      return "Execution mode is SIM ONLY. Arm LIVE to enable entry actions.";
+    }
+    if (!props.operatorId.trim().length) {
+      return "Operator ID is required.";
+    }
+    if (!Number.isFinite(spreadSizeNumber) || spreadSizeNumber <= 0) {
+      return "Spread size must be greater than 0.";
+    }
+    if (props.gateState.killSwitchActive) {
+      return "Kill switch is ACTIVE.";
+    }
+    if (!props.gateState.leftAllowed || !props.gateState.rightAllowed) {
+      return "Integrity gate is blocking one or both legs.";
+    }
+    if (!props.gateState.reconcileOk) {
+      return "Reconcile gate is NOT_OK.";
+    }
+    return null;
+  };
+
+  const setupOrCostDisableReason = (): string | null => {
+    if (!selectedCue) {
+      return "No selected pair.";
+    }
+    if (selectedCue.cue.trade_gate?.status === "WAIT" || tradeGateReasons.has("PERFORMANCE_HISTORY_WAIT")) {
+      return "Waiting for minimum paper-trade history (<TWO).";
+    }
+    if (selectedCue.cue.trade_gate?.status === "UNAVAILABLE") {
+      return "Trade gate unavailable.";
+    }
+    if (!tradeGatePass) {
+      if (tradeGateReasons.has("AT_OR_BEYOND_STOP_BAND")) {
+        return "Blocked: spread is at or beyond stop band.";
+      }
+      if (tradeGateReasons.has("RETRACE_COOLDOWN_ACTIVE")) {
+        return "Blocked: waiting for retrace cooldown to complete.";
+      }
+      if (tradeGateReasons.has("BELOW_ENTRY_BAND")) {
+        return "Waiting for entry stretch (|z| below entry threshold).";
+      }
+      if (tradeGateReasons.has("CHAMPION_DRIFT_BLOCKED")) {
+        return "Blocked by champion drift guard.";
+      }
+      if (tradeGateReasons.has("HEDGE_RATIO_UNSTABLE")) {
+        return "Blocked: hedge ratio stability is weak.";
+      }
+      if (tradeGateReasons.has("PERFORMANCE_GATE_BLOCKED")) {
+        return "Blocked: recent paper-trade profitability gate failed.";
+      }
+      if (tradeGateReasons.has("COST_GATE_BLOCKED")) {
+        return "Blocked: estimated costs exceed edge.";
+      }
+      return "Blocked by current setup/cost conditions.";
+    }
+    return null;
+  };
+
+  const longEntryDisabled = !props.canLongEntry || props.submitting;
+  const shortEntryDisabled = !props.canShortEntry || props.submitting;
+  const addExposureDisabled = !props.canAddExposure || props.submitting;
+  const reduceExposureDisabled = !props.canReduceExposure || props.submitting;
+  const closeSpreadDisabled = !props.canCloseSpread || props.submitting;
+
+  const longEntryDisabledReason =
+    commonEntryDisableReason() ?? setupOrCostDisableReason();
+  const shortEntryDisabledReason =
+    commonEntryDisableReason() ?? setupOrCostDisableReason();
+  const addExposureDisabledReason =
+    commonEntryDisableReason() ??
+    (props.currentPosition.direction === "NONE"
+      ? "No open spread position to add exposure."
+      : setupOrCostDisableReason());
+  const reduceExposureDisabledReason = props.submitting
+    ? "Action in progress."
+    : props.currentPosition.direction === "NONE" || props.currentPosition.totalSize <= 0
+      ? "No open spread position to reduce."
+      : !props.operatorConfirmed
+        ? "Execution mode is SIM ONLY. Arm LIVE to reduce."
+        : !props.operatorId.trim().length
+          ? "Operator ID is required."
+          : !Number.isFinite(spreadSizeNumber) || spreadSizeNumber <= 0
+            ? "Spread size must be greater than 0."
+            : null;
+  const closeSpreadDisabledReason = props.submitting
+    ? "Action in progress."
+    : props.currentPosition.direction === "NONE" || props.currentPosition.totalSize <= 0
+      ? "No open spread position to close."
+      : null;
 
   const execute = (command: TradeCommand) => {
     void props.onCommand(command);
@@ -2268,33 +2381,6 @@ function TradePage(props: {
               })}
             </tbody>
           </table>
-        </div>
-
-        <div className="mini-card">
-          <h3>Open spread summary</h3>
-          <p>
-            Direction: <span className="tone-info">{props.currentPosition.direction}</span>
-          </p>
-          <p>Total size: {props.currentPosition.totalSize.toFixed(2)} spread units</p>
-          <p>Avg entry z-score: {props.currentPosition.avgEntryZ.toFixed(2)}</p>
-          <p>Updated: {formatLocalTime(props.currentPosition.updatedAt)}</p>
-          {props.activeTradeAnchor ? (
-            <p className="tone-info">
-              Active trade anchor: entry {props.activeTradeAnchor.entryZ.toFixed(2)} at{" "}
-              {formatLocalTime(props.activeTradeAnchor.entryAt)} | current{" "}
-              {props.activeTradeAnchor.currentZ.toFixed(2)} | ΔZ{" "}
-              {formatSigned(props.activeTradeAnchor.deltaZ, 2)}
-            </p>
-          ) : null}
-          <p>Tracked intents: {props.intentHistory.length}</p>
-          {props.intentHistory.slice(0, 2).map((history) => {
-            const latestState = latestLifecycleState(history);
-            return (
-              <p key={history.idempotency_key} className="small-text">
-                {history.intent.instrument}: {latestState}
-              </p>
-            );
-          })}
         </div>
       </SectionCard>
 
@@ -2372,9 +2458,52 @@ function TradePage(props: {
         subtitle="Manual actions with fail-closed execution gates"
         className="execution-panel"
       >
+        <div className="mini-card execution-state-card">
+          <h3>Trade State</h3>
+          <p>
+            Direction: <span className="tone-info">{props.currentPosition.direction}</span>
+          </p>
+          <p>Open size: {props.currentPosition.totalSize.toFixed(2)} spread units</p>
+          <p>Avg entry z-score: {props.currentPosition.avgEntryZ.toFixed(2)}</p>
+          <p>Updated: {formatLocalTime(props.currentPosition.updatedAt)}</p>
+          {props.activeTradeAnchor ? (
+            <p className="tone-info">
+              Active trade anchor: entry {props.activeTradeAnchor.entryZ.toFixed(2)} at{" "}
+              {formatLocalTime(props.activeTradeAnchor.entryAt)} | current{" "}
+              {props.activeTradeAnchor.currentZ.toFixed(2)} | ΔZ{" "}
+              {formatSigned(props.activeTradeAnchor.deltaZ, 2)}
+            </p>
+          ) : null}
+          <p>Tracked intents: {props.intentHistory.length}</p>
+          {props.intentHistory.slice(0, 2).map((history) => {
+            const latestState = latestLifecycleState(history);
+            return (
+              <p key={history.idempotency_key} className="small-text">
+                {history.intent.instrument}: {latestState}
+              </p>
+            );
+          })}
+        </div>
+
         <div className="execution-grid">
           <div className="execution-block entry-block">
             <h3>Entry / Add Exposure</h3>
+            <div className="execution-mode-card">
+              <div className="execution-mode-row">
+                <strong>Execution Mode</strong>
+                <span className={`mode-badge ${props.operatorConfirmed ? "live" : "sim"}`}>
+                  {props.operatorConfirmed ? "LIVE ARMED" : "SIM ONLY"}
+                </span>
+              </div>
+              <label className="checkbox-row">
+                <input
+                  type="checkbox"
+                  checked={props.operatorConfirmed}
+                  onChange={(event) => props.setOperatorConfirmed(event.target.checked)}
+                />
+                Live Trading Armed
+              </label>
+            </div>
             <label>
               Spread size (units)
               <input
@@ -2393,45 +2522,56 @@ function TradePage(props: {
                 onChange={(event) => props.setOperatorId(event.target.value)}
               />
             </label>
-            <label className="checkbox-row">
-              <input
-                type="checkbox"
-                checked={props.operatorConfirmed}
-                onChange={(event) => props.setOperatorConfirmed(event.target.checked)}
-              />
-              Live Trading Armed
-            </label>
 
-            <button disabled={!props.canLongEntry || props.submitting} onClick={() => execute("long-entry")}>
+            <div className="execution-preview">
+              <p>
+                Long preview: BUY {formatInstrumentLabel(leftInstrument)} {longLeftQty.toFixed(2)} / SELL{" "}
+                {formatInstrumentLabel(rightInstrument)} {longRightQty.toFixed(2)}
+              </p>
+              <p>
+                Short preview: SELL {formatInstrumentLabel(leftInstrument)} {shortLeftQty.toFixed(2)} / BUY{" "}
+                {formatInstrumentLabel(rightInstrument)} {shortRightQty.toFixed(2)}
+              </p>
+            </div>
+
+            <button disabled={longEntryDisabled} onClick={() => execute("long-entry")}>
               Long Spread Entry
             </button>
+            {longEntryDisabled ? <p className="action-disabled-reason">{longEntryDisabledReason}</p> : null}
             <button
               className="danger"
-              disabled={!props.canShortEntry || props.submitting}
+              disabled={shortEntryDisabled}
               onClick={() => execute("short-entry")}
             >
               Short Spread Entry
             </button>
-            <button disabled={!props.canAddExposure || props.submitting} onClick={() => execute("add-exposure")}>
+            {shortEntryDisabled ? <p className="action-disabled-reason">{shortEntryDisabledReason}</p> : null}
+            <button disabled={addExposureDisabled} onClick={() => execute("add-exposure")}>
               Add Exposure to Open Spread
             </button>
+            {addExposureDisabled ? <p className="action-disabled-reason">{addExposureDisabledReason}</p> : null}
 
             <div className="execution-block reduce-block">
               <h3>Reduce / Close</h3>
               <button
-                disabled={!props.canReduceExposure || props.submitting}
+                disabled={reduceExposureDisabled}
                 onClick={() => execute("reduce-exposure")}
               >
                 Reduce Exposure (partial)
               </button>
+              {reduceExposureDisabled ? (
+                <p className="action-disabled-reason">{reduceExposureDisabledReason}</p>
+              ) : null}
               <button
                 className="danger"
-                disabled={!props.canCloseSpread || props.submitting}
+                disabled={closeSpreadDisabled}
                 onClick={() => execute("close-spread")}
               >
                 Close Spread (all open in pair)
               </button>
+              {closeSpreadDisabled ? <p className="action-disabled-reason">{closeSpreadDisabledReason}</p> : null}
             </div>
+            <p className="execution-last-action">Last action: {props.tradeMessage}</p>
           </div>
         </div>
       </SectionCard>

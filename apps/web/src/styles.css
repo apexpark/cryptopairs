@@ -904,6 +904,69 @@ button:disabled {
   overflow: auto;
 }
 
+.execution-state-card {
+  margin-bottom: 8px;
+}
+
+.execution-mode-card {
+  border: 1px solid var(--line-soft);
+  border-radius: 8px;
+  background: var(--panel);
+  padding: 7px;
+  margin-bottom: 6px;
+}
+
+.execution-mode-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 6px;
+}
+
+.mode-badge {
+  border: 1px solid var(--line-soft);
+  border-radius: 999px;
+  padding: 3px 8px;
+  font-size: 0.74rem;
+  font-weight: 700;
+}
+
+.mode-badge.live {
+  color: var(--tone-ok);
+  border-color: color-mix(in srgb, var(--tone-ok) 50%, var(--line));
+}
+
+.mode-badge.sim {
+  color: var(--tone-warn);
+  border-color: color-mix(in srgb, var(--tone-warn) 55%, var(--line));
+}
+
+.execution-preview {
+  margin: 6px 0 2px 0;
+  border: 1px dashed var(--line-soft);
+  border-radius: 8px;
+  padding: 6px 8px;
+}
+
+.execution-preview p {
+  margin: 3px 0;
+  font-size: 0.8rem;
+  color: var(--muted);
+}
+
+.action-disabled-reason {
+  margin: 3px 0 1px 0;
+  font-size: 0.77rem;
+  color: var(--tone-warn);
+  line-height: 1.3;
+}
+
+.execution-last-action {
+  margin: 8px 0 2px 0;
+  font-size: 0.8rem;
+  color: var(--muted);
+}
+
 .execution-grid {
   display: grid;
   grid-template-columns: 1fr;
