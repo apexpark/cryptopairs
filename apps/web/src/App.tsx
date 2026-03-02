@@ -3420,7 +3420,7 @@ function AnalyticsPage({
               }
               unavailableText={loading ? "Loading live candles..." : error ?? "No data"}
               yAxisFormatter={formatUsdAxisValue}
-              valueScaleMode="trimmed"
+              valueScaleMode="full"
             />
           </SectionCard>
 
