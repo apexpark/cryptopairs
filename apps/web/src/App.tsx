@@ -15,6 +15,7 @@ import {
   fetchStrategyCandidateInbox,
   runStrategyResearchSweep,
   submitStrategyCandidateAction,
+  fetchExecutionDispatchMode,
   fetchExecutionPortfolioPositions,
   dispatchOrderIntent,
   fetchExecutionDecision,
@@ -22,6 +23,7 @@ import {
   fetchMarketMetrics,
   fetchOrderIntentHistory,
   fetchReconcile,
+  updateKillSwitchState,
   fetchStrategyBacktest,
   fetchStrategyCues,
   fetchStrategyLiveZ,
@@ -40,6 +42,7 @@ import type {
   BacktestExitMode,
   DispatchIntentResponse,
   DirectionHint,
+  ExecutionDispatchModeResponse,
   ExecutionAction,
   KillSwitchState,
   MarketMetricsResponse,
@@ -489,6 +492,9 @@ function App(): JSX.Element {
   const [selectedPairId, setSelectedPairId] = usePersistentState<string>("cp.pair", "");
 
   const [killSwitch, setKillSwitch] = useState<KillSwitchState | null>(null);
+  const [executionDispatchMode, setExecutionDispatchMode] =
+    useState<ExecutionDispatchModeResponse | null>(null);
+  const [killSwitchUpdating, setKillSwitchUpdating] = useState<boolean>(false);
   const [leftDecisionAllowed, setLeftDecisionAllowed] = useState<boolean>(false);
   const [rightDecisionAllowed, setRightDecisionAllowed] = useState<boolean>(false);
   const [reconcileResponse, setReconcileResponse] = useState<ReconcileResponse | null>(null);
@@ -697,9 +703,11 @@ function App(): JSX.Element {
     }),
     [killSwitch?.active, leftDecisionAllowed, rightDecisionAllowed, reconcileResponse]
   );
+  const requiresLiveArm = executionDispatchMode?.requires_live_arm ?? true;
+  const effectiveOperatorConfirmed = operatorConfirmed || !requiresLiveArm;
 
   const baseEntryGuard = {
-    operatorConfirmed,
+    operatorConfirmed: effectiveOperatorConfirmed,
     operatorId,
     spreadSize: spreadSizeNumber,
     gateState,
@@ -710,7 +718,7 @@ function App(): JSX.Element {
   const canAddExposure = isAddAllowed(currentPosition, baseEntryGuard);
   const canReduceExposure = isReduceAllowed(
     currentPosition,
-    operatorConfirmed,
+    effectiveOperatorConfirmed,
     operatorId,
     spreadSizeNumber
   );
@@ -805,6 +813,28 @@ function App(): JSX.Element {
       window.clearInterval(intervalId);
     };
   }, [timeframe, uiAccessGranted, takerFeeBpsOverride]);
+
+  useEffect(() => {
+    if (!uiAccessGranted) {
+      return;
+    }
+    let cancelled = false;
+    void fetchExecutionDispatchMode()
+      .then((mode) => {
+        if (!cancelled) {
+          setExecutionDispatchMode(mode);
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          // Fail-closed for unknown mode: require explicit live arming.
+          setExecutionDispatchMode({ mode: "FAIL_CLOSED", requires_live_arm: true });
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [uiAccessGranted]);
 
   useEffect(() => {
     if (!uiAccessGranted) {
@@ -1520,6 +1550,30 @@ function App(): JSX.Element {
     });
   };
 
+  const toggleKillSwitch = useCallback(
+    async (active: boolean): Promise<void> => {
+      setKillSwitchUpdating(true);
+      setGateError(null);
+      try {
+        const updated = await updateKillSwitchState({
+          active,
+          reason: active
+            ? "manual kill switch enabled from spread execution panel"
+            : "manual kill switch disabled from spread execution panel",
+          actor: operatorId.trim().length ? operatorId : "operator-ui",
+        });
+        setKillSwitch(updated);
+      } catch (error) {
+        setGateError(
+          `Kill switch update failed: ${error instanceof Error ? error.message : String(error)}`
+        );
+      } finally {
+        setKillSwitchUpdating(false);
+      }
+    },
+    [operatorId]
+  );
+
   const executeTradeCommand = async (command: TradeCommand): Promise<void> => {
     if (!selectedCueRow) {
       setTradeMessage("No selected pair.");
@@ -1594,7 +1648,7 @@ function App(): JSX.Element {
             spread_z: action === "ENTRY" ? currentZ : null,
             side: leg.side,
             qty,
-            operator_confirmed: action === "EMERGENCY_STOP_CLOSE" ? false : operatorConfirmed,
+            operator_confirmed: action === "EMERGENCY_STOP_CLOSE" ? false : effectiveOperatorConfirmed,
             operator_id: action === "EMERGENCY_STOP_CLOSE" ? null : operatorId,
             min_coverage_pct: 99.5,
           })
@@ -1811,8 +1865,12 @@ function App(): JSX.Element {
           canAddExposure={canAddExposure}
           canReduceExposure={canReduceExposure}
           canCloseSpread={canCloseSpread}
+          requiresLiveArm={requiresLiveArm}
+          dispatchMode={executionDispatchMode?.mode ?? "FAIL_CLOSED"}
           gateState={gateState}
           killSwitch={killSwitch}
+          killSwitchUpdating={killSwitchUpdating}
+          onToggleKillSwitch={toggleKillSwitch}
           reconcile={reconcileResponse?.reconcile ?? null}
           gateError={gateError}
           tradeMessage={tradeMessage}
@@ -2071,8 +2129,12 @@ function TradePage(props: {
   canAddExposure: boolean;
   canReduceExposure: boolean;
   canCloseSpread: boolean;
+  requiresLiveArm: boolean;
+  dispatchMode: "FAIL_CLOSED" | "SIMULATE_ACK" | "LIVE_KRAKEN";
   gateState: { killSwitchActive: boolean; leftAllowed: boolean; rightAllowed: boolean; reconcileOk: boolean };
   killSwitch: KillSwitchState | null;
+  killSwitchUpdating: boolean;
+  onToggleKillSwitch: (active: boolean) => Promise<void>;
   reconcile: ReconcileResponse["reconcile"];
   gateError: string | null;
   tradeMessage: string;
@@ -2109,7 +2171,7 @@ function TradePage(props: {
     if (props.submitting) {
       return "Action in progress.";
     }
-    if (!props.operatorConfirmed) {
+    if (props.requiresLiveArm && !props.operatorConfirmed) {
       return "Execution mode is SIM ONLY. Arm LIVE to enable entry actions.";
     }
     if (!props.operatorId.trim().length) {
@@ -2130,39 +2192,39 @@ function TradePage(props: {
     return null;
   };
 
-  const setupOrCostDisableReason = (): string | null => {
+  const strategyWarningMessage = (): string | null => {
     if (!selectedCue) {
-      return "No selected pair.";
+      return null;
     }
     if (selectedCue.cue.trade_gate?.status === "WAIT" || tradeGateReasons.has("PERFORMANCE_HISTORY_WAIT")) {
-      return "Waiting for minimum paper-trade history (<TWO).";
+      return "Warning: waiting for minimum paper-trade history (<TWO).";
     }
     if (selectedCue.cue.trade_gate?.status === "UNAVAILABLE") {
-      return "Trade gate unavailable.";
+      return "Warning: trade gate is unavailable.";
     }
     if (!tradeGatePass) {
       if (tradeGateReasons.has("AT_OR_BEYOND_STOP_BAND")) {
-        return "Blocked: spread is at or beyond stop band.";
+        return "Warning: spread is at or beyond stop band.";
       }
       if (tradeGateReasons.has("RETRACE_COOLDOWN_ACTIVE")) {
-        return "Blocked: waiting for retrace cooldown to complete.";
+        return "Warning: retrace cooldown is active.";
       }
       if (tradeGateReasons.has("BELOW_ENTRY_BAND")) {
-        return "Waiting for entry stretch (|z| below entry threshold).";
+        return "Warning: |z| is below the entry threshold.";
       }
       if (tradeGateReasons.has("CHAMPION_DRIFT_BLOCKED")) {
-        return "Blocked by champion drift guard.";
+        return "Warning: champion drift guard is active.";
       }
       if (tradeGateReasons.has("HEDGE_RATIO_UNSTABLE")) {
-        return "Blocked: hedge ratio stability is weak.";
+        return "Warning: hedge ratio stability is weak.";
       }
       if (tradeGateReasons.has("PERFORMANCE_GATE_BLOCKED")) {
-        return "Blocked: recent paper-trade profitability gate failed.";
+        return "Warning: recent paper-trade profitability gate failed.";
       }
       if (tradeGateReasons.has("COST_GATE_BLOCKED")) {
-        return "Blocked: estimated costs exceed edge.";
+        return "Warning: estimated costs exceed edge.";
       }
-      return "Blocked by current setup/cost conditions.";
+      return "Warning: setup/cost conditions are not favorable.";
     }
     return null;
   };
@@ -2173,20 +2235,18 @@ function TradePage(props: {
   const reduceExposureDisabled = !props.canReduceExposure || props.submitting;
   const closeSpreadDisabled = !props.canCloseSpread || props.submitting;
 
-  const longEntryDisabledReason =
-    commonEntryDisableReason() ?? setupOrCostDisableReason();
-  const shortEntryDisabledReason =
-    commonEntryDisableReason() ?? setupOrCostDisableReason();
+  const longEntryDisabledReason = commonEntryDisableReason();
+  const shortEntryDisabledReason = commonEntryDisableReason();
   const addExposureDisabledReason =
     commonEntryDisableReason() ??
     (props.currentPosition.direction === "NONE"
       ? "No open spread position to add exposure."
-      : setupOrCostDisableReason());
+      : null);
   const reduceExposureDisabledReason = props.submitting
     ? "Action in progress."
     : props.currentPosition.direction === "NONE" || props.currentPosition.totalSize <= 0
       ? "No open spread position to reduce."
-      : !props.operatorConfirmed
+      : props.requiresLiveArm && !props.operatorConfirmed
         ? "Execution mode is SIM ONLY. Arm LIVE to reduce."
         : !props.operatorId.trim().length
           ? "Operator ID is required."
@@ -2198,6 +2258,7 @@ function TradePage(props: {
     : props.currentPosition.direction === "NONE" || props.currentPosition.totalSize <= 0
       ? "No open spread position to close."
             : null;
+  const activeStrategyWarning = strategyWarningMessage();
 
   useEffect(() => {
     setCloseConfirmArmed(false);
@@ -2229,6 +2290,10 @@ function TradePage(props: {
 
   const execute = (command: TradeCommand) => {
     void props.onCommand(command);
+  };
+
+  const handleKillSwitchToggle = (nextActive: boolean) => {
+    void props.onToggleKillSwitch(nextActive);
   };
 
   return (
@@ -2376,8 +2441,16 @@ function TradePage(props: {
             <div className="execution-mode-card">
               <div className="execution-mode-row">
                 <strong>Execution Mode</strong>
-                <span className={`mode-badge ${props.operatorConfirmed ? "live" : "sim"}`}>
-                  {props.operatorConfirmed ? "LIVE ARMED" : "SIM ONLY"}
+                <span
+                  className={`mode-badge ${
+                    props.requiresLiveArm ? (props.operatorConfirmed ? "live" : "sim") : "sim"
+                  }`}
+                >
+                  {props.requiresLiveArm
+                    ? props.operatorConfirmed
+                      ? "LIVE ARMED"
+                      : "SIM ONLY"
+                    : "SIM ENABLED"}
                 </span>
               </div>
               <label className="checkbox-row">
@@ -2385,9 +2458,30 @@ function TradePage(props: {
                   type="checkbox"
                   checked={props.operatorConfirmed}
                   onChange={(event) => props.setOperatorConfirmed(event.target.checked)}
+                  disabled={!props.requiresLiveArm}
                 />
-                Live Trading Armed
+                {props.requiresLiveArm ? "Live Trading Armed" : "Live arm not required in SIMULATE_ACK"}
               </label>
+              <div className="execution-mode-meta small-text">
+                Dispatch mode: {props.dispatchMode}
+              </div>
+              <div className="kill-switch-row">
+                <div className="kill-switch-copy">
+                  <strong>Global Disable (Kill Switch)</strong>
+                  <p className="small-text">
+                    {props.killSwitch?.active ? "ON: entries disabled globally." : "OFF: normal operation."}
+                  </p>
+                </div>
+                <label className="toggle-switch" aria-label="Global disable kill switch">
+                  <input
+                    type="checkbox"
+                    checked={props.killSwitch?.active ?? true}
+                    disabled={props.killSwitchUpdating || !props.operatorId.trim().length}
+                    onChange={(event) => handleKillSwitchToggle(event.target.checked)}
+                  />
+                  <span className="toggle-slider" />
+                </label>
+              </div>
             </div>
             <label>
               Spread size (units)
@@ -2399,6 +2493,9 @@ function TradePage(props: {
                 onChange={(event) => props.setSpreadSize(event.target.value)}
               />
             </label>
+            <p className="small-text execution-size-hint">
+              Used for Long, Short, Add, and Reduce actions.
+            </p>
             <label>
               Operator ID
               <input
@@ -2424,7 +2521,7 @@ function TradePage(props: {
             </button>
             {longEntryDisabled ? <p className="action-disabled-reason">{longEntryDisabledReason}</p> : null}
             <button
-              className="secondary"
+              className="danger"
               disabled={shortEntryDisabled}
               onClick={() => execute("short-entry")}
             >
@@ -2435,6 +2532,7 @@ function TradePage(props: {
               Add Exposure to Open Spread
             </button>
             {addExposureDisabled ? <p className="action-disabled-reason">{addExposureDisabledReason}</p> : null}
+            {activeStrategyWarning ? <p className="execution-strategy-warning">{activeStrategyWarning}</p> : null}
 
             <div className="execution-block reduce-block">
               <h3>Reduce / Close</h3>

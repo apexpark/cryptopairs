@@ -1,6 +1,7 @@
 import type {
   DispatchIntentRequest,
   DispatchIntentResponse,
+  ExecutionDispatchModeResponse,
   ExecutionPortfolioPositionsResponse,
   ExecutionDecisionResponse,
   KillSwitchState,
@@ -23,6 +24,7 @@ import type {
   StrategyUiAuthStatusResponse,
   StrategyUiAuthVerifyRequest,
   StrategyUiAuthVerifyResponse,
+  UpdateKillSwitchRequest,
   BacktestExitMode,
   Timeframe,
 } from "../types";
@@ -245,6 +247,24 @@ export async function submitStrategyCandidateAction(
 export async function fetchKillSwitchState(): Promise<KillSwitchState> {
   const url = `${EXECUTION_SERVICE_BASE_URL}/v1/execution/kill-switch`;
   return parseJson<KillSwitchState>(await fetch(url));
+}
+
+export async function updateKillSwitchState(
+  payload: UpdateKillSwitchRequest
+): Promise<KillSwitchState> {
+  const url = `${EXECUTION_SERVICE_BASE_URL}/v1/execution/kill-switch`;
+  return parseJson<KillSwitchState>(
+    await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    })
+  );
+}
+
+export async function fetchExecutionDispatchMode(): Promise<ExecutionDispatchModeResponse> {
+  const url = `${EXECUTION_SERVICE_BASE_URL}/v1/execution/dispatch-mode`;
+  return parseJson<ExecutionDispatchModeResponse>(await fetch(url));
 }
 
 export async function fetchExecutionDecision(

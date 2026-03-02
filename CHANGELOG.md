@@ -531,6 +531,17 @@ This project follows SemVer as defined in `docs/02-versioning-and-releases.md`.
     instead of modeled expected-edge arithmetic.
   - Funding rationale codes were removed from gate blocking reasons (funding remains reference data only).
   - Non-ready gate state now surfaces as `WAIT` (replacing `UNAVAILABLE` in setup/cost/trade gate flow).
+- Execution-service now exposes dispatch-mode status via
+  `GET /v1/execution/dispatch-mode` to let UI distinguish `FAIL_CLOSED`,
+  `SIMULATE_ACK`, and `LIVE_KRAKEN` runtime behavior.
+- Manual controls now require explicit operator confirmation only when execution
+  dispatch mode is `LIVE_KRAKEN`; `SIMULATE_ACK` allows unarmed entry/exit intents
+  (operator ID still required for auditability).
+- Trade page Spread Execution panel enhancements:
+  - Added global kill-switch on/off slide toggle (wired to `POST /v1/execution/kill-switch`).
+  - SIM mode now enables entry/add/reduce actions without live arming when backend mode is `SIMULATE_ACK`.
+  - Strategy conditions now surface as warnings in the panel instead of disabling action buttons.
+  - Action hierarchy now uses green long-entry and red short-entry controls.
 
 ### Fixed
 - Removed accidental duplicate spec/example files with `* 2.json` suffix.

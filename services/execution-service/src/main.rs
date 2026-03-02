@@ -61,6 +61,18 @@ impl DispatchMode {
             _ => Self::FailClosed,
         }
     }
+
+    fn as_api_mode(&self) -> &'static str {
+        match self {
+            Self::FailClosed => "FAIL_CLOSED",
+            Self::SimulateAck => "SIMULATE_ACK",
+            Self::LiveKraken => "LIVE_KRAKEN",
+        }
+    }
+
+    fn requires_live_arm(&self) -> bool {
+        matches!(self, Self::LiveKraken)
+    }
 }
 
 fn normalize_secret_value(raw: String) -> Option<String> {
@@ -1352,6 +1364,12 @@ struct UpdateKillSwitchRequest {
 }
 
 #[derive(Debug, Serialize)]
+struct DispatchModeResponse {
+    mode: &'static str,
+    requires_live_arm: bool,
+}
+
+#[derive(Debug, Serialize)]
 struct KillSwitchState {
     active: bool,
     reason: String,
@@ -1767,6 +1785,7 @@ async fn main() -> anyhow::Result<()> {
     let app = Router::new()
         .route("/health", get(health))
         .route("/v1/execution/decision", get(decision))
+        .route("/v1/execution/dispatch-mode", get(dispatch_mode_status))
         .route(
             "/v1/execution/kill-switch",
             get(kill_switch).post(update_kill_switch),
@@ -2408,6 +2427,15 @@ async fn kill_switch(State(state): State<AppState>) -> Result<Json<KillSwitchSta
     Ok(Json(current))
 }
 
+async fn dispatch_mode_status(
+    State(state): State<AppState>,
+) -> Result<Json<DispatchModeResponse>, ApiError> {
+    Ok(Json(DispatchModeResponse {
+        mode: state.dispatch_mode.as_api_mode(),
+        requires_live_arm: state.dispatch_mode.requires_live_arm(),
+    }))
+}
+
 async fn update_kill_switch(
     State(state): State<AppState>,
     Json(payload): Json<UpdateKillSwitchRequest>,
@@ -2683,6 +2711,7 @@ async fn order_intent(
     }
     validate_manual_controls(
         action,
+        state.dispatch_mode,
         payload.operator_confirmed,
         normalized_operator_id.as_deref(),
     )?;
@@ -3251,11 +3280,12 @@ async fn transition_order_state_if_current(
 
 fn validate_manual_controls(
     action: OrderIntentAction,
+    dispatch_mode: DispatchMode,
     operator_confirmed: bool,
     operator_id: Option<&str>,
 ) -> Result<(), ApiError> {
     if matches!(action, OrderIntentAction::Entry | OrderIntentAction::Exit) {
-        if !operator_confirmed {
+        if dispatch_mode.requires_live_arm() && !operator_confirmed {
             return Err(ApiError::BadRequest(
                 "manual ENTRY/EXIT requires operator_confirmed=true".to_string(),
             ));
@@ -3433,19 +3463,45 @@ mod tests {
 
     #[test]
     fn manual_entry_requires_operator_confirmation() {
-        let result = validate_manual_controls(OrderIntentAction::Entry, false, Some("ops-1"));
+        let result = validate_manual_controls(
+            OrderIntentAction::Entry,
+            DispatchMode::LiveKraken,
+            false,
+            Some("ops-1"),
+        );
         assert!(matches!(result, Err(ApiError::BadRequest(_))));
     }
 
     #[test]
     fn manual_exit_requires_operator_id() {
-        let result = validate_manual_controls(OrderIntentAction::Exit, true, None);
+        let result = validate_manual_controls(
+            OrderIntentAction::Exit,
+            DispatchMode::LiveKraken,
+            true,
+            None,
+        );
         assert!(matches!(result, Err(ApiError::BadRequest(_))));
     }
 
     #[test]
     fn emergency_stop_can_run_without_operator_confirmation() {
-        let result = validate_manual_controls(OrderIntentAction::EmergencyStopClose, false, None);
+        let result = validate_manual_controls(
+            OrderIntentAction::EmergencyStopClose,
+            DispatchMode::LiveKraken,
+            false,
+            None,
+        );
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn manual_entry_allows_unarmed_in_simulate_ack_mode() {
+        let result = validate_manual_controls(
+            OrderIntentAction::Entry,
+            DispatchMode::SimulateAck,
+            false,
+            Some("ops-1"),
+        );
         assert!(result.is_ok());
     }
 
@@ -3486,6 +3542,12 @@ mod tests {
             DispatchMode::parse("live_kraken"),
             DispatchMode::LiveKraken
         ));
+        assert_eq!(DispatchMode::FailClosed.as_api_mode(), "FAIL_CLOSED");
+        assert_eq!(DispatchMode::SimulateAck.as_api_mode(), "SIMULATE_ACK");
+        assert_eq!(DispatchMode::LiveKraken.as_api_mode(), "LIVE_KRAKEN");
+        assert!(!DispatchMode::FailClosed.requires_live_arm());
+        assert!(!DispatchMode::SimulateAck.requires_live_arm());
+        assert!(DispatchMode::LiveKraken.requires_live_arm());
     }
 
     #[test]

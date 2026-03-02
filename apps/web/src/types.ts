@@ -462,6 +462,17 @@ export interface KillSwitchState {
   updated_at: string;
 }
 
+export interface UpdateKillSwitchRequest {
+  active: boolean;
+  reason: string;
+  actor?: string;
+}
+
+export interface ExecutionDispatchModeResponse {
+  mode: "FAIL_CLOSED" | "SIMULATE_ACK" | "LIVE_KRAKEN";
+  requires_live_arm: boolean;
+}
+
 export interface ExecutionDecisionResponse {
   instrument: string;
   timeframe: Timeframe;

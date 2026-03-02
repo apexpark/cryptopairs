@@ -23,6 +23,7 @@ import App from "../App";
 
 const api = vi.hoisted(() => ({
   dispatchOrderIntent: vi.fn(),
+  fetchExecutionDispatchMode: vi.fn(),
   fetchExecutionDecision: vi.fn(),
   fetchExecutionPortfolioPositions: vi.fn(),
   fetchKillSwitchState: vi.fn(),
@@ -34,6 +35,7 @@ const api = vi.hoisted(() => ({
   fetchStrategyLiveZ: vi.fn(),
   fetchStrategyUiAuthStatus: vi.fn(),
   submitOrderIntent: vi.fn(),
+  updateKillSwitchState: vi.fn(),
   verifyStrategyUiAccess: vi.fn(),
 }));
 
@@ -186,6 +188,15 @@ beforeEach(() => {
   });
 
   api.fetchKillSwitchState.mockResolvedValue({
+    active: false,
+    reason: "manual",
+    updated_at: "2026-02-20T00:00:00Z",
+  });
+  api.fetchExecutionDispatchMode.mockResolvedValue({
+    mode: "LIVE_KRAKEN",
+    requires_live_arm: true,
+  });
+  api.updateKillSwitchState.mockResolvedValue({
     active: false,
     reason: "manual",
     updated_at: "2026-02-20T00:00:00Z",

@@ -1,0 +1,18 @@
+{
+  "$id": "https://cryptopairs/specs/contracts/execution_dispatch_mode_response.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "ExecutionDispatchModeResponse",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["mode", "requires_live_arm"],
+  "properties": {
+    "mode": {
+      "type": "string",
+      "enum": ["FAIL_CLOSED", "SIMULATE_ACK", "LIVE_KRAKEN"]
+    },
+    "requires_live_arm": {
+      "type": "boolean"
+    }
+  },
+  "version": "0.1.0"
+}
