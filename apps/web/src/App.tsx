@@ -2629,195 +2629,38 @@ function AnalyticsPage({
   return (
     <div className="analytics-layout">
       <div className="analytics-left-stack">
-        <SectionCard title="Strategy Metrics" subtitle="Optimal strategy summary">
-          {selected ? (
-            <>
-              <StatRow label="Opportunity Score" value={selected.cue.opportunity_score.toFixed(2)} />
-              <StatRow label="Expected Hold Bars" value={selected.cue.expected_hold_bars.toString()} />
-              <StatRow label="Cost Estimate" value={`${selected.cue.cost_estimate_bps.toFixed(2)} bp`} />
-              <StatRow label="Confidence" value={selected.cue.confidence_band} />
-              <StatRow
-                label="Shadow ML Precision"
-                value={selected.cue.shadow_ml.precision.toFixed(2)}
-                tone="ok"
-              />
-            </>
-          ) : (
-            <p className="empty-text">No live cues available.</p>
-          )}
-
-          <label>
-            Pair
-            <select
-              value={selected?.cue.pair_id ?? ""}
-              onChange={(event) => onSelectPair(event.target.value)}
-            >
-              {cues?.cues.map((entry) => (
-                <option key={entry.cue.pair_id} value={entry.cue.pair_id}>
-                  {formatPairLabel(entry.cue.pair_id)}
-                </option>
-              ))}
-            </select>
-          </label>
-        </SectionCard>
-
-        <SectionCard
-          title="Advanced Analytics"
-          subtitle="Optional diagnostics and persisted paper-trade inspection"
-        >
-          <details className="analytics-advanced-panel">
-            <summary>
-              <span>Diagnostics (Optional)</span>
-            </summary>
-            <div className="analytics-advanced-body">
-              {selected ? (
-                <>
-                  <StatRow label="Champion Variant" value={selected.cue.selected_variant} />
-                  <StatRow
-                    label="Shadow Agreement"
-                    value={selected.cue.shadow_ml.agrees_with_selected ? "YES" : "NO"}
-                    tone={selected.cue.shadow_ml.agrees_with_selected ? "ok" : "warn"}
-                  />
-                  <StatRow
-                    label="Setup Gate"
-                    value={
-                      (selected.cue.setup_gate?.pass ??
-                      selected.cue.setup_actionable ??
-                      selected.cue.actionable)
-                        ? "PASS"
-                        : "BLOCK"
-                    }
-                    tone={
-                      (selected.cue.setup_gate?.pass ??
-                      selected.cue.setup_actionable ??
-                      selected.cue.actionable)
-                        ? "ok"
-                        : "bad"
-                    }
-                  />
-                  <StatRow
-                    label="Cost Economics"
-                    value={selected.cue.cost_gate.pass ? "PASS" : "BLOCK"}
-                    tone={selected.cue.cost_gate.pass ? "ok" : "bad"}
-                  />
-                  <StatRow
-                    label="Trade Ready"
-                    value={(selected.cue.trade_gate?.pass ?? selected.cue.actionable) ? "PASS" : "BLOCK"}
-                    tone={(selected.cue.trade_gate?.pass ?? selected.cue.actionable) ? "ok" : "bad"}
-                  />
-                </>
-              ) : (
-                <p className="empty-text">No diagnostics available.</p>
-              )}
+        <div className="analytics-top-left-split">
+          <SectionCard title="Pair" subtitle="Select pair">
+            <div className="table-wrap analytics-pair-list">
+              <table>
+                <tbody>
+                  {cues?.cues.map((entry) => (
+                    <tr
+                      key={entry.cue.pair_id}
+                      className={entry.cue.pair_id === selected?.cue.pair_id ? "selected-row" : ""}
+                      onClick={() => onSelectPair(entry.cue.pair_id)}
+                    >
+                      <td>{formatPairLabel(entry.cue.pair_id)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
             </div>
-          </details>
+          </SectionCard>
 
-          <details className="analytics-advanced-panel">
-            <summary>
-              <span>Paper Trades (Optional)</span>
-            </summary>
-            <div className="analytics-advanced-body">
-              <div className="research-controls-grid">
-                <label>
-                  Chart Bars
-                  <input
-                    type="number"
-                    min="120"
-                    max="2000"
-                    step="1"
-                    value={analyticsChartBars}
-                    onChange={(event) =>
-                      onAnalyticsChartBarsChange(
-                        clampAnalyticsChartBars(Number.parseInt(event.target.value, 10) || 120)
-                      )
-                    }
-                  />
-                </label>
-                <label>
-                  Paper Hours
-                  <input
-                    type="number"
-                    min="1"
-                    max="175200"
-                    step="1"
-                    value={analyticsPaperHours}
-                    onChange={(event) =>
-                      onAnalyticsPaperHoursChange(
-                        clampAnalyticsPaperHours(Number.parseInt(event.target.value, 10) || 1)
-                      )
-                    }
-                  />
-                </label>
-                <label>
-                  Paper Limit
-                  <input
-                    type="number"
-                    min="1"
-                    max="20000"
-                    step="1"
-                    value={analyticsPaperLimit}
-                    onChange={(event) =>
-                      onAnalyticsPaperLimitChange(
-                        clampAnalyticsPaperLimit(Number.parseInt(event.target.value, 10) || 1)
-                      )
-                    }
-                  />
-                </label>
-              </div>
-              <p className="small-text tone-info">
-                Active window: chart={clampAnalyticsChartBars(analyticsChartBars)} bars, paper=
-                {clampAnalyticsPaperHours(analyticsPaperHours)}h, limit=
-                {clampAnalyticsPaperLimit(analyticsPaperLimit)}.
-              </p>
-              {paperTrades?.model_bars ? (
-                <p className="small-text tone-info">Model window: {paperTrades.model_bars} bars</p>
-              ) : null}
-              {paperTradesLoading ? <p className="small-text">Loading persisted paper trades...</p> : null}
-              {paperTradesError ? <p className="small-text tone-bad">{paperTradesError}</p> : null}
-              {!paperTradesLoading && !paperTradesError && paperTrades?.rows.length === 0 ? (
-                <p className="small-text">No persisted paper trades found for this pair/timeframe window.</p>
-              ) : null}
-              {paperTrades?.rows.length ? (
-                <div className="table-wrap analytics-paper-trades-table">
-                  <table>
-                    <thead>
-                      <tr>
-                        <th>Exit</th>
-                        <th>Dir</th>
-                        <th>Hold</th>
-                        <th>Left</th>
-                        <th>Right</th>
-                        <th>Net</th>
-                        <th>Equity</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {paperTrades.rows.map((row) => (
-                        <tr key={`${row.entry_ts}-${row.exit_ts}-${row.exit_kind}`}>
-                          <td>{formatLocalTime(row.exit_ts)}</td>
-                          <td>{row.direction === "LONG_SPREAD" ? "LONG" : "SHORT"}</td>
-                          <td>{row.bars_held}</td>
-                          <td className={row.left_leg_bps >= 0 ? "tone-ok" : "tone-bad"}>
-                            {formatSigned(row.left_leg_bps)}bp
-                          </td>
-                          <td className={row.right_leg_bps >= 0 ? "tone-ok" : "tone-bad"}>
-                            {formatSigned(row.right_leg_bps)}bp
-                          </td>
-                          <td className={row.net_bps >= 0 ? "tone-ok" : "tone-bad"}>
-                            {formatSigned(row.net_bps)}bp
-                          </td>
-                          <td className={row.equity_trade_bps >= 0 ? "tone-ok" : "tone-bad"}>
-                            {formatSigned(row.equity_trade_bps)}bp
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              ) : null}
-            </div>
-          </details>
-        </SectionCard>
+          <SectionCard title="Strategy Metrics" subtitle="Optimal strategy summary">
+            {selected ? (
+              <>
+                <StatRow label="Opportunity Score" value={selected.cue.opportunity_score.toFixed(2)} />
+                <StatRow label="Expected Hold Bars" value={selected.cue.expected_hold_bars.toString()} />
+                <StatRow label="Cost Estimate" value={`${selected.cue.cost_estimate_bps.toFixed(2)} bp`} />
+                <StatRow label="Confidence" value={selected.cue.confidence_band} />
+              </>
+            ) : (
+              <p className="empty-text">No live cues available.</p>
+            )}
+          </SectionCard>
+        </div>
 
         <SectionCard
           title="Research Controls"
@@ -3158,89 +3001,235 @@ function AnalyticsPage({
 
       <div className="analytics-right-stack">
         <div className="analytics-chart-split">
-          <SectionCard
-            title="Hypothetical Equity Curve"
-            subtitle="Absolute mode (equity x $100) from live candles and current strategy bands"
-          >
-            <div className="mini-card">
-              <div className="research-results-grid">
-                <div>
-                  <p className="small-text">Return (window)</p>
-                  <p
-                    className={
-                      equityWindowStats.returnPct != null && equityWindowStats.returnPct >= 0
-                        ? "tone-ok"
-                        : "tone-bad"
-                    }
-                  >
-                    {equityWindowStats.returnPct != null
-                      ? `${formatSigned(equityWindowStats.returnPct, 2)}%`
-                      : "--"}
-                  </p>
-                </div>
-                <div>
-                  <p className="small-text">Days represented</p>
-                  <p>{equityWindowStats.daysRepresented != null ? equityWindowStats.daysRepresented.toFixed(2) : "--"}</p>
-                </div>
-                <div>
-                  <p className="small-text">Annualized return</p>
-                  <p
-                    className={
-                      equityWindowStats.annualizedReturnPct != null &&
-                      equityWindowStats.annualizedReturnPct >= 0
-                        ? "tone-ok"
-                        : "tone-bad"
-                    }
-                  >
-                    {equityWindowStats.annualizedReturnPct != null
-                      ? `${formatSigned(equityWindowStats.annualizedReturnPct, 2)}%`
-                      : "--"}
-                  </p>
+          <div className="analytics-chart-col">
+            <SectionCard
+              title="Hypothetical Equity Curve"
+              subtitle="Absolute mode (equity x $100) from live candles and current strategy bands"
+            >
+              <div className="mini-card">
+                <div className="research-results-grid">
+                  <div>
+                    <p className="small-text">Return (window)</p>
+                    <p
+                      className={
+                        equityWindowStats.returnPct != null && equityWindowStats.returnPct >= 0
+                          ? "tone-ok"
+                          : "tone-bad"
+                      }
+                    >
+                      {equityWindowStats.returnPct != null
+                        ? `${formatSigned(equityWindowStats.returnPct, 2)}%`
+                        : "--"}
+                    </p>
+                  </div>
+                  <div>
+                    <p className="small-text">Days represented</p>
+                    <p>{equityWindowStats.daysRepresented != null ? equityWindowStats.daysRepresented.toFixed(2) : "--"}</p>
+                  </div>
+                  <div>
+                    <p className="small-text">Annualized return</p>
+                    <p
+                      className={
+                        equityWindowStats.annualizedReturnPct != null &&
+                        equityWindowStats.annualizedReturnPct >= 0
+                          ? "tone-ok"
+                          : "tone-bad"
+                      }
+                    >
+                      {equityWindowStats.annualizedReturnPct != null
+                        ? `${formatSigned(equityWindowStats.annualizedReturnPct, 2)}%`
+                        : "--"}
+                    </p>
+                  </div>
                 </div>
               </div>
-            </div>
-            <LineChart
-              values={displayEquitySeries}
-              timestamps={equityTimestamps}
-              height={chartHeight}
-              title="Hypothetical equity (absolute, equity x $100)"
-              unavailableText={loading ? "Loading live candles..." : error ?? "No data"}
-              yAxisFormatter={formatUsdAxisValue}
-              valueScaleMode="full"
-            />
-          </SectionCard>
+              <LineChart
+                values={displayEquitySeries}
+                timestamps={equityTimestamps}
+                height={chartHeight}
+                title="Hypothetical equity (absolute, equity x $100)"
+                unavailableText={loading ? "Loading live candles..." : error ?? "No data"}
+                yAxisFormatter={formatUsdAxisValue}
+                valueScaleMode="full"
+              />
+            </SectionCard>
 
-          <SectionCard
-            title="Historical Z-Score (Entries / Exits / Stops)"
-            subtitle="Derived from live spread history"
-          >
-            <div className="mini-card analytics-chart-top-spacer" aria-hidden="true" />
-            <LineChart
-              values={zSeries}
-              timestamps={zTimestamps}
-              markers={zMarkers}
-              thresholds={
-                selected
-                  ? [
-                      { value: 0, tone: "info" },
-                      { value: selected.cue.entry_band, tone: "warn" },
-                      { value: -selected.cue.entry_band, tone: "warn" },
-                      { value: selected.cue.stop_band, tone: "bad" },
-                      { value: -selected.cue.stop_band, tone: "bad" },
-                    ]
-                  : []
-              }
-              height={chartHeight}
-              title="Entry=green, Exit=amber, Stop=red"
-              unavailableText={loading ? "Loading live candles..." : error ?? "No data"}
-              yAxisFormatter={(value) => value.toFixed(2)}
-              showThresholdLabels
-              mirrorThresholdLabels
-              markerRadius={6}
-              valueScaleMode="trimmed"
-              includeThresholdsInDomain
-            />
-          </SectionCard>
+            <SectionCard title="Paper Trades" subtitle="Persisted paper-trade inspection">
+              <div className="research-controls-grid">
+                <label>
+                  Chart Bars
+                  <input
+                    type="number"
+                    min="120"
+                    max="2000"
+                    step="1"
+                    value={analyticsChartBars}
+                    onChange={(event) =>
+                      onAnalyticsChartBarsChange(
+                        clampAnalyticsChartBars(Number.parseInt(event.target.value, 10) || 120)
+                      )
+                    }
+                  />
+                </label>
+                <label>
+                  Paper Hours
+                  <input
+                    type="number"
+                    min="1"
+                    max="175200"
+                    step="1"
+                    value={analyticsPaperHours}
+                    onChange={(event) =>
+                      onAnalyticsPaperHoursChange(
+                        clampAnalyticsPaperHours(Number.parseInt(event.target.value, 10) || 1)
+                      )
+                    }
+                  />
+                </label>
+                <label>
+                  Paper Limit
+                  <input
+                    type="number"
+                    min="1"
+                    max="20000"
+                    step="1"
+                    value={analyticsPaperLimit}
+                    onChange={(event) =>
+                      onAnalyticsPaperLimitChange(
+                        clampAnalyticsPaperLimit(Number.parseInt(event.target.value, 10) || 1)
+                      )
+                    }
+                  />
+                </label>
+              </div>
+              <p className="small-text tone-info">
+                Active window: chart={clampAnalyticsChartBars(analyticsChartBars)} bars, paper=
+                {clampAnalyticsPaperHours(analyticsPaperHours)}h, limit=
+                {clampAnalyticsPaperLimit(analyticsPaperLimit)}.
+              </p>
+              {paperTrades?.model_bars ? (
+                <p className="small-text tone-info">Model window: {paperTrades.model_bars} bars</p>
+              ) : null}
+              {paperTradesLoading ? <p className="small-text">Loading persisted paper trades...</p> : null}
+              {paperTradesError ? <p className="small-text tone-bad">{paperTradesError}</p> : null}
+              {!paperTradesLoading && !paperTradesError && paperTrades?.rows.length === 0 ? (
+                <p className="small-text">No persisted paper trades found for this pair/timeframe window.</p>
+              ) : null}
+              {paperTrades?.rows.length ? (
+                <div className="table-wrap analytics-paper-trades-table">
+                  <table>
+                    <thead>
+                      <tr>
+                        <th>Exit</th>
+                        <th>Dir</th>
+                        <th>Hold</th>
+                        <th>Left</th>
+                        <th>Right</th>
+                        <th>Net</th>
+                        <th>Equity</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {paperTrades.rows.map((row) => (
+                        <tr key={`${row.entry_ts}-${row.exit_ts}-${row.exit_kind}`}>
+                          <td>{formatLocalTime(row.exit_ts)}</td>
+                          <td>{row.direction === "LONG_SPREAD" ? "LONG" : "SHORT"}</td>
+                          <td>{row.bars_held}</td>
+                          <td className={row.left_leg_bps >= 0 ? "tone-ok" : "tone-bad"}>
+                            {formatSigned(row.left_leg_bps)}bp
+                          </td>
+                          <td className={row.right_leg_bps >= 0 ? "tone-ok" : "tone-bad"}>
+                            {formatSigned(row.right_leg_bps)}bp
+                          </td>
+                          <td className={row.net_bps >= 0 ? "tone-ok" : "tone-bad"}>
+                            {formatSigned(row.net_bps)}bp
+                          </td>
+                          <td className={row.equity_trade_bps >= 0 ? "tone-ok" : "tone-bad"}>
+                            {formatSigned(row.equity_trade_bps)}bp
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              ) : null}
+            </SectionCard>
+          </div>
+
+          <div className="analytics-chart-col">
+            <SectionCard
+              title="Historical Z-Score (Entries / Exits / Stops)"
+              subtitle="Derived from live spread history"
+            >
+              <LineChart
+                values={zSeries}
+                timestamps={zTimestamps}
+                markers={zMarkers}
+                thresholds={
+                  selected
+                    ? [
+                        { value: 0, tone: "info" },
+                        { value: selected.cue.entry_band, tone: "warn" },
+                        { value: -selected.cue.entry_band, tone: "warn" },
+                        { value: selected.cue.stop_band, tone: "bad" },
+                        { value: -selected.cue.stop_band, tone: "bad" },
+                      ]
+                    : []
+                }
+                height={chartHeight}
+                title="Entry=green, Exit=amber, Stop=red"
+                unavailableText={loading ? "Loading live candles..." : error ?? "No data"}
+                yAxisFormatter={(value) => value.toFixed(2)}
+                showThresholdLabels
+                mirrorThresholdLabels
+                markerRadius={6}
+                valueScaleMode="trimmed"
+                includeThresholdsInDomain
+              />
+            </SectionCard>
+
+            <SectionCard title="Diagnostics" subtitle="Live model and gate state">
+              {selected ? (
+                <>
+                  <StatRow label="Champion Variant" value={selected.cue.selected_variant} />
+                  <StatRow
+                    label="Shadow Agreement"
+                    value={selected.cue.shadow_ml.agrees_with_selected ? "YES" : "NO"}
+                    tone={selected.cue.shadow_ml.agrees_with_selected ? "ok" : "warn"}
+                  />
+                  <StatRow
+                    label="Setup Gate"
+                    value={
+                      (selected.cue.setup_gate?.pass ??
+                      selected.cue.setup_actionable ??
+                      selected.cue.actionable)
+                        ? "PASS"
+                        : "BLOCK"
+                    }
+                    tone={
+                      (selected.cue.setup_gate?.pass ??
+                      selected.cue.setup_actionable ??
+                      selected.cue.actionable)
+                        ? "ok"
+                        : "bad"
+                    }
+                  />
+                  <StatRow
+                    label="Cost Economics"
+                    value={selected.cue.cost_gate.pass ? "PASS" : "BLOCK"}
+                    tone={selected.cue.cost_gate.pass ? "ok" : "bad"}
+                  />
+                  <StatRow
+                    label="Trade Ready"
+                    value={(selected.cue.trade_gate?.pass ?? selected.cue.actionable) ? "PASS" : "BLOCK"}
+                    tone={(selected.cue.trade_gate?.pass ?? selected.cue.actionable) ? "ok" : "bad"}
+                  />
+                </>
+              ) : (
+                <p className="empty-text">No diagnostics available.</p>
+              )}
+            </SectionCard>
+          </div>
         </div>
       </div>
     </div>

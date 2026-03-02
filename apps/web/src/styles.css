@@ -358,9 +358,33 @@ input {
   min-height: 0;
 }
 
+.analytics-top-left-split {
+  display: grid;
+  grid-template-columns: minmax(180px, 0.9fr) minmax(220px, 1.1fr);
+  gap: 10px;
+  align-items: start;
+}
+
+.analytics-pair-list {
+  max-height: 420px;
+  overflow: auto;
+}
+
+.analytics-pair-list table td {
+  font-size: 0.86rem;
+  font-weight: 600;
+}
+
 .analytics-chart-split {
   display: grid;
   grid-template-columns: 1fr 1fr;
+  gap: 10px;
+  min-height: 0;
+}
+
+.analytics-chart-col {
+  display: grid;
+  grid-template-rows: auto auto;
   gap: 10px;
   min-height: 0;
 }
@@ -370,14 +394,6 @@ input {
   grid-template-rows: auto;
   gap: 10px;
   min-height: 0;
-}
-
-.analytics-chart-top-spacer {
-  min-height: 78px;
-  margin-bottom: 0;
-  border-color: transparent;
-  background: transparent;
-  box-shadow: none;
 }
 
 .analytics-paper-trades-table table th,
@@ -1028,6 +1044,10 @@ button:disabled {
   }
 
   .analytics-chart-split {
+    grid-template-columns: 1fr;
+  }
+
+  .analytics-top-left-split {
     grid-template-columns: 1fr;
   }
 
