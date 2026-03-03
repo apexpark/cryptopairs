@@ -549,6 +549,9 @@ This project follows SemVer as defined in `docs/02-versioning-and-releases.md`.
   - live modes (`FAIL_CLOSED`, `LIVE_KRAKEN`) retain existing fail-closed gate behavior.
 
 ### Fixed
+- Hosted compose wiring for execution dispatch mode:
+  - `docker-compose.yml` now passes `EXECUTION_DISPATCH_MODE` into `execution-service`
+    so SIM/LIVE mode selection is applied at runtime (instead of always defaulting to `FAIL_CLOSED`).
 - Removed accidental duplicate spec/example files with `* 2.json` suffix.
 - Strategy marker generation no longer emits same-bar `entry` + `stop` overlaps in live z-score/backtest series,
   preventing visual stop markers without a preceding visible entry.
