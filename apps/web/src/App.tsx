@@ -703,6 +703,15 @@ function App(): JSX.Element {
     }),
     [killSwitch?.active, leftDecisionAllowed, rightDecisionAllowed, reconcileResponse]
   );
+  const simGateBypass = executionDispatchMode?.mode === "SIMULATE_ACK";
+  const effectiveGateState = simGateBypass
+    ? {
+        killSwitchActive: false,
+        leftAllowed: true,
+        rightAllowed: true,
+        reconcileOk: true,
+      }
+    : gateState;
   const requiresLiveArm = executionDispatchMode?.requires_live_arm ?? true;
   const effectiveOperatorConfirmed = operatorConfirmed || !requiresLiveArm;
 
@@ -710,7 +719,7 @@ function App(): JSX.Element {
     operatorConfirmed: effectiveOperatorConfirmed,
     operatorId,
     spreadSize: spreadSizeNumber,
-    gateState,
+    gateState: effectiveGateState,
   };
 
   const canLongEntry = isEntryAllowed(baseEntryGuard);
@@ -724,7 +733,7 @@ function App(): JSX.Element {
   );
   const canCloseSpread = isCloseAllowed(currentPosition);
 
-  const gateSafe = isGateSafe(gateState);
+  const gateSafe = isGateSafe(effectiveGateState);
   const startupStatus = useMemo(() => {
     if (coreLoading) {
       return {
@@ -2166,6 +2175,7 @@ function TradePage(props: {
         ...(selectedCue.cue.cost_gate?.rationale_codes ?? []),
       ])
     : new Set<string>();
+  const bypassExecutionGates = props.dispatchMode === "SIMULATE_ACK";
 
   const commonEntryDisableReason = (): string | null => {
     if (props.submitting) {
@@ -2180,13 +2190,13 @@ function TradePage(props: {
     if (!Number.isFinite(spreadSizeNumber) || spreadSizeNumber <= 0) {
       return "Spread size must be greater than 0.";
     }
-    if (props.gateState.killSwitchActive) {
+    if (!bypassExecutionGates && props.gateState.killSwitchActive) {
       return "Kill switch is ACTIVE.";
     }
-    if (!props.gateState.leftAllowed || !props.gateState.rightAllowed) {
+    if (!bypassExecutionGates && (!props.gateState.leftAllowed || !props.gateState.rightAllowed)) {
       return "Integrity gate is blocking one or both legs.";
     }
-    if (!props.gateState.reconcileOk) {
+    if (!bypassExecutionGates && !props.gateState.reconcileOk) {
       return "Reconcile gate is NOT_OK.";
     }
     return null;

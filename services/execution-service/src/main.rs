@@ -75,6 +75,10 @@ impl DispatchMode {
     }
 }
 
+fn bypass_safety_gates_for_dispatch_mode(dispatch_mode: DispatchMode) -> bool {
+    matches!(dispatch_mode, DispatchMode::SimulateAck)
+}
+
 fn normalize_secret_value(raw: String) -> Option<String> {
     let trimmed = raw.trim().to_string();
     if trimmed.is_empty() {
@@ -2297,14 +2301,18 @@ async fn decision(
     let min_coverage_pct = query
         .min_coverage_pct
         .unwrap_or(state.default_min_coverage_pct);
-    let gate_decision = evaluate_integrity_gate_from_store(
-        &state.postgres_url,
-        &query.instrument,
-        timeframe,
-        min_coverage_pct,
-    )
-    .await
-    .map_err(|error| ApiError::Upstream(error.to_string()))?;
+    let gate_decision = if bypass_safety_gates_for_dispatch_mode(state.dispatch_mode) {
+        GateDecision::Allowed
+    } else {
+        evaluate_integrity_gate_from_store(
+            &state.postgres_url,
+            &query.instrument,
+            timeframe,
+            min_coverage_pct,
+        )
+        .await
+        .map_err(|error| ApiError::Upstream(error.to_string()))?
+    };
     let (decision, reason) = match gate_decision {
         GateDecision::Allowed => ("ALLOWED", None),
         GateDecision::Blocked(reason) => ("BLOCKED", Some(reason)),
@@ -2792,12 +2800,33 @@ async fn order_intent(
         .map_err(|error| ApiError::Upstream(error.to_string()))?
     };
 
+    let (
+        effective_kill_switch_active,
+        effective_gate_decision,
+        effective_reconcile_decision,
+        effective_risk_decision,
+    ) = if bypass_safety_gates_for_dispatch_mode(state.dispatch_mode) {
+        (
+            false,
+            GateDecision::Allowed,
+            ReconcileDecision::Allowed,
+            GateDecision::Allowed,
+        )
+    } else {
+        (
+            kill_switch.active,
+            gate_decision,
+            reconcile_decision,
+            risk_decision,
+        )
+    };
+
     let intent_decision = evaluate_order_intent(
         action,
-        kill_switch.active,
-        gate_decision,
-        reconcile_decision,
-        risk_decision,
+        effective_kill_switch_active,
+        effective_gate_decision,
+        effective_reconcile_decision,
+        effective_risk_decision,
     );
     let (decision, reason) = match intent_decision {
         OrderIntentDecision::Accepted => ("ACCEPTED".to_string(), String::new()),
@@ -3429,13 +3458,14 @@ fn map_order_intent(record: OrderIntentRecord) -> OrderIntentResponse {
 #[cfg(test)]
 mod tests {
     use super::{
-        build_execution_alerts, build_uri_component, derive_open_order_transition,
-        derive_order_status_transition, fold_spread_positions, is_snapshot_stale,
-        is_terminal_state, parse_ingest_target_state, parse_kraken_open_orders_response,
-        parse_kraken_order_status_response, parse_kraken_submit_response, resolve_secret_value,
-        safe_ratio, sign_kraken_futures_payload, validate_manual_controls,
-        validate_order_qty_constraints, ApiError, DispatchMode, ExecutionObservabilityMetricsRaw,
-        ExecutionObservabilityThresholds, KrakenOpenOrder, KrakenStatusOrder, SpreadLedgerEvent,
+        build_execution_alerts, build_uri_component, bypass_safety_gates_for_dispatch_mode,
+        derive_open_order_transition, derive_order_status_transition, fold_spread_positions,
+        is_snapshot_stale, is_terminal_state, parse_ingest_target_state,
+        parse_kraken_open_orders_response, parse_kraken_order_status_response,
+        parse_kraken_submit_response, resolve_secret_value, safe_ratio,
+        sign_kraken_futures_payload, validate_manual_controls, validate_order_qty_constraints,
+        ApiError, DispatchMode, ExecutionObservabilityMetricsRaw, ExecutionObservabilityThresholds,
+        KrakenOpenOrder, KrakenStatusOrder, SpreadLedgerEvent,
     };
     use chrono::{DateTime, Duration, Utc};
     use execution_service::{OrderIntentAction, OrderLifecycleState};
@@ -3545,6 +3575,15 @@ mod tests {
         assert_eq!(DispatchMode::FailClosed.as_api_mode(), "FAIL_CLOSED");
         assert_eq!(DispatchMode::SimulateAck.as_api_mode(), "SIMULATE_ACK");
         assert_eq!(DispatchMode::LiveKraken.as_api_mode(), "LIVE_KRAKEN");
+        assert!(!bypass_safety_gates_for_dispatch_mode(
+            DispatchMode::FailClosed
+        ));
+        assert!(bypass_safety_gates_for_dispatch_mode(
+            DispatchMode::SimulateAck
+        ));
+        assert!(!bypass_safety_gates_for_dispatch_mode(
+            DispatchMode::LiveKraken
+        ));
         assert!(!DispatchMode::FailClosed.requires_live_arm());
         assert!(!DispatchMode::SimulateAck.requires_live_arm());
         assert!(DispatchMode::LiveKraken.requires_live_arm());
