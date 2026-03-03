@@ -80,6 +80,7 @@ type TradeCommand =
 interface SpreadLeg {
   instrument: string;
   side: TradeSide;
+  qty: number;
 }
 
 interface LegExecutionOutcome {
@@ -388,6 +389,13 @@ function quantizeDownToStep(value: number, step: number): number {
   return Number(quantized.toFixed(decimals));
 }
 
+function quantizeNearestToStep(value: number, step: number): number {
+  const units = Math.max(1, Math.round(value / step));
+  const quantized = units * step;
+  const decimals = decimalPlacesForStep(step);
+  return Number(quantized.toFixed(decimals));
+}
+
 function formatQtyForStep(qty: number, step?: number): string {
   if (!Number.isFinite(qty)) {
     return "--";
@@ -436,6 +444,66 @@ function deriveExecutableSpreadQty(
     qty: quantized,
     step,
     adjusted: Math.abs(quantized - requestedSpreadQty) > 1e-9,
+    reason: null,
+  };
+}
+
+function deriveExecutableLegPlan(
+  requestedSpreadQty: number,
+  leftInstrument: string,
+  rightInstrument: string,
+  hedgeRatio: number | null | undefined
+): {
+  spreadQty: number;
+  leftQty: number;
+  rightQty: number;
+  leftStep: number | null;
+  rightStep: number | null;
+  adjusted: boolean;
+  reason: string | null;
+} {
+  const spreadPlan = deriveExecutableSpreadQty(requestedSpreadQty, leftInstrument, rightInstrument);
+  if (spreadPlan.reason) {
+    return {
+      spreadQty: 0,
+      leftQty: 0,
+      rightQty: 0,
+      leftStep: null,
+      rightStep: null,
+      adjusted: spreadPlan.adjusted,
+      reason: spreadPlan.reason,
+    };
+  }
+
+  const leftQty = spreadPlan.qty;
+  const ratio =
+    hedgeRatio != null && Number.isFinite(hedgeRatio) && hedgeRatio > 0 ? Math.abs(hedgeRatio) : 1;
+  const rawRightQty = leftQty * ratio;
+  const rightStep = INSTRUMENT_MIN_LOT_BY_SYMBOL[normalizePerpSymbol(rightInstrument)] ?? null;
+  const rightQty =
+    rightStep != null && Number.isFinite(rightStep) && rightStep > 0
+      ? quantizeNearestToStep(rawRightQty, rightStep)
+      : rawRightQty;
+
+  if (!Number.isFinite(rightQty) || rightQty <= 0) {
+    return {
+      spreadQty: 0,
+      leftQty: 0,
+      rightQty: 0,
+      leftStep: INSTRUMENT_MIN_LOT_BY_SYMBOL[normalizePerpSymbol(leftInstrument)] ?? null,
+      rightStep,
+      adjusted: true,
+      reason: "Spread size is too small for executable hedge-ratio sizing on this pair.",
+    };
+  }
+
+  return {
+    spreadQty: leftQty,
+    leftQty,
+    rightQty,
+    leftStep: INSTRUMENT_MIN_LOT_BY_SYMBOL[normalizePerpSymbol(leftInstrument)] ?? null,
+    rightStep,
+    adjusted: spreadPlan.adjusted || Math.abs(rightQty - rawRightQty) > 1e-9,
     reason: null,
   };
 }
@@ -525,18 +593,20 @@ function buildSpreadLegs(
   leftInstrument: string,
   rightInstrument: string,
   direction: Exclude<DirectionHint, "NONE">,
-  action: ExecutionAction
+  action: ExecutionAction,
+  leftQty: number,
+  rightQty: number
 ): SpreadLeg[] {
   const isEntry = action === "ENTRY";
   if (direction === "LONG_SPREAD") {
     return [
-      { instrument: leftInstrument, side: isEntry ? "BUY" : "SELL" },
-      { instrument: rightInstrument, side: isEntry ? "SELL" : "BUY" },
+      { instrument: leftInstrument, side: isEntry ? "BUY" : "SELL", qty: leftQty },
+      { instrument: rightInstrument, side: isEntry ? "SELL" : "BUY", qty: rightQty },
     ];
   }
   return [
-    { instrument: leftInstrument, side: isEntry ? "SELL" : "BUY" },
-    { instrument: rightInstrument, side: isEntry ? "BUY" : "SELL" },
+    { instrument: leftInstrument, side: isEntry ? "SELL" : "BUY", qty: leftQty },
+    { instrument: rightInstrument, side: isEntry ? "BUY" : "SELL", qty: rightQty },
   ];
 }
 
@@ -1687,7 +1757,7 @@ function App(): JSX.Element {
 
     let direction: Exclude<DirectionHint, "NONE">;
     let action: ExecutionAction;
-    let qty = spreadSizeNumber;
+    let spreadQty = spreadSizeNumber;
 
     if (!Number.isFinite(spreadSizeNumber) || spreadSizeNumber <= 0) {
       setTradeMessage("Spread size must be > 0.");
@@ -1714,7 +1784,7 @@ function App(): JSX.Element {
       }
       direction = current.direction;
       action = "EXIT";
-      qty = Math.min(spreadSizeNumber, current.totalSize);
+      spreadQty = Math.min(spreadSizeNumber, current.totalSize);
     } else {
       if (current.direction === "NONE" || current.totalSize <= 0) {
         setTradeMessage("No open spread to close.");
@@ -1722,28 +1792,33 @@ function App(): JSX.Element {
       }
       direction = current.direction;
       action = "EMERGENCY_STOP_CLOSE";
-      qty = current.totalSize;
+      spreadQty = current.totalSize;
     }
-
+    let leftLegQty = spreadQty;
+    let rightLegQty = spreadQty;
+    if (action !== "EMERGENCY_STOP_CLOSE") {
+      const executableLegPlan = deriveExecutableLegPlan(
+        spreadQty,
+        selectedCueRow.cue.left_instrument,
+        selectedCueRow.cue.right_instrument,
+        selectedCueRow.hedge_ratio
+      );
+      if (executableLegPlan.reason) {
+        setTradeMessage(executableLegPlan.reason);
+        return;
+      }
+      spreadQty = executableLegPlan.spreadQty;
+      leftLegQty = executableLegPlan.leftQty;
+      rightLegQty = executableLegPlan.rightQty;
+    }
     const legs = buildSpreadLegs(
       selectedCueRow.cue.left_instrument,
       selectedCueRow.cue.right_instrument,
       direction,
-      action
+      action,
+      leftLegQty,
+      rightLegQty
     );
-
-    if (action !== "EMERGENCY_STOP_CLOSE") {
-      const executableQty = deriveExecutableSpreadQty(
-        qty,
-        selectedCueRow.cue.left_instrument,
-        selectedCueRow.cue.right_instrument
-      );
-      if (executableQty.reason) {
-        setTradeMessage(executableQty.reason);
-        return;
-      }
-      qty = executableQty.qty;
-    }
 
     setSubmitting(true);
     try {
@@ -1760,7 +1835,7 @@ function App(): JSX.Element {
             spread_direction: direction,
             spread_z: action === "ENTRY" ? currentZ : null,
             side: leg.side,
-            qty,
+            qty: leg.qty,
             operator_confirmed: action === "EMERGENCY_STOP_CLOSE" ? false : effectiveOperatorConfirmed,
             operator_id: action === "EMERGENCY_STOP_CLOSE" ? null : operatorId,
             min_coverage_pct: 99.5,
@@ -2265,16 +2340,17 @@ function TradePage(props: {
     Number.isFinite(spreadSizeNumber) && spreadSizeNumber > 0 ? spreadSizeNumber : 0;
   const leftInstrument = selectedCue?.cue.left_instrument ?? "LEFT";
   const rightInstrument = selectedCue?.cue.right_instrument ?? "RIGHT";
-  const entryExecutableQtyPlan = deriveExecutableSpreadQty(
+  const entryExecutableLegPlan = deriveExecutableLegPlan(
     normalizedSpreadSize,
     leftInstrument,
-    rightInstrument
+    rightInstrument,
+    selectedCue?.hedge_ratio
   );
-  const executableEntryQty = entryExecutableQtyPlan.qty;
-  const longLeftQty = executableEntryQty;
-  const longRightQty = executableEntryQty;
-  const shortLeftQty = executableEntryQty;
-  const shortRightQty = executableEntryQty;
+  const executableEntryQty = entryExecutableLegPlan.spreadQty;
+  const longLeftQty = entryExecutableLegPlan.leftQty;
+  const longRightQty = entryExecutableLegPlan.rightQty;
+  const shortLeftQty = entryExecutableLegPlan.leftQty;
+  const shortRightQty = entryExecutableLegPlan.rightQty;
 
   const tradeGatePass = selectedCue ? selectedCue.cue.trade_gate?.pass ?? selectedCue.cue.actionable : false;
   const tradeGateReasons = selectedCue
@@ -2299,8 +2375,8 @@ function TradePage(props: {
     if (!Number.isFinite(spreadSizeNumber) || spreadSizeNumber <= 0) {
       return "Spread size must be greater than 0.";
     }
-    if (entryExecutableQtyPlan.reason) {
-      return entryExecutableQtyPlan.reason;
+    if (entryExecutableLegPlan.reason) {
+      return entryExecutableLegPlan.reason;
     }
     if (!bypassExecutionGates && props.gateState.killSwitchActive) {
       return "Kill switch is ACTIVE.";
@@ -2374,8 +2450,8 @@ function TradePage(props: {
           ? "Operator ID is required."
           : !Number.isFinite(spreadSizeNumber) || spreadSizeNumber <= 0
             ? "Spread size must be greater than 0."
-            : entryExecutableQtyPlan.reason
-              ? entryExecutableQtyPlan.reason
+            : entryExecutableLegPlan.reason
+              ? entryExecutableLegPlan.reason
             : null;
   const closeSpreadDisabledReason = props.submitting
     ? "Action in progress."
@@ -2632,19 +2708,19 @@ function TradePage(props: {
             <div className="execution-preview">
               <p>
                 Long preview: BUY {formatInstrumentLabel(leftInstrument)}{" "}
-                {formatQtyForStep(longLeftQty, entryExecutableQtyPlan.step ?? undefined)} / SELL{" "}
+                {formatQtyForStep(longLeftQty, entryExecutableLegPlan.leftStep ?? undefined)} / SELL{" "}
                 {formatInstrumentLabel(rightInstrument)}{" "}
-                {formatQtyForStep(longRightQty, entryExecutableQtyPlan.step ?? undefined)}
+                {formatQtyForStep(longRightQty, entryExecutableLegPlan.rightStep ?? undefined)}
               </p>
               <p>
                 Short preview: SELL {formatInstrumentLabel(leftInstrument)}{" "}
-                {formatQtyForStep(shortLeftQty, entryExecutableQtyPlan.step ?? undefined)} / BUY{" "}
+                {formatQtyForStep(shortLeftQty, entryExecutableLegPlan.leftStep ?? undefined)} / BUY{" "}
                 {formatInstrumentLabel(rightInstrument)}{" "}
-                {formatQtyForStep(shortRightQty, entryExecutableQtyPlan.step ?? undefined)}
+                {formatQtyForStep(shortRightQty, entryExecutableLegPlan.rightStep ?? undefined)}
               </p>
-              {entryExecutableQtyPlan.adjusted ? (
+              {entryExecutableLegPlan.adjusted ? (
                 <p className="small-text tone-warn">
-                  Executable size adjusted to {formatQtyForStep(executableEntryQty, entryExecutableQtyPlan.step ?? undefined)} to match pair lot step.
+                  Executable sizing adjusted to match pair lot constraints and hedge ratio.
                 </p>
               ) : null}
             </div>
