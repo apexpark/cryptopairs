@@ -2764,7 +2764,10 @@ async fn order_intent(
         .await
         .map_err(|error| ApiError::Upstream(error.to_string()))?;
 
-    let gate_decision = if matches!(action, OrderIntentAction::EmergencyStopClose) {
+    let bypass_safety = bypass_safety_gates_for_dispatch_mode(state.dispatch_mode);
+
+    let gate_decision = if matches!(action, OrderIntentAction::EmergencyStopClose) || bypass_safety
+    {
         GateDecision::Allowed
     } else {
         evaluate_integrity_gate_from_store(
@@ -2777,7 +2780,9 @@ async fn order_intent(
         .map_err(|error| ApiError::Upstream(error.to_string()))?
     };
 
-    let reconcile_decision = if matches!(action, OrderIntentAction::EmergencyStopClose) {
+    let reconcile_decision = if matches!(action, OrderIntentAction::EmergencyStopClose)
+        || bypass_safety
+    {
         ReconcileDecision::Allowed
     } else {
         fetch_latest_reconcile_decision_from_service(&state, &payload.exchange, &payload.account_id)
@@ -2785,7 +2790,8 @@ async fn order_intent(
             .map_err(|error| ApiError::Upstream(error.to_string()))?
     };
 
-    let risk_decision = if matches!(action, OrderIntentAction::EmergencyStopClose) {
+    let risk_decision = if matches!(action, OrderIntentAction::EmergencyStopClose) || bypass_safety
+    {
         GateDecision::Allowed
     } else {
         evaluate_risk_gate_from_store(
@@ -2805,7 +2811,7 @@ async fn order_intent(
         effective_gate_decision,
         effective_reconcile_decision,
         effective_risk_decision,
-    ) = if bypass_safety_gates_for_dispatch_mode(state.dispatch_mode) {
+    ) = if bypass_safety {
         (
             false,
             GateDecision::Allowed,
