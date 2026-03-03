@@ -1012,7 +1012,7 @@ impl ExecutionRepository {
         let rows = self
             .client
             .query(
-                "SELECT i.pair_id, i.action, i.spread_direction, i.spread_z, i.qty, i.created_at
+                "SELECT i.pair_id, i.instrument, i.action, i.spread_direction, i.spread_z, i.qty, i.created_at
                  FROM execution_order_intents i
                  JOIN (
                     SELECT DISTINCT ON (idempotency_key)
@@ -1035,11 +1035,12 @@ impl ExecutionRepository {
             .iter()
             .map(|row| SpreadLedgerEvent {
                 pair_id: row.get(0),
-                action: row.get(1),
-                spread_direction: row.get(2),
-                spread_z: row.get(3),
-                qty: row.get(4),
-                created_at: row.get(5),
+                instrument: row.get(1),
+                action: row.get(2),
+                spread_direction: row.get(3),
+                spread_z: row.get(4),
+                qty: row.get(5),
+                created_at: row.get(6),
             })
             .collect())
     }
@@ -1474,6 +1475,7 @@ struct DispatchAttempt {
 #[derive(Debug)]
 struct SpreadLedgerEvent {
     pair_id: String,
+    instrument: String,
     action: String,
     spread_direction: Option<String>,
     spread_z: Option<f64>,
@@ -2332,6 +2334,14 @@ fn fold_spread_positions(events: &[SpreadLedgerEvent]) -> Vec<PortfolioPositionR
     let mut by_pair: HashMap<String, FoldedSpreadPosition> = HashMap::new();
     for event in events {
         if !event.qty.is_finite() || event.qty <= 0.0 {
+            continue;
+        }
+        let Some(left_instrument) = event.pair_id.split("__").next() else {
+            continue;
+        };
+        if normalize_kraken_perp_symbol(&event.instrument)
+            != normalize_kraken_perp_symbol(left_instrument)
+        {
             continue;
         }
         let state = by_pair.entry(event.pair_id.clone()).or_default();
@@ -3895,6 +3905,7 @@ mod tests {
         let rows = fold_spread_positions(&[
             SpreadLedgerEvent {
                 pair_id: "PI_XBTUSD__PI_ETHUSD".to_string(),
+                instrument: "PI_XBTUSD".to_string(),
                 action: "ENTRY".to_string(),
                 spread_direction: Some("LONG_SPREAD".to_string()),
                 spread_z: Some(-2.0),
@@ -3903,6 +3914,7 @@ mod tests {
             },
             SpreadLedgerEvent {
                 pair_id: "PI_XBTUSD__PI_ETHUSD".to_string(),
+                instrument: "PI_XBTUSD".to_string(),
                 action: "ENTRY".to_string(),
                 spread_direction: Some("LONG_SPREAD".to_string()),
                 spread_z: Some(-1.0),
@@ -3911,6 +3923,7 @@ mod tests {
             },
             SpreadLedgerEvent {
                 pair_id: "PI_XBTUSD__PI_ETHUSD".to_string(),
+                instrument: "PI_XBTUSD".to_string(),
                 action: "EXIT".to_string(),
                 spread_direction: Some("LONG_SPREAD".to_string()),
                 spread_z: None,
@@ -3937,6 +3950,7 @@ mod tests {
         let rows = fold_spread_positions(&[
             SpreadLedgerEvent {
                 pair_id: "PI_SOLUSD__PI_XRPUSD".to_string(),
+                instrument: "PI_SOLUSD".to_string(),
                 action: "ENTRY".to_string(),
                 spread_direction: Some("SHORT_SPREAD".to_string()),
                 spread_z: Some(2.1),
@@ -3945,6 +3959,7 @@ mod tests {
             },
             SpreadLedgerEvent {
                 pair_id: "PI_SOLUSD__PI_XRPUSD".to_string(),
+                instrument: "PI_SOLUSD".to_string(),
                 action: "EMERGENCY_STOP_CLOSE".to_string(),
                 spread_direction: Some("SHORT_SPREAD".to_string()),
                 spread_z: None,
@@ -3953,6 +3968,35 @@ mod tests {
             },
         ]);
         assert!(rows.is_empty());
+    }
+
+    #[test]
+    fn fold_spread_positions_counts_one_spread_unit_per_pair_action() {
+        let t0 = DateTime::parse_from_rfc3339("2026-02-20T03:00:00Z")
+            .expect("valid time")
+            .with_timezone(&Utc);
+        let rows = fold_spread_positions(&[
+            SpreadLedgerEvent {
+                pair_id: "PI_XBTUSD__PI_XRPUSD".to_string(),
+                instrument: "PI_XBTUSD".to_string(),
+                action: "ENTRY".to_string(),
+                spread_direction: Some("SHORT_SPREAD".to_string()),
+                spread_z: Some(2.4),
+                qty: 1.0,
+                created_at: t0,
+            },
+            SpreadLedgerEvent {
+                pair_id: "PI_XBTUSD__PI_XRPUSD".to_string(),
+                instrument: "PI_XRPUSD".to_string(),
+                action: "ENTRY".to_string(),
+                spread_direction: Some("SHORT_SPREAD".to_string()),
+                spread_z: Some(2.4),
+                qty: 1.0,
+                created_at: t0,
+            },
+        ]);
+        assert_eq!(rows.len(), 1);
+        assert!((rows[0].total_size - 1.0).abs() < f64::EPSILON);
     }
 
     #[test]
