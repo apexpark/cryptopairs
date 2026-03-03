@@ -2673,12 +2673,6 @@ function TradePage(props: {
     return null;
   };
 
-  const longEntryDisabled = !props.canLongEntry || props.submitting;
-  const shortEntryDisabled = !props.canShortEntry || props.submitting;
-  const addExposureDisabled = !props.canAddExposure || props.submitting;
-  const reduceExposureDisabled = !props.canReduceExposure || props.submitting;
-  const closeSpreadDisabled = !props.canCloseSpread || props.submitting;
-
   const longEntryDisabledReason = commonEntryDisableReason(longEntrySizing);
   const shortEntryDisabledReason = commonEntryDisableReason(shortEntrySizing);
   const addExposureDisabledReason =
@@ -2699,6 +2693,11 @@ function TradePage(props: {
             : reduceSizing
               ? sizingReason(reduceSizing)
               : null;
+  const longEntryDisabled = !!longEntryDisabledReason;
+  const shortEntryDisabled = !!shortEntryDisabledReason;
+  const addExposureDisabled = !!addExposureDisabledReason;
+  const reduceExposureDisabled = !!reduceExposureDisabledReason;
+  const closeSpreadDisabled = !props.canCloseSpread || props.submitting;
   const closeSpreadDisabledReason = props.submitting
     ? "Action in progress."
     : props.currentPosition.direction === "NONE" || props.currentPosition.totalSize <= 0
