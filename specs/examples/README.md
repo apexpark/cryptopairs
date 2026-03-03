@@ -21,6 +21,7 @@ Current baseline examples:
 - `specs/examples/execution_order_intent_request.example.json`
 - `specs/examples/execution_order_intent_response_blocked.example.json`
 - `specs/examples/execution_portfolio_positions_response.example.json`
+- `specs/examples/execution_open_trades_response.example.json`
 - `specs/examples/execution_observability_summary_response.example.json`
 - `specs/examples/execution_order_intent_response_emergency_stop_accepted.example.json`
 - `specs/examples/execution_order_lifecycle_state_machine.example.json`

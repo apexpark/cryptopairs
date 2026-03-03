@@ -1,0 +1,114 @@
+{
+  "$id": "https://cryptopairs/specs/contracts/execution_open_trades_response.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "ExecutionOpenTradesResponse",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "exchange",
+    "account_id",
+    "generated_at",
+    "warnings",
+    "trades"
+  ],
+  "properties": {
+    "exchange": {
+      "type": "string"
+    },
+    "account_id": {
+      "type": "string"
+    },
+    "generated_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "warnings": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "trades": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "pair_id",
+          "direction",
+          "spread_units",
+          "entry_z",
+          "updated_at",
+          "pnl_status",
+          "legs"
+        ],
+        "properties": {
+          "pair_id": {
+            "type": "string"
+          },
+          "direction": {
+            "type": "string",
+            "enum": ["LONG_SPREAD", "SHORT_SPREAD"]
+          },
+          "spread_units": {
+            "type": "number",
+            "minimum": 0
+          },
+          "entry_z": {
+            "type": "number"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "pnl_status": {
+            "type": "string",
+            "enum": ["LIVE", "STALE", "UNAVAILABLE"]
+          },
+          "unrealized_pnl_usd": {
+            "type": ["number", "null"]
+          },
+          "legs": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "instrument",
+                "side",
+                "qty"
+              ],
+              "properties": {
+                "instrument": {
+                  "type": "string"
+                },
+                "side": {
+                  "type": "string",
+                  "enum": ["BUY", "SELL"]
+                },
+                "qty": {
+                  "type": "number",
+                  "exclusiveMinimum": 0
+                },
+                "entry_ref_price": {
+                  "type": ["number", "null"]
+                },
+                "live_mark": {
+                  "type": ["number", "null"]
+                },
+                "mark_time": {
+                  "type": ["string", "null"],
+                  "format": "date-time"
+                },
+                "unrealized_pnl_usd": {
+                  "type": ["number", "null"]
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "version": "0.1.0"
+}

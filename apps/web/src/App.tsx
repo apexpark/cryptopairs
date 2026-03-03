@@ -16,6 +16,7 @@ import {
   runStrategyResearchSweep,
   submitStrategyCandidateAction,
   fetchExecutionDispatchMode,
+  fetchExecutionOpenTrades,
   fetchExecutionPortfolioPositions,
   dispatchOrderIntent,
   fetchExecutionDecision,
@@ -43,6 +44,7 @@ import type {
   DispatchIntentResponse,
   DirectionHint,
   ExecutionDispatchModeResponse,
+  ExecutionOpenTradesResponse,
   ExecutionAction,
   KillSwitchState,
   MarketMetricsResponse,
@@ -635,21 +637,11 @@ function formatPairLabel(pairId: string): string {
 
 function deriveOpportunityStatus(
   cue: StrategyPairsCuesResponse["cues"][number]["cue"]
-): { label: "READY" | "WAIT" | "<TWO"; toneClass: "tone-ok" | "tone-warn" | "tone-info" } {
+): { label: "READY" | "WAIT"; toneClass: "tone-ok" | "tone-warn" } {
   const tradePass = cue.trade_gate?.pass ?? cue.actionable;
   if (tradePass) {
     return { label: "READY", toneClass: "tone-ok" };
   }
-
-  const reasons = new Set<string>([
-    ...(cue.trade_gate?.rationale_codes ?? []),
-    ...(cue.cost_gate?.rationale_codes ?? []),
-    ...(cue.setup_gate?.rationale_codes ?? cue.rationale_codes),
-  ]);
-  if (reasons.has("PERFORMANCE_HISTORY_WAIT")) {
-    return { label: "<TWO", toneClass: "tone-info" };
-  }
-
   return { label: "WAIT", toneClass: "tone-warn" };
 }
 
@@ -839,6 +831,13 @@ function App(): JSX.Element {
   const [submitting, setSubmitting] = useState(false);
 
   const [positions, setPositions] = useState<Record<string, SpreadPosition>>({});
+  const [openTradesResponse, setOpenTradesResponse] = useState<ExecutionOpenTradesResponse | null>(
+    null
+  );
+  const [openTradesError, setOpenTradesError] = useState<string | null>(null);
+  const [liveZTick, setLiveZTick] = useState<{ pairId: string; z: number; ts: string } | null>(
+    null
+  );
   const [timelineByPair, setTimelineByPair] = usePersistentState<Record<string, TimelineEvent[]>>(
     "cp.timeline",
     {}
@@ -865,17 +864,25 @@ function App(): JSX.Element {
   const currentPairId = selectedCueRow?.cue.pair_id ?? "";
   const currentPosition =
     (currentPairId ? positions[currentPairId] : undefined) ?? emptyPosition(nowIso());
-  const openPositions = useMemo(
-    () =>
-      Object.entries(positions).filter(
-        ([, position]) => position.direction !== "NONE" && position.totalSize > 0
-      ),
-    [positions]
+  const currentOpenTrade = useMemo(
+    () => openTradesResponse?.trades.find((trade) => trade.pair_id === currentPairId) ?? null,
+    [openTradesResponse, currentPairId]
   );
-  const openPositionsCount = openPositions.length;
-  const openPositionPairsExcludingCurrent = openPositions
-    .map(([pairId]) => pairId)
-    .filter((pairId) => pairId !== currentPairId);
+  const currentLiveZ = useMemo(() => {
+    if (liveZTick && liveZTick.pairId === currentPairId) {
+      return liveZTick.z;
+    }
+    if (!zSeries.length) {
+      return null;
+    }
+    return zSeries[zSeries.length - 1];
+  }, [liveZTick, currentPairId, zSeries]);
+  const currentLiveZUpdatedAt = useMemo(() => {
+    if (liveZTick && liveZTick.pairId === currentPairId) {
+      return liveZTick.ts;
+    }
+    return null;
+  }, [liveZTick, currentPairId]);
   const currentTimeline = timelineByPair[currentPairId] ?? [];
   const currentIntentHistory = intentHistoryByPair[currentPairId] ?? [];
   const persistentExecutionMarkers = useMemo(
@@ -1033,7 +1040,10 @@ function App(): JSX.Element {
   }, [coreLoading, coreError]);
 
   const refreshPositions = async (): Promise<void> => {
-    const response = await fetchExecutionPortfolioPositions(exchange, accountId);
+    const [response, openTrades] = await Promise.all([
+      fetchExecutionPortfolioPositions(exchange, accountId),
+      fetchExecutionOpenTrades(exchange, accountId),
+    ]);
     const next: Record<string, SpreadPosition> = {};
     for (const row of response.positions) {
       next[row.pair_id] = {
@@ -1044,6 +1054,8 @@ function App(): JSX.Element {
       };
     }
     setPositions(next);
+    setOpenTradesResponse(openTrades);
+    setOpenTradesError(openTrades.warnings.length ? openTrades.warnings.join(" | ") : null);
   };
 
   useEffect(() => {
@@ -1183,21 +1195,26 @@ function App(): JSX.Element {
     void refreshPositions().catch(() => {
       if (!cancelled) {
         setPositions({});
+        setOpenTradesResponse(null);
+        setOpenTradesError("Open trades are unavailable.");
       }
     });
+    const refreshIntervalMs = page === "trade" ? 2_000 : 10_000;
     const intervalId = window.setInterval(() => {
       void refreshPositions().catch(() => {
         if (!cancelled) {
           setPositions({});
+          setOpenTradesResponse(null);
+          setOpenTradesError("Open trades are unavailable.");
         }
       });
-    }, 10_000);
+    }, refreshIntervalMs);
 
     return () => {
       cancelled = true;
       window.clearInterval(intervalId);
     };
-  }, [exchange, accountId, uiAccessGranted]);
+  }, [exchange, accountId, uiAccessGranted, page]);
 
   useEffect(() => {
     if (!uiAccessGranted) {
@@ -1425,6 +1442,46 @@ function App(): JSX.Element {
     analyticsPaperHours,
     analyticsPaperLimit,
   ]);
+
+  useEffect(() => {
+    if (!uiAccessGranted || page !== "trade" || !selectedCueRow) {
+      return;
+    }
+    let cancelled = false;
+    let inFlight = false;
+    const pairId = selectedCueRow.cue.pair_id;
+
+    const tickLiveZ = async (): Promise<void> => {
+      if (cancelled || inFlight) {
+        return;
+      }
+      inFlight = true;
+      try {
+        const response =
+          takerFeeBpsOverride == null
+            ? await fetchStrategyLiveZ(timeframe, pairId, 2, undefined, backtestExitMode)
+            : await fetchStrategyLiveZ(timeframe, pairId, 2, takerFeeBpsOverride, backtestExitMode);
+        if (cancelled || !response.points.length) {
+          return;
+        }
+        const point = response.points[response.points.length - 1];
+        setLiveZTick({ pairId, z: point.z, ts: point.ts });
+      } catch {
+        // Keep prior ticker value on transient errors.
+      } finally {
+        inFlight = false;
+      }
+    };
+
+    void tickLiveZ();
+    const intervalId = window.setInterval(() => {
+      void tickLiveZ();
+    }, 1500);
+    return () => {
+      cancelled = true;
+      window.clearInterval(intervalId);
+    };
+  }, [uiAccessGranted, page, selectedCueRow, timeframe, takerFeeBpsOverride, backtestExitMode]);
 
   useEffect(() => {
     if (!uiAccessGranted || page !== "analytics") {
@@ -2217,9 +2274,11 @@ function App(): JSX.Element {
           zMarkers={tradeChartMarkers}
           analyticsError={analyticsError}
           currentPosition={currentPosition}
-          currentPairId={currentPairId}
-          openPositionsCount={openPositionsCount}
-          openPositionPairsExcludingCurrent={openPositionPairsExcludingCurrent}
+          openTrade={currentOpenTrade}
+          openTradesCount={openTradesResponse?.trades.length ?? 0}
+          openTradesError={openTradesError}
+          liveCurrentZ={currentLiveZ}
+          liveCurrentZUpdatedAt={currentLiveZUpdatedAt}
           intentHistory={currentIntentHistory}
           activeTradeAnchor={activeTradeAnchor}
           timeline={currentTimeline}
@@ -2489,9 +2548,11 @@ function TradePage(props: {
   zMarkers: ChartMarker[];
   analyticsError: string | null;
   currentPosition: SpreadPosition;
-  currentPairId: string;
-  openPositionsCount: number;
-  openPositionPairsExcludingCurrent: string[];
+  openTrade: ExecutionOpenTradesResponse["trades"][number] | null;
+  openTradesCount: number;
+  openTradesError: string | null;
+  liveCurrentZ: number | null;
+  liveCurrentZUpdatedAt: string | null;
   intentHistory: OrderIntentHistoryResponse[];
   activeTradeAnchor: { entryAt: string; entryZ: number; currentZ: number; deltaZ: number } | null;
   timeline: TimelineEvent[];
@@ -2658,7 +2719,7 @@ function TradePage(props: {
       return null;
     }
     if (selectedCue.cue.trade_gate?.status === "WAIT" || tradeGateReasons.has("PERFORMANCE_HISTORY_WAIT")) {
-      return "Warning: waiting for minimum paper-trade history (<TWO).";
+      return "Warning: waiting for minimum paper-trade history.";
     }
     if (selectedCue.cue.trade_gate?.status === "UNAVAILABLE") {
       return "Warning: trade gate is unavailable.";
@@ -2864,6 +2925,10 @@ function TradePage(props: {
         <div className="chip-row">
           <span className="chip">Signal dots: entry/exit/stop (recomputed)</span>
           <span className="chip tone-info">Execution dots: persist from executed intents</span>
+          <span className="chip tone-info">
+            Live Z: {props.liveCurrentZ != null ? props.liveCurrentZ.toFixed(2) : "--"}
+            {props.liveCurrentZUpdatedAt ? ` @ ${formatLocalTime(props.liveCurrentZUpdatedAt)}` : ""}
+          </span>
         </div>
 
         <div className="chip-row">
@@ -2884,15 +2949,82 @@ function TradePage(props: {
         </div>
 
         <div className="timeline-card">
-          <h3>Historical Trades</h3>
-          {props.timeline.length ? (
-            props.timeline.map((event, index) => (
-              <p key={`${event.ts}-${index}`} className={`tone-${event.tone}`}>
-                {formatLocalTime(event.ts)} {event.text}
-              </p>
-            ))
+          <h3>Open Trades</h3>
+          {props.openTradesError ? <p className="small-text tone-warn">{props.openTradesError}</p> : null}
+          <p className="small-text">Open positions (all pairs): {props.openTradesCount}</p>
+          {props.openTrade ? (
+            <>
+              <div className="table-wrap">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Leg</th>
+                      <th>Side</th>
+                      <th>Qty</th>
+                      <th>Entry</th>
+                      <th>Mark</th>
+                      <th>uPnL</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {props.openTrade.legs.map((leg) => (
+                      <tr key={`${props.openTrade?.pair_id}-${leg.instrument}`}>
+                        <td>{formatInstrumentLabel(leg.instrument)}</td>
+                        <td>{leg.side}</td>
+                        <td>{formatQtyForStep(leg.qty, undefined)}</td>
+                        <td>{leg.entry_ref_price != null ? formatMetricPrice(leg.entry_ref_price) : "--"}</td>
+                        <td>{leg.live_mark != null ? formatMetricPrice(leg.live_mark) : "--"}</td>
+                        <td
+                          className={
+                            leg.unrealized_pnl_usd == null
+                              ? "tone-warn"
+                              : leg.unrealized_pnl_usd >= 0
+                                ? "tone-ok"
+                                : "tone-bad"
+                          }
+                        >
+                          {leg.unrealized_pnl_usd == null
+                            ? "--"
+                            : `${leg.unrealized_pnl_usd >= 0 ? "+" : "-"}$${Math.abs(
+                                leg.unrealized_pnl_usd
+                              ).toFixed(2)}`}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              <div className="mini-card">
+                <p>
+                  Spread: {props.openTrade.direction} | Size {props.openTrade.spread_units.toFixed(2)} units | Status{" "}
+                  {props.openTrade.pnl_status}
+                </p>
+                <p>
+                  Z now {props.liveCurrentZ != null ? props.liveCurrentZ.toFixed(2) : "--"} | Entry Z{" "}
+                  {props.openTrade.entry_z.toFixed(2)} | Target Z{" "}
+                  {selectedCue ? selectedCue.cue.exit_band.toFixed(2) : "--"}
+                </p>
+                <p
+                  className={
+                    props.openTrade.unrealized_pnl_usd == null
+                      ? "tone-warn"
+                      : props.openTrade.unrealized_pnl_usd >= 0
+                        ? "tone-ok"
+                        : "tone-bad"
+                  }
+                >
+                  Spread uPnL:{" "}
+                  {props.openTrade.unrealized_pnl_usd == null
+                    ? "--"
+                    : `${props.openTrade.unrealized_pnl_usd >= 0 ? "+" : "-"}$${Math.abs(
+                        props.openTrade.unrealized_pnl_usd
+                      ).toFixed(2)}`}
+                </p>
+                <p className="small-text">Updated: {formatLocalTime(props.openTrade.updated_at)}</p>
+              </div>
+            </>
           ) : (
-            <p className="empty-text">No historical trades yet.</p>
+            <p className="empty-text">No live position for selected pair.</p>
           )}
         </div>
       </SectionCard>
@@ -2902,51 +3034,6 @@ function TradePage(props: {
         subtitle="Manual actions with fail-closed execution gates"
         className="execution-panel"
       >
-        <div className="mini-card execution-state-card">
-          <h3>Trade State</h3>
-          <p>
-            Selected pair:{" "}
-            <span className="tone-info">
-              {props.currentPairId ? formatPairLabel(props.currentPairId) : "--"}
-            </span>
-          </p>
-          <p>
-            Direction: <span className="tone-info">{props.currentPosition.direction}</span>
-          </p>
-          <p>Open size: {props.currentPosition.totalSize.toFixed(2)} spread units</p>
-          <p>Avg entry z-score: {props.currentPosition.avgEntryZ.toFixed(2)}</p>
-          <p>Updated: {formatLocalTime(props.currentPosition.updatedAt)}</p>
-          <p>Open positions (all pairs): {props.openPositionsCount}</p>
-          {props.currentPosition.direction === "NONE" &&
-          props.openPositionPairsExcludingCurrent.length > 0 ? (
-            <p className="small-text tone-warn">
-              This pair is flat. Open position currently in{" "}
-              {props.openPositionPairsExcludingCurrent
-                .slice(0, 2)
-                .map((pairId) => formatPairLabel(pairId))
-                .join(", ")}
-              {props.openPositionPairsExcludingCurrent.length > 2 ? "..." : ""}.
-            </p>
-          ) : null}
-          {props.activeTradeAnchor ? (
-            <p className="tone-info">
-              Active trade anchor: entry {props.activeTradeAnchor.entryZ.toFixed(2)} at{" "}
-              {formatLocalTime(props.activeTradeAnchor.entryAt)} | current{" "}
-              {props.activeTradeAnchor.currentZ.toFixed(2)} | ΔZ{" "}
-              {formatSigned(props.activeTradeAnchor.deltaZ, 2)}
-            </p>
-          ) : null}
-          <p>Tracked intents: {props.intentHistory.length}</p>
-          {props.intentHistory.slice(0, 2).map((history) => {
-            const latestState = latestLifecycleState(history);
-            return (
-              <p key={history.idempotency_key} className="small-text">
-                {history.intent.instrument}: {latestState}
-              </p>
-            );
-          })}
-        </div>
-
         <div className="execution-grid">
           <div className="execution-block entry-block">
             <h3>Entry / Add Exposure</h3>
