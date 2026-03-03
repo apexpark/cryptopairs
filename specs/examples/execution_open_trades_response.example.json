@@ -1,0 +1,37 @@
+{
+  "exchange": "kraken_futures",
+  "account_id": "primary",
+  "generated_at": "2026-03-04T05:30:00Z",
+  "warnings": [],
+  "trades": [
+    {
+      "pair_id": "PF_XBTUSD__PF_XRPUSD",
+      "direction": "SHORT_SPREAD",
+      "spread_units": 1.0,
+      "entry_z": 2.01,
+      "updated_at": "2026-03-04T05:29:55Z",
+      "pnl_status": "LIVE",
+      "unrealized_pnl_usd": 18.42,
+      "legs": [
+        {
+          "instrument": "PF_XBTUSD",
+          "side": "SELL",
+          "qty": 0.0146,
+          "entry_ref_price": 68334.0,
+          "live_mark": 68110.2,
+          "mark_time": "2026-03-04T05:30:00Z",
+          "unrealized_pnl_usd": 3.27
+        },
+        {
+          "instrument": "PF_XRPUSD",
+          "side": "BUY",
+          "qty": 1.363,
+          "entry_ref_price": 1.363,
+          "live_mark": 1.3741,
+          "mark_time": "2026-03-04T05:30:00Z",
+          "unrealized_pnl_usd": 15.15
+        }
+      ]
+    }
+  ]
+}

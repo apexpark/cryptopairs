@@ -631,6 +631,31 @@ export interface ExecutionPortfolioPositionsResponse {
   }>;
 }
 
+export interface ExecutionOpenTradesResponse {
+  exchange: string;
+  account_id: string;
+  generated_at: string;
+  warnings: string[];
+  trades: Array<{
+    pair_id: string;
+    direction: Exclude<DirectionHint, "NONE">;
+    spread_units: number;
+    entry_z: number;
+    updated_at: string;
+    pnl_status: "LIVE" | "STALE" | "UNAVAILABLE";
+    unrealized_pnl_usd: number | null;
+    legs: Array<{
+      instrument: string;
+      side: TradeSide;
+      qty: number;
+      entry_ref_price: number | null;
+      live_mark: number | null;
+      mark_time: string | null;
+      unrealized_pnl_usd: number | null;
+    }>;
+  }>;
+}
+
 export interface SpreadPosition {
   direction: DirectionHint;
   totalSize: number;

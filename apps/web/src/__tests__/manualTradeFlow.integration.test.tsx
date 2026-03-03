@@ -327,7 +327,7 @@ describe("manual trade flow", () => {
 
     await waitFor(() => {
       expect(
-        screen.getByText(/LONG-ENTRY accepted=2 blocked=0 dispatch=ACKNOWLEDGED/i)
+        screen.getByText((content) => content.includes("Last action: Spread dispatched and acknowledged."))
       ).toBeInTheDocument();
       expect(api.fetchExecutionPortfolioPositions).toHaveBeenCalledWith(
         "kraken_futures",

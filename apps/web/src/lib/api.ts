@@ -2,6 +2,7 @@ import type {
   DispatchIntentRequest,
   DispatchIntentResponse,
   ExecutionDispatchModeResponse,
+  ExecutionOpenTradesResponse,
   ExecutionPortfolioPositionsResponse,
   ExecutionDecisionResponse,
   KillSwitchState,
@@ -285,6 +286,21 @@ export async function fetchExecutionPortfolioPositions(
     exchange
   )}&account_id=${encodeURIComponent(accountId)}`;
   return parseJson<ExecutionPortfolioPositionsResponse>(await fetch(url));
+}
+
+export async function fetchExecutionOpenTrades(
+  exchange: string,
+  accountId: string,
+  pairId?: string
+): Promise<ExecutionOpenTradesResponse> {
+  const params = new URLSearchParams();
+  params.set("exchange", exchange);
+  params.set("account_id", accountId);
+  if (pairId && pairId.trim().length > 0) {
+    params.set("pair_id", pairId);
+  }
+  const url = `${EXECUTION_SERVICE_BASE_URL}/v1/execution/portfolio/open-trades?${params.toString()}`;
+  return parseJson<ExecutionOpenTradesResponse>(await fetch(url));
 }
 
 export async function submitOrderIntent(

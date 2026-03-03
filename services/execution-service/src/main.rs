@@ -33,6 +33,7 @@ struct AppState {
     repository: Arc<ExecutionRepository>,
     postgres_url: Arc<String>,
     account_service_url: Arc<String>,
+    data_service_url: Arc<String>,
     http_client: reqwest::Client,
     default_min_coverage_pct: f64,
     dispatch_mode: DispatchMode,
@@ -710,7 +711,9 @@ impl ExecutionRepository {
                  ALTER TABLE execution_order_intents
                  ADD COLUMN IF NOT EXISTS spread_direction TEXT;
                  ALTER TABLE execution_order_intents
-                 ADD COLUMN IF NOT EXISTS spread_z DOUBLE PRECISION;",
+                 ADD COLUMN IF NOT EXISTS spread_z DOUBLE PRECISION;
+                 ALTER TABLE execution_order_intents
+                 ADD COLUMN IF NOT EXISTS sizing_json TEXT;",
             )
             .await?;
         Ok(())
@@ -784,7 +787,7 @@ impl ExecutionRepository {
             .client
             .query_opt(
                 "SELECT idempotency_key, instrument, timeframe, action, side, qty,
-                        operator_confirmed, operator_id, min_coverage_pct, exchange, account_id,
+                        sizing_json, operator_confirmed, operator_id, min_coverage_pct, exchange, account_id,
                         pair_id, spread_direction, spread_z, decision, reason, created_at
                  FROM execution_order_intents
                  WHERE idempotency_key = $1",
@@ -799,17 +802,18 @@ impl ExecutionRepository {
             action: row.get(3),
             side: row.get(4),
             qty: row.get(5),
-            operator_confirmed: row.get(6),
-            operator_id: row.get(7),
-            min_coverage_pct: row.get(8),
-            exchange: row.get(9),
-            account_id: row.get(10),
-            pair_id: row.get(11),
-            spread_direction: row.get(12),
-            spread_z: row.get(13),
-            decision: row.get(14),
-            reason: row.get(15),
-            created_at: row.get(16),
+            sizing_json: row.get(6),
+            operator_confirmed: row.get(7),
+            operator_id: row.get(8),
+            min_coverage_pct: row.get(9),
+            exchange: row.get(10),
+            account_id: row.get(11),
+            pair_id: row.get(12),
+            spread_direction: row.get(13),
+            spread_z: row.get(14),
+            decision: row.get(15),
+            reason: row.get(16),
+            created_at: row.get(17),
         }))
     }
 
@@ -821,7 +825,7 @@ impl ExecutionRepository {
             .client
             .query_opt(
                 "SELECT i.idempotency_key, i.instrument, i.timeframe, i.action, i.side, i.qty,
-                        i.operator_confirmed, i.operator_id, i.min_coverage_pct, i.exchange, i.account_id,
+                        i.sizing_json, i.operator_confirmed, i.operator_id, i.min_coverage_pct, i.exchange, i.account_id,
                         i.pair_id, i.spread_direction, i.spread_z, i.decision, i.reason, i.created_at
                  FROM execution_order_intents i
                  JOIN execution_dispatch_attempts d
@@ -840,17 +844,18 @@ impl ExecutionRepository {
             action: row.get(3),
             side: row.get(4),
             qty: row.get(5),
-            operator_confirmed: row.get(6),
-            operator_id: row.get(7),
-            min_coverage_pct: row.get(8),
-            exchange: row.get(9),
-            account_id: row.get(10),
-            pair_id: row.get(11),
-            spread_direction: row.get(12),
-            spread_z: row.get(13),
-            decision: row.get(14),
-            reason: row.get(15),
-            created_at: row.get(16),
+            sizing_json: row.get(6),
+            operator_confirmed: row.get(7),
+            operator_id: row.get(8),
+            min_coverage_pct: row.get(9),
+            exchange: row.get(10),
+            account_id: row.get(11),
+            pair_id: row.get(12),
+            spread_direction: row.get(13),
+            spread_z: row.get(14),
+            decision: row.get(15),
+            reason: row.get(16),
+            created_at: row.get(17),
         }))
     }
 
@@ -858,10 +863,10 @@ impl ExecutionRepository {
         self.client
             .execute(
                 "INSERT INTO execution_order_intents
-                 (idempotency_key, instrument, timeframe, action, side, qty,
+                 (idempotency_key, instrument, timeframe, action, side, qty, sizing_json,
                   operator_confirmed, operator_id, min_coverage_pct, exchange, account_id,
                   pair_id, spread_direction, spread_z, decision, reason, created_at)
-                 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)
+                 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)
                  ON CONFLICT (idempotency_key) DO NOTHING",
                 &[
                     &record.idempotency_key as &(dyn ToSql + Sync),
@@ -870,6 +875,7 @@ impl ExecutionRepository {
                     &record.action,
                     &record.side,
                     &record.qty,
+                    &record.sizing_json,
                     &record.operator_confirmed,
                     &record.operator_id,
                     &record.min_coverage_pct,
@@ -1043,6 +1049,46 @@ impl ExecutionRepository {
                 spread_z: row.get(4),
                 qty: row.get(5),
                 created_at: row.get(6),
+            })
+            .collect())
+    }
+
+    async fn fetch_spread_open_trade_events(
+        &self,
+        exchange: &str,
+        account_id: &str,
+    ) -> anyhow::Result<Vec<SpreadOpenTradeEvent>> {
+        let rows = self
+            .client
+            .query(
+                "SELECT i.pair_id, i.instrument, i.action, i.side, i.qty, i.sizing_json
+                 FROM execution_order_intents i
+                 JOIN (
+                    SELECT DISTINCT ON (idempotency_key)
+                      idempotency_key, state, created_at
+                    FROM execution_order_state_events
+                    ORDER BY idempotency_key, created_at DESC
+                 ) latest
+                   ON latest.idempotency_key = i.idempotency_key
+                 WHERE i.exchange = $1
+                   AND i.account_id = $2
+                   AND i.decision = 'ACCEPTED'
+                   AND i.pair_id IS NOT NULL
+                   AND i.pair_id <> ''
+                   AND latest.state IN ('ACKNOWLEDGED', 'PARTIALLY_FILLED', 'FILLED')
+                 ORDER BY i.created_at ASC",
+                &[&exchange, &account_id],
+            )
+            .await?;
+        Ok(rows
+            .iter()
+            .map(|row| SpreadOpenTradeEvent {
+                pair_id: row.get(0),
+                instrument: row.get(1),
+                action: row.get(2),
+                side: row.get(3),
+                qty: row.get(4),
+                sizing_json: row.get(5),
             })
             .collect())
     }
@@ -1404,7 +1450,7 @@ struct OrderIntentRequest {
     min_coverage_pct: Option<f64>,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 struct SpreadSizingRequest {
     target_notional_usd: f64,
     target_hedge_ratio: f64,
@@ -1456,6 +1502,7 @@ struct OrderIntentRecord {
     spread_z: Option<f64>,
     side: String,
     qty: f64,
+    sizing_json: Option<String>,
     operator_confirmed: bool,
     operator_id: Option<String>,
     min_coverage_pct: f64,
@@ -1506,6 +1553,22 @@ struct SpreadLedgerEvent {
     created_at: DateTime<Utc>,
 }
 
+#[derive(Debug)]
+struct SpreadOpenTradeEvent {
+    pair_id: String,
+    instrument: String,
+    action: String,
+    side: String,
+    qty: f64,
+    sizing_json: Option<String>,
+}
+
+#[derive(Debug, Clone, Default)]
+struct FoldedOpenTradeLeg {
+    signed_qty: f64,
+    avg_entry_ref_price: Option<f64>,
+}
+
 #[derive(Debug, Default)]
 struct FoldedSpreadPosition {
     direction: String,
@@ -1518,6 +1581,13 @@ struct FoldedSpreadPosition {
 struct PortfolioPositionsQuery {
     exchange: String,
     account_id: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct PortfolioOpenTradesQuery {
+    exchange: String,
+    account_id: String,
+    pair_id: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -1535,6 +1605,50 @@ struct PortfolioPositionsResponse {
     account_id: String,
     generated_at: DateTime<Utc>,
     positions: Vec<PortfolioPositionRow>,
+}
+
+#[derive(Debug, Serialize)]
+struct OpenTradeLegRow {
+    instrument: String,
+    side: String,
+    qty: f64,
+    entry_ref_price: Option<f64>,
+    live_mark: Option<f64>,
+    mark_time: Option<DateTime<Utc>>,
+    unrealized_pnl_usd: Option<f64>,
+}
+
+#[derive(Debug, Serialize)]
+struct OpenTradeRow {
+    pair_id: String,
+    direction: String,
+    spread_units: f64,
+    entry_z: f64,
+    updated_at: DateTime<Utc>,
+    pnl_status: String,
+    unrealized_pnl_usd: Option<f64>,
+    legs: Vec<OpenTradeLegRow>,
+}
+
+#[derive(Debug, Serialize)]
+struct PortfolioOpenTradesResponse {
+    exchange: String,
+    account_id: String,
+    generated_at: DateTime<Utc>,
+    warnings: Vec<String>,
+    trades: Vec<OpenTradeRow>,
+}
+
+#[derive(Debug, Deserialize)]
+struct DataMarketMetricsBatchResponse {
+    metrics: Vec<DataMarketMetricsRow>,
+}
+
+#[derive(Debug, Deserialize)]
+struct DataMarketMetricsRow {
+    instrument: String,
+    server_time: DateTime<Utc>,
+    mark: f64,
 }
 
 #[derive(Debug, Deserialize)]
@@ -1677,6 +1791,8 @@ async fn main() -> anyhow::Result<()> {
     });
     let account_service_url = std::env::var("ACCOUNT_SERVICE_URL")
         .unwrap_or_else(|_| "http://127.0.0.1:8081".to_string());
+    let data_service_url = std::env::var("EXECUTION_DATA_SERVICE_URL")
+        .unwrap_or_else(|_| "http://data-service:8080".to_string());
     let port = std::env::var("EXECUTION_SERVICE_PORT").unwrap_or_else(|_| "8082".to_string());
     let default_min_coverage_pct = std::env::var("INTEGRITY_MIN_COVERAGE_PCT")
         .ok()
@@ -1803,6 +1919,7 @@ async fn main() -> anyhow::Result<()> {
         repository,
         postgres_url: Arc::new(postgres_url.clone()),
         account_service_url: Arc::new(account_service_url.clone()),
+        data_service_url: Arc::new(data_service_url.clone()),
         http_client,
         default_min_coverage_pct,
         dispatch_mode,
@@ -1837,6 +1954,10 @@ async fn main() -> anyhow::Result<()> {
             get(portfolio_positions),
         )
         .route(
+            "/v1/execution/portfolio/open-trades",
+            get(portfolio_open_trades),
+        )
+        .route(
             "/v1/execution/observability/summary",
             get(execution_observability_summary),
         )
@@ -1857,6 +1978,7 @@ async fn main() -> anyhow::Result<()> {
         bind_addr = %bind_addr,
         postgres_url = %postgres_url,
         account_service_url = %account_service_url,
+        data_service_url = %data_service_url,
         default_min_coverage_pct,
         dispatch_mode = ?dispatch_mode,
         ack_watchdog_poll_seconds = ack_watchdog.poll_interval_seconds,
@@ -2473,6 +2595,303 @@ async fn portfolio_positions(
     }))
 }
 
+fn extract_reference_price_for_event(event: &SpreadOpenTradeEvent) -> Option<f64> {
+    let sizing_json = event.sizing_json.as_ref()?;
+    let sizing: SpreadSizingRequest = serde_json::from_str(sizing_json).ok()?;
+    let event_symbol = normalize_kraken_perp_symbol(&event.instrument);
+    let left_symbol = normalize_kraken_perp_symbol(&sizing.reference_left_instrument);
+    let right_symbol = normalize_kraken_perp_symbol(&sizing.reference_right_instrument);
+    if event_symbol == left_symbol {
+        return Some(sizing.reference_left_price);
+    }
+    if event_symbol == right_symbol {
+        return Some(sizing.reference_right_price);
+    }
+    None
+}
+
+fn fold_leg_fill(leg: &mut FoldedOpenTradeLeg, delta_signed_qty: f64, fill_price: Option<f64>) {
+    if !delta_signed_qty.is_finite() || delta_signed_qty.abs() <= f64::EPSILON {
+        return;
+    }
+    if leg.signed_qty.abs() <= f64::EPSILON {
+        leg.signed_qty = delta_signed_qty;
+        leg.avg_entry_ref_price = fill_price;
+        return;
+    }
+
+    let current = leg.signed_qty;
+    let same_sign = current.signum() == delta_signed_qty.signum();
+    if same_sign {
+        let current_abs = current.abs();
+        let delta_abs = delta_signed_qty.abs();
+        leg.signed_qty = current + delta_signed_qty;
+        leg.avg_entry_ref_price = match (leg.avg_entry_ref_price, fill_price) {
+            (Some(existing), Some(next)) => {
+                Some((existing * current_abs + next * delta_abs) / (current_abs + delta_abs))
+            }
+            (Some(existing), None) => Some(existing),
+            (None, Some(next)) => Some(next),
+            (None, None) => None,
+        };
+        return;
+    }
+
+    let current_abs = current.abs();
+    let delta_abs = delta_signed_qty.abs();
+    if delta_abs < current_abs - f64::EPSILON {
+        leg.signed_qty = current + delta_signed_qty;
+        return;
+    }
+    if (delta_abs - current_abs).abs() <= f64::EPSILON {
+        leg.signed_qty = 0.0;
+        leg.avg_entry_ref_price = None;
+        return;
+    }
+
+    leg.signed_qty = current + delta_signed_qty;
+    leg.avg_entry_ref_price = fill_price;
+}
+
+fn fold_open_trade_legs(
+    events: &[SpreadOpenTradeEvent],
+    active_pairs: &HashMap<String, PortfolioPositionRow>,
+) -> HashMap<String, HashMap<String, FoldedOpenTradeLeg>> {
+    let mut by_pair: HashMap<String, HashMap<String, FoldedOpenTradeLeg>> = HashMap::new();
+    for event in events {
+        if !active_pairs.contains_key(&event.pair_id) {
+            continue;
+        }
+        if event.action != "ENTRY"
+            && event.action != "EXIT"
+            && event.action != "EMERGENCY_STOP_CLOSE"
+        {
+            continue;
+        }
+        let side = normalize_side(&event.side).unwrap_or("BUY");
+        let signed_delta = if side == "BUY" {
+            event.qty.abs()
+        } else {
+            -event.qty.abs()
+        };
+        let entry_ref_price = extract_reference_price_for_event(event);
+        let pair_legs = by_pair.entry(event.pair_id.clone()).or_default();
+        let leg = pair_legs.entry(event.instrument.clone()).or_default();
+        fold_leg_fill(leg, signed_delta, entry_ref_price);
+    }
+
+    for pair_legs in by_pair.values_mut() {
+        pair_legs.retain(|_, leg| leg.signed_qty.abs() > f64::EPSILON);
+    }
+    by_pair.retain(|_, legs| !legs.is_empty());
+    by_pair
+}
+
+async fn fetch_live_mark_map(
+    state: &AppState,
+    instruments: &[String],
+) -> Result<HashMap<String, DataMarketMetricsRow>, String> {
+    if instruments.is_empty() {
+        return Ok(HashMap::new());
+    }
+    let mut dedupe = HashMap::<String, ()>::new();
+    let mut normalized = Vec::new();
+    for instrument in instruments {
+        let symbol = normalize_kraken_perp_symbol(instrument).to_uppercase();
+        if dedupe.insert(symbol.clone(), ()).is_none() {
+            normalized.push(symbol);
+        }
+    }
+
+    let url = format!(
+        "{}/v1/market/metrics/batch?instruments={}",
+        state.data_service_url,
+        normalized.join(",")
+    );
+    let response = state
+        .http_client
+        .get(url)
+        .send()
+        .await
+        .map_err(|error| format!("data-service market metrics batch failed: {error}"))?;
+    if !response.status().is_success() {
+        let status = response.status();
+        let body = response.text().await.unwrap_or_default();
+        return Err(format!(
+            "data-service market metrics batch status={} body={}",
+            status.as_u16(),
+            body
+        ));
+    }
+    let payload: DataMarketMetricsBatchResponse = response
+        .json()
+        .await
+        .map_err(|error| format!("data-service market metrics batch parse failed: {error}"))?;
+
+    let mut by_symbol = HashMap::new();
+    for metric in payload.metrics {
+        by_symbol.insert(
+            normalize_kraken_perp_symbol(&metric.instrument).to_uppercase(),
+            metric,
+        );
+    }
+    Ok(by_symbol)
+}
+
+async fn portfolio_open_trades(
+    State(state): State<AppState>,
+    Query(query): Query<PortfolioOpenTradesQuery>,
+) -> Result<Json<PortfolioOpenTradesResponse>, ApiError> {
+    if query.exchange.trim().is_empty() || query.account_id.trim().is_empty() {
+        return Err(ApiError::BadRequest(
+            "exchange and account_id are required".to_string(),
+        ));
+    }
+    let pair_filter = query
+        .pair_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned);
+
+    let position_events = state
+        .repository
+        .fetch_spread_ledger_events(&query.exchange, &query.account_id)
+        .await
+        .map_err(|error| ApiError::Upstream(error.to_string()))?;
+    let mut positions = fold_spread_positions(&position_events);
+    if let Some(pair_id) = pair_filter.as_deref() {
+        positions.retain(|row| row.pair_id == pair_id);
+    }
+    if positions.is_empty() {
+        return Ok(Json(PortfolioOpenTradesResponse {
+            exchange: query.exchange,
+            account_id: query.account_id,
+            generated_at: Utc::now(),
+            warnings: vec![],
+            trades: vec![],
+        }));
+    }
+
+    let active_pairs = positions
+        .iter()
+        .map(|row| {
+            (
+                row.pair_id.clone(),
+                PortfolioPositionRow {
+                    pair_id: row.pair_id.clone(),
+                    direction: row.direction.clone(),
+                    total_size: row.total_size,
+                    avg_entry_z: row.avg_entry_z,
+                    updated_at: row.updated_at,
+                },
+            )
+        })
+        .collect::<HashMap<_, _>>();
+
+    let open_trade_events = state
+        .repository
+        .fetch_spread_open_trade_events(&query.exchange, &query.account_id)
+        .await
+        .map_err(|error| ApiError::Upstream(error.to_string()))?;
+    let folded_legs_by_pair = fold_open_trade_legs(&open_trade_events, &active_pairs);
+    let leg_instruments = folded_legs_by_pair
+        .values()
+        .flat_map(|legs| legs.keys().cloned())
+        .collect::<Vec<_>>();
+
+    let mut warnings = vec![];
+    let live_marks = match fetch_live_mark_map(&state, &leg_instruments).await {
+        Ok(marks) => marks,
+        Err(error) => {
+            warnings.push(error);
+            HashMap::new()
+        }
+    };
+
+    let mut trades = Vec::with_capacity(positions.len());
+    for position in positions {
+        let mut legs = Vec::new();
+        let mut pnl_values = Vec::new();
+        let pair_legs = folded_legs_by_pair
+            .get(&position.pair_id)
+            .cloned()
+            .unwrap_or_default();
+        let mut sorted_instruments = pair_legs.keys().cloned().collect::<Vec<_>>();
+        sorted_instruments.sort();
+        for instrument in sorted_instruments {
+            let Some(leg_state) = pair_legs.get(&instrument) else {
+                continue;
+            };
+            let side = if leg_state.signed_qty >= 0.0 {
+                "BUY"
+            } else {
+                "SELL"
+            }
+            .to_string();
+            let qty = leg_state.signed_qty.abs();
+            let symbol = normalize_kraken_perp_symbol(&instrument).to_uppercase();
+            let live_mark = live_marks.get(&symbol).map(|row| row.mark);
+            let mark_time = live_marks.get(&symbol).map(|row| row.server_time);
+            let unrealized_pnl_usd = match (leg_state.avg_entry_ref_price, live_mark) {
+                (Some(entry), Some(mark)) if entry.is_finite() && mark.is_finite() => {
+                    Some(if side == "BUY" {
+                        (mark - entry) * qty
+                    } else {
+                        (entry - mark) * qty
+                    })
+                }
+                _ => None,
+            };
+            if let Some(value) = unrealized_pnl_usd {
+                pnl_values.push(value);
+            }
+            legs.push(OpenTradeLegRow {
+                instrument,
+                side,
+                qty,
+                entry_ref_price: leg_state.avg_entry_ref_price,
+                live_mark,
+                mark_time,
+                unrealized_pnl_usd,
+            });
+        }
+
+        let all_live = !legs.is_empty() && legs.iter().all(|leg| leg.unrealized_pnl_usd.is_some());
+        let any_live = legs.iter().any(|leg| leg.unrealized_pnl_usd.is_some());
+        let unrealized_pnl_usd = if all_live {
+            Some(pnl_values.iter().sum())
+        } else {
+            None
+        };
+        let pnl_status = if all_live {
+            "LIVE".to_string()
+        } else if any_live {
+            "STALE".to_string()
+        } else {
+            "UNAVAILABLE".to_string()
+        };
+        trades.push(OpenTradeRow {
+            pair_id: position.pair_id,
+            direction: position.direction,
+            spread_units: position.total_size,
+            entry_z: position.avg_entry_z,
+            updated_at: position.updated_at,
+            pnl_status,
+            unrealized_pnl_usd,
+            legs,
+        });
+    }
+
+    Ok(Json(PortfolioOpenTradesResponse {
+        exchange: query.exchange,
+        account_id: query.account_id,
+        generated_at: Utc::now(),
+        warnings,
+        trades,
+    }))
+}
+
 async fn kill_switch(State(state): State<AppState>) -> Result<Json<KillSwitchState>, ApiError> {
     let current = state
         .repository
@@ -2776,6 +3195,12 @@ async fn order_intent(
     let min_coverage_pct = payload
         .min_coverage_pct
         .unwrap_or(state.default_min_coverage_pct);
+    let sizing_json = payload
+        .sizing
+        .as_ref()
+        .map(serde_json::to_string)
+        .transpose()
+        .map_err(|error| ApiError::BadRequest(format!("invalid sizing payload: {error}")))?;
 
     if let Some(existing) = state
         .repository
@@ -2795,6 +3220,7 @@ async fn order_intent(
             normalized_spread_z,
             side,
             payload.qty,
+            sizing_json.as_deref(),
             payload.operator_confirmed,
             normalized_operator_id.as_deref(),
             min_coverage_pct,
@@ -2912,6 +3338,7 @@ async fn order_intent(
         spread_z: normalized_spread_z,
         side: side.to_string(),
         qty: payload.qty,
+        sizing_json,
         operator_confirmed: payload.operator_confirmed,
         operator_id: normalized_operator_id,
         min_coverage_pct,
@@ -3610,6 +4037,7 @@ fn is_same_intent(
     spread_z: Option<f64>,
     side: &str,
     qty: f64,
+    sizing_json: Option<&str>,
     operator_confirmed: bool,
     operator_id: Option<&str>,
     min_coverage_pct: f64,
@@ -3628,6 +4056,7 @@ fn is_same_intent(
         }
         && existing.side == side
         && (existing.qty - qty).abs() < f64::EPSILON
+        && existing.sizing_json.as_deref() == sizing_json
         && existing.operator_confirmed == operator_confirmed
         && existing.operator_id.as_deref() == operator_id
         && (existing.min_coverage_pct - min_coverage_pct).abs() < f64::EPSILON

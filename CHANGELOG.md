@@ -5,6 +5,16 @@ This project follows SemVer as defined in `docs/02-versioning-and-releases.md`.
 
 ## Unreleased
 ### Added
+- Execution open-trades API and Trade tab live position view for SIM/manual operations:
+  - New endpoint: `GET /v1/execution/portfolio/open-trades` (pair-level spread + per-leg live unrealized PnL using data-service marks).
+  - New contracts/examples:
+    - `specs/contracts/execution_open_trades_response.schema.json`
+    - `specs/examples/execution_open_trades_response.example.json`
+  - Trade UI now shows an `Open Trades` panel (replacing historical intent timeline) with:
+    - selected-pair spread summary (direction, size, entry/current/target z, live spread uPnL),
+    - per-leg live table (side, qty, entry ref, mark, leg uPnL),
+    - live current-z tick chip.
+  - Opportunities status model simplified to two states only: `READY` and `WAIT` (removed `<TWO` display state).
 - Mixed-lot-step spread sizing guardrails for execution intents:
   - Order intent contract now supports optional `sizing` payload metadata (target notional, target hedge ratio, reference prices, planned leg qty, achieved drift, tolerance overrides).
   - Dispatch mode response now includes runtime sizing tolerance configuration:
