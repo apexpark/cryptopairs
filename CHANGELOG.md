@@ -542,6 +542,11 @@ This project follows SemVer as defined in `docs/02-versioning-and-releases.md`.
   - SIM mode now enables entry/add/reduce actions without live arming when backend mode is `SIMULATE_ACK`.
   - Strategy conditions now surface as warnings in the panel instead of disabling action buttons.
   - Action hierarchy now uses green long-entry and red short-entry controls.
+- SIM demo mode now bypasses execution safety gate blocking end-to-end when
+  `EXECUTION_DISPATCH_MODE=simulate_ack`:
+  - `GET /v1/execution/decision` returns `ALLOWED` for UI leg checks.
+  - order-intent evaluation ignores kill-switch, integrity, reconcile, and risk gates in SIM mode.
+  - live modes (`FAIL_CLOSED`, `LIVE_KRAKEN`) retain existing fail-closed gate behavior.
 
 ### Fixed
 - Removed accidental duplicate spec/example files with `* 2.json` suffix.
