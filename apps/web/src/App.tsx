@@ -865,6 +865,17 @@ function App(): JSX.Element {
   const currentPairId = selectedCueRow?.cue.pair_id ?? "";
   const currentPosition =
     (currentPairId ? positions[currentPairId] : undefined) ?? emptyPosition(nowIso());
+  const openPositions = useMemo(
+    () =>
+      Object.entries(positions).filter(
+        ([, position]) => position.direction !== "NONE" && position.totalSize > 0
+      ),
+    [positions]
+  );
+  const openPositionsCount = openPositions.length;
+  const openPositionPairsExcludingCurrent = openPositions
+    .map(([pairId]) => pairId)
+    .filter((pairId) => pairId !== currentPairId);
   const currentTimeline = timelineByPair[currentPairId] ?? [];
   const currentIntentHistory = intentHistoryByPair[currentPairId] ?? [];
   const persistentExecutionMarkers = useMemo(
@@ -2206,6 +2217,9 @@ function App(): JSX.Element {
           zMarkers={tradeChartMarkers}
           analyticsError={analyticsError}
           currentPosition={currentPosition}
+          currentPairId={currentPairId}
+          openPositionsCount={openPositionsCount}
+          openPositionPairsExcludingCurrent={openPositionPairsExcludingCurrent}
           intentHistory={currentIntentHistory}
           activeTradeAnchor={activeTradeAnchor}
           timeline={currentTimeline}
@@ -2475,6 +2489,9 @@ function TradePage(props: {
   zMarkers: ChartMarker[];
   analyticsError: string | null;
   currentPosition: SpreadPosition;
+  currentPairId: string;
+  openPositionsCount: number;
+  openPositionPairsExcludingCurrent: string[];
   intentHistory: OrderIntentHistoryResponse[];
   activeTradeAnchor: { entryAt: string; entryZ: number; currentZ: number; deltaZ: number } | null;
   timeline: TimelineEvent[];
@@ -2888,11 +2905,29 @@ function TradePage(props: {
         <div className="mini-card execution-state-card">
           <h3>Trade State</h3>
           <p>
+            Selected pair:{" "}
+            <span className="tone-info">
+              {props.currentPairId ? formatPairLabel(props.currentPairId) : "--"}
+            </span>
+          </p>
+          <p>
             Direction: <span className="tone-info">{props.currentPosition.direction}</span>
           </p>
           <p>Open size: {props.currentPosition.totalSize.toFixed(2)} spread units</p>
           <p>Avg entry z-score: {props.currentPosition.avgEntryZ.toFixed(2)}</p>
           <p>Updated: {formatLocalTime(props.currentPosition.updatedAt)}</p>
+          <p>Open positions (all pairs): {props.openPositionsCount}</p>
+          {props.currentPosition.direction === "NONE" &&
+          props.openPositionPairsExcludingCurrent.length > 0 ? (
+            <p className="small-text tone-warn">
+              This pair is flat. Open position currently in{" "}
+              {props.openPositionPairsExcludingCurrent
+                .slice(0, 2)
+                .map((pairId) => formatPairLabel(pairId))
+                .join(", ")}
+              {props.openPositionPairsExcludingCurrent.length > 2 ? "..." : ""}.
+            </p>
+          ) : null}
           {props.activeTradeAnchor ? (
             <p className="tone-info">
               Active trade anchor: entry {props.activeTradeAnchor.entryZ.toFixed(2)} at{" "}
