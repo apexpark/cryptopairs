@@ -5,6 +5,13 @@ This project follows SemVer as defined in `docs/02-versioning-and-releases.md`.
 
 ## Unreleased
 ### Added
+- Mixed-lot-step spread sizing guardrails for execution intents:
+  - Order intent contract now supports optional `sizing` payload metadata (target notional, target hedge ratio, reference prices, planned leg qty, achieved drift, tolerance overrides).
+  - Dispatch mode response now includes runtime sizing tolerance configuration:
+    - `sizing_tolerance_notional_drift_pct`
+    - `sizing_tolerance_hedge_ratio_drift_pct`
+  - Execution service validates submitted sizing payload against pair/instrument, planned leg qty, and drift tolerances; rejects out-of-tolerance or inconsistent sizing fail-closed.
+  - Trade UI now sizes entries/exits from target USD notional using live bid/ask, per-leg lot-step quantization, and pre-submit drift/tolerance preview.
 - Data horizon and retention controls for `data-service` candles:
   - Configurable backfill windows by timeframe (`1m/15m/1h`) with defaults aligned to long-horizon research (`120d/540d/1095d`).
   - Configurable candle retention pruning by timeframe plus periodic prune interval.

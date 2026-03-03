@@ -10,6 +10,22 @@
   "spread_z": -2.1,
   "side": "BUY",
   "qty": 1.25,
+  "sizing": {
+    "target_notional_usd": 5000.0,
+    "target_hedge_ratio": 0.92,
+    "reference_left_instrument": "PI_XBTUSD",
+    "reference_right_instrument": "PI_ETHUSD",
+    "reference_left_price": 65400.0,
+    "reference_right_price": 3200.0,
+    "planned_left_qty": 0.07,
+    "planned_right_qty": 0.06,
+    "achieved_notional_usd": 4770.0,
+    "achieved_hedge_ratio": 0.8571428571,
+    "notional_drift_pct": 4.6,
+    "hedge_ratio_drift_pct": 6.8322981366,
+    "tolerance_notional_drift_pct": 12.0,
+    "tolerance_hedge_ratio_drift_pct": 25.0
+  },
   "operator_confirmed": true,
   "operator_id": "operator-kevin",
   "min_coverage_pct": 99.5

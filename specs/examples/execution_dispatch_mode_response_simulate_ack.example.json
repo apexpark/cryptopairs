@@ -1,4 +1,6 @@
 {
   "mode": "SIMULATE_ACK",
-  "requires_live_arm": false
+  "requires_live_arm": false,
+  "sizing_tolerance_notional_drift_pct": 12.0,
+  "sizing_tolerance_hedge_ratio_drift_pct": 25.0
 }

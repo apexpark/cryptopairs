@@ -1057,6 +1057,10 @@ button:disabled {
   color: var(--muted);
 }
 
+.execution-sizing-row {
+  margin-top: 4px;
+}
+
 .action-disabled-reason {
   margin: 3px 0 1px 0;
   font-size: 0.77rem;

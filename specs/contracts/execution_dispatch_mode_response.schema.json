@@ -4,7 +4,12 @@
   "title": "ExecutionDispatchModeResponse",
   "type": "object",
   "additionalProperties": false,
-  "required": ["mode", "requires_live_arm"],
+  "required": [
+    "mode",
+    "requires_live_arm",
+    "sizing_tolerance_notional_drift_pct",
+    "sizing_tolerance_hedge_ratio_drift_pct"
+  ],
   "properties": {
     "mode": {
       "type": "string",
@@ -12,6 +17,14 @@
     },
     "requires_live_arm": {
       "type": "boolean"
+    },
+    "sizing_tolerance_notional_drift_pct": {
+      "type": "number",
+      "minimum": 0
+    },
+    "sizing_tolerance_hedge_ratio_drift_pct": {
+      "type": "number",
+      "minimum": 0
     }
   },
   "version": "0.1.0"

@@ -43,6 +43,8 @@ struct AppState {
     trigger_reconcile_on_terminal: bool,
     risk_caps: RiskCapsConfig,
     risk_max_snapshot_age_seconds: i64,
+    sizing_tolerance_notional_drift_pct: f64,
+    sizing_tolerance_hedge_ratio_drift_pct: f64,
     observability_thresholds: ExecutionObservabilityThresholds,
 }
 
@@ -1372,6 +1374,8 @@ struct UpdateKillSwitchRequest {
 struct DispatchModeResponse {
     mode: &'static str,
     requires_live_arm: bool,
+    sizing_tolerance_notional_drift_pct: f64,
+    sizing_tolerance_hedge_ratio_drift_pct: f64,
 }
 
 #[derive(Debug, Serialize)]
@@ -1394,9 +1398,28 @@ struct OrderIntentRequest {
     spread_z: Option<f64>,
     side: String,
     qty: f64,
+    sizing: Option<SpreadSizingRequest>,
     operator_confirmed: bool,
     operator_id: Option<String>,
     min_coverage_pct: Option<f64>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct SpreadSizingRequest {
+    target_notional_usd: f64,
+    target_hedge_ratio: f64,
+    reference_left_instrument: String,
+    reference_right_instrument: String,
+    reference_left_price: f64,
+    reference_right_price: f64,
+    planned_left_qty: f64,
+    planned_right_qty: f64,
+    achieved_notional_usd: f64,
+    achieved_hedge_ratio: f64,
+    notional_drift_pct: f64,
+    hedge_ratio_drift_pct: f64,
+    tolerance_notional_drift_pct: Option<f64>,
+    tolerance_hedge_ratio_drift_pct: Option<f64>,
 }
 
 #[derive(Debug, Serialize)]
@@ -1728,6 +1751,16 @@ async fn main() -> anyhow::Result<()> {
         .ok()
         .and_then(|value| value.parse::<i64>().ok())
         .unwrap_or(120);
+    let sizing_tolerance_notional_drift_pct =
+        std::env::var("EXECUTION_SIZING_TOLERANCE_NOTIONAL_DRIFT_PCT")
+            .ok()
+            .and_then(|value| value.parse::<f64>().ok())
+            .unwrap_or(12.0);
+    let sizing_tolerance_hedge_ratio_drift_pct =
+        std::env::var("EXECUTION_SIZING_TOLERANCE_HEDGE_RATIO_DRIFT_PCT")
+            .ok()
+            .and_then(|value| value.parse::<f64>().ok())
+            .unwrap_or(25.0);
     let observability_thresholds = ExecutionObservabilityThresholds {
         risk_block_ratio_p2: std::env::var("EXECUTION_ALERT_RISK_BLOCK_RATIO_P2")
             .ok()
@@ -1780,6 +1813,8 @@ async fn main() -> anyhow::Result<()> {
         trigger_reconcile_on_terminal,
         risk_caps,
         risk_max_snapshot_age_seconds,
+        sizing_tolerance_notional_drift_pct,
+        sizing_tolerance_hedge_ratio_drift_pct,
         observability_thresholds,
     };
     tokio::spawn(spawn_ack_watchdog(app_state.clone()));
@@ -1839,6 +1874,8 @@ async fn main() -> anyhow::Result<()> {
         risk_daily_loss_limit_usd = risk_caps.daily_loss_limit_usd,
         risk_entry_cooldown_seconds = risk_caps.entry_cooldown_seconds,
         risk_max_snapshot_age_seconds = risk_max_snapshot_age_seconds,
+        sizing_tolerance_notional_drift_pct = sizing_tolerance_notional_drift_pct,
+        sizing_tolerance_hedge_ratio_drift_pct = sizing_tolerance_hedge_ratio_drift_pct,
         alert_risk_block_ratio_p2 = observability_thresholds.risk_block_ratio_p2,
         alert_dispatch_reject_ratio_p2 = observability_thresholds.dispatch_reject_ratio_p2,
         alert_stale_ack_count_p1 = observability_thresholds.stale_ack_count_p1,
@@ -2451,6 +2488,8 @@ async fn dispatch_mode_status(
     Ok(Json(DispatchModeResponse {
         mode: state.dispatch_mode.as_api_mode(),
         requires_live_arm: state.dispatch_mode.requires_live_arm(),
+        sizing_tolerance_notional_drift_pct: state.sizing_tolerance_notional_drift_pct,
+        sizing_tolerance_hedge_ratio_drift_pct: state.sizing_tolerance_hedge_ratio_drift_pct,
     }))
 }
 
@@ -2767,6 +2806,18 @@ async fn order_intent(
         return Ok(Json(map_order_intent(existing)));
     }
     validate_order_qty_constraints(action, &payload.instrument, payload.qty)?;
+    if matches!(action, OrderIntentAction::Entry | OrderIntentAction::Exit) {
+        if let Some(sizing) = payload.sizing.as_ref() {
+            validate_spread_sizing_request(
+                &payload.instrument,
+                normalized_pair_id.as_deref(),
+                sizing,
+                state.sizing_tolerance_notional_drift_pct,
+                state.sizing_tolerance_hedge_ratio_drift_pct,
+                payload.qty,
+            )?;
+        }
+    }
 
     let kill_switch = state
         .repository
@@ -3385,6 +3436,143 @@ fn normalize_optional_string(value: Option<&str>) -> Option<String> {
         .map(ToString::to_string)
 }
 
+fn relative_drift_pct(target: f64, achieved: f64) -> f64 {
+    if !target.is_finite() || target.abs() <= f64::EPSILON {
+        return f64::INFINITY;
+    }
+    ((achieved - target).abs() / target.abs()) * 100.0
+}
+
+fn parse_pair_instruments(pair_id: &str) -> Option<(String, String)> {
+    let mut parts = pair_id.split("__");
+    let left = parts.next()?.trim();
+    let right = parts.next()?.trim();
+    if left.is_empty() || right.is_empty() || parts.next().is_some() {
+        return None;
+    }
+    Some((left.to_string(), right.to_string()))
+}
+
+fn validate_spread_sizing_request(
+    instrument: &str,
+    pair_id: Option<&str>,
+    sizing: &SpreadSizingRequest,
+    default_notional_tolerance_pct: f64,
+    default_ratio_tolerance_pct: f64,
+    payload_qty: f64,
+) -> Result<(), ApiError> {
+    let pair_id = pair_id.ok_or_else(|| {
+        ApiError::BadRequest(
+            "pair_id is required when spread sizing metadata is provided".to_string(),
+        )
+    })?;
+    let (pair_left, pair_right) = parse_pair_instruments(pair_id).ok_or_else(|| {
+        ApiError::BadRequest(
+            "pair_id must contain exactly two instruments joined by '__'".to_string(),
+        )
+    })?;
+    let normalized_pair_left = normalize_kraken_perp_symbol(&pair_left);
+    let normalized_pair_right = normalize_kraken_perp_symbol(&pair_right);
+    let normalized_reference_left = normalize_kraken_perp_symbol(&sizing.reference_left_instrument);
+    let normalized_reference_right =
+        normalize_kraken_perp_symbol(&sizing.reference_right_instrument);
+    if normalized_pair_left != normalized_reference_left
+        || normalized_pair_right != normalized_reference_right
+    {
+        return Err(ApiError::BadRequest(
+            "sizing reference instruments do not match pair_id".to_string(),
+        ));
+    }
+
+    let normalized_instrument = normalize_kraken_perp_symbol(instrument);
+    let expected_qty = if normalized_instrument == normalized_pair_left {
+        sizing.planned_left_qty
+    } else if normalized_instrument == normalized_pair_right {
+        sizing.planned_right_qty
+    } else {
+        return Err(ApiError::BadRequest(
+            "instrument is not part of pair_id for spread sizing".to_string(),
+        ));
+    };
+    if (expected_qty - payload_qty).abs() > 1e-9 {
+        return Err(ApiError::BadRequest(format!(
+            "qty={payload_qty} does not match spread sizing plan qty={expected_qty}"
+        )));
+    }
+
+    if !sizing.target_notional_usd.is_finite()
+        || sizing.target_notional_usd <= 0.0
+        || !sizing.target_hedge_ratio.is_finite()
+        || sizing.target_hedge_ratio <= 0.0
+        || !sizing.reference_left_price.is_finite()
+        || sizing.reference_left_price <= 0.0
+        || !sizing.reference_right_price.is_finite()
+        || sizing.reference_right_price <= 0.0
+        || !sizing.planned_left_qty.is_finite()
+        || sizing.planned_left_qty <= 0.0
+        || !sizing.planned_right_qty.is_finite()
+        || sizing.planned_right_qty <= 0.0
+        || !sizing.achieved_notional_usd.is_finite()
+        || sizing.achieved_notional_usd <= 0.0
+        || !sizing.achieved_hedge_ratio.is_finite()
+        || sizing.achieved_hedge_ratio <= 0.0
+        || !sizing.notional_drift_pct.is_finite()
+        || sizing.notional_drift_pct < 0.0
+        || !sizing.hedge_ratio_drift_pct.is_finite()
+        || sizing.hedge_ratio_drift_pct < 0.0
+    {
+        return Err(ApiError::BadRequest(
+            "invalid spread sizing metadata: all prices, ratios, notionals, and planned quantities must be finite and > 0".to_string(),
+        ));
+    }
+
+    let notional_tolerance_pct = sizing
+        .tolerance_notional_drift_pct
+        .unwrap_or(default_notional_tolerance_pct);
+    let ratio_tolerance_pct = sizing
+        .tolerance_hedge_ratio_drift_pct
+        .unwrap_or(default_ratio_tolerance_pct);
+    if !notional_tolerance_pct.is_finite()
+        || notional_tolerance_pct < 0.0
+        || !ratio_tolerance_pct.is_finite()
+        || ratio_tolerance_pct < 0.0
+    {
+        return Err(ApiError::BadRequest(
+            "spread sizing tolerances must be finite and >= 0".to_string(),
+        ));
+    }
+
+    let achieved_notional_usd = (sizing.reference_left_price * sizing.planned_left_qty).abs()
+        + (sizing.reference_right_price * sizing.planned_right_qty).abs();
+    let target_ratio = sizing.target_hedge_ratio.abs().max(f64::EPSILON);
+    let achieved_ratio = (sizing.planned_right_qty.abs() / sizing.planned_left_qty.abs())
+        .abs()
+        .max(f64::EPSILON);
+    let notional_drift_pct = relative_drift_pct(sizing.target_notional_usd, achieved_notional_usd);
+    let ratio_drift_pct = relative_drift_pct(target_ratio, achieved_ratio);
+    let notional_projection_delta_pct =
+        relative_drift_pct(achieved_notional_usd, sizing.achieved_notional_usd);
+    let ratio_projection_delta_pct =
+        relative_drift_pct(achieved_ratio, sizing.achieved_hedge_ratio);
+
+    if notional_projection_delta_pct > 0.5 || ratio_projection_delta_pct > 0.5 {
+        return Err(ApiError::BadRequest(format!(
+            "spread sizing metadata mismatch: recomputed_notional={achieved_notional_usd:.6} payload_notional={:.6} recomputed_ratio={achieved_ratio:.6} payload_ratio={:.6}",
+            sizing.achieved_notional_usd, sizing.achieved_hedge_ratio
+        )));
+    }
+
+    let notional_exceeds = notional_drift_pct > notional_tolerance_pct;
+    let ratio_exceeds = ratio_drift_pct > ratio_tolerance_pct;
+    if notional_exceeds || ratio_exceeds {
+        return Err(ApiError::BadRequest(format!(
+            "spread sizing drift exceeds tolerance: notional_drift_pct={notional_drift_pct:.4} (tol={notional_tolerance_pct:.4}), hedge_ratio_drift_pct={ratio_drift_pct:.4} (tol={ratio_tolerance_pct:.4})"
+        )));
+    }
+
+    Ok(())
+}
+
 fn normalize_spread_direction(value: Option<&str>) -> Result<Option<String>, ApiError> {
     let Some(raw) = value.map(str::trim).filter(|raw| !raw.is_empty()) else {
         return Ok(None);
@@ -3480,8 +3668,9 @@ mod tests {
         parse_kraken_open_orders_response, parse_kraken_order_status_response,
         parse_kraken_submit_response, resolve_secret_value, safe_ratio,
         sign_kraken_futures_payload, validate_manual_controls, validate_order_qty_constraints,
-        ApiError, DispatchMode, ExecutionObservabilityMetricsRaw, ExecutionObservabilityThresholds,
-        KrakenOpenOrder, KrakenStatusOrder, SpreadLedgerEvent,
+        validate_spread_sizing_request, ApiError, DispatchMode, ExecutionObservabilityMetricsRaw,
+        ExecutionObservabilityThresholds, KrakenOpenOrder, KrakenStatusOrder, SpreadLedgerEvent,
+        SpreadSizingRequest,
     };
     use chrono::{DateTime, Duration, Utc};
     use execution_service::{OrderIntentAction, OrderLifecycleState};
@@ -4028,6 +4217,66 @@ mod tests {
         let alerts = build_execution_alerts(metrics, thresholds);
         assert_eq!(alerts.len(), 4);
         assert!(alerts.iter().all(|alert| alert.triggered));
+    }
+
+    #[test]
+    fn spread_sizing_validation_accepts_within_tolerance() {
+        let sizing = SpreadSizingRequest {
+            target_notional_usd: 100.0,
+            target_hedge_ratio: 2.0,
+            reference_left_instrument: "PF_XBTUSD".to_string(),
+            reference_right_instrument: "PF_XRPUSD".to_string(),
+            reference_left_price: 1.0,
+            reference_right_price: 1.0,
+            planned_left_qty: 33.0,
+            planned_right_qty: 67.0,
+            achieved_notional_usd: 100.0,
+            achieved_hedge_ratio: 2.0303,
+            notional_drift_pct: 0.0,
+            hedge_ratio_drift_pct: 1.515,
+            tolerance_notional_drift_pct: Some(2.0),
+            tolerance_hedge_ratio_drift_pct: Some(3.0),
+        };
+        let result = validate_spread_sizing_request(
+            "PF_XRPUSD",
+            Some("PF_XBTUSD__PF_XRPUSD"),
+            &sizing,
+            2.0,
+            3.0,
+            67.0,
+        );
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn spread_sizing_validation_rejects_when_drift_exceeds_tolerance() {
+        let sizing = SpreadSizingRequest {
+            target_notional_usd: 100.0,
+            target_hedge_ratio: 1.0,
+            reference_left_instrument: "PF_XBTUSD".to_string(),
+            reference_right_instrument: "PF_XRPUSD".to_string(),
+            reference_left_price: 1.0,
+            reference_right_price: 1.0,
+            planned_left_qty: 10.0,
+            planned_right_qty: 10.0,
+            achieved_notional_usd: 20.0,
+            achieved_hedge_ratio: 1.0,
+            notional_drift_pct: 80.0,
+            hedge_ratio_drift_pct: 0.0,
+            tolerance_notional_drift_pct: Some(5.0),
+            tolerance_hedge_ratio_drift_pct: Some(5.0),
+        };
+        let result = validate_spread_sizing_request(
+            "PF_XBTUSD",
+            Some("PF_XBTUSD__PF_XRPUSD"),
+            &sizing,
+            5.0,
+            5.0,
+            10.0,
+        );
+        assert!(
+            matches!(result, Err(ApiError::BadRequest(message)) if message.contains("drift exceeds tolerance"))
+        );
     }
 
     #[test]
