@@ -349,6 +349,97 @@ function derivePairLotSizes(
   return { leftSize: 1, rightSize: sanitizedHedgeRatio };
 }
 
+const INSTRUMENT_MIN_LOT_BY_SYMBOL: Record<string, number> = {
+  PF_ADAUSD: 1.0,
+  PF_ARBUSD: 1.0,
+  PF_AVAXUSD: 0.01,
+  PF_BNBUSD: 0.01,
+  PF_DOGEUSD: 1.0,
+  PF_ETHUSD: 0.001,
+  PF_HYPEUSD: 0.1,
+  PF_LINKUSD: 0.1,
+  PF_PEPEUSD: 1000.0,
+  PF_SOLUSD: 0.01,
+  PF_SUIUSD: 1.0,
+  PF_TAOUSD: 0.01,
+  PF_XBTUSD: 0.0001,
+  PF_XRPUSD: 1.0,
+};
+
+function normalizePerpSymbol(rawInstrument: string): string {
+  const upper = rawInstrument.trim().toUpperCase();
+  return upper.startsWith("PI_") ? `PF_${upper.slice(3)}` : upper;
+}
+
+function decimalPlacesForStep(step: number): number {
+  let decimals = 0;
+  let scaled = step;
+  while (decimals < 8 && Math.abs(Math.round(scaled) - scaled) > 1e-9) {
+    scaled *= 10;
+    decimals += 1;
+  }
+  return decimals;
+}
+
+function quantizeDownToStep(value: number, step: number): number {
+  const units = Math.floor(value / step + 1e-9);
+  const quantized = units * step;
+  const decimals = decimalPlacesForStep(step);
+  return Number(quantized.toFixed(decimals));
+}
+
+function formatQtyForStep(qty: number, step?: number): string {
+  if (!Number.isFinite(qty)) {
+    return "--";
+  }
+  if (step == null || !Number.isFinite(step) || step <= 0) {
+    return qty.toFixed(4);
+  }
+  const decimals = decimalPlacesForStep(step);
+  return qty.toFixed(decimals);
+}
+
+function deriveExecutableSpreadQty(
+  requestedSpreadQty: number,
+  leftInstrument: string,
+  rightInstrument: string
+): { qty: number; step: number | null; adjusted: boolean; reason: string | null } {
+  if (!Number.isFinite(requestedSpreadQty) || requestedSpreadQty <= 0) {
+    return { qty: 0, step: null, adjusted: false, reason: "Spread size must be greater than 0." };
+  }
+
+  const leftStep = INSTRUMENT_MIN_LOT_BY_SYMBOL[normalizePerpSymbol(leftInstrument)];
+  const rightStep = INSTRUMENT_MIN_LOT_BY_SYMBOL[normalizePerpSymbol(rightInstrument)];
+  const effectiveStep = [leftStep, rightStep].filter(
+    (value): value is number => Number.isFinite(value) && value > 0
+  );
+
+  if (!effectiveStep.length) {
+    return { qty: requestedSpreadQty, step: null, adjusted: false, reason: null };
+  }
+
+  const step = Math.max(...effectiveStep);
+  const quantized = quantizeDownToStep(requestedSpreadQty, step);
+  if (!Number.isFinite(quantized) || quantized <= 0 || quantized + 1e-12 < step) {
+    return {
+      qty: 0,
+      step,
+      adjusted: true,
+      reason: `Spread size is below executable minimum ${formatQtyForStep(
+        step,
+        step
+      )} for this pair.`,
+    };
+  }
+
+  return {
+    qty: quantized,
+    step,
+    adjusted: Math.abs(quantized - requestedSpreadQty) > 1e-9,
+    reason: null,
+  };
+}
+
 function formatOpenInterest(value: number | null | undefined): string {
   if (value == null || !Number.isFinite(value)) {
     return "--";
@@ -1641,6 +1732,19 @@ function App(): JSX.Element {
       action
     );
 
+    if (action !== "EMERGENCY_STOP_CLOSE") {
+      const executableQty = deriveExecutableSpreadQty(
+        qty,
+        selectedCueRow.cue.left_instrument,
+        selectedCueRow.cue.right_instrument
+      );
+      if (executableQty.reason) {
+        setTradeMessage(executableQty.reason);
+        return;
+      }
+      qty = executableQty.qty;
+    }
+
     setSubmitting(true);
     try {
       const responses = await Promise.all(
@@ -2159,13 +2263,18 @@ function TradePage(props: {
   const spreadSizeNumber = Number.parseFloat(props.spreadSize);
   const normalizedSpreadSize =
     Number.isFinite(spreadSizeNumber) && spreadSizeNumber > 0 ? spreadSizeNumber : 0;
-  const pairLots = derivePairLotSizes(selectedCue?.hedge_ratio);
   const leftInstrument = selectedCue?.cue.left_instrument ?? "LEFT";
   const rightInstrument = selectedCue?.cue.right_instrument ?? "RIGHT";
-  const longLeftQty = normalizedSpreadSize * pairLots.leftSize;
-  const longRightQty = normalizedSpreadSize * pairLots.rightSize;
-  const shortLeftQty = longLeftQty;
-  const shortRightQty = longRightQty;
+  const entryExecutableQtyPlan = deriveExecutableSpreadQty(
+    normalizedSpreadSize,
+    leftInstrument,
+    rightInstrument
+  );
+  const executableEntryQty = entryExecutableQtyPlan.qty;
+  const longLeftQty = executableEntryQty;
+  const longRightQty = executableEntryQty;
+  const shortLeftQty = executableEntryQty;
+  const shortRightQty = executableEntryQty;
 
   const tradeGatePass = selectedCue ? selectedCue.cue.trade_gate?.pass ?? selectedCue.cue.actionable : false;
   const tradeGateReasons = selectedCue
@@ -2189,6 +2298,9 @@ function TradePage(props: {
     }
     if (!Number.isFinite(spreadSizeNumber) || spreadSizeNumber <= 0) {
       return "Spread size must be greater than 0.";
+    }
+    if (entryExecutableQtyPlan.reason) {
+      return entryExecutableQtyPlan.reason;
     }
     if (!bypassExecutionGates && props.gateState.killSwitchActive) {
       return "Kill switch is ACTIVE.";
@@ -2262,6 +2374,8 @@ function TradePage(props: {
           ? "Operator ID is required."
           : !Number.isFinite(spreadSizeNumber) || spreadSizeNumber <= 0
             ? "Spread size must be greater than 0."
+            : entryExecutableQtyPlan.reason
+              ? entryExecutableQtyPlan.reason
             : null;
   const closeSpreadDisabledReason = props.submitting
     ? "Action in progress."
@@ -2517,13 +2631,22 @@ function TradePage(props: {
 
             <div className="execution-preview">
               <p>
-                Long preview: BUY {formatInstrumentLabel(leftInstrument)} {longLeftQty.toFixed(2)} / SELL{" "}
-                {formatInstrumentLabel(rightInstrument)} {longRightQty.toFixed(2)}
+                Long preview: BUY {formatInstrumentLabel(leftInstrument)}{" "}
+                {formatQtyForStep(longLeftQty, entryExecutableQtyPlan.step ?? undefined)} / SELL{" "}
+                {formatInstrumentLabel(rightInstrument)}{" "}
+                {formatQtyForStep(longRightQty, entryExecutableQtyPlan.step ?? undefined)}
               </p>
               <p>
-                Short preview: SELL {formatInstrumentLabel(leftInstrument)} {shortLeftQty.toFixed(2)} / BUY{" "}
-                {formatInstrumentLabel(rightInstrument)} {shortRightQty.toFixed(2)}
+                Short preview: SELL {formatInstrumentLabel(leftInstrument)}{" "}
+                {formatQtyForStep(shortLeftQty, entryExecutableQtyPlan.step ?? undefined)} / BUY{" "}
+                {formatInstrumentLabel(rightInstrument)}{" "}
+                {formatQtyForStep(shortRightQty, entryExecutableQtyPlan.step ?? undefined)}
               </p>
+              {entryExecutableQtyPlan.adjusted ? (
+                <p className="small-text tone-warn">
+                  Executable size adjusted to {formatQtyForStep(executableEntryQty, entryExecutableQtyPlan.step ?? undefined)} to match pair lot step.
+                </p>
+              ) : null}
             </div>
 
             <button className="primary" disabled={longEntryDisabled} onClick={() => execute("long-entry")}>
