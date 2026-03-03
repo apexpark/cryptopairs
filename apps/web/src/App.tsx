@@ -407,103 +407,204 @@ function formatQtyForStep(qty: number, step?: number): string {
   return qty.toFixed(decimals);
 }
 
-function deriveExecutableSpreadQty(
-  requestedSpreadQty: number,
-  leftInstrument: string,
-  rightInstrument: string
-): { qty: number; step: number | null; adjusted: boolean; reason: string | null } {
-  if (!Number.isFinite(requestedSpreadQty) || requestedSpreadQty <= 0) {
-    return { qty: 0, step: null, adjusted: false, reason: "Spread size must be greater than 0." };
-  }
+const DEFAULT_SIZING_TOLERANCE_NOTIONAL_DRIFT_PCT = 12;
+const DEFAULT_SIZING_TOLERANCE_HEDGE_RATIO_DRIFT_PCT = 25;
 
-  const leftStep = INSTRUMENT_MIN_LOT_BY_SYMBOL[normalizePerpSymbol(leftInstrument)];
-  const rightStep = INSTRUMENT_MIN_LOT_BY_SYMBOL[normalizePerpSymbol(rightInstrument)];
-  const effectiveStep = [leftStep, rightStep].filter(
-    (value): value is number => Number.isFinite(value) && value > 0
-  );
-
-  if (!effectiveStep.length) {
-    return { qty: requestedSpreadQty, step: null, adjusted: false, reason: null };
-  }
-
-  const step = Math.max(...effectiveStep);
-  const quantized = quantizeDownToStep(requestedSpreadQty, step);
-  if (!Number.isFinite(quantized) || quantized <= 0 || quantized + 1e-12 < step) {
-    return {
-      qty: 0,
-      step,
-      adjusted: true,
-      reason: `Spread size is below executable minimum ${formatQtyForStep(
-        step,
-        step
-      )} for this pair.`,
-    };
-  }
-
-  return {
-    qty: quantized,
-    step,
-    adjusted: Math.abs(quantized - requestedSpreadQty) > 1e-9,
-    reason: null,
-  };
-}
-
-function deriveExecutableLegPlan(
-  requestedSpreadQty: number,
-  leftInstrument: string,
-  rightInstrument: string,
-  hedgeRatio: number | null | undefined
-): {
-  spreadQty: number;
-  leftQty: number;
-  rightQty: number;
+interface SpreadSizingPlan {
+  targetNotionalUsd: number;
+  targetHedgeRatio: number;
+  leftInstrument: string;
+  rightInstrument: string;
+  leftSide: TradeSide;
+  rightSide: TradeSide;
+  referenceLeftPrice: number;
+  referenceRightPrice: number;
   leftStep: number | null;
   rightStep: number | null;
+  rawLeftQty: number;
+  rawRightQty: number;
+  plannedLeftQty: number;
+  plannedRightQty: number;
+  achievedNotionalUsd: number;
+  achievedHedgeRatio: number;
+  notionalDriftPct: number;
+  hedgeRatioDriftPct: number;
+  toleranceNotionalDriftPct: number;
+  toleranceHedgeRatioDriftPct: number;
+  driftWithinTolerance: boolean;
   adjusted: boolean;
+  capApplied: boolean;
+}
+
+interface SpreadSizingPlanResult {
+  plan: SpreadSizingPlan | null;
   reason: string | null;
-} {
-  const spreadPlan = deriveExecutableSpreadQty(requestedSpreadQty, leftInstrument, rightInstrument);
-  if (spreadPlan.reason) {
+}
+
+function relativeDriftPct(target: number, achieved: number): number {
+  if (!Number.isFinite(target) || Math.abs(target) <= 1e-12) {
+    return 0;
+  }
+  return (Math.abs(achieved - target) / Math.abs(target)) * 100;
+}
+
+function deriveLegSides(
+  direction: Exclude<DirectionHint, "NONE">,
+  action: ExecutionAction
+): { leftSide: TradeSide; rightSide: TradeSide } {
+  const isEntry = action === "ENTRY";
+  if (direction === "LONG_SPREAD") {
+    return { leftSide: isEntry ? "BUY" : "SELL", rightSide: isEntry ? "SELL" : "BUY" };
+  }
+  return { leftSide: isEntry ? "SELL" : "BUY", rightSide: isEntry ? "BUY" : "SELL" };
+}
+
+function referencePriceForSide(
+  metrics: MarketMetricsResponse | null,
+  side: TradeSide
+): number | null {
+  if (!metrics) {
+    return null;
+  }
+  const raw = side === "BUY" ? (metrics.ask ?? metrics.mark) : (metrics.bid ?? metrics.mark);
+  return Number.isFinite(raw) && raw > 0 ? raw : null;
+}
+
+function deriveSpreadSizingPlan(params: {
+  targetNotionalUsd: number;
+  leftInstrument: string;
+  rightInstrument: string;
+  hedgeRatio: number | null | undefined;
+  direction: Exclude<DirectionHint, "NONE">;
+  action: ExecutionAction;
+  leftMetrics: MarketMetricsResponse | null;
+  rightMetrics: MarketMetricsResponse | null;
+  toleranceNotionalDriftPct: number;
+  toleranceHedgeRatioDriftPct: number;
+  maxLeftQty?: number | null;
+  maxRightQty?: number | null;
+}): SpreadSizingPlanResult {
+  if (!Number.isFinite(params.targetNotionalUsd) || params.targetNotionalUsd <= 0) {
+    return { plan: null, reason: "Target notional (USD) must be greater than 0." };
+  }
+
+  const targetHedgeRatio =
+    params.hedgeRatio != null && Number.isFinite(params.hedgeRatio) && params.hedgeRatio > 0
+      ? Math.abs(params.hedgeRatio)
+      : 1;
+  const { leftSide, rightSide } = deriveLegSides(params.direction, params.action);
+  const referenceLeftPrice = referencePriceForSide(params.leftMetrics, leftSide);
+  const referenceRightPrice = referencePriceForSide(params.rightMetrics, rightSide);
+  if (
+    referenceLeftPrice == null ||
+    !Number.isFinite(referenceLeftPrice) ||
+    referenceRightPrice == null ||
+    !Number.isFinite(referenceRightPrice)
+  ) {
     return {
-      spreadQty: 0,
-      leftQty: 0,
-      rightQty: 0,
-      leftStep: null,
-      rightStep: null,
-      adjusted: spreadPlan.adjusted,
-      reason: spreadPlan.reason,
+      plan: null,
+      reason: "Live bid/ask prices are unavailable for sizing. Wait for fresh market metrics.",
     };
   }
 
-  const leftQty = spreadPlan.qty;
-  const ratio =
-    hedgeRatio != null && Number.isFinite(hedgeRatio) && hedgeRatio > 0 ? Math.abs(hedgeRatio) : 1;
-  const rawRightQty = leftQty * ratio;
-  const rightStep = INSTRUMENT_MIN_LOT_BY_SYMBOL[normalizePerpSymbol(rightInstrument)] ?? null;
-  const rightQty =
+  const denominator = referenceLeftPrice + targetHedgeRatio * referenceRightPrice;
+  if (!Number.isFinite(denominator) || denominator <= 0) {
+    return {
+      plan: null,
+      reason: "Unable to derive executable leg quantities from target notional and prices.",
+    };
+  }
+
+  const rawLeftQty = params.targetNotionalUsd / denominator;
+  const rawRightQty = rawLeftQty * targetHedgeRatio;
+  if (!Number.isFinite(rawLeftQty) || rawLeftQty <= 0 || !Number.isFinite(rawRightQty) || rawRightQty <= 0) {
+    return { plan: null, reason: "Sizing result is invalid for this pair at current prices." };
+  }
+
+  const leftStep = INSTRUMENT_MIN_LOT_BY_SYMBOL[normalizePerpSymbol(params.leftInstrument)] ?? null;
+  const rightStep = INSTRUMENT_MIN_LOT_BY_SYMBOL[normalizePerpSymbol(params.rightInstrument)] ?? null;
+  let plannedLeftQty =
+    leftStep != null && Number.isFinite(leftStep) && leftStep > 0
+      ? quantizeNearestToStep(rawLeftQty, leftStep)
+      : rawLeftQty;
+  let plannedRightQty =
     rightStep != null && Number.isFinite(rightStep) && rightStep > 0
       ? quantizeNearestToStep(rawRightQty, rightStep)
       : rawRightQty;
+  let capApplied = false;
 
-  if (!Number.isFinite(rightQty) || rightQty <= 0) {
+  if (params.maxLeftQty != null && Number.isFinite(params.maxLeftQty) && params.maxLeftQty > 0) {
+    if (plannedLeftQty > params.maxLeftQty) {
+      plannedLeftQty =
+        leftStep != null && leftStep > 0
+          ? quantizeDownToStep(params.maxLeftQty, leftStep)
+          : params.maxLeftQty;
+      capApplied = true;
+    }
+  }
+  if (params.maxRightQty != null && Number.isFinite(params.maxRightQty) && params.maxRightQty > 0) {
+    if (plannedRightQty > params.maxRightQty) {
+      plannedRightQty =
+        rightStep != null && rightStep > 0
+          ? quantizeDownToStep(params.maxRightQty, rightStep)
+          : params.maxRightQty;
+      capApplied = true;
+    }
+  }
+
+  if (!Number.isFinite(plannedLeftQty) || plannedLeftQty <= 0) {
     return {
-      spreadQty: 0,
-      leftQty: 0,
-      rightQty: 0,
-      leftStep: INSTRUMENT_MIN_LOT_BY_SYMBOL[normalizePerpSymbol(leftInstrument)] ?? null,
-      rightStep,
-      adjusted: true,
-      reason: "Spread size is too small for executable hedge-ratio sizing on this pair.",
+      plan: null,
+      reason: `Left leg quantity is below minimum lot step for ${formatInstrumentLabel(
+        params.leftInstrument
+      )}.`,
+    };
+  }
+  if (!Number.isFinite(plannedRightQty) || plannedRightQty <= 0) {
+    return {
+      plan: null,
+      reason: `Right leg quantity is below minimum lot step for ${formatInstrumentLabel(
+        params.rightInstrument
+      )}.`,
     };
   }
 
+  const achievedNotionalUsd =
+    Math.abs(referenceLeftPrice * plannedLeftQty) + Math.abs(referenceRightPrice * plannedRightQty);
+  const achievedHedgeRatio = Math.abs(plannedRightQty / plannedLeftQty);
+  const notionalDriftPct = relativeDriftPct(params.targetNotionalUsd, achievedNotionalUsd);
+  const hedgeRatioDriftPct = relativeDriftPct(targetHedgeRatio, achievedHedgeRatio);
+  const driftWithinTolerance =
+    notionalDriftPct <= params.toleranceNotionalDriftPct + 1e-9 &&
+    hedgeRatioDriftPct <= params.toleranceHedgeRatioDriftPct + 1e-9;
+
   return {
-    spreadQty: leftQty,
-    leftQty,
-    rightQty,
-    leftStep: INSTRUMENT_MIN_LOT_BY_SYMBOL[normalizePerpSymbol(leftInstrument)] ?? null,
-    rightStep,
-    adjusted: spreadPlan.adjusted || Math.abs(rightQty - rawRightQty) > 1e-9,
+    plan: {
+      targetNotionalUsd: params.targetNotionalUsd,
+      targetHedgeRatio,
+      leftInstrument: params.leftInstrument,
+      rightInstrument: params.rightInstrument,
+      leftSide,
+      rightSide,
+      referenceLeftPrice,
+      referenceRightPrice,
+      leftStep,
+      rightStep,
+      rawLeftQty,
+      rawRightQty,
+      plannedLeftQty,
+      plannedRightQty,
+      achievedNotionalUsd,
+      achievedHedgeRatio,
+      notionalDriftPct,
+      hedgeRatioDriftPct,
+      toleranceNotionalDriftPct: params.toleranceNotionalDriftPct,
+      toleranceHedgeRatioDriftPct: params.toleranceHedgeRatioDriftPct,
+      driftWithinTolerance,
+      adjusted:
+        Math.abs(plannedLeftQty - rawLeftQty) > 1e-9 || Math.abs(plannedRightQty - rawRightQty) > 1e-9,
+      capApplied,
+    },
     reason: null,
   };
 }
@@ -732,7 +833,7 @@ function App(): JSX.Element {
   const [headerLeftMetrics, setHeaderLeftMetrics] = useState<MarketMetricsResponse | null>(null);
   const [headerRightMetrics, setHeaderRightMetrics] = useState<MarketMetricsResponse | null>(null);
   const [headerMetricsError, setHeaderMetricsError] = useState<string | null>(null);
-  const [spreadSize, setSpreadSize] = useState<string>("1.25");
+  const [spreadSize, setSpreadSize] = useState<string>("1000");
   const [operatorConfirmed, setOperatorConfirmed] = useState<boolean>(false);
   const [tradeMessage, setTradeMessage] = useState<string>("No trade submitted yet.");
   const [submitting, setSubmitting] = useState(false);
@@ -828,6 +929,12 @@ function App(): JSX.Element {
   }, []);
 
   const spreadSizeNumber = Number.parseFloat(spreadSize);
+  const sizingToleranceNotionalDriftPct =
+    executionDispatchMode?.sizing_tolerance_notional_drift_pct ??
+    DEFAULT_SIZING_TOLERANCE_NOTIONAL_DRIFT_PCT;
+  const sizingToleranceHedgeRatioDriftPct =
+    executionDispatchMode?.sizing_tolerance_hedge_ratio_drift_pct ??
+    DEFAULT_SIZING_TOLERANCE_HEDGE_RATIO_DRIFT_PCT;
   const takerFeeBpsOverride = useMemo(
     () => parseCommissionPercentToBps(takerCommissionPct),
     [takerCommissionPct]
@@ -998,7 +1105,12 @@ function App(): JSX.Element {
       .catch(() => {
         if (!cancelled) {
           // Fail-closed for unknown mode: require explicit live arming.
-          setExecutionDispatchMode({ mode: "FAIL_CLOSED", requires_live_arm: true });
+          setExecutionDispatchMode({
+            mode: "FAIL_CLOSED",
+            requires_live_arm: true,
+            sizing_tolerance_notional_drift_pct: DEFAULT_SIZING_TOLERANCE_NOTIONAL_DRIFT_PCT,
+            sizing_tolerance_hedge_ratio_drift_pct: DEFAULT_SIZING_TOLERANCE_HEDGE_RATIO_DRIFT_PCT,
+          });
         }
       });
     return () => {
@@ -1757,10 +1869,10 @@ function App(): JSX.Element {
 
     let direction: Exclude<DirectionHint, "NONE">;
     let action: ExecutionAction;
-    let spreadQty = spreadSizeNumber;
+    const targetNotionalUsd = spreadSizeNumber;
 
     if (!Number.isFinite(spreadSizeNumber) || spreadSizeNumber <= 0) {
-      setTradeMessage("Spread size must be > 0.");
+      setTradeMessage("Target notional (USD) must be > 0.");
       return;
     }
 
@@ -1784,7 +1896,6 @@ function App(): JSX.Element {
       }
       direction = current.direction;
       action = "EXIT";
-      spreadQty = Math.min(spreadSizeNumber, current.totalSize);
     } else {
       if (current.direction === "NONE" || current.totalSize <= 0) {
         setTradeMessage("No open spread to close.");
@@ -1792,24 +1903,79 @@ function App(): JSX.Element {
       }
       direction = current.direction;
       action = "EMERGENCY_STOP_CLOSE";
-      spreadQty = current.totalSize;
     }
-    let leftLegQty = spreadQty;
-    let rightLegQty = spreadQty;
+    let leftLegQty = current.totalSize;
+    let rightLegQty = current.totalSize;
+    let sizingPayload:
+      | {
+          target_notional_usd: number;
+          target_hedge_ratio: number;
+          reference_left_instrument: string;
+          reference_right_instrument: string;
+          reference_left_price: number;
+          reference_right_price: number;
+          planned_left_qty: number;
+          planned_right_qty: number;
+          achieved_notional_usd: number;
+          achieved_hedge_ratio: number;
+          notional_drift_pct: number;
+          hedge_ratio_drift_pct: number;
+          tolerance_notional_drift_pct: number;
+          tolerance_hedge_ratio_drift_pct: number;
+        }
+      | undefined;
     if (action !== "EMERGENCY_STOP_CLOSE") {
-      const executableLegPlan = deriveExecutableLegPlan(
-        spreadQty,
-        selectedCueRow.cue.left_instrument,
-        selectedCueRow.cue.right_instrument,
-        selectedCueRow.hedge_ratio
-      );
-      if (executableLegPlan.reason) {
-        setTradeMessage(executableLegPlan.reason);
+      const planResult = deriveSpreadSizingPlan({
+        targetNotionalUsd,
+        leftInstrument: selectedCueRow.cue.left_instrument,
+        rightInstrument: selectedCueRow.cue.right_instrument,
+        hedgeRatio: selectedCueRow.hedge_ratio,
+        direction,
+        action,
+        leftMetrics: headerLeftMetrics,
+        rightMetrics: headerRightMetrics,
+        toleranceNotionalDriftPct: sizingToleranceNotionalDriftPct,
+        toleranceHedgeRatioDriftPct: sizingToleranceHedgeRatioDriftPct,
+        maxLeftQty:
+          action === "EXIT" ? current.totalSize : undefined,
+        maxRightQty:
+          action === "EXIT"
+            ? current.totalSize * Math.max(Math.abs(selectedCueRow.hedge_ratio ?? 1), 1e-9)
+            : undefined,
+      });
+      if (planResult.reason || !planResult.plan) {
+        setTradeMessage(planResult.reason ?? "Sizing plan unavailable.");
         return;
       }
-      spreadQty = executableLegPlan.spreadQty;
-      leftLegQty = executableLegPlan.leftQty;
-      rightLegQty = executableLegPlan.rightQty;
+      const plan = planResult.plan;
+      if (!plan.driftWithinTolerance) {
+        setTradeMessage(
+          `Sizing drift exceeds tolerance (notional ${plan.notionalDriftPct.toFixed(
+            2
+          )}% > ${plan.toleranceNotionalDriftPct.toFixed(2)}%, ratio ${plan.hedgeRatioDriftPct.toFixed(
+            2
+          )}% > ${plan.toleranceHedgeRatioDriftPct.toFixed(2)}%).`
+        );
+        return;
+      }
+      leftLegQty = plan.plannedLeftQty;
+      rightLegQty = plan.plannedRightQty;
+      sizingPayload = {
+        target_notional_usd: plan.targetNotionalUsd,
+        target_hedge_ratio: plan.targetHedgeRatio,
+        reference_left_instrument: plan.leftInstrument,
+        reference_right_instrument: plan.rightInstrument,
+        reference_left_price: plan.referenceLeftPrice,
+        reference_right_price: plan.referenceRightPrice,
+        planned_left_qty: plan.plannedLeftQty,
+        planned_right_qty: plan.plannedRightQty,
+        achieved_notional_usd: plan.achievedNotionalUsd,
+        achieved_hedge_ratio: plan.achievedHedgeRatio,
+        notional_drift_pct: plan.notionalDriftPct,
+        hedge_ratio_drift_pct: plan.hedgeRatioDriftPct,
+        tolerance_notional_drift_pct: plan.toleranceNotionalDriftPct,
+        tolerance_hedge_ratio_drift_pct: plan.toleranceHedgeRatioDriftPct,
+      };
     }
     const legs = buildSpreadLegs(
       selectedCueRow.cue.left_instrument,
@@ -1836,6 +2002,7 @@ function App(): JSX.Element {
             spread_z: action === "ENTRY" ? currentZ : null,
             side: leg.side,
             qty: leg.qty,
+            sizing: action === "EMERGENCY_STOP_CLOSE" ? undefined : sizingPayload,
             operator_confirmed: action === "EMERGENCY_STOP_CLOSE" ? false : effectiveOperatorConfirmed,
             operator_id: action === "EMERGENCY_STOP_CLOSE" ? null : operatorId,
             min_coverage_pct: 99.5,
@@ -2055,6 +2222,11 @@ function App(): JSX.Element {
           canCloseSpread={canCloseSpread}
           requiresLiveArm={requiresLiveArm}
           dispatchMode={executionDispatchMode?.mode ?? "FAIL_CLOSED"}
+          hedgeRatio={selectedCueRow?.hedge_ratio}
+          leftMetrics={headerLeftMetrics}
+          rightMetrics={headerRightMetrics}
+          sizingToleranceNotionalDriftPct={sizingToleranceNotionalDriftPct}
+          sizingToleranceHedgeRatioDriftPct={sizingToleranceHedgeRatioDriftPct}
           gateState={gateState}
           killSwitch={killSwitch}
           killSwitchUpdating={killSwitchUpdating}
@@ -2319,6 +2491,11 @@ function TradePage(props: {
   canCloseSpread: boolean;
   requiresLiveArm: boolean;
   dispatchMode: "FAIL_CLOSED" | "SIMULATE_ACK" | "LIVE_KRAKEN";
+  hedgeRatio: number | null | undefined;
+  leftMetrics: MarketMetricsResponse | null;
+  rightMetrics: MarketMetricsResponse | null;
+  sizingToleranceNotionalDriftPct: number;
+  sizingToleranceHedgeRatioDriftPct: number;
   gateState: { killSwitchActive: boolean; leftAllowed: boolean; rightAllowed: boolean; reconcileOk: boolean };
   killSwitch: KillSwitchState | null;
   killSwitchUpdating: boolean;
@@ -2336,21 +2513,65 @@ function TradePage(props: {
     props.cues?.cues[0] ??
     null;
   const spreadSizeNumber = Number.parseFloat(props.spreadSize);
-  const normalizedSpreadSize =
-    Number.isFinite(spreadSizeNumber) && spreadSizeNumber > 0 ? spreadSizeNumber : 0;
+  const targetNotionalUsd = Number.isFinite(spreadSizeNumber) && spreadSizeNumber > 0 ? spreadSizeNumber : 0;
   const leftInstrument = selectedCue?.cue.left_instrument ?? "LEFT";
   const rightInstrument = selectedCue?.cue.right_instrument ?? "RIGHT";
-  const entryExecutableLegPlan = deriveExecutableLegPlan(
-    normalizedSpreadSize,
+  const longEntrySizing = deriveSpreadSizingPlan({
+    targetNotionalUsd,
     leftInstrument,
     rightInstrument,
-    selectedCue?.hedge_ratio
-  );
-  const executableEntryQty = entryExecutableLegPlan.spreadQty;
-  const longLeftQty = entryExecutableLegPlan.leftQty;
-  const longRightQty = entryExecutableLegPlan.rightQty;
-  const shortLeftQty = entryExecutableLegPlan.leftQty;
-  const shortRightQty = entryExecutableLegPlan.rightQty;
+    hedgeRatio: props.hedgeRatio,
+    direction: "LONG_SPREAD",
+    action: "ENTRY",
+    leftMetrics: props.leftMetrics,
+    rightMetrics: props.rightMetrics,
+    toleranceNotionalDriftPct: props.sizingToleranceNotionalDriftPct,
+    toleranceHedgeRatioDriftPct: props.sizingToleranceHedgeRatioDriftPct,
+  });
+  const shortEntrySizing = deriveSpreadSizingPlan({
+    targetNotionalUsd,
+    leftInstrument,
+    rightInstrument,
+    hedgeRatio: props.hedgeRatio,
+    direction: "SHORT_SPREAD",
+    action: "ENTRY",
+    leftMetrics: props.leftMetrics,
+    rightMetrics: props.rightMetrics,
+    toleranceNotionalDriftPct: props.sizingToleranceNotionalDriftPct,
+    toleranceHedgeRatioDriftPct: props.sizingToleranceHedgeRatioDriftPct,
+  });
+  const addExposureSizing =
+    props.currentPosition.direction !== "NONE"
+      ? deriveSpreadSizingPlan({
+          targetNotionalUsd,
+          leftInstrument,
+          rightInstrument,
+          hedgeRatio: props.hedgeRatio,
+          direction: props.currentPosition.direction,
+          action: "ENTRY",
+          leftMetrics: props.leftMetrics,
+          rightMetrics: props.rightMetrics,
+          toleranceNotionalDriftPct: props.sizingToleranceNotionalDriftPct,
+          toleranceHedgeRatioDriftPct: props.sizingToleranceHedgeRatioDriftPct,
+        })
+      : null;
+  const reduceSizing =
+    props.currentPosition.direction !== "NONE" && props.currentPosition.totalSize > 0
+      ? deriveSpreadSizingPlan({
+          targetNotionalUsd,
+          leftInstrument,
+          rightInstrument,
+          hedgeRatio: props.hedgeRatio,
+          direction: props.currentPosition.direction,
+          action: "EXIT",
+          leftMetrics: props.leftMetrics,
+          rightMetrics: props.rightMetrics,
+          toleranceNotionalDriftPct: props.sizingToleranceNotionalDriftPct,
+          toleranceHedgeRatioDriftPct: props.sizingToleranceHedgeRatioDriftPct,
+          maxLeftQty: props.currentPosition.totalSize,
+          maxRightQty: props.currentPosition.totalSize * Math.max(Math.abs(props.hedgeRatio ?? 1), 1e-9),
+        })
+      : null;
 
   const tradeGatePass = selectedCue ? selectedCue.cue.trade_gate?.pass ?? selectedCue.cue.actionable : false;
   const tradeGateReasons = selectedCue
@@ -2362,7 +2583,31 @@ function TradePage(props: {
     : new Set<string>();
   const bypassExecutionGates = props.dispatchMode === "SIMULATE_ACK";
 
-  const commonEntryDisableReason = (): string | null => {
+  const sizingReason = (
+    result: SpreadSizingPlanResult | null,
+    includeTolerance = true
+  ): string | null => {
+    if (!result) {
+      return "No open spread position.";
+    }
+    if (result.reason) {
+      return result.reason;
+    }
+    const plan = result.plan;
+    if (!plan) {
+      return "Sizing plan unavailable.";
+    }
+    if (includeTolerance && !plan.driftWithinTolerance) {
+      return `Sizing drift exceeds tolerance (notional ${plan.notionalDriftPct.toFixed(
+        2
+      )}% > ${plan.toleranceNotionalDriftPct.toFixed(2)}%, ratio ${plan.hedgeRatioDriftPct.toFixed(
+        2
+      )}% > ${plan.toleranceHedgeRatioDriftPct.toFixed(2)}%).`;
+    }
+    return null;
+  };
+
+  const commonEntryDisableReason = (sizing: SpreadSizingPlanResult): string | null => {
     if (props.submitting) {
       return "Action in progress.";
     }
@@ -2373,10 +2618,11 @@ function TradePage(props: {
       return "Operator ID is required.";
     }
     if (!Number.isFinite(spreadSizeNumber) || spreadSizeNumber <= 0) {
-      return "Spread size must be greater than 0.";
+      return "Target notional (USD) must be greater than 0.";
     }
-    if (entryExecutableLegPlan.reason) {
-      return entryExecutableLegPlan.reason;
+    const localSizingReason = sizingReason(sizing);
+    if (localSizingReason) {
+      return localSizingReason;
     }
     if (!bypassExecutionGates && props.gateState.killSwitchActive) {
       return "Kill switch is ACTIVE.";
@@ -2433,10 +2679,10 @@ function TradePage(props: {
   const reduceExposureDisabled = !props.canReduceExposure || props.submitting;
   const closeSpreadDisabled = !props.canCloseSpread || props.submitting;
 
-  const longEntryDisabledReason = commonEntryDisableReason();
-  const shortEntryDisabledReason = commonEntryDisableReason();
+  const longEntryDisabledReason = commonEntryDisableReason(longEntrySizing);
+  const shortEntryDisabledReason = commonEntryDisableReason(shortEntrySizing);
   const addExposureDisabledReason =
-    commonEntryDisableReason() ??
+    (addExposureSizing ? commonEntryDisableReason(addExposureSizing) : null) ??
     (props.currentPosition.direction === "NONE"
       ? "No open spread position to add exposure."
       : null);
@@ -2449,10 +2695,10 @@ function TradePage(props: {
         : !props.operatorId.trim().length
           ? "Operator ID is required."
           : !Number.isFinite(spreadSizeNumber) || spreadSizeNumber <= 0
-            ? "Spread size must be greater than 0."
-            : entryExecutableLegPlan.reason
-              ? entryExecutableLegPlan.reason
-            : null;
+            ? "Target notional (USD) must be greater than 0."
+            : reduceSizing
+              ? sizingReason(reduceSizing)
+              : null;
   const closeSpreadDisabledReason = props.submitting
     ? "Action in progress."
     : props.currentPosition.direction === "NONE" || props.currentPosition.totalSize <= 0
@@ -2494,6 +2740,38 @@ function TradePage(props: {
 
   const handleKillSwitchToggle = (nextActive: boolean) => {
     void props.onToggleKillSwitch(nextActive);
+  };
+
+  const renderSizingPreview = (
+    label: string,
+    result: SpreadSizingPlanResult | null
+  ): JSX.Element => {
+    if (!result) {
+      return <p>{label}: no open spread position.</p>;
+    }
+    if (result.reason || !result.plan) {
+      return <p>{label}: {result.reason ?? "sizing unavailable."}</p>;
+    }
+    const plan = result.plan;
+    return (
+      <div className="execution-sizing-row">
+        <p>
+          {label}: {plan.leftSide} {formatInstrumentLabel(plan.leftInstrument)}{" "}
+          {formatQtyForStep(plan.plannedLeftQty, plan.leftStep ?? undefined)} @{" "}
+          {formatMetricPrice(plan.referenceLeftPrice)} / {plan.rightSide}{" "}
+          {formatInstrumentLabel(plan.rightInstrument)}{" "}
+          {formatQtyForStep(plan.plannedRightQty, plan.rightStep ?? undefined)} @{" "}
+          {formatMetricPrice(plan.referenceRightPrice)}
+        </p>
+        <p className={plan.driftWithinTolerance ? "small-text tone-ok" : "small-text tone-warn"}>
+          Achieved ${plan.achievedNotionalUsd.toFixed(2)} (drift {plan.notionalDriftPct.toFixed(2)}%, tol{" "}
+          {plan.toleranceNotionalDriftPct.toFixed(2)}%) | ratio {plan.achievedHedgeRatio.toFixed(4)} (drift{" "}
+          {plan.hedgeRatioDriftPct.toFixed(2)}%, tol {plan.toleranceHedgeRatioDriftPct.toFixed(2)}%)
+          {plan.adjusted ? " | rounded to lot steps" : ""}
+          {plan.capApplied ? " | capped by open position" : ""}
+        </p>
+      </div>
+    );
   };
 
   return (
@@ -2684,17 +2962,17 @@ function TradePage(props: {
               </div>
             </div>
             <label>
-              Spread size (units)
+              Target spread notional (USD)
               <input
                 type="number"
-                step="0.01"
+                step="1"
                 min="0"
                 value={props.spreadSize}
                 onChange={(event) => props.setSpreadSize(event.target.value)}
               />
             </label>
             <p className="small-text execution-size-hint">
-              Used for Long, Short, Add, and Reduce actions.
+              Used for Long, Short, Add, and Reduce actions. Close-all ignores this field.
             </p>
             <label>
               Operator ID
@@ -2706,22 +2984,17 @@ function TradePage(props: {
             </label>
 
             <div className="execution-preview">
-              <p>
-                Long preview: BUY {formatInstrumentLabel(leftInstrument)}{" "}
-                {formatQtyForStep(longLeftQty, entryExecutableLegPlan.leftStep ?? undefined)} / SELL{" "}
-                {formatInstrumentLabel(rightInstrument)}{" "}
-                {formatQtyForStep(longRightQty, entryExecutableLegPlan.rightStep ?? undefined)}
+              <p className="small-text">
+                Target notional ${targetNotionalUsd.toFixed(2)} | hedge ratio target{" "}
+                {Math.abs(props.hedgeRatio ?? 1).toFixed(4)}
               </p>
-              <p>
-                Short preview: SELL {formatInstrumentLabel(leftInstrument)}{" "}
-                {formatQtyForStep(shortLeftQty, entryExecutableLegPlan.leftStep ?? undefined)} / BUY{" "}
-                {formatInstrumentLabel(rightInstrument)}{" "}
-                {formatQtyForStep(shortRightQty, entryExecutableLegPlan.rightStep ?? undefined)}
-              </p>
-              {entryExecutableLegPlan.adjusted ? (
-                <p className="small-text tone-warn">
-                  Executable sizing adjusted to match pair lot constraints and hedge ratio.
-                </p>
+              {renderSizingPreview("Long preview", longEntrySizing)}
+              {renderSizingPreview("Short preview", shortEntrySizing)}
+              {props.currentPosition.direction !== "NONE" ? (
+                renderSizingPreview("Add preview", addExposureSizing)
+              ) : null}
+              {props.currentPosition.direction !== "NONE" ? (
+                renderSizingPreview("Reduce preview", reduceSizing)
               ) : null}
             </div>
 

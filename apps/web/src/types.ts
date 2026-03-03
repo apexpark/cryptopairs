@@ -471,6 +471,8 @@ export interface UpdateKillSwitchRequest {
 export interface ExecutionDispatchModeResponse {
   mode: "FAIL_CLOSED" | "SIMULATE_ACK" | "LIVE_KRAKEN";
   requires_live_arm: boolean;
+  sizing_tolerance_notional_drift_pct: number;
+  sizing_tolerance_hedge_ratio_drift_pct: number;
 }
 
 export interface ExecutionDecisionResponse {
@@ -497,6 +499,22 @@ export interface OrderIntentRequest {
   spread_z?: number | null;
   side: TradeSide;
   qty: number;
+  sizing?: {
+    target_notional_usd: number;
+    target_hedge_ratio: number;
+    reference_left_instrument: string;
+    reference_right_instrument: string;
+    reference_left_price: number;
+    reference_right_price: number;
+    planned_left_qty: number;
+    planned_right_qty: number;
+    achieved_notional_usd: number;
+    achieved_hedge_ratio: number;
+    notional_drift_pct: number;
+    hedge_ratio_drift_pct: number;
+    tolerance_notional_drift_pct?: number;
+    tolerance_hedge_ratio_drift_pct?: number;
+  };
   operator_confirmed: boolean;
   operator_id: string | null;
   min_coverage_pct: number;

@@ -59,6 +59,40 @@
       "type": "number",
       "exclusiveMinimum": 0
     },
+    "sizing": {
+      "type": ["object", "null"],
+      "additionalProperties": false,
+      "required": [
+        "target_notional_usd",
+        "target_hedge_ratio",
+        "reference_left_instrument",
+        "reference_right_instrument",
+        "reference_left_price",
+        "reference_right_price",
+        "planned_left_qty",
+        "planned_right_qty",
+        "achieved_notional_usd",
+        "achieved_hedge_ratio",
+        "notional_drift_pct",
+        "hedge_ratio_drift_pct"
+      ],
+      "properties": {
+        "target_notional_usd": { "type": "number", "exclusiveMinimum": 0 },
+        "target_hedge_ratio": { "type": "number", "exclusiveMinimum": 0 },
+        "reference_left_instrument": { "type": "string", "minLength": 1 },
+        "reference_right_instrument": { "type": "string", "minLength": 1 },
+        "reference_left_price": { "type": "number", "exclusiveMinimum": 0 },
+        "reference_right_price": { "type": "number", "exclusiveMinimum": 0 },
+        "planned_left_qty": { "type": "number", "exclusiveMinimum": 0 },
+        "planned_right_qty": { "type": "number", "exclusiveMinimum": 0 },
+        "achieved_notional_usd": { "type": "number", "exclusiveMinimum": 0 },
+        "achieved_hedge_ratio": { "type": "number", "exclusiveMinimum": 0 },
+        "notional_drift_pct": { "type": "number", "minimum": 0 },
+        "hedge_ratio_drift_pct": { "type": "number", "minimum": 0 },
+        "tolerance_notional_drift_pct": { "type": "number", "minimum": 0 },
+        "tolerance_hedge_ratio_drift_pct": { "type": "number", "minimum": 0 }
+      }
+    },
     "operator_confirmed": {
       "type": "boolean"
     },
