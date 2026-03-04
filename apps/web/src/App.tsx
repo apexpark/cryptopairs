@@ -869,21 +869,43 @@ function App(): JSX.Element {
     () => openTradesResponse?.trades.find((trade) => trade.pair_id === currentPairId) ?? null,
     [openTradesResponse, currentPairId]
   );
-  const currentLiveZ = useMemo(() => {
-    if (liveZTick && liveZTick.pairId === currentPairId) {
-      return liveZTick.z;
-    }
+  const tradeZSeries = useMemo(() => {
     if (!zSeries.length) {
+      return zSeries;
+    }
+    if (!liveZTick || liveZTick.pairId !== currentPairId || !Number.isFinite(liveZTick.z)) {
+      return zSeries;
+    }
+    const next = [...zSeries];
+    next[next.length - 1] = liveZTick.z;
+    return next;
+  }, [zSeries, liveZTick, currentPairId]);
+  const tradeZTimestamps = useMemo(() => {
+    if (!zTimestamps.length) {
+      return zTimestamps;
+    }
+    if (!liveZTick || liveZTick.pairId !== currentPairId || !liveZTick.ts.trim().length) {
+      return zTimestamps;
+    }
+    const next = [...zTimestamps];
+    next[next.length - 1] = liveZTick.ts;
+    return next;
+  }, [zTimestamps, liveZTick, currentPairId]);
+  const currentLiveZ = useMemo(() => {
+    if (!tradeZSeries.length) {
       return null;
     }
-    return zSeries[zSeries.length - 1];
-  }, [liveZTick, currentPairId, zSeries]);
+    return tradeZSeries[tradeZSeries.length - 1];
+  }, [tradeZSeries]);
   const currentLiveZUpdatedAt = useMemo(() => {
     if (liveZTick && liveZTick.pairId === currentPairId) {
       return liveZTick.ts;
     }
-    return null;
-  }, [liveZTick, currentPairId]);
+    if (!tradeZTimestamps.length) {
+      return null;
+    }
+    return tradeZTimestamps[tradeZTimestamps.length - 1];
+  }, [liveZTick, currentPairId, tradeZTimestamps]);
   const currentTimeline = timelineByPair[currentPairId] ?? [];
   const currentIntentHistory = intentHistoryByPair[currentPairId] ?? [];
   const persistentExecutionMarkers = useMemo(
@@ -1351,28 +1373,6 @@ function App(): JSX.Element {
     backtestExitMode,
     analyticsChartBars,
   ]);
-
-  useEffect(() => {
-    if (!selectedCueRow || zSeries.length === 0) {
-      return;
-    }
-    const canonicalZ = selectedCueRow.cue.spread_z;
-    if (!Number.isFinite(canonicalZ)) {
-      return;
-    }
-    const latest = zSeries[zSeries.length - 1];
-    if (Math.abs(latest - canonicalZ) < 1e-9) {
-      return;
-    }
-    setZSeries((prev) => {
-      if (prev.length === 0) {
-        return prev;
-      }
-      const next = [...prev];
-      next[next.length - 1] = canonicalZ;
-      return next;
-    });
-  }, [selectedCueRow, zSeries]);
 
   useEffect(() => {
     if (!uiAccessGranted) {
@@ -2270,8 +2270,8 @@ function App(): JSX.Element {
           cues={cuesResponse}
           selectedPairId={currentPairId}
           onSelectPair={setSelectedPairId}
-          zSeries={zSeries}
-          zTimestamps={zTimestamps}
+          zSeries={tradeZSeries}
+          zTimestamps={tradeZTimestamps}
           zMarkers={tradeChartMarkers}
           analyticsError={analyticsError}
           currentPosition={currentPosition}

@@ -82,6 +82,10 @@ fn bypass_safety_gates_for_dispatch_mode(dispatch_mode: DispatchMode) -> bool {
     matches!(dispatch_mode, DispatchMode::SimulateAck)
 }
 
+fn ack_watchdog_enabled_for_dispatch_mode(dispatch_mode: DispatchMode) -> bool {
+    !matches!(dispatch_mode, DispatchMode::SimulateAck)
+}
+
 fn normalize_secret_value(raw: String) -> Option<String> {
     let trimmed = raw.trim().to_string();
     if trimmed.is_empty() {
@@ -2009,6 +2013,13 @@ async fn main() -> anyhow::Result<()> {
 }
 
 async fn spawn_ack_watchdog(state: AppState) {
+    if !ack_watchdog_enabled_for_dispatch_mode(state.dispatch_mode) {
+        info!(
+            dispatch_mode = ?state.dispatch_mode,
+            "execution ack watchdog disabled for simulate dispatch mode"
+        );
+        return;
+    }
     let poll_every = Duration::from_secs(state.ack_watchdog.poll_interval_seconds.max(1));
     loop {
         if let Err(error) = run_ack_watchdog_once(&state).await {
@@ -4091,15 +4102,15 @@ fn map_order_intent(record: OrderIntentRecord) -> OrderIntentResponse {
 #[cfg(test)]
 mod tests {
     use super::{
-        build_execution_alerts, build_uri_component, bypass_safety_gates_for_dispatch_mode,
-        derive_open_order_transition, derive_order_status_transition, fold_spread_positions,
-        is_snapshot_stale, is_terminal_state, parse_ingest_target_state,
-        parse_kraken_open_orders_response, parse_kraken_order_status_response,
-        parse_kraken_submit_response, resolve_secret_value, safe_ratio,
-        sign_kraken_futures_payload, validate_manual_controls, validate_order_qty_constraints,
-        validate_spread_sizing_request, ApiError, DispatchMode, ExecutionObservabilityMetricsRaw,
-        ExecutionObservabilityThresholds, KrakenOpenOrder, KrakenStatusOrder, SpreadLedgerEvent,
-        SpreadSizingRequest,
+        ack_watchdog_enabled_for_dispatch_mode, build_execution_alerts, build_uri_component,
+        bypass_safety_gates_for_dispatch_mode, derive_open_order_transition,
+        derive_order_status_transition, fold_spread_positions, is_snapshot_stale,
+        is_terminal_state, parse_ingest_target_state, parse_kraken_open_orders_response,
+        parse_kraken_order_status_response, parse_kraken_submit_response, resolve_secret_value,
+        safe_ratio, sign_kraken_futures_payload, validate_manual_controls,
+        validate_order_qty_constraints, validate_spread_sizing_request, ApiError, DispatchMode,
+        ExecutionObservabilityMetricsRaw, ExecutionObservabilityThresholds, KrakenOpenOrder,
+        KrakenStatusOrder, SpreadLedgerEvent, SpreadSizingRequest,
     };
     use chrono::{DateTime, Duration, Utc};
     use execution_service::{OrderIntentAction, OrderLifecycleState};
@@ -4216,6 +4227,15 @@ mod tests {
             DispatchMode::SimulateAck
         ));
         assert!(!bypass_safety_gates_for_dispatch_mode(
+            DispatchMode::LiveKraken
+        ));
+        assert!(ack_watchdog_enabled_for_dispatch_mode(
+            DispatchMode::FailClosed
+        ));
+        assert!(!ack_watchdog_enabled_for_dispatch_mode(
+            DispatchMode::SimulateAck
+        ));
+        assert!(ack_watchdog_enabled_for_dispatch_mode(
             DispatchMode::LiveKraken
         ));
         assert!(!DispatchMode::FailClosed.requires_live_arm());
