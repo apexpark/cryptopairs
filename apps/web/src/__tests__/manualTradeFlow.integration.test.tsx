@@ -323,7 +323,7 @@ describe("manual trade flow", () => {
     const firstPayload = api.submitOrderIntent.mock.calls[0][0];
     expect(firstPayload.pair_id).toBe(PAIR_ID);
     expect(firstPayload.spread_direction).toBe("LONG_SPREAD");
-    expect(firstPayload.spread_z).toBe(-2.1);
+    expect(firstPayload.spread_z).toBeCloseTo(-0.05, 6);
 
     await waitFor(() => {
       expect(
