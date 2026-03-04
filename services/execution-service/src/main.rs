@@ -3980,10 +3980,11 @@ fn validate_spread_sizing_request(
         ));
     }
 
-    let achieved_notional_usd = (sizing.reference_left_price * sizing.planned_left_qty).abs()
-        + (sizing.reference_right_price * sizing.planned_right_qty).abs();
+    let achieved_left_notional_usd = (sizing.reference_left_price * sizing.planned_left_qty).abs();
+    let achieved_right_notional_usd = (sizing.reference_right_price * sizing.planned_right_qty).abs();
+    let achieved_notional_usd = achieved_left_notional_usd + achieved_right_notional_usd;
     let target_ratio = sizing.target_hedge_ratio.abs().max(f64::EPSILON);
-    let achieved_ratio = (sizing.planned_right_qty.abs() / sizing.planned_left_qty.abs())
+    let achieved_ratio = (achieved_right_notional_usd / achieved_left_notional_usd)
         .abs()
         .max(f64::EPSILON);
     let notional_drift_pct = relative_drift_pct(sizing.target_notional_usd, achieved_notional_usd);
@@ -4726,6 +4727,35 @@ mod tests {
         assert!(
             matches!(result, Err(ApiError::BadRequest(message)) if message.contains("drift exceeds tolerance"))
         );
+    }
+
+    #[test]
+    fn spread_sizing_validation_uses_notional_ratio_for_drift() {
+        let sizing = SpreadSizingRequest {
+            target_notional_usd: 6_940.0,
+            target_hedge_ratio: 0.8754,
+            reference_left_instrument: "PF_DOGEUSD".to_string(),
+            reference_right_instrument: "PF_PEPEUSD".to_string(),
+            reference_left_price: 0.102458,
+            reference_right_price: 0.000004,
+            planned_left_qty: 36_113.0,
+            planned_right_qty: 809_970_750.0,
+            achieved_notional_usd: 6_939.94,
+            achieved_hedge_ratio: 0.8756,
+            notional_drift_pct: 0.001,
+            hedge_ratio_drift_pct: 0.03,
+            tolerance_notional_drift_pct: Some(2.0),
+            tolerance_hedge_ratio_drift_pct: Some(25.0),
+        };
+        let result = validate_spread_sizing_request(
+            "PF_DOGEUSD",
+            Some("PF_DOGEUSD__PF_PEPEUSD"),
+            &sizing,
+            2.0,
+            25.0,
+            36_113.0,
+        );
+        assert!(result.is_ok());
     }
 
     #[test]
