@@ -521,16 +521,24 @@ function deriveSpreadSizingPlan(params: {
     };
   }
 
-  const denominator = referenceLeftPrice + targetHedgeRatio * referenceRightPrice;
-  if (!Number.isFinite(denominator) || denominator <= 0) {
+  const leftNotionalFraction = 1 / (1 + targetHedgeRatio);
+  const rightNotionalFraction = targetHedgeRatio / (1 + targetHedgeRatio);
+  if (
+    !Number.isFinite(leftNotionalFraction) ||
+    leftNotionalFraction <= 0 ||
+    !Number.isFinite(rightNotionalFraction) ||
+    rightNotionalFraction <= 0
+  ) {
     return {
       plan: null,
       reason: "Unable to derive executable leg quantities from target notional and prices.",
     };
   }
 
-  const rawLeftQty = params.targetNotionalUsd / denominator;
-  const rawRightQty = rawLeftQty * targetHedgeRatio;
+  const targetLeftNotionalUsd = params.targetNotionalUsd * leftNotionalFraction;
+  const targetRightNotionalUsd = params.targetNotionalUsd * rightNotionalFraction;
+  const rawLeftQty = targetLeftNotionalUsd / referenceLeftPrice;
+  const rawRightQty = targetRightNotionalUsd / referenceRightPrice;
   if (!Number.isFinite(rawLeftQty) || rawLeftQty <= 0 || !Number.isFinite(rawRightQty) || rawRightQty <= 0) {
     return { plan: null, reason: "Sizing result is invalid for this pair at current prices." };
   }
@@ -583,9 +591,11 @@ function deriveSpreadSizingPlan(params: {
     };
   }
 
-  const achievedNotionalUsd =
-    Math.abs(referenceLeftPrice * plannedLeftQty) + Math.abs(referenceRightPrice * plannedRightQty);
-  const achievedHedgeRatio = Math.abs(plannedRightQty / plannedLeftQty);
+  const achievedLeftNotionalUsd = Math.abs(referenceLeftPrice * plannedLeftQty);
+  const achievedRightNotionalUsd = Math.abs(referenceRightPrice * plannedRightQty);
+  const achievedNotionalUsd = achievedLeftNotionalUsd + achievedRightNotionalUsd;
+  const achievedHedgeRatio =
+    achievedLeftNotionalUsd > 0 ? achievedRightNotionalUsd / achievedLeftNotionalUsd : 0;
   const notionalDriftPct = relativeDriftPct(params.targetNotionalUsd, achievedNotionalUsd);
   const hedgeRatioDriftPct = relativeDriftPct(targetHedgeRatio, achievedHedgeRatio);
   const driftWithinTolerance =
@@ -666,25 +676,19 @@ function derivePairNotionalRules(params: {
     return { minimumNotionalUsd: 1, incrementNotionalUsd: 1 };
   }
 
-  const longDenominator = leftLong + targetHedgeRatio * rightLong;
-  const shortDenominator = leftShort + targetHedgeRatio * rightShort;
-  if (
-    !Number.isFinite(longDenominator) ||
-    longDenominator <= 0 ||
-    !Number.isFinite(shortDenominator) ||
-    shortDenominator <= 0
-  ) {
+  const ratioScale = 1 + targetHedgeRatio;
+  if (!Number.isFinite(ratioScale) || ratioScale <= 0) {
     return { minimumNotionalUsd: 1, incrementNotionalUsd: 1 };
   }
 
   const directionalIncrements: number[] = [
-    longDenominator * leftStep,
-    shortDenominator * leftStep,
+    leftStep * leftLong * ratioScale,
+    leftStep * leftShort * ratioScale,
   ];
   if (targetHedgeRatio > 1e-9) {
     directionalIncrements.push(
-      longDenominator * (rightStep / targetHedgeRatio),
-      shortDenominator * (rightStep / targetHedgeRatio)
+      rightStep * rightLong * (ratioScale / targetHedgeRatio),
+      rightStep * rightShort * (ratioScale / targetHedgeRatio)
     );
   }
   const rawIncrementNotional = directionalIncrements
@@ -2146,6 +2150,24 @@ function App(): JSX.Element {
     const now = nowIso();
     const pairId = selectedCueRow.cue.pair_id;
     const current = positions[pairId] ?? emptyPosition(now);
+    const currentOpenTradeSnapshot =
+      openTradesResponse?.trades.find((trade) => trade.pair_id === pairId) ?? null;
+    const openLeftLegQty =
+      currentOpenTradeSnapshot?.legs.find(
+        (leg) => leg.instrument === selectedCueRow.cue.left_instrument
+      )?.qty ?? null;
+    const openRightLegQty =
+      currentOpenTradeSnapshot?.legs.find(
+        (leg) => leg.instrument === selectedCueRow.cue.right_instrument
+      )?.qty ?? null;
+    const maxReducibleLeftQty =
+      openLeftLegQty != null && Number.isFinite(openLeftLegQty) && openLeftLegQty > 0
+        ? openLeftLegQty
+        : current.totalSize;
+    const maxReducibleRightQty =
+      openRightLegQty != null && Number.isFinite(openRightLegQty) && openRightLegQty > 0
+        ? openRightLegQty
+        : undefined;
     const currentZ = Number.isFinite(currentLiveZ ?? NaN)
       ? (currentLiveZ as number)
       : selectedCueRow.cue.spread_z;
@@ -2220,8 +2242,8 @@ function App(): JSX.Element {
       }
     }
 
-    let leftLegQty = current.totalSize;
-    let rightLegQty = current.totalSize;
+    let leftLegQty = 0;
+    let rightLegQty = 0;
     let sizingPayload:
       | {
           target_notional_usd: number;
@@ -2252,12 +2274,8 @@ function App(): JSX.Element {
         rightMetrics: headerRightMetrics,
         toleranceNotionalDriftPct: sizingToleranceNotionalDriftPct,
         toleranceHedgeRatioDriftPct: sizingToleranceHedgeRatioDriftPct,
-        maxLeftQty:
-          action === "EXIT" ? current.totalSize : undefined,
-        maxRightQty:
-          action === "EXIT"
-            ? current.totalSize * Math.max(Math.abs(selectedCueRow.hedge_ratio ?? 1), 1e-9)
-            : undefined,
+        maxLeftQty: action === "EXIT" ? maxReducibleLeftQty : undefined,
+        maxRightQty: action === "EXIT" ? maxReducibleRightQty : undefined,
       });
       if (planResult.reason || !planResult.plan) {
         setTradeMessage(planResult.reason ?? "Sizing plan unavailable.");
@@ -2286,6 +2304,20 @@ function App(): JSX.Element {
         tolerance_notional_drift_pct: plan.toleranceNotionalDriftPct,
         tolerance_hedge_ratio_drift_pct: plan.toleranceHedgeRatioDriftPct,
       };
+    } else {
+      if (
+        openLeftLegQty == null ||
+        !Number.isFinite(openLeftLegQty) ||
+        openLeftLegQty <= 0 ||
+        openRightLegQty == null ||
+        !Number.isFinite(openRightLegQty) ||
+        openRightLegQty <= 0
+      ) {
+        setTradeMessage("Open-trade leg quantities are unavailable. Unable to close safely.");
+        return;
+      }
+      leftLegQty = openLeftLegQty;
+      rightLegQty = openRightLegQty;
     }
     const legs = buildSpreadLegs(
       selectedCueRow.cue.left_instrument,
@@ -2838,6 +2870,18 @@ function TradePage(props: {
   const targetNotionalUsd = Number.isFinite(spreadSizeNumber) && spreadSizeNumber > 0 ? spreadSizeNumber : 0;
   const leftInstrument = selectedCue?.cue.left_instrument ?? "LEFT";
   const rightInstrument = selectedCue?.cue.right_instrument ?? "RIGHT";
+  const openLeftLegQty =
+    props.openTrade?.legs.find((leg) => leg.instrument === leftInstrument)?.qty ?? null;
+  const openRightLegQty =
+    props.openTrade?.legs.find((leg) => leg.instrument === rightInstrument)?.qty ?? null;
+  const maxReduceLeftQty =
+    openLeftLegQty != null && Number.isFinite(openLeftLegQty) && openLeftLegQty > 0
+      ? openLeftLegQty
+      : props.currentPosition.totalSize;
+  const maxReduceRightQty =
+    openRightLegQty != null && Number.isFinite(openRightLegQty) && openRightLegQty > 0
+      ? openRightLegQty
+      : undefined;
   const pairNotionalRules = useMemo(
     () =>
       derivePairNotionalRules({
@@ -2937,8 +2981,8 @@ function TradePage(props: {
           rightMetrics: props.rightMetrics,
           toleranceNotionalDriftPct: props.sizingToleranceNotionalDriftPct,
           toleranceHedgeRatioDriftPct: props.sizingToleranceHedgeRatioDriftPct,
-          maxLeftQty: props.currentPosition.totalSize,
-          maxRightQty: props.currentPosition.totalSize * Math.max(Math.abs(props.hedgeRatio ?? 1), 1e-9),
+          maxLeftQty: maxReduceLeftQty,
+          maxRightQty: maxReduceRightQty,
         })
       : null;
 
