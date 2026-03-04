@@ -309,11 +309,9 @@ describe("manual trade flow", () => {
     expect(screen.getByText("XBTUSD Position Size").parentElement).toHaveTextContent("+1.00");
     expect(screen.getByText("ETHUSD Position Size").parentElement).toHaveTextContent("+0.85");
 
-    const targetNotionalInput = screen.getByLabelText(
-      /Target Spread Notional \(USD\)/i
-    ) as HTMLInputElement;
-    fireEvent.change(targetNotionalInput, { target: { value: targetNotionalInput.min || "1000" } });
-    fireEvent.blur(targetNotionalInput);
+    const spreadUnitsInput = screen.getByLabelText(/Spread Units \(lots\)/i) as HTMLInputElement;
+    fireEvent.change(spreadUnitsInput, { target: { value: spreadUnitsInput.min || "1" } });
+    fireEvent.blur(spreadUnitsInput);
 
     fireEvent.click(screen.getByLabelText(/Live Trading Armed/i));
     await waitFor(() => {

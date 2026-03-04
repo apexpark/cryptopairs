@@ -749,25 +749,6 @@ function derivePairNotionalRules(params: {
   };
 }
 
-function isNotionalAlignedToRules(value: number, rules: PairNotionalRules): boolean {
-  if (!Number.isFinite(value) || value < rules.minimumNotionalUsd) {
-    return false;
-  }
-  const steps = (value - rules.minimumNotionalUsd) / rules.incrementNotionalUsd;
-  return Math.abs(steps - Math.round(steps)) < 1e-6;
-}
-
-function alignNotionalToRules(value: number, rules: PairNotionalRules): number {
-  if (!Number.isFinite(value)) {
-    return rules.minimumNotionalUsd;
-  }
-  if (value <= rules.minimumNotionalUsd) {
-    return rules.minimumNotionalUsd;
-  }
-  const steps = Math.round((value - rules.minimumNotionalUsd) / rules.incrementNotionalUsd);
-  return normalizeUsdValue(rules.minimumNotionalUsd + steps * rules.incrementNotionalUsd);
-}
-
 function formatSizingDriftBlockedMessage(plan: SpreadSizingPlan): string {
   return `Notional sizing drift exceeds tolerance (${plan.notionalDriftPct.toFixed(
     2
@@ -994,7 +975,7 @@ function App(): JSX.Element {
   const [headerLeftMetrics, setHeaderLeftMetrics] = useState<MarketMetricsResponse | null>(null);
   const [headerRightMetrics, setHeaderRightMetrics] = useState<MarketMetricsResponse | null>(null);
   const [headerMetricsError, setHeaderMetricsError] = useState<string | null>(null);
-  const [spreadSize, setSpreadSize] = useState<string>("1000");
+  const [spreadSize, setSpreadSize] = useState<string>("1");
   const [operatorConfirmed, setOperatorConfirmed] = useState<boolean>(false);
   const [tradeMessage, setTradeMessage] = useState<string>("No trade submitted yet.");
   const [submitting, setSubmitting] = useState(false);
@@ -2174,7 +2155,7 @@ function App(): JSX.Element {
 
     let direction: Exclude<DirectionHint, "NONE">;
     let action: ExecutionAction;
-    const targetNotionalUsd = spreadSizeNumber;
+    const spreadLots = spreadSizeNumber;
     const pairNotionalRules = derivePairNotionalRules({
       leftInstrument: selectedCueRow.cue.left_instrument,
       rightInstrument: selectedCueRow.cue.right_instrument,
@@ -2184,6 +2165,8 @@ function App(): JSX.Element {
       toleranceNotionalDriftPct: sizingToleranceNotionalDriftPct,
       toleranceHedgeRatioDriftPct: sizingToleranceHedgeRatioDriftPct,
     });
+    const lotNotionalUsd = pairNotionalRules.minimumNotionalUsd;
+    const targetNotionalUsd = spreadLots * lotNotionalUsd;
 
     if (!Number.isFinite(currentZ)) {
       setTradeMessage("Current z-score unavailable. Wait for live data and retry.");
@@ -2220,24 +2203,16 @@ function App(): JSX.Element {
     }
 
     if (action !== "EMERGENCY_STOP_CLOSE") {
-      if (!Number.isFinite(spreadSizeNumber) || spreadSizeNumber <= 0) {
-        setTradeMessage("Target notional (USD) must be > 0.");
+      if (!Number.isFinite(spreadLots) || spreadLots <= 0) {
+        setTradeMessage("Spread units must be greater than 0.");
         return;
       }
-      if (targetNotionalUsd < pairNotionalRules.minimumNotionalUsd) {
-        setTradeMessage(
-          `Target notional is below minimum for this pair ($${formatUsdCompact(
-            pairNotionalRules.minimumNotionalUsd
-          )}).`
-        );
+      if (Math.abs(spreadLots - Math.round(spreadLots)) > 1e-6) {
+        setTradeMessage("Spread units must be a whole number of lots.");
         return;
       }
-      if (!isNotionalAlignedToRules(targetNotionalUsd, pairNotionalRules)) {
-        setTradeMessage(
-          `Target notional must move in $${formatUsdCompact(
-            pairNotionalRules.incrementNotionalUsd
-          )} increments above $${formatUsdCompact(pairNotionalRules.minimumNotionalUsd)}.`
-        );
+      if (!Number.isFinite(lotNotionalUsd) || lotNotionalUsd <= 0) {
+        setTradeMessage("Pair lot sizing is unavailable. Wait for fresh market metrics.");
         return;
       }
     }
@@ -2867,7 +2842,7 @@ function TradePage(props: {
     props.cues?.cues[0] ??
     null;
   const spreadSizeNumber = Number.parseFloat(props.spreadSize);
-  const targetNotionalUsd = Number.isFinite(spreadSizeNumber) && spreadSizeNumber > 0 ? spreadSizeNumber : 0;
+  const spreadLots = Number.isFinite(spreadSizeNumber) && spreadSizeNumber > 0 ? spreadSizeNumber : 0;
   const leftInstrument = selectedCue?.cue.left_instrument ?? "LEFT";
   const rightInstrument = selectedCue?.cue.right_instrument ?? "RIGHT";
   const openLeftLegQty =
@@ -2903,30 +2878,28 @@ function TradePage(props: {
       props.sizingToleranceHedgeRatioDriftPct,
     ]
   );
+  const lotNotionalUsd = pairNotionalRules.minimumNotionalUsd;
+  const targetNotionalUsd = spreadLots * lotNotionalUsd;
   const notionalValidationMessage = (): string | null => {
-    if (!Number.isFinite(spreadSizeNumber) || spreadSizeNumber <= 0) {
-      return "Target notional (USD) must be greater than 0.";
+    if (!Number.isFinite(spreadLots) || spreadLots <= 0) {
+      return "Spread units must be greater than 0.";
     }
-    if (spreadSizeNumber < pairNotionalRules.minimumNotionalUsd) {
-      return `Target notional is below minimum for this pair ($${formatUsdCompact(
-        pairNotionalRules.minimumNotionalUsd
-      )}).`;
+    if (Math.abs(spreadLots - Math.round(spreadLots)) > 1e-6) {
+      return "Spread units must be a whole number of lots.";
     }
-    if (!isNotionalAlignedToRules(spreadSizeNumber, pairNotionalRules)) {
-      return `Target notional must move in $${formatUsdCompact(
-        pairNotionalRules.incrementNotionalUsd
-      )} increments above $${formatUsdCompact(pairNotionalRules.minimumNotionalUsd)}.`;
+    if (!Number.isFinite(lotNotionalUsd) || lotNotionalUsd <= 0) {
+      return "Pair lot sizing is unavailable. Wait for fresh market metrics.";
     }
     return null;
   };
   const handleSpreadSizeBlur = (): void => {
     if (!Number.isFinite(spreadSizeNumber)) {
-      props.setSpreadSize(formatUsdCompact(pairNotionalRules.minimumNotionalUsd));
+      props.setSpreadSize("1");
       return;
     }
-    const normalized = alignNotionalToRules(spreadSizeNumber, pairNotionalRules);
+    const normalized = Math.max(1, Math.round(spreadSizeNumber));
     if (Math.abs(normalized - spreadSizeNumber) > 1e-6) {
-      props.setSpreadSize(formatUsdCompact(normalized));
+      props.setSpreadSize(normalized.toString());
     }
   };
   const longEntrySizing = deriveSpreadSizingPlan({
@@ -3152,36 +3125,18 @@ function TradePage(props: {
     void props.onToggleKillSwitch(nextActive);
   };
 
-  const renderSizingPreview = (
-    label: string,
-    result: SpreadSizingPlanResult | null
-  ): JSX.Element => {
-    if (!result) {
-      return <p>{label}: no open spread position.</p>;
-    }
-    if (result.reason || !result.plan) {
-      return <p>{label}: {result.reason ?? "sizing unavailable."}</p>;
-    }
-    const plan = result.plan;
-    return (
-      <div className="execution-sizing-row">
-        <p>
-          {label}: {formatInstrumentLabel(plan.leftInstrument)}{" "}
-          {formatQtyForStep(plan.plannedLeftQty, plan.leftStep ?? undefined)} |{" "}
-          {formatInstrumentLabel(plan.rightInstrument)}{" "}
-          {formatQtyForStep(plan.plannedRightQty, plan.rightStep ?? undefined)}
-        </p>
-        <p className={plan.driftWithinTolerance ? "small-text tone-ok" : "small-text tone-warn"}>
-          Achieved ${formatUsdCompact(plan.achievedNotionalUsd)}
-        </p>
-        {plan.hedgeRatioDriftPct > plan.toleranceHedgeRatioDriftPct + 1e-9 ? (
-          <p className="small-text tone-warn">
-            Hedge ratio drift {plan.hedgeRatioDriftPct.toFixed(2)}% (lot-step constrained).
-          </p>
-        ) : null}
-      </div>
-    );
-  };
+  const sizingSummaryPlan =
+    longEntrySizing.plan ??
+    shortEntrySizing.plan ??
+    addExposureSizing?.plan ??
+    reduceSizing?.plan ??
+    null;
+  const sizingSummaryReason =
+    longEntrySizing.reason ??
+    shortEntrySizing.reason ??
+    addExposureSizing?.reason ??
+    reduceSizing?.reason ??
+    null;
 
   return (
     <div className="trade-grid">
@@ -3419,19 +3374,18 @@ function TradePage(props: {
               </div>
             </div>
             <label>
-              Target Spread Notional (USD) - ${formatUsdCompact(pairNotionalRules.minimumNotionalUsd)} minimum
+              Spread Units (lots)
               <input
                 type="number"
-                step={pairNotionalRules.incrementNotionalUsd}
-                min={pairNotionalRules.minimumNotionalUsd}
+                step={1}
+                min={1}
                 value={props.spreadSize}
                 onChange={(event) => props.setSpreadSize(event.target.value)}
                 onBlur={handleSpreadSizeBlur}
               />
             </label>
             <p className="small-text execution-size-hint">
-              Increment: ${formatUsdCompact(pairNotionalRules.incrementNotionalUsd)}. Used for Long, Short,
-              Add, and Reduce actions. Close-all ignores this field.
+              1 lot = ${formatUsdCompact(lotNotionalUsd)} notional. Close-all ignores this field.
             </p>
             <label>
               Operator ID
@@ -3447,14 +3401,35 @@ function TradePage(props: {
                 Target Notional ${formatUsdCompact(targetNotionalUsd)} | Hedge ratio target{" "}
                 {Math.abs(props.hedgeRatio ?? 1).toFixed(4)}
               </p>
-              {renderSizingPreview("Long", longEntrySizing)}
-              {renderSizingPreview("Short", shortEntrySizing)}
-              {props.currentPosition.direction !== "NONE" ? (
-                renderSizingPreview("Add", addExposureSizing)
-              ) : null}
-              {props.currentPosition.direction !== "NONE" ? (
-                renderSizingPreview("Reduce", reduceSizing)
-              ) : null}
+              {sizingSummaryPlan ? (
+                <>
+                  <p>
+                    {formatInstrumentLabel(sizingSummaryPlan.leftInstrument)}{" "}
+                    {formatQtyForStep(
+                      sizingSummaryPlan.plannedLeftQty,
+                      sizingSummaryPlan.leftStep ?? undefined
+                    )}{" "}
+                    |{" "}
+                    {formatInstrumentLabel(sizingSummaryPlan.rightInstrument)}{" "}
+                    {formatQtyForStep(
+                      sizingSummaryPlan.plannedRightQty,
+                      sizingSummaryPlan.rightStep ?? undefined
+                    )}
+                  </p>
+                  <p
+                    className={
+                      sizingSummaryPlan.notionalDriftPct <=
+                      sizingSummaryPlan.toleranceNotionalDriftPct + 1e-9
+                        ? "small-text tone-ok"
+                        : "small-text tone-warn"
+                    }
+                  >
+                    Achieved ${formatUsdCompact(sizingSummaryPlan.achievedNotionalUsd)}
+                  </p>
+                </>
+              ) : (
+                <p className="small-text tone-warn">{sizingSummaryReason ?? "Sizing unavailable."}</p>
+              )}
             </div>
 
             <button className="primary" disabled={longEntryDisabled} onClick={() => execute("long-entry")}>
