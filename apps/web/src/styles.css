@@ -618,6 +618,29 @@ tbody tr.selected-row {
   font-size: 0.84rem;
 }
 
+.open-trades-card h3 {
+  margin-bottom: 8px;
+}
+
+.open-trades-count {
+  margin: 6px 0 8px 0;
+  font-size: 0.92rem;
+  color: var(--muted);
+}
+
+.open-trades-table {
+  font-size: 0.72rem;
+}
+
+.open-trades-summary p {
+  font-size: 0.95rem;
+}
+
+.open-trades-updated {
+  font-size: 0.88rem;
+  color: var(--muted);
+}
+
 .execution-block {
   border: 1px solid var(--line-soft);
   border-radius: 8px;
