@@ -3172,10 +3172,7 @@ function TradePage(props: {
                   props.dataDegraded,
                   props.openTradePairIds.has(entry.cue.pair_id)
                 );
-                const displayZ =
-                  entry.cue.pair_id === props.selectedPairId && props.liveCurrentZ != null
-                    ? props.liveCurrentZ
-                    : entry.cue.spread_z;
+                const displayZ = entry.cue.spread_z;
                 return (
                   <tr
                     key={entry.cue.pair_id}
