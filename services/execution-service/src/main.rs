@@ -3981,7 +3981,8 @@ fn validate_spread_sizing_request(
     }
 
     let achieved_left_notional_usd = (sizing.reference_left_price * sizing.planned_left_qty).abs();
-    let achieved_right_notional_usd = (sizing.reference_right_price * sizing.planned_right_qty).abs();
+    let achieved_right_notional_usd =
+        (sizing.reference_right_price * sizing.planned_right_qty).abs();
     let achieved_notional_usd = achieved_left_notional_usd + achieved_right_notional_usd;
     let target_ratio = sizing.target_hedge_ratio.abs().max(f64::EPSILON);
     let achieved_ratio = (achieved_right_notional_usd / achieved_left_notional_usd)
