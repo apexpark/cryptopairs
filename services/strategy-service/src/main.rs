@@ -2184,7 +2184,7 @@ struct ErrorResponse {
     error: String,
 }
 
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Debug, Deserialize, Serialize, Clone)]
 struct StrategyMarketMetricsResponse {
     instrument: String,
     server_time: DateTime<Utc>,
@@ -2215,6 +2215,14 @@ struct StrategyMarketMetricsUiResponse {
 struct StrategyMarketMetricsBatchResponse {
     generated_at: DateTime<Utc>,
     metrics: Vec<StrategyMarketMetricsResponse>,
+}
+
+fn canonical_metric_instrument(value: &str) -> String {
+    let upper = value.trim().to_uppercase();
+    if upper.starts_with("PF_") || upper.starts_with("PI_") {
+        return upper[3..].to_string();
+    }
+    upper
 }
 
 #[derive(Debug, Clone)]
@@ -3843,6 +3851,50 @@ async fn refresh_sampled_slippage(state: &AppState) -> anyhow::Result<usize> {
         }
     }
     Ok(updated)
+}
+
+async fn fetch_pair_live_marks(
+    state: &AppState,
+    left_instrument: &str,
+    right_instrument: &str,
+) -> anyhow::Result<Option<(StrategyMarketMetricsResponse, StrategyMarketMetricsResponse)>> {
+    let upstream_base = state.settings.data_service_url.trim_end_matches('/');
+    let instruments = format!("{left_instrument},{right_instrument}");
+    let upstream_url = reqwest::Url::parse_with_params(
+        &format!("{upstream_base}/v1/market/metrics/batch"),
+        &[("instruments", instruments.as_str())],
+    )?;
+    let response = state.http_client.get(upstream_url).send().await?;
+    if !response.status().is_success() {
+        let status = response.status();
+        let body = response.text().await.unwrap_or_default();
+        anyhow::bail!(
+            "live-z metrics batch status={} body={}",
+            status.as_u16(),
+            body
+        );
+    }
+    let payload: StrategyMarketMetricsBatchResponse = response.json().await?;
+    let left_key = canonical_metric_instrument(left_instrument);
+    let right_key = canonical_metric_instrument(right_instrument);
+
+    let mut left_metric = None;
+    let mut right_metric = None;
+    for metric in payload.metrics {
+        let key = canonical_metric_instrument(&metric.instrument);
+        if key == left_key && left_metric.is_none() {
+            left_metric = Some(metric);
+            continue;
+        }
+        if key == right_key && right_metric.is_none() {
+            right_metric = Some(metric);
+        }
+    }
+
+    match (left_metric, right_metric) {
+        (Some(left), Some(right)) => Ok(Some((left, right))),
+        _ => Ok(None),
+    }
 }
 
 fn spawn_reoptimize_worker(state: AppState) -> tokio::task::JoinHandle<()> {
@@ -6888,7 +6940,7 @@ async fn pairs_live_z(
         ApiError::BadRequest("invalid timeframe; expected 1m, 15m, 1h".to_string())
     })?;
     let exit_mode = parse_backtest_exit_mode(query.exit_mode.as_deref())?;
-    let points = query.points.unwrap_or(300).clamp(120, 2_000);
+    let points = query.points.unwrap_or(300).clamp(2, 2_000);
     let Some(pair) = state
         .settings
         .pairs
@@ -6924,9 +6976,36 @@ async fn pairs_live_z(
     }
 
     let start_idx = timestamps.len().saturating_sub(points + 1);
-    let timestamps = &timestamps[start_idx..];
-    let left_closes = &left_closes[start_idx..];
-    let right_closes = &right_closes[start_idx..];
+    let mut timestamps = timestamps[start_idx..].to_vec();
+    let mut left_closes = left_closes[start_idx..].to_vec();
+    let mut right_closes = right_closes[start_idx..].to_vec();
+
+    match fetch_pair_live_marks(&state, &pair.left, &pair.right).await {
+        Ok(Some((left_live, right_live))) => {
+            if !timestamps.is_empty() && !left_closes.is_empty() && !right_closes.is_empty() {
+                let last_idx = timestamps.len() - 1;
+                if left_live.mark.is_finite() && left_live.mark > 0.0 {
+                    left_closes[last_idx] = left_live.mark;
+                }
+                if right_live.mark.is_finite() && right_live.mark > 0.0 {
+                    right_closes[last_idx] = right_live.mark;
+                }
+                let latest_ts = std::cmp::max(left_live.server_time, right_live.server_time);
+                if latest_ts > timestamps[last_idx] {
+                    timestamps[last_idx] = latest_ts;
+                }
+            }
+        }
+        Ok(None) => {}
+        Err(error) => {
+            tracing::warn!(
+                pair_id = %query.pair_id,
+                timeframe = %timeframe.as_str(),
+                error = %error,
+                "live-z mark override unavailable; falling back to aligned closes"
+            );
+        }
+    }
 
     let taker_fee_bps = resolve_taker_fee_bps(query.taker_fee_bps, state.settings.trading_fee_bps)?;
     let output = evaluate_pair_for_timeframe(
@@ -6940,9 +7019,9 @@ async fn pairs_live_z(
     .map_err(|error| ApiError::Upstream(error.to_string()))?;
     let (left_constraints, right_constraints) = lookup_pair_constraints(&pair.left, &pair.right);
     let series = compute_backtest_series(
-        timestamps,
-        left_closes,
-        right_closes,
+        &timestamps,
+        &left_closes,
+        &right_closes,
         BacktestConfig {
             hedge_ratio: output.hedge_ratio,
             entry_band: output.cue.entry_band,
@@ -7801,16 +7880,17 @@ fn parse_env_bool(key: &str, default: bool) -> bool {
 mod tests {
     use super::{
         artifact_download_path, bootstrap_deviation_exceeds_threshold, bootstrap_snapshot_is_fresh,
-        classify_expectancy_result, compute_expectancy_metrics, compute_pair_funding_bps_per_event,
-        compute_pair_slippage_sample_bps, compute_walk_forward_summary, days_covered,
-        decide_candidate_probation_transition, decide_champion_transition,
-        derive_paper_trades_from_series, derive_replay_trades_from_series,
-        estimate_research_combinations, evaluate_recent_performance_gate,
-        expectancy_objective_score, expected_funding_events_crossed, finalize_trade_gate,
-        normalize_funding_rate, parse_backtest_exit_mode, parse_candidate_inbox_query,
-        parse_expectancy_query, parse_opportunity_history_stats_timeframe,
-        parse_opportunity_history_window, parse_paper_trades_window, parse_replay_trades_query,
-        percentile, project_continuous_funding_bps, refresh_setup_gate, resolve_artifact_path,
+        canonical_metric_instrument, classify_expectancy_result, compute_expectancy_metrics,
+        compute_pair_funding_bps_per_event, compute_pair_slippage_sample_bps,
+        compute_walk_forward_summary, days_covered, decide_candidate_probation_transition,
+        decide_champion_transition, derive_paper_trades_from_series,
+        derive_replay_trades_from_series, estimate_research_combinations,
+        evaluate_recent_performance_gate, expectancy_objective_score,
+        expected_funding_events_crossed, finalize_trade_gate, normalize_funding_rate,
+        parse_backtest_exit_mode, parse_candidate_inbox_query, parse_expectancy_query,
+        parse_opportunity_history_stats_timeframe, parse_opportunity_history_window,
+        parse_paper_trades_window, parse_replay_trades_query, percentile,
+        project_continuous_funding_bps, refresh_setup_gate, resolve_artifact_path,
         resolve_taker_fee_bps, summarize_recent_performance, CandidateInboxQuery,
         CandidateLifecycleState, CandidateOperatorAction, CandidateProbationInputs,
         ChampionDecision, ExpectancyMetrics, ExpectancyQuery, FundingCostEstimate,
@@ -8086,6 +8166,13 @@ mod tests {
             exit_mode: None,
         };
         assert!(parse_paper_trades_window(&query).is_err());
+    }
+
+    #[test]
+    fn canonical_metric_instrument_normalizes_prefix_aliases() {
+        assert_eq!(canonical_metric_instrument("PF_XBTUSD"), "XBTUSD");
+        assert_eq!(canonical_metric_instrument("PI_XBTUSD"), "XBTUSD");
+        assert_eq!(canonical_metric_instrument("xbtusd"), "XBTUSD");
     }
 
     #[test]
