@@ -1322,10 +1322,6 @@ function App(): JSX.Element {
         }
 
         const zValues = liveZ.points.map((point) => point.z);
-        // Keep chart endpoint aligned with the current cue snapshot so "now" is canonical.
-        if (zValues.length > 0 && Number.isFinite(selectedCueRow.cue.spread_z)) {
-          zValues[zValues.length - 1] = selectedCueRow.cue.spread_z;
-        }
         const zTimes = liveZ.points.map((point) => point.ts);
         const equity = backtest.points.map((point) => point.equity);
         const equityTimes = backtest.points.map((point) => point.ts);
@@ -1934,7 +1930,9 @@ function App(): JSX.Element {
     const now = nowIso();
     const pairId = selectedCueRow.cue.pair_id;
     const current = positions[pairId] ?? emptyPosition(now);
-    const currentZ = selectedCueRow.cue.spread_z;
+    const currentZ = Number.isFinite(currentLiveZ ?? NaN)
+      ? (currentLiveZ as number)
+      : selectedCueRow.cue.spread_z;
 
     let direction: Exclude<DirectionHint, "NONE">;
     let action: ExecutionAction;
@@ -1942,6 +1940,10 @@ function App(): JSX.Element {
 
     if (!Number.isFinite(spreadSizeNumber) || spreadSizeNumber <= 0) {
       setTradeMessage("Target notional (USD) must be > 0.");
+      return;
+    }
+    if (!Number.isFinite(currentZ)) {
+      setTradeMessage("Current z-score unavailable. Wait for live data and retry.");
       return;
     }
 
