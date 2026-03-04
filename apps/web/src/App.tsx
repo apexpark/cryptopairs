@@ -677,10 +677,23 @@ function derivePairNotionalRules(params: {
     return { minimumNotionalUsd: 1, incrementNotionalUsd: 1 };
   }
 
-  const qtyQuantum = Math.max(leftStep, rightStep / targetHedgeRatio);
-  const rawMinimumNotional = Math.max(longDenominator, shortDenominator) * qtyQuantum;
-  const rawIncrementNotional = rawMinimumNotional;
-  const incrementNotionalUsd = normalizeUsdValue(Math.max(rawIncrementNotional, 1));
+  const directionalIncrements: number[] = [
+    longDenominator * leftStep,
+    shortDenominator * leftStep,
+  ];
+  if (targetHedgeRatio > 1e-9) {
+    directionalIncrements.push(
+      longDenominator * (rightStep / targetHedgeRatio),
+      shortDenominator * (rightStep / targetHedgeRatio)
+    );
+  }
+  const rawIncrementNotional = directionalIncrements
+    .filter((value) => Number.isFinite(value) && value > 0)
+    .reduce((acc, value) => Math.min(acc, value), Number.POSITIVE_INFINITY);
+  const incrementNotionalUsd = normalizeUsdValue(
+    Math.max(Number.isFinite(rawIncrementNotional) ? rawIncrementNotional : 1, 1)
+  );
+  const rawMinimumNotional = incrementNotionalUsd;
   const alignedBaseMinimum = normalizeUsdValue(
     Math.ceil(Math.max(rawMinimumNotional, incrementNotionalUsd) / incrementNotionalUsd) *
       incrementNotionalUsd
@@ -716,8 +729,8 @@ function derivePairNotionalRules(params: {
     if (
       longPlan.plan != null &&
       shortPlan.plan != null &&
-      longPlan.plan.driftWithinTolerance &&
-      shortPlan.plan.driftWithinTolerance
+      longPlan.plan.notionalDriftPct <= params.toleranceNotionalDriftPct + 1e-9 &&
+      shortPlan.plan.notionalDriftPct <= params.toleranceNotionalDriftPct + 1e-9
     ) {
       return {
         minimumNotionalUsd: candidate,
@@ -752,11 +765,11 @@ function alignNotionalToRules(value: number, rules: PairNotionalRules): number {
 }
 
 function formatSizingDriftBlockedMessage(plan: SpreadSizingPlan): string {
-  return `Lot-step rounding causes sizing drift above tolerance (${plan.hedgeRatioDriftPct.toFixed(
+  return `Notional sizing drift exceeds tolerance (${plan.notionalDriftPct.toFixed(
     2
-  )}% > ${plan.toleranceHedgeRatioDriftPct.toFixed(
+  )}% > ${plan.toleranceNotionalDriftPct.toFixed(
     2
-  )}%). Increase target notional or use a pair with finer lot steps.`;
+  )}%). Increase target notional or adjust by pair increment.`;
 }
 
 function formatOpenInterest(value: number | null | undefined): string {
@@ -784,8 +797,12 @@ function formatPairLabel(pairId: string): string {
 }
 
 function deriveOpportunityStatus(
-  cue: StrategyPairsCuesResponse["cues"][number]["cue"]
-): { label: "READY" | "WAIT"; toneClass: "tone-ok" | "tone-warn" } {
+  cue: StrategyPairsCuesResponse["cues"][number]["cue"],
+  dataDegraded: boolean
+): { label: "READY" | "WAIT" | "DATA"; toneClass: "tone-ok" | "tone-warn" | "tone-bad" } {
+  if (dataDegraded) {
+    return { label: "DATA", toneClass: "tone-bad" };
+  }
   const tradePass = cue.trade_gate?.pass ?? cue.actionable;
   if (tradePass) {
     return { label: "READY", toneClass: "tone-ok" };
@@ -994,6 +1011,16 @@ function App(): JSX.Element {
     Record<string, OrderIntentHistoryResponse[]>
   >({});
   const positionsRefreshSeqRef = useRef(0);
+  const positionsRef = useRef<Record<string, SpreadPosition>>({});
+  const openTradesRef = useRef<ExecutionOpenTradesResponse | null>(null);
+
+  useEffect(() => {
+    positionsRef.current = positions;
+  }, [positions]);
+
+  useEffect(() => {
+    openTradesRef.current = openTradesResponse;
+  }, [openTradesResponse]);
 
   const selectedCueRow = useMemo(() => {
     if (!cuesResponse?.cues.length) {
@@ -1228,9 +1255,25 @@ function App(): JSX.Element {
         updatedAt: row.updated_at,
       };
     }
-    setPositions(next);
-    setOpenTradesResponse(openTrades);
-    setOpenTradesError(openTrades.warnings.length ? openTrades.warnings.join(" | ") : null);
+    const hadPreviousPositions = Object.keys(positionsRef.current).length > 0;
+    const hadPreviousTrades = (openTradesRef.current?.trades.length ?? 0) > 0;
+    const incomingPositionsEmpty = Object.keys(next).length === 0;
+    const incomingTradesEmpty = openTrades.trades.length === 0;
+    const dataDegraded = coreError != null || openTrades.warnings.length > 0;
+    const shouldRetainPositions = dataDegraded && incomingPositionsEmpty && hadPreviousPositions;
+    const shouldRetainTrades = dataDegraded && incomingTradesEmpty && hadPreviousTrades;
+
+    setPositions(shouldRetainPositions ? positionsRef.current : next);
+    setOpenTradesResponse(shouldRetainTrades ? openTradesRef.current : openTrades);
+
+    const warningParts: string[] = [];
+    if (openTrades.warnings.length) {
+      warningParts.push(openTrades.warnings.join(" | "));
+    }
+    if (shouldRetainPositions || shouldRetainTrades) {
+      warningParts.push("Data degraded: showing last known open-trade snapshot.");
+    }
+    setOpenTradesError(warningParts.length ? warningParts.join(" | ") : null);
   };
 
   useEffect(() => {
@@ -1269,7 +1312,6 @@ function App(): JSX.Element {
             error instanceof Error ? error.message : String(error)
           }`
         );
-        setCuesResponse(null);
       } finally {
         if (!cancelled && firstLoad) {
           setCoreLoading(false);
@@ -1386,7 +1428,7 @@ function App(): JSX.Element {
       cancelled = true;
       window.clearInterval(intervalId);
     };
-  }, [exchange, accountId, uiAccessGranted, page]);
+  }, [exchange, accountId, uiAccessGranted, page, coreError]);
 
   useEffect(() => {
     if (!uiAccessGranted) {
@@ -2222,7 +2264,7 @@ function App(): JSX.Element {
         return;
       }
       const plan = planResult.plan;
-      if (!plan.driftWithinTolerance) {
+      if (plan.notionalDriftPct > plan.toleranceNotionalDriftPct + 1e-9) {
         setTradeMessage(formatSizingDriftBlockedMessage(plan));
         return;
       }
@@ -2509,6 +2551,7 @@ function App(): JSX.Element {
           tradeMessage={tradeMessage}
           submitting={submitting}
           zChartHeight={tradeZChartHeight}
+          dataDegraded={coreError != null}
           onCommand={executeTradeCommand}
         />
       );
@@ -2783,6 +2826,7 @@ function TradePage(props: {
   tradeMessage: string;
   submitting: boolean;
   zChartHeight: number;
+  dataDegraded: boolean;
   onCommand: (command: TradeCommand) => Promise<void>;
 }): JSX.Element {
   const [closeConfirmArmed, setCloseConfirmArmed] = useState(false);
@@ -2922,7 +2966,7 @@ function TradePage(props: {
     if (!plan) {
       return "Sizing plan unavailable.";
     }
-    if (includeTolerance && !plan.driftWithinTolerance) {
+    if (includeTolerance && plan.notionalDriftPct > plan.toleranceNotionalDriftPct + 1e-9) {
       return formatSizingDriftBlockedMessage(plan);
     }
     return null;
@@ -3086,6 +3130,11 @@ function TradePage(props: {
         <p className={plan.driftWithinTolerance ? "small-text tone-ok" : "small-text tone-warn"}>
           Achieved ${formatUsdCompact(plan.achievedNotionalUsd)}
         </p>
+        {plan.hedgeRatioDriftPct > plan.toleranceHedgeRatioDriftPct + 1e-9 ? (
+          <p className="small-text tone-warn">
+            Hedge ratio drift {plan.hedgeRatioDriftPct.toFixed(2)}% (lot-step constrained).
+          </p>
+        ) : null}
       </div>
     );
   };
@@ -3109,7 +3158,7 @@ function TradePage(props: {
             </thead>
             <tbody>
               {props.cues?.cues.map((entry) => {
-                const status = deriveOpportunityStatus(entry.cue);
+                const status = deriveOpportunityStatus(entry.cue, props.dataDegraded);
                 const displayZ =
                   entry.cue.pair_id === props.selectedPairId && props.liveCurrentZ != null
                     ? props.liveCurrentZ
