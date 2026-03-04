@@ -783,8 +783,12 @@ function formatPairLabel(pairId: string): string {
 
 function deriveOpportunityStatus(
   cue: StrategyPairsCuesResponse["cues"][number]["cue"],
-  dataDegraded: boolean
-): { label: "READY" | "WAIT" | "DATA"; toneClass: "tone-ok" | "tone-warn" | "tone-bad" } {
+  dataDegraded: boolean,
+  hasLiveOpenTrade: boolean
+): { label: "LIVE" | "READY" | "WAIT" | "DATA"; toneClass: "tone-ok" | "tone-warn" | "tone-bad" } {
+  if (hasLiveOpenTrade) {
+    return { label: "LIVE", toneClass: "tone-ok" };
+  }
   if (dataDegraded) {
     return { label: "DATA", toneClass: "tone-bad" };
   }
@@ -1028,6 +1032,10 @@ function App(): JSX.Element {
   const currentOpenTrade = useMemo(
     () => openTradesResponse?.trades.find((trade) => trade.pair_id === currentPairId) ?? null,
     [openTradesResponse, currentPairId]
+  );
+  const openTradePairIds = useMemo(
+    () => new Set((openTradesResponse?.trades ?? []).map((trade) => trade.pair_id)),
+    [openTradesResponse]
   );
   const tradeZSeries = useMemo(() => {
     if (!zSeries.length) {
@@ -2524,6 +2532,7 @@ function App(): JSX.Element {
           analyticsError={analyticsError}
           currentPosition={currentPosition}
           openTrade={currentOpenTrade}
+          openTradePairIds={openTradePairIds}
           openTradesCount={openTradesResponse?.trades.length ?? 0}
           openTradesError={openTradesError}
           liveCurrentZ={currentLiveZ}
@@ -2799,6 +2808,7 @@ function TradePage(props: {
   analyticsError: string | null;
   currentPosition: SpreadPosition;
   openTrade: ExecutionOpenTradesResponse["trades"][number] | null;
+  openTradePairIds: Set<string>;
   openTradesCount: number;
   openTradesError: string | null;
   liveCurrentZ: number | null;
@@ -3157,7 +3167,11 @@ function TradePage(props: {
             </thead>
             <tbody>
               {props.cues?.cues.map((entry) => {
-                const status = deriveOpportunityStatus(entry.cue, props.dataDegraded);
+                const status = deriveOpportunityStatus(
+                  entry.cue,
+                  props.dataDegraded,
+                  props.openTradePairIds.has(entry.cue.pair_id)
+                );
                 const displayZ =
                   entry.cue.pair_id === props.selectedPairId && props.liveCurrentZ != null
                     ? props.liveCurrentZ
