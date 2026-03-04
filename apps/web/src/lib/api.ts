@@ -88,6 +88,7 @@ export async function fetchStrategyLiveZ(
   timeframe: Timeframe,
   pairId: string,
   points = 300,
+  windowBars?: number,
   takerFeeBps?: number,
   exitMode?: BacktestExitMode
 ): Promise<StrategyPairsLiveZResponse> {
@@ -95,6 +96,9 @@ export async function fetchStrategyLiveZ(
   params.set("timeframe", timeframe);
   params.set("pair_id", pairId);
   params.set("points", points.toString());
+  if (windowBars != null && Number.isFinite(windowBars) && windowBars > 0) {
+    params.set("window_bars", Math.floor(windowBars).toString());
+  }
   withOptionalTakerFeeBps(params, takerFeeBps);
   if (exitMode) {
     params.set("exit_mode", exitMode);
