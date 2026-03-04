@@ -1,5 +1,5 @@
 import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import LineChart from "./components/LineChart";
 import {
   allAcceptedDispatchAcknowledged,
@@ -845,6 +845,7 @@ function App(): JSX.Element {
   const [intentHistoryByPair, setIntentHistoryByPair] = useState<
     Record<string, OrderIntentHistoryResponse[]>
   >({});
+  const positionsRefreshSeqRef = useRef(0);
 
   const selectedCueRow = useMemo(() => {
     if (!cuesResponse?.cues.length) {
@@ -1040,10 +1041,14 @@ function App(): JSX.Element {
   }, [coreLoading, coreError]);
 
   const refreshPositions = async (): Promise<void> => {
+    const refreshSeq = ++positionsRefreshSeqRef.current;
     const [response, openTrades] = await Promise.all([
       fetchExecutionPortfolioPositions(exchange, accountId),
       fetchExecutionOpenTrades(exchange, accountId),
     ]);
+    if (refreshSeq !== positionsRefreshSeqRef.current) {
+      return;
+    }
     const next: Record<string, SpreadPosition> = {};
     for (const row of response.positions) {
       next[row.pair_id] = {
@@ -1194,18 +1199,14 @@ function App(): JSX.Element {
     let cancelled = false;
     void refreshPositions().catch(() => {
       if (!cancelled) {
-        setPositions({});
-        setOpenTradesResponse(null);
-        setOpenTradesError("Open trades are unavailable.");
+        setOpenTradesError("Open trades refresh failed. Retaining last known state.");
       }
     });
     const refreshIntervalMs = page === "trade" ? 2_000 : 10_000;
     const intervalId = window.setInterval(() => {
       void refreshPositions().catch(() => {
         if (!cancelled) {
-          setPositions({});
-          setOpenTradesResponse(null);
-          setOpenTradesError("Open trades are unavailable.");
+          setOpenTradesError("Open trades refresh failed. Retaining last known state.");
         }
       });
     }, refreshIntervalMs);
@@ -2165,7 +2166,7 @@ function App(): JSX.Element {
 
       if (acceptedCount > 0) {
         await refreshPositions().catch(() => {
-          setPositions({});
+          setOpenTradesError("Open trades refresh failed. Retaining last known state.");
         });
       }
 
@@ -2948,14 +2949,14 @@ function TradePage(props: {
           )}
         </div>
 
-        <div className="timeline-card">
+        <div className="timeline-card open-trades-card">
           <h3>Open Trades</h3>
           {props.openTradesError ? <p className="small-text tone-warn">{props.openTradesError}</p> : null}
-          <p className="small-text">Open positions (all pairs): {props.openTradesCount}</p>
+          <p className="open-trades-count">Open positions (all pairs): {props.openTradesCount}</p>
           {props.openTrade ? (
             <>
-              <div className="table-wrap">
-                <table>
+              <div className="table-wrap open-trades-table-wrap">
+                <table className="open-trades-table">
                   <thead>
                     <tr>
                       <th>Leg</th>
@@ -2994,7 +2995,7 @@ function TradePage(props: {
                   </tbody>
                 </table>
               </div>
-              <div className="mini-card">
+              <div className="mini-card open-trades-summary">
                 <p>
                   Spread: {props.openTrade.direction} | Size {props.openTrade.spread_units.toFixed(2)} units | Status{" "}
                   {props.openTrade.pnl_status}
@@ -3020,7 +3021,7 @@ function TradePage(props: {
                         props.openTrade.unrealized_pnl_usd
                       ).toFixed(2)}`}
                 </p>
-                <p className="small-text">Updated: {formatLocalTime(props.openTrade.updated_at)}</p>
+                <p className="open-trades-updated">Updated: {formatLocalTime(props.openTrade.updated_at)}</p>
               </div>
             </>
           ) : (
