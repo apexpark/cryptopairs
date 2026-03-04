@@ -1131,15 +1131,16 @@ function App(): JSX.Element {
     };
 
     void runCoreRefresh(true);
+    const coreRefreshIntervalMs = page === "trade" ? 3_000 : analyticsRefreshMs(timeframe);
     const intervalId = window.setInterval(() => {
       void runCoreRefresh(false);
-    }, analyticsRefreshMs(timeframe));
+    }, coreRefreshIntervalMs);
 
     return () => {
       cancelled = true;
       window.clearInterval(intervalId);
     };
-  }, [timeframe, uiAccessGranted, takerFeeBpsOverride]);
+  }, [timeframe, uiAccessGranted, takerFeeBpsOverride, page]);
 
   useEffect(() => {
     if (!uiAccessGranted) {
@@ -1276,12 +1277,14 @@ function App(): JSX.Element {
                 timeframe,
                 selectedCueRow.cue.pair_id,
                 bars,
+                bars,
                 undefined,
                 backtestExitMode
               )
             : fetchStrategyLiveZ(
                 timeframe,
                 selectedCueRow.cue.pair_id,
+                bars,
                 bars,
                 takerFeeBpsOverride,
                 backtestExitMode
@@ -1454,10 +1457,25 @@ function App(): JSX.Element {
       }
       inFlight = true;
       try {
+        const tickerWindowBars = clampAnalyticsChartBars(analyticsChartBars);
         const response =
           takerFeeBpsOverride == null
-            ? await fetchStrategyLiveZ(timeframe, pairId, 2, undefined, backtestExitMode)
-            : await fetchStrategyLiveZ(timeframe, pairId, 2, takerFeeBpsOverride, backtestExitMode);
+            ? await fetchStrategyLiveZ(
+                timeframe,
+                pairId,
+                2,
+                tickerWindowBars,
+                undefined,
+                backtestExitMode
+              )
+            : await fetchStrategyLiveZ(
+                timeframe,
+                pairId,
+                2,
+                tickerWindowBars,
+                takerFeeBpsOverride,
+                backtestExitMode
+              );
         if (cancelled || !response.points.length) {
           return;
         }
@@ -1478,7 +1496,15 @@ function App(): JSX.Element {
       cancelled = true;
       window.clearInterval(intervalId);
     };
-  }, [uiAccessGranted, page, selectedCueRow, timeframe, takerFeeBpsOverride, backtestExitMode]);
+  }, [
+    uiAccessGranted,
+    page,
+    selectedCueRow,
+    timeframe,
+    takerFeeBpsOverride,
+    backtestExitMode,
+    analyticsChartBars,
+  ]);
 
   useEffect(() => {
     if (!uiAccessGranted || page !== "analytics") {
@@ -2874,6 +2900,10 @@ function TradePage(props: {
             <tbody>
               {props.cues?.cues.map((entry) => {
                 const status = deriveOpportunityStatus(entry.cue);
+                const displayZ =
+                  entry.cue.pair_id === props.selectedPairId && props.liveCurrentZ != null
+                    ? props.liveCurrentZ
+                    : entry.cue.spread_z;
                 return (
                   <tr
                     key={entry.cue.pair_id}
@@ -2881,7 +2911,7 @@ function TradePage(props: {
                     onClick={() => props.onSelectPair(entry.cue.pair_id)}
                   >
                     <td>{formatPairLabel(entry.cue.pair_id)}</td>
-                    <td>{entry.cue.spread_z.toFixed(2)}</td>
+                    <td>{displayZ.toFixed(2)}</td>
                     <td>{formatSigned(entry.cue.cost_gate.net_edge_bps)}bp</td>
                     <td className={status.toneClass}>{status.label}</td>
                   </tr>

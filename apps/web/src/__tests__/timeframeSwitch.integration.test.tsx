@@ -283,6 +283,7 @@ describe("global timeframe switching", () => {
         "1m",
         PAIR_ID,
         2000,
+        2000,
         undefined,
         "mean_revert"
       );
@@ -313,6 +314,7 @@ describe("global timeframe switching", () => {
         "15m",
         PAIR_ID,
         1600,
+        1600,
         undefined,
         "mean_revert"
       );
@@ -335,6 +337,7 @@ describe("global timeframe switching", () => {
         "1m",
         PAIR_ID,
         2000,
+        2000,
         undefined,
         "mean_revert"
       );
@@ -346,6 +349,7 @@ describe("global timeframe switching", () => {
       expect(api.fetchStrategyLiveZ).toHaveBeenCalledWith(
         "1h",
         PAIR_ID,
+        1200,
         1200,
         undefined,
         "mean_revert"
@@ -375,7 +379,14 @@ describe("global timeframe switching", () => {
 
     await waitFor(() => {
       expect(api.fetchStrategyCues).toHaveBeenCalledWith("1m", 20, 10);
-      expect(api.fetchStrategyLiveZ).toHaveBeenCalledWith("1m", PAIR_ID, 2000, 10, "mean_revert");
+      expect(api.fetchStrategyLiveZ).toHaveBeenCalledWith(
+        "1m",
+        PAIR_ID,
+        2000,
+        2000,
+        10,
+        "mean_revert"
+      );
       expect(api.fetchStrategyBacktest).toHaveBeenCalledWith(
         "1m",
         PAIR_ID,

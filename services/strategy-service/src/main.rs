@@ -2050,6 +2050,7 @@ struct LiveZQuery {
     timeframe: String,
     pair_id: String,
     points: Option<usize>,
+    window_bars: Option<usize>,
     taker_fee_bps: Option<f64>,
     exit_mode: Option<String>,
 }
@@ -6941,6 +6942,7 @@ async fn pairs_live_z(
     })?;
     let exit_mode = parse_backtest_exit_mode(query.exit_mode.as_deref())?;
     let points = query.points.unwrap_or(300).clamp(2, 2_000);
+    let window_bars = query.window_bars.unwrap_or(points).clamp(120, 2_000);
     let Some(pair) = state
         .settings
         .pairs
@@ -6953,7 +6955,7 @@ async fn pairs_live_z(
         )));
     };
 
-    let lookback = std::cmp::max(state.settings.lookback_bars(timeframe), points + 32) as i64;
+    let lookback = std::cmp::max(state.settings.lookback_bars(timeframe), window_bars + 32) as i64;
     let left = state
         .repository
         .fetch_recent_closes(&pair.left, timeframe, lookback)
@@ -6965,7 +6967,7 @@ async fn pairs_live_z(
         .await
         .map_err(|error| ApiError::Upstream(error.to_string()))?;
 
-    let (timestamps, left_closes, right_closes) = align_closes(left, right);
+    let (mut timestamps, mut left_closes, mut right_closes) = align_closes(left, right);
     if timestamps.len() < 120 {
         return Err(ApiError::Upstream(format!(
             "insufficient aligned candles for pair={} timeframe={} bars={}",
@@ -6974,11 +6976,6 @@ async fn pairs_live_z(
             timestamps.len()
         )));
     }
-
-    let start_idx = timestamps.len().saturating_sub(points + 1);
-    let mut timestamps = timestamps[start_idx..].to_vec();
-    let mut left_closes = left_closes[start_idx..].to_vec();
-    let mut right_closes = right_closes[start_idx..].to_vec();
 
     match fetch_pair_live_marks(&state, &pair.left, &pair.right).await {
         Ok(Some((left_live, right_live))) => {
@@ -7045,10 +7042,36 @@ async fn pairs_live_z(
         pair_id = %query.pair_id,
         timeframe = %timeframe.as_str(),
         exit_mode = %exit_mode.as_str(),
-        points = series.points.len(),
-        markers = series.markers.len(),
+        points_requested = points,
+        window_bars,
+        points_computed = series.points.len(),
+        markers_computed = series.markers.len(),
         "strategy live z-series generated"
     );
+
+    let points_start_index = series.points.len().saturating_sub(points);
+    let response_points = series
+        .points
+        .iter()
+        .skip(points_start_index)
+        .map(|point| LiveZPointResponse {
+            ts: point.ts,
+            z: point.z,
+        })
+        .collect::<Vec<_>>();
+    let response_markers = series
+        .markers
+        .iter()
+        .filter_map(|marker| {
+            if marker.index < points_start_index {
+                return None;
+            }
+            Some(BacktestMarkerResponse {
+                index: marker.index - points_start_index,
+                kind: marker.kind.clone(),
+            })
+        })
+        .collect::<Vec<_>>();
 
     Ok(Json(LiveZResponse {
         timeframe: timeframe.as_str().to_string(),
@@ -7059,22 +7082,8 @@ async fn pairs_live_z(
         exit_band: output.cue.exit_band,
         stop_band: output.cue.stop_band,
         selected_variant: output.cue.selected_variant,
-        points: series
-            .points
-            .into_iter()
-            .map(|point| LiveZPointResponse {
-                ts: point.ts,
-                z: point.z,
-            })
-            .collect(),
-        markers: series
-            .markers
-            .into_iter()
-            .map(|marker| BacktestMarkerResponse {
-                index: marker.index,
-                kind: marker.kind,
-            })
-            .collect(),
+        points: response_points,
+        markers: response_markers,
         rationale_codes: output.cue.rationale_codes,
     }))
 }
