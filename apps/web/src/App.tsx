@@ -910,6 +910,7 @@ function App(): JSX.Element {
 
   const [zSeries, setZSeries] = useState<number[]>([]);
   const [zTimestamps, setZTimestamps] = useState<string[]>([]);
+  const [analyticsSeriesPairId, setAnalyticsSeriesPairId] = useState<string>("");
   const [equitySeries, setEquitySeries] = useState<number[]>([]);
   const [equityTimestamps, setEquityTimestamps] = useState<string[]>([]);
   const [zMarkers, setZMarkers] = useState<ChartMarker[]>([]);
@@ -1060,20 +1061,20 @@ function App(): JSX.Element {
     return next;
   }, [zTimestamps, liveZTick, currentPairId]);
   const currentLiveZ = useMemo(() => {
-    if (!tradeZSeries.length) {
+    if (!tradeZSeries.length || analyticsSeriesPairId !== currentPairId) {
       return null;
     }
     return tradeZSeries[tradeZSeries.length - 1];
-  }, [tradeZSeries]);
+  }, [tradeZSeries, analyticsSeriesPairId, currentPairId]);
   const currentLiveZUpdatedAt = useMemo(() => {
     if (liveZTick && liveZTick.pairId === currentPairId) {
       return liveZTick.ts;
     }
-    if (!tradeZTimestamps.length) {
+    if (!tradeZTimestamps.length || analyticsSeriesPairId !== currentPairId) {
       return null;
     }
     return tradeZTimestamps[tradeZTimestamps.length - 1];
-  }, [liveZTick, currentPairId, tradeZTimestamps]);
+  }, [liveZTick, currentPairId, tradeZTimestamps, analyticsSeriesPairId]);
   const currentTimeline = timelineByPair[currentPairId] ?? [];
   const currentIntentHistory = intentHistoryByPair[currentPairId] ?? [];
   const persistentExecutionMarkers = useMemo(
@@ -1430,6 +1431,7 @@ function App(): JSX.Element {
     if (!selectedCueRow) {
       setZSeries([]);
       setZTimestamps([]);
+      setAnalyticsSeriesPairId("");
       setEquitySeries([]);
       setEquityTimestamps([]);
       setZMarkers([]);
@@ -1441,6 +1443,7 @@ function App(): JSX.Element {
     let cancelled = false;
     let inFlight = false;
     setAnalyticsLoading(true);
+    setAnalyticsSeriesPairId("");
 
     const runAnalyticsRefresh = async (firstLoad = false): Promise<void> => {
       if (cancelled || inFlight) {
@@ -1501,6 +1504,7 @@ function App(): JSX.Element {
           setAnalyticsError("Insufficient aligned data for analytics charts.");
           setZSeries([]);
           setZTimestamps([]);
+          setAnalyticsSeriesPairId(selectedCueRow.cue.pair_id);
           setEquitySeries([]);
           setEquityTimestamps([]);
           setZMarkers([]);
@@ -1517,6 +1521,7 @@ function App(): JSX.Element {
 
         setZSeries(zValues);
         setZTimestamps(zTimes);
+        setAnalyticsSeriesPairId(selectedCueRow.cue.pair_id);
         setZMarkers(markers);
         setEquitySeries(equity);
         setEquityTimestamps(equityTimes);
@@ -3172,7 +3177,10 @@ function TradePage(props: {
                   props.dataDegraded,
                   props.openTradePairIds.has(entry.cue.pair_id)
                 );
-                const displayZ = entry.cue.spread_z;
+                const displayZ =
+                  entry.cue.pair_id === props.selectedPairId && props.liveCurrentZ != null
+                    ? props.liveCurrentZ
+                    : entry.cue.spread_z;
                 return (
                   <tr
                     key={entry.cue.pair_id}
