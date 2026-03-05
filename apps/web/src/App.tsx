@@ -1028,6 +1028,27 @@ function App(): JSX.Element {
     }
   }, [selectedCueRow, selectedPairId, setSelectedPairId]);
 
+  useEffect(() => {
+    if (!cuesResponse?.cues.length) {
+      setLiveZByPair({});
+      return;
+    }
+    setLiveZByPair((prev) => {
+      const next: Record<string, { z: number; ts: string }> = {};
+      for (const entry of cuesResponse.cues) {
+        const pairId = entry.cue.pair_id;
+        const existing = prev[pairId];
+        next[pairId] =
+          existing ??
+          {
+            z: entry.cue.spread_z,
+            ts: entry.cue.evaluated_at,
+          };
+      }
+      return next;
+    });
+  }, [cuesResponse]);
+
   const currentPairId = selectedCueRow?.cue.pair_id ?? "";
   const currentPosition =
     (currentPairId ? positions[currentPairId] : undefined) ?? emptyPosition(nowIso());
@@ -1062,27 +1083,21 @@ function App(): JSX.Element {
     return next;
   }, [zTimestamps, liveZTick, currentPairId]);
   const currentLiveZ = useMemo(() => {
+    if (tradeZSeries.length && analyticsSeriesPairId === currentPairId) {
+      return tradeZSeries[tradeZSeries.length - 1];
+    }
     const cachedZ = liveZByPair[currentPairId]?.z;
-    if (Number.isFinite(cachedZ ?? NaN)) {
-      return cachedZ as number;
-    }
-    if (!tradeZSeries.length || analyticsSeriesPairId !== currentPairId) {
-      return null;
-    }
-    return tradeZSeries[tradeZSeries.length - 1];
+    return Number.isFinite(cachedZ ?? NaN) ? (cachedZ as number) : null;
   }, [liveZByPair, tradeZSeries, analyticsSeriesPairId, currentPairId]);
   const currentLiveZUpdatedAt = useMemo(() => {
-    const cachedTs = liveZByPair[currentPairId]?.ts;
-    if (cachedTs?.trim().length) {
-      return cachedTs;
-    }
     if (liveZTick && liveZTick.pairId === currentPairId) {
       return liveZTick.ts;
     }
-    if (!tradeZTimestamps.length || analyticsSeriesPairId !== currentPairId) {
-      return null;
+    if (tradeZTimestamps.length && analyticsSeriesPairId === currentPairId) {
+      return tradeZTimestamps[tradeZTimestamps.length - 1];
     }
-    return tradeZTimestamps[tradeZTimestamps.length - 1];
+    const cachedTs = liveZByPair[currentPairId]?.ts;
+    return cachedTs?.trim().length ? cachedTs : null;
   }, [liveZByPair, liveZTick, currentPairId, tradeZTimestamps, analyticsSeriesPairId]);
   const currentTimeline = timelineByPair[currentPairId] ?? [];
   const currentIntentHistory = intentHistoryByPair[currentPairId] ?? [];
@@ -1649,6 +1664,74 @@ function App(): JSX.Element {
     uiAccessGranted,
     analyticsPaperHours,
     analyticsPaperLimit,
+  ]);
+
+  useEffect(() => {
+    if (!uiAccessGranted || page !== "trade" || !cuesResponse?.cues.length) {
+      return;
+    }
+    let cancelled = false;
+    let inFlight = false;
+    const pairIds = cuesResponse.cues.map((entry) => entry.cue.pair_id);
+    const intervalMs = timeframe === "1m" ? 5_000 : 10_000;
+
+    const refreshOpportunityLiveZ = async (): Promise<void> => {
+      if (cancelled || inFlight || !pairIds.length) {
+        return;
+      }
+      inFlight = true;
+      try {
+        const tickerWindowBars = clampAnalyticsChartBars(analyticsChartBars);
+        const responses = await Promise.allSettled(
+          pairIds.map((pairId) =>
+            takerFeeBpsOverride == null
+              ? fetchStrategyLiveZ(timeframe, pairId, 2, tickerWindowBars, undefined, backtestExitMode)
+              : fetchStrategyLiveZ(
+                  timeframe,
+                  pairId,
+                  2,
+                  tickerWindowBars,
+                  takerFeeBpsOverride,
+                  backtestExitMode
+                )
+          )
+        );
+        if (cancelled) {
+          return;
+        }
+        setLiveZByPair((prev) => {
+          const next = { ...prev };
+          for (let i = 0; i < responses.length; i += 1) {
+            const response = responses[i];
+            if (response.status !== "fulfilled" || !response.value.points.length) {
+              continue;
+            }
+            const point = response.value.points[response.value.points.length - 1];
+            next[pairIds[i]] = { z: point.z, ts: point.ts };
+          }
+          return next;
+        });
+      } finally {
+        inFlight = false;
+      }
+    };
+
+    void refreshOpportunityLiveZ();
+    const intervalId = window.setInterval(() => {
+      void refreshOpportunityLiveZ();
+    }, intervalMs);
+    return () => {
+      cancelled = true;
+      window.clearInterval(intervalId);
+    };
+  }, [
+    uiAccessGranted,
+    page,
+    cuesResponse,
+    timeframe,
+    takerFeeBpsOverride,
+    backtestExitMode,
+    analyticsChartBars,
   ]);
 
   useEffect(() => {
