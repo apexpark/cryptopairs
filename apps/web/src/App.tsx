@@ -990,6 +990,7 @@ function App(): JSX.Element {
     null
   );
   const [openTradesError, setOpenTradesError] = useState<string | null>(null);
+  const [liveZByPair, setLiveZByPair] = useState<Record<string, { z: number; ts: string }>>({});
   const [liveZTick, setLiveZTick] = useState<{ pairId: string; z: number; ts: string } | null>(
     null
   );
@@ -1061,12 +1062,20 @@ function App(): JSX.Element {
     return next;
   }, [zTimestamps, liveZTick, currentPairId]);
   const currentLiveZ = useMemo(() => {
+    const cachedZ = liveZByPair[currentPairId]?.z;
+    if (Number.isFinite(cachedZ ?? NaN)) {
+      return cachedZ as number;
+    }
     if (!tradeZSeries.length || analyticsSeriesPairId !== currentPairId) {
       return null;
     }
     return tradeZSeries[tradeZSeries.length - 1];
-  }, [tradeZSeries, analyticsSeriesPairId, currentPairId]);
+  }, [liveZByPair, tradeZSeries, analyticsSeriesPairId, currentPairId]);
   const currentLiveZUpdatedAt = useMemo(() => {
+    const cachedTs = liveZByPair[currentPairId]?.ts;
+    if (cachedTs?.trim().length) {
+      return cachedTs;
+    }
     if (liveZTick && liveZTick.pairId === currentPairId) {
       return liveZTick.ts;
     }
@@ -1074,9 +1083,13 @@ function App(): JSX.Element {
       return null;
     }
     return tradeZTimestamps[tradeZTimestamps.length - 1];
-  }, [liveZTick, currentPairId, tradeZTimestamps, analyticsSeriesPairId]);
+  }, [liveZByPair, liveZTick, currentPairId, tradeZTimestamps, analyticsSeriesPairId]);
   const currentTimeline = timelineByPair[currentPairId] ?? [];
   const currentIntentHistory = intentHistoryByPair[currentPairId] ?? [];
+  useEffect(() => {
+    setLiveZByPair({});
+  }, [timeframe]);
+
   const persistentExecutionMarkers = useMemo(
     () =>
       buildExecutionMarkers({
@@ -1522,6 +1535,13 @@ function App(): JSX.Element {
         setZSeries(zValues);
         setZTimestamps(zTimes);
         setAnalyticsSeriesPairId(selectedCueRow.cue.pair_id);
+        const lastPointIndex = zValues.length - 1;
+        if (lastPointIndex >= 0) {
+          setLiveZByPair((prev) => ({
+            ...prev,
+            [selectedCueRow.cue.pair_id]: { z: zValues[lastPointIndex], ts: zTimes[lastPointIndex] },
+          }));
+        }
         setZMarkers(markers);
         setEquitySeries(equity);
         setEquityTimestamps(equityTimes);
@@ -1669,6 +1689,10 @@ function App(): JSX.Element {
         }
         const point = response.points[response.points.length - 1];
         setLiveZTick({ pairId, z: point.z, ts: point.ts });
+        setLiveZByPair((prev) => ({
+          ...prev,
+          [pairId]: { z: point.z, ts: point.ts },
+        }));
       } catch {
         // Keep prior ticker value on transient errors.
       } finally {
@@ -2542,6 +2566,7 @@ function App(): JSX.Element {
           openTradesError={openTradesError}
           liveCurrentZ={currentLiveZ}
           liveCurrentZUpdatedAt={currentLiveZUpdatedAt}
+          liveZByPair={liveZByPair}
           intentHistory={currentIntentHistory}
           activeTradeAnchor={activeTradeAnchor}
           timeline={currentTimeline}
@@ -2818,6 +2843,7 @@ function TradePage(props: {
   openTradesError: string | null;
   liveCurrentZ: number | null;
   liveCurrentZUpdatedAt: string | null;
+  liveZByPair: Record<string, { z: number; ts: string }>;
   intentHistory: OrderIntentHistoryResponse[];
   activeTradeAnchor: { entryAt: string; entryZ: number; currentZ: number; deltaZ: number } | null;
   timeline: TimelineEvent[];
@@ -3177,10 +3203,7 @@ function TradePage(props: {
                   props.dataDegraded,
                   props.openTradePairIds.has(entry.cue.pair_id)
                 );
-                const displayZ =
-                  entry.cue.pair_id === props.selectedPairId && props.liveCurrentZ != null
-                    ? props.liveCurrentZ
-                    : entry.cue.spread_z;
+                const displayZ = props.liveZByPair[entry.cue.pair_id]?.z ?? entry.cue.spread_z;
                 return (
                   <tr
                     key={entry.cue.pair_id}
