@@ -89,7 +89,6 @@
         "achieved_hedge_ratio": { "type": "number", "exclusiveMinimum": 0 },
         "notional_drift_pct": { "type": "number", "minimum": 0 },
         "hedge_ratio_drift_pct": { "type": "number", "minimum": 0 },
-        "trade_sigma_usd": { "type": "number", "exclusiveMinimum": 0 },
         "tolerance_notional_drift_pct": { "type": "number", "minimum": 0 },
         "tolerance_hedge_ratio_drift_pct": { "type": "number", "minimum": 0 }
       }

@@ -443,34 +443,6 @@ export interface StrategyUiAuthVerifyResponse {
   ok: boolean;
 }
 
-export interface DataQueryCandle {
-  ts: string;
-  open: number;
-  high: number;
-  low: number;
-  close: number;
-  volume: number;
-}
-
-export interface DataQueryResponse {
-  instrument: string;
-  timeframe: Timeframe;
-  start_ts: string;
-  end_ts: string;
-  candles: DataQueryCandle[];
-  integrity: {
-    status: string;
-    coverage_pct: number;
-    missing_ranges: Array<{
-      start_ts: string;
-      end_ts: string;
-      reason: string;
-    }>;
-    last_verified_at: string;
-    warnings: string[];
-  };
-}
-
 export interface MarketMetricsResponse {
   instrument: string;
   server_time: string;
@@ -540,7 +512,6 @@ export interface OrderIntentRequest {
     achieved_hedge_ratio: number;
     notional_drift_pct: number;
     hedge_ratio_drift_pct: number;
-    trade_sigma_usd?: number;
     tolerance_notional_drift_pct?: number;
     tolerance_hedge_ratio_drift_pct?: number;
   };
@@ -670,8 +641,6 @@ export interface ExecutionOpenTradesResponse {
     direction: Exclude<DirectionHint, "NONE">;
     spread_units: number;
     entry_z: number;
-    trade_entry_z?: number | null;
-    trade_z_now?: number | null;
     updated_at: string;
     pnl_status: "LIVE" | "STALE" | "UNAVAILABLE";
     unrealized_pnl_usd: number | null;

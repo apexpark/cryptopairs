@@ -3097,7 +3097,6 @@ struct CuesResponse {
 struct BacktestPointResponse {
     ts: DateTime<Utc>,
     z: f64,
-    signal_z: f64,
     equity: f64,
 }
 
@@ -5505,10 +5504,6 @@ async fn compute_and_record_paper_trades_for_output(
         &right_closes,
         BacktestConfig {
             hedge_ratio: output.hedge_ratio,
-            selected_variant: SignalVariant::parse(&output.cue.selected_variant)
-                .unwrap_or(SignalVariant::CointegrationZ),
-            z_window: timestamps.len().min(180),
-            funding_drag_bps: state.settings.funding_drag_bps,
             entry_band: output.cue.entry_band,
             exit_band: output.cue.exit_band,
             stop_band: output.cue.stop_band,
@@ -5788,10 +5783,6 @@ async fn pairs_expectancy(
         right_closes,
         BacktestConfig {
             hedge_ratio: output.hedge_ratio,
-            selected_variant: SignalVariant::parse(&config.z_method)
-                .unwrap_or(SignalVariant::CointegrationZ),
-            z_window: timestamps.len().min(180),
-            funding_drag_bps: state.settings.funding_drag_bps,
             entry_band: config.entry_z,
             exit_band: config.exit_z,
             stop_band: config.stop_z,
@@ -5940,10 +5931,6 @@ async fn pairs_replay_trades(
         right_closes,
         BacktestConfig {
             hedge_ratio: output.hedge_ratio,
-            selected_variant: SignalVariant::parse(&config.z_method)
-                .unwrap_or(SignalVariant::CointegrationZ),
-            z_window: timestamps.len().min(180),
-            funding_drag_bps: state.settings.funding_drag_bps,
             entry_band: config.entry_z,
             exit_band: config.exit_z,
             stop_band: config.stop_z,
@@ -6016,7 +6003,6 @@ struct SweepDataset {
     left_closes: Vec<f64>,
     right_closes: Vec<f64>,
     hedge_ratio: f64,
-    funding_drag_bps: f64,
     round_trip_cost_bps: f64,
 }
 
@@ -6155,10 +6141,6 @@ fn build_sweep_candidate(
         right_closes,
         BacktestConfig {
             hedge_ratio: dataset.hedge_ratio,
-            selected_variant: SignalVariant::parse(&config.z_method)
-                .unwrap_or(SignalVariant::CointegrationZ),
-            z_window: timestamps.len().min(180),
-            funding_drag_bps: dataset.funding_drag_bps,
             entry_band: config.entry_z,
             exit_band: config.exit_z,
             stop_band: config.stop_z,
@@ -6455,7 +6437,6 @@ async fn pairs_research_sweep(
                         left_closes,
                         right_closes,
                         hedge_ratio: output.hedge_ratio,
-                        funding_drag_bps: state.settings.funding_drag_bps,
                         round_trip_cost_bps: output.cue.cost_estimate_bps.max(0.0),
                     },
                 );
@@ -6890,10 +6871,6 @@ async fn pairs_backtest(
         right_closes,
         BacktestConfig {
             hedge_ratio: output.hedge_ratio,
-            selected_variant: SignalVariant::parse(&output.cue.selected_variant)
-                .unwrap_or(SignalVariant::CointegrationZ),
-            z_window: timestamps.len().min(180),
-            funding_drag_bps: state.settings.funding_drag_bps,
             entry_band: output.cue.entry_band,
             exit_band: output.cue.exit_band,
             stop_band: output.cue.stop_band,
@@ -6941,7 +6918,6 @@ async fn pairs_backtest(
             .map(|point| BacktestPointResponse {
                 ts: point.ts,
                 z: point.z,
-                signal_z: point.signal_z,
                 equity: point.equity,
             })
             .collect(),
@@ -7045,10 +7021,6 @@ async fn pairs_live_z(
         &right_closes,
         BacktestConfig {
             hedge_ratio: output.hedge_ratio,
-            selected_variant: SignalVariant::parse(&output.cue.selected_variant)
-                .unwrap_or(SignalVariant::CointegrationZ),
-            z_window: timestamps.len().min(180),
-            funding_drag_bps: state.settings.funding_drag_bps,
             entry_band: output.cue.entry_band,
             exit_band: output.cue.exit_band,
             stop_band: output.cue.stop_band,
@@ -8539,19 +8511,16 @@ mod tests {
                 BacktestPoint {
                     ts: timestamps[1],
                     z: -2.0,
-                    signal_z: -2.0,
                     equity: 0.999,
                 },
                 BacktestPoint {
                     ts: timestamps[2],
                     z: 0.5,
-                    signal_z: 0.5,
                     equity: 1.02,
                 },
                 BacktestPoint {
                     ts: timestamps[3],
                     z: 0.4,
-                    signal_z: 0.4,
                     equity: 1.02,
                 },
             ],
@@ -8602,19 +8571,16 @@ mod tests {
                 BacktestPoint {
                     ts: start + chrono::Duration::hours(1),
                     z: -2.0,
-                    signal_z: -2.0,
                     equity: 0.99,
                 },
                 BacktestPoint {
                     ts: start + chrono::Duration::hours(2),
                     z: -1.0,
-                    signal_z: -1.0,
                     equity: 1.01,
                 },
                 BacktestPoint {
                     ts: start + chrono::Duration::hours(3),
                     z: 0.2,
-                    signal_z: 0.2,
                     equity: 1.02,
                 },
             ],

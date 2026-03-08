@@ -4,25 +4,7 @@ All notable changes to this project will be documented in this file.
 This project follows SemVer as defined in `docs/02-versioning-and-releases.md`.
 
 ## Unreleased
-### Fixed
-- Strategy z-score consistency across cue, live-z, and backtest responses:
-  - `cue.spread_z` now reflects the selected signal variant rather than always the plain rolling cointegration z-score.
-  - Live/backtest z-series now use the same variant-aware z-score construction as strategy evaluation instead of a separate full-sample static normalization path.
-- Strategy replay, expectancy, and backtest equity now monetize the same executable spread model used for live trade monitoring:
-  - `strategy-service` derives a fixed executable spread unit from current hedge ratio, live closes, exchange tick sizes, and lot steps.
-  - Pair evaluation, edge estimation, backtest equity, replay rows, and expectancy now operate on executable spread deltas normalized by achieved spread notional instead of abstract `left_return - beta * right_return`.
-  - This removes a prior mismatch where signal z and live-trade economics could diverge materially for the same pair/timeframe.
-
 ### Added
-- PnL-reliable live trade z-score monitoring for open spread positions:
-  - Entry intents now carry optional executable spread sigma metadata (`sizing.trade_sigma_usd`) so live trade monitoring can preserve entry normalization.
-  - `GET /v1/execution/portfolio/open-trades` now returns optional `trade_entry_z` and `trade_z_now`.
-  - Trade UI now prefers frozen trade-z for active positions in:
-    - the Open Trades summary,
-    - the live z chip,
-    - the latest chart point,
-    - and the Opportunities table for pairs with active trades.
-  - This preserves the invariant that improving trade-z direction corresponds to improving marked spread PnL for the open trade monitor.
 - Execution open-trades API and Trade tab live position view for SIM/manual operations:
   - New endpoint: `GET /v1/execution/portfolio/open-trades` (pair-level spread + per-leg live unrealized PnL using data-service marks).
   - New contracts/examples:
@@ -528,11 +510,6 @@ This project follows SemVer as defined in `docs/02-versioning-and-releases.md`.
   - Expanded incident and execution runbooks with deterministic recovery command gates.
 
 ### Changed
-- Historical backtest/live-z trade paths now use a lagged executable-spread
-  `signal_z` for entries, then switch to frozen entry-normalized `trade_z`
-  while a simulated trade is open. Amber exits are now profit-gated after exit
-  cost so historical green-to-amber moves align with executable spread PnL
-  semantics. Backtest points now include additive `signal_z` for diagnostics.
 - Product/risk/architecture docs now explicitly define manual-first live trading for MVP.
 - Operator-facing execution settings docs now use friendly labels with technical key mapping,
   with a dedicated runbook: `docs/playbooks/execution-operations-runbook.md`.

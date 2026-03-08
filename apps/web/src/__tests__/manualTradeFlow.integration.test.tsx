@@ -23,10 +23,8 @@ import App from "../App";
 
 const api = vi.hoisted(() => ({
   dispatchOrderIntent: vi.fn(),
-  fetchDataQuery: vi.fn(),
   fetchExecutionDispatchMode: vi.fn(),
   fetchExecutionDecision: vi.fn(),
-  fetchExecutionOpenTrades: vi.fn(),
   fetchExecutionPortfolioPositions: vi.fn(),
   fetchKillSwitchState: vi.fn(),
   fetchMarketMetrics: vi.fn(),
@@ -197,8 +195,6 @@ beforeEach(() => {
   api.fetchExecutionDispatchMode.mockResolvedValue({
     mode: "LIVE_KRAKEN",
     requires_live_arm: true,
-    sizing_tolerance_notional_drift_pct: 12,
-    sizing_tolerance_hedge_ratio_drift_pct: 25,
   });
   api.updateKillSwitchState.mockResolvedValue({
     active: false,
@@ -223,31 +219,16 @@ beforeEach(() => {
       notes: "ok",
     },
   });
-  api.fetchMarketMetrics.mockImplementation(async (instrument: string) => {
-    if (instrument === RIGHT) {
-      return {
-        instrument: RIGHT,
-        server_time: "2026-02-20T00:00:00Z",
-        bid: 3245.1,
-        ask: 3245.5,
-        mark: 3245.3,
-        index: 3242.8,
-        change_24h_pct: 0.63,
-        funding_rate: 0.0000012,
-        open_interest: 1823456,
-      };
-    }
-    return {
-      instrument: LEFT,
-      server_time: "2026-02-20T00:00:00Z",
-      bid: 67324.1,
-      ask: 67324.5,
-      mark: 67324.3,
-      index: 67317.8,
-      change_24h_pct: 0.84,
-      funding_rate: 0.0000021,
-      open_interest: 5278812,
-    };
+  api.fetchMarketMetrics.mockResolvedValue({
+    instrument: LEFT,
+    server_time: "2026-02-20T00:00:00Z",
+    bid: 67324.1,
+    ask: 67324.5,
+    mark: 67324.3,
+    index: 67317.8,
+    change_24h_pct: 0.84,
+    funding_rate: 0.0000021,
+    open_interest: 5278812,
   });
 
   api.fetchExecutionPortfolioPositions
@@ -271,43 +252,6 @@ beforeEach(() => {
         },
       ],
     });
-  api.fetchExecutionOpenTrades.mockResolvedValue({
-    exchange: "kraken_futures",
-    account_id: "primary",
-    generated_at: "2026-02-20T00:00:10Z",
-    warnings: [],
-    trades: [],
-  });
-  api.fetchDataQuery.mockImplementation(async ({ instrument }: { instrument: string }) => ({
-    instrument,
-    timeframe: "1m",
-    start_ts: "2026-02-20T00:00:00Z",
-    end_ts: "2026-02-20T04:00:00Z",
-    candles: Array.from({ length: 180 }, (_, i) => {
-      const ts = `2026-02-20T${String(Math.floor(i / 60)).padStart(2, "0")}:${String(
-        i % 60
-      ).padStart(2, "0")}:00Z`;
-      const base =
-        instrument === RIGHT
-          ? 3200 + i * 0.45 + Math.sin(i / 6) * 9
-          : 67000 + i * 7 + Math.cos(i / 9) * 85;
-      return {
-        ts,
-        open: base,
-        high: base + 1,
-        low: base - 1,
-        close: base,
-        volume: 1,
-      };
-    }),
-    integrity: {
-      status: "COMPLETE",
-      coverage_pct: 100,
-      missing_ranges: [],
-      last_verified_at: "2026-02-20T04:00:00Z",
-      warnings: [],
-    },
-  }));
 
   api.submitOrderIntent.mockImplementation(async (payload: any) => ({
     ...payload,
