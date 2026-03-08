@@ -1261,6 +1261,8 @@ fn compute_backtest_series_from_zscores(
                 _ => signal_z,
             };
             chart_z = trade_z;
+            let exit_equity_after_cost = equity * (1.0 - round_trip_cost);
+            let profitable_after_exit = exit_equity_after_cost > equity_at_entry;
 
             if trade_z.abs() >= config.stop_band {
                 if position == 1 {
@@ -1281,10 +1283,13 @@ fn compute_backtest_series_from_zscores(
                 });
             } else {
                 let should_exit = match config.exit_mode {
-                    BacktestExitMode::MeanRevert => trade_z.abs() <= config.exit_band,
+                    BacktestExitMode::MeanRevert => {
+                        trade_z.abs() <= config.exit_band && profitable_after_exit
+                    }
                     BacktestExitMode::OppositeExtreme => {
-                        (position == 1 && trade_z >= config.entry_band)
-                            || (position == -1 && trade_z <= -config.entry_band)
+                        ((position == 1 && trade_z >= config.entry_band)
+                            || (position == -1 && trade_z <= -config.entry_band))
+                            && profitable_after_exit
                     }
                 };
                 if should_exit {
@@ -1528,14 +1533,11 @@ fn build_executable_spread_series(
 }
 
 fn trailing_spread_sigma_usd(spread_values: &[f64], idx: usize, window: usize) -> Option<f64> {
-    if spread_values.is_empty() || idx >= spread_values.len() {
+    if spread_values.is_empty() || idx >= spread_values.len() || idx < 2 {
         return None;
     }
-    let win = window.max(2).min(idx + 1);
-    if idx + 1 < win {
-        return None;
-    }
-    let slice = &spread_values[(idx + 1 - win)..=idx];
+    let win = window.max(2).min(idx);
+    let slice = &spread_values[(idx - win)..idx];
     let sigma = stddev(slice);
     (sigma.is_finite() && sigma > 1e-9).then_some(sigma)
 }
@@ -1693,10 +1695,10 @@ fn rolling_z_scores(values: &[f64], window: usize) -> Vec<f64> {
     let mut result = vec![0.0; values.len()];
     let win = window.max(10).min(values.len());
     for idx in 0..values.len() {
-        if idx + 1 < win {
+        if idx < win {
             continue;
         }
-        let slice = &values[(idx + 1 - win)..=idx];
+        let slice = &values[(idx - win)..idx];
         let std = stddev(slice);
         if std > 0.0 {
             result[idx] = (values[idx] - mean(slice)) / std;
@@ -1751,10 +1753,10 @@ fn rolling_robust_z_scores(values: &[f64], window: usize) -> Vec<f64> {
     let mut result = vec![0.0; values.len()];
     let win = window.max(10).min(values.len());
     for idx in 0..values.len() {
-        if idx + 1 < win {
+        if idx < win {
             continue;
         }
-        let slice = &values[(idx + 1 - win)..=idx];
+        let slice = &values[(idx - win)..idx];
         let med = median(slice);
         let mut abs_dev = slice
             .iter()
@@ -1892,8 +1894,8 @@ mod tests {
     use super::{
         annotate_with_shadow_model, build_executable_spread_series, build_portfolio_plan,
         build_variant_score_series, compute_backtest_series, compute_backtest_series_from_zscores,
-        derive_executable_spread_unit, evaluate_cost_gate, evaluate_pair,
-        quantize_close_series_to_ticks, to_direction_hint_with_stop,
+        derive_executable_spread_unit, evaluate_cost_gate, evaluate_pair, mean,
+        quantize_close_series_to_ticks, rolling_z_scores, stddev, to_direction_hint_with_stop,
         to_direction_hint_with_stop_retrace, train_shadow_model, BacktestConfig, BacktestExitMode,
         CostGateDiagnostics, CostGateInput, DirectionHint, ExecutableSpreadUnit, FundingModel,
         PairCue, PairEvaluationInput, PortfolioHint, Regime, SetupGateDiagnostics,
@@ -2572,11 +2574,11 @@ mod tests {
 
     #[test]
     fn executable_backtest_long_spread_pnl_improves_when_spread_reverts_up() {
-        let timestamps = synthetic_timestamps(5);
-        let left = vec![100.0, 98.0, 99.0, 100.0, 101.0];
-        let right = vec![100.0; 5];
+        let timestamps = synthetic_timestamps(6);
+        let left = vec![100.0, 101.0, 98.0, 99.0, 100.0, 101.0];
+        let right = vec![100.0; 6];
         let spread_values = build_executable_spread_series(&left, &right, 1.0, 1.0);
-        let z_scores = vec![0.0, -2.2, -1.6, -1.0, -0.2];
+        let z_scores = vec![0.0, 0.0, -2.2, -1.6, -1.0, -0.2];
         let executable_unit = test_executable_unit(1.0, 1.0, &left, &right);
 
         let series = compute_backtest_series_from_zscores(
@@ -2588,7 +2590,7 @@ mod tests {
             BacktestConfig {
                 hedge_ratio: 1.0,
                 selected_variant: SignalVariant::CointegrationZ,
-                z_window: 3,
+                z_window: 2,
                 funding_drag_bps: 0.0,
                 entry_band: 1.8,
                 exit_band: 0.5,
@@ -2625,11 +2627,11 @@ mod tests {
 
     #[test]
     fn executable_backtest_short_spread_pnl_improves_when_spread_reverts_down() {
-        let timestamps = synthetic_timestamps(5);
-        let left = vec![100.0, 102.0, 101.0, 100.0, 99.0];
-        let right = vec![100.0; 5];
+        let timestamps = synthetic_timestamps(6);
+        let left = vec![100.0, 99.0, 102.0, 101.0, 100.0, 99.0];
+        let right = vec![100.0; 6];
         let spread_values = build_executable_spread_series(&left, &right, 1.0, 1.0);
-        let z_scores = vec![0.0, 2.2, 1.6, 1.0, 0.2];
+        let z_scores = vec![0.0, 0.0, 2.2, 1.6, 1.0, 0.2];
         let executable_unit = test_executable_unit(1.0, 1.0, &left, &right);
 
         let series = compute_backtest_series_from_zscores(
@@ -2641,7 +2643,7 @@ mod tests {
             BacktestConfig {
                 hedge_ratio: 1.0,
                 selected_variant: SignalVariant::CointegrationZ,
-                z_window: 3,
+                z_window: 2,
                 funding_drag_bps: 0.0,
                 entry_band: 1.8,
                 exit_band: 0.5,
@@ -2709,6 +2711,17 @@ mod tests {
 
         assert!(series.markers.is_empty());
         assert!(series.points.iter().all(|point| point.z == point.signal_z));
+    }
+
+    #[test]
+    fn rolling_z_scores_use_prior_window_reference() {
+        let values = (0..=11).map(|value| value as f64).collect::<Vec<_>>();
+        let scores = rolling_z_scores(&values, 10);
+        let expected = (10.0 - mean(&values[0..10])) / stddev(&values[0..10]);
+        assert_eq!(scores[0], 0.0);
+        assert_eq!(scores[9], 0.0);
+        assert!((scores[10] - expected).abs() < 1e-9);
+        assert!(scores[10] > 1.8);
     }
 
     fn synthetic_pair_series(n: usize) -> (Vec<chrono::DateTime<Utc>>, Vec<f64>, Vec<f64>) {
