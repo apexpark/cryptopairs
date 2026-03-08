@@ -40,6 +40,7 @@ Hard constraint:
 4. Manual-first UX: surface best opportunities and risk context, operator decides entry/exit.
 5. Additive interfaces only: avoid breaking existing contracts.
 6. Tradable economics first: strategy signal ranking, replay, expectancy, and live-trade monitoring should share one executable spread basis built from lot-rounded leg quantities and marked prices.
+7. Historical trade progress must use the same frozen trade-normalized oscillator as live open trades once a simulated entry is open; rolling scanner z remains available only as diagnostic context.
 
 ## Strategy Stack (Target)
 
