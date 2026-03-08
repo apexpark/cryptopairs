@@ -1,6 +1,7 @@
 import type {
   DispatchIntentRequest,
   DispatchIntentResponse,
+  DataQueryResponse,
   ExecutionDispatchModeResponse,
   ExecutionOpenTradesResponse,
   ExecutionPortfolioPositionsResponse,
@@ -34,6 +35,8 @@ const ACCOUNT_SERVICE_BASE_URL =
   import.meta.env.VITE_ACCOUNT_SERVICE_BASE_URL ?? "http://127.0.0.1:8081";
 const EXECUTION_SERVICE_BASE_URL =
   import.meta.env.VITE_EXECUTION_SERVICE_BASE_URL ?? "http://127.0.0.1:8082";
+const DATA_SERVICE_BASE_URL =
+  import.meta.env.VITE_DATA_SERVICE_BASE_URL ?? "http://127.0.0.1:8080";
 const STRATEGY_SERVICE_BASE_URL =
   import.meta.env.VITE_STRATEGY_SERVICE_BASE_URL ?? "http://127.0.0.1:8083";
 
@@ -305,6 +308,22 @@ export async function fetchExecutionOpenTrades(
   }
   const url = `${EXECUTION_SERVICE_BASE_URL}/v1/execution/portfolio/open-trades?${params.toString()}`;
   return parseJson<ExecutionOpenTradesResponse>(await fetch(url));
+}
+
+export async function fetchDataQuery(payload: {
+  instrument: string;
+  timeframe: Timeframe;
+  start_ts: string;
+  end_ts: string;
+}): Promise<DataQueryResponse> {
+  const url = `${DATA_SERVICE_BASE_URL}/v1/data/query`;
+  return parseJson<DataQueryResponse>(
+    await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    })
+  );
 }
 
 export async function submitOrderIntent(
