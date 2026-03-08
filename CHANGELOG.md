@@ -8,6 +8,10 @@ This project follows SemVer as defined in `docs/02-versioning-and-releases.md`.
 - Strategy z-score consistency across cue, live-z, and backtest responses:
   - `cue.spread_z` now reflects the selected signal variant rather than always the plain rolling cointegration z-score.
   - Live/backtest z-series now use the same variant-aware z-score construction as strategy evaluation instead of a separate full-sample static normalization path.
+- Strategy replay, expectancy, and backtest equity now monetize the same executable spread model used for live trade monitoring:
+  - `strategy-service` derives a fixed executable spread unit from current hedge ratio, live closes, exchange tick sizes, and lot steps.
+  - Pair evaluation, edge estimation, backtest equity, replay rows, and expectancy now operate on executable spread deltas normalized by achieved spread notional instead of abstract `left_return - beta * right_return`.
+  - This removes a prior mismatch where signal z and live-trade economics could diverge materially for the same pair/timeframe.
 
 ### Added
 - PnL-reliable live trade z-score monitoring for open spread positions:
