@@ -3097,7 +3097,6 @@ struct CuesResponse {
 struct BacktestPointResponse {
     ts: DateTime<Utc>,
     z: f64,
-    signal_z: f64,
     equity: f64,
 }
 
@@ -6941,7 +6940,6 @@ async fn pairs_backtest(
             .map(|point| BacktestPointResponse {
                 ts: point.ts,
                 z: point.z,
-                signal_z: point.signal_z,
                 equity: point.equity,
             })
             .collect(),
@@ -8539,19 +8537,16 @@ mod tests {
                 BacktestPoint {
                     ts: timestamps[1],
                     z: -2.0,
-                    signal_z: -2.0,
                     equity: 0.999,
                 },
                 BacktestPoint {
                     ts: timestamps[2],
                     z: 0.5,
-                    signal_z: 0.5,
                     equity: 1.02,
                 },
                 BacktestPoint {
                     ts: timestamps[3],
                     z: 0.4,
-                    signal_z: 0.4,
                     equity: 1.02,
                 },
             ],
@@ -8602,19 +8597,16 @@ mod tests {
                 BacktestPoint {
                     ts: start + chrono::Duration::hours(1),
                     z: -2.0,
-                    signal_z: -2.0,
                     equity: 0.99,
                 },
                 BacktestPoint {
                     ts: start + chrono::Duration::hours(2),
                     z: -1.0,
-                    signal_z: -1.0,
                     equity: 1.01,
                 },
                 BacktestPoint {
                     ts: start + chrono::Duration::hours(3),
                     z: 0.2,
-                    signal_z: 0.2,
                     equity: 1.02,
                 },
             ],

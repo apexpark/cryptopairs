@@ -353,7 +353,6 @@ pub struct PairEvaluationOutput {
 pub struct BacktestPoint {
     pub ts: DateTime<Utc>,
     pub z: f64,
-    pub signal_z: f64,
     pub equity: f64,
 }
 
@@ -1156,8 +1155,6 @@ fn compute_backtest_series_from_zscores(
     let mut equity = 1.0;
     let mut entry_spread_value: Option<f64> = None;
     let mut entry_notional_usd = 0.0;
-    let mut entry_trade_z: Option<f64> = None;
-    let mut entry_sigma_usd = 0.0;
     let mut equity_at_entry = 1.0;
     let round_trip_cost = (config.round_trip_cost_bps.max(0.0) / 20_000.0).clamp(0.0, 1.0);
     let stop_abs = config.stop_band.abs();
@@ -1168,59 +1165,33 @@ fn compute_backtest_series_from_zscores(
     let mut long_entry_cooldown_active = false;
 
     for idx in 1..timestamps.len() {
-        let signal_z = z_scores[idx];
+        let z = z_scores[idx];
         let left_now = left_closes[idx];
         let right_now = right_closes[idx];
         let current_spread_value = spread_values[idx];
         let position_at_bar_start = position;
-        let mut chart_z = signal_z;
         if stop_abs > 0.0 {
-            if signal_z >= stop_abs {
+            if z >= stop_abs {
                 short_entry_cooldown_active = true;
             }
-            if signal_z <= -stop_abs {
+            if z <= -stop_abs {
                 long_entry_cooldown_active = true;
             }
-            if short_entry_cooldown_active && signal_z <= rearm_level {
+            if short_entry_cooldown_active && z <= rearm_level {
                 short_entry_cooldown_active = false;
             }
-            if long_entry_cooldown_active && signal_z >= -rearm_level {
+            if long_entry_cooldown_active && z >= -rearm_level {
                 long_entry_cooldown_active = false;
             }
         }
 
         if position_at_bar_start == 0 {
-            let at_or_beyond_stop = signal_z.abs() >= config.stop_band.abs();
+            let at_or_beyond_stop = z.abs() >= config.stop_band.abs();
             if at_or_beyond_stop {
                 // Fail closed: never open new entries at/through the stop level.
-            } else if signal_z <= -config.entry_band {
+            } else if z <= -config.entry_band {
                 if !long_entry_cooldown_active {
-                    if let Some(trade_sigma_usd) =
-                        trailing_spread_sigma_usd(spread_values, idx, config.z_window)
-                    {
-                        position = 1;
-                        entry_spread_value = Some(current_spread_value);
-                        entry_notional_usd = executable_spread_notional_usd(
-                            left_now,
-                            right_now,
-                            executable_unit.left_qty,
-                            executable_unit.right_qty,
-                        );
-                        entry_trade_z = Some(signal_z);
-                        entry_sigma_usd = trade_sigma_usd;
-                        equity *= 1.0 - round_trip_cost;
-                        equity_at_entry = equity;
-                        markers.push(BacktestMarker {
-                            index: points.len(),
-                            kind: "entry".to_string(),
-                        });
-                    }
-                }
-            } else if signal_z >= config.entry_band && !short_entry_cooldown_active {
-                if let Some(trade_sigma_usd) =
-                    trailing_spread_sigma_usd(spread_values, idx, config.z_window)
-                {
-                    position = -1;
+                    position = 1;
                     entry_spread_value = Some(current_spread_value);
                     entry_notional_usd = executable_spread_notional_usd(
                         left_now,
@@ -1228,8 +1199,6 @@ fn compute_backtest_series_from_zscores(
                         executable_unit.left_qty,
                         executable_unit.right_qty,
                     );
-                    entry_trade_z = Some(signal_z);
-                    entry_sigma_usd = trade_sigma_usd;
                     equity *= 1.0 - round_trip_cost;
                     equity_at_entry = equity;
                     markers.push(BacktestMarker {
@@ -1237,6 +1206,21 @@ fn compute_backtest_series_from_zscores(
                         kind: "entry".to_string(),
                     });
                 }
+            } else if z >= config.entry_band && !short_entry_cooldown_active {
+                position = -1;
+                entry_spread_value = Some(current_spread_value);
+                entry_notional_usd = executable_spread_notional_usd(
+                    left_now,
+                    right_now,
+                    executable_unit.left_qty,
+                    executable_unit.right_qty,
+                );
+                equity *= 1.0 - round_trip_cost;
+                equity_at_entry = equity;
+                markers.push(BacktestMarker {
+                    index: points.len(),
+                    kind: "entry".to_string(),
+                });
             }
         } else {
             // Only evaluate close conditions for positions that were open
@@ -1253,27 +1237,12 @@ fn compute_backtest_series_from_zscores(
                 0.0
             };
             equity = equity_at_entry * (1.0 + pnl_return);
-            let direction_sign = if position == 1 { 1.0 } else { -1.0 };
-            let trade_z = match entry_trade_z {
-                Some(entry_z) if entry_sigma_usd > 1e-9 => {
-                    entry_z + direction_sign * (pnl_usd / entry_sigma_usd)
-                }
-                _ => signal_z,
-            };
-            chart_z = trade_z;
 
-            if trade_z.abs() >= config.stop_band {
-                if position == 1 {
-                    long_entry_cooldown_active = true;
-                } else {
-                    short_entry_cooldown_active = true;
-                }
+            if z.abs() >= config.stop_band {
                 position = 0;
                 equity *= 1.0 - round_trip_cost;
                 entry_spread_value = None;
                 entry_notional_usd = 0.0;
-                entry_trade_z = None;
-                entry_sigma_usd = 0.0;
                 equity_at_entry = equity;
                 markers.push(BacktestMarker {
                     index: points.len(),
@@ -1281,10 +1250,10 @@ fn compute_backtest_series_from_zscores(
                 });
             } else {
                 let should_exit = match config.exit_mode {
-                    BacktestExitMode::MeanRevert => trade_z.abs() <= config.exit_band,
+                    BacktestExitMode::MeanRevert => z.abs() <= config.exit_band,
                     BacktestExitMode::OppositeExtreme => {
-                        (position == 1 && trade_z >= config.entry_band)
-                            || (position == -1 && trade_z <= -config.entry_band)
+                        (position == 1 && z >= config.entry_band)
+                            || (position == -1 && z <= -config.entry_band)
                     }
                 };
                 if should_exit {
@@ -1292,8 +1261,6 @@ fn compute_backtest_series_from_zscores(
                     equity *= 1.0 - round_trip_cost;
                     entry_spread_value = None;
                     entry_notional_usd = 0.0;
-                    entry_trade_z = None;
-                    entry_sigma_usd = 0.0;
                     equity_at_entry = equity;
                     markers.push(BacktestMarker {
                         index: points.len(),
@@ -1305,8 +1272,7 @@ fn compute_backtest_series_from_zscores(
 
         points.push(BacktestPoint {
             ts: timestamps[idx],
-            z: chart_z,
-            signal_z,
+            z,
             equity,
         });
     }
@@ -1525,19 +1491,6 @@ fn build_executable_spread_series(
         .zip(right_prices.iter())
         .map(|(left, right)| left_qty * *left - right_qty * *right)
         .collect()
-}
-
-fn trailing_spread_sigma_usd(spread_values: &[f64], idx: usize, window: usize) -> Option<f64> {
-    if spread_values.is_empty() || idx >= spread_values.len() {
-        return None;
-    }
-    let win = window.max(2).min(idx + 1);
-    if idx + 1 < win {
-        return None;
-    }
-    let slice = &spread_values[(idx + 1 - win)..=idx];
-    let sigma = stddev(slice);
-    (sigma.is_finite() && sigma > 1e-9).then_some(sigma)
 }
 
 fn executable_spread_notional_usd(
@@ -2617,10 +2570,6 @@ mod tests {
         assert!(series.points[entry_idx].equity >= 1.0);
         assert!(series.points[exit_idx].equity > series.points[entry_idx].equity);
         assert!(series.points[exit_idx].equity > 1.0);
-        assert!((series.points[entry_idx].z + 2.2).abs() < 1e-9);
-        assert!(series.points[exit_idx].z > series.points[entry_idx].z);
-        assert!(series.points[exit_idx].z.abs() < series.points[entry_idx].z.abs());
-        assert!((series.points[entry_idx].signal_z + 2.2).abs() < 1e-9);
     }
 
     #[test]
@@ -2670,45 +2619,6 @@ mod tests {
         assert!(series.points[entry_idx].equity >= 1.0);
         assert!(series.points[exit_idx].equity > series.points[entry_idx].equity);
         assert!(series.points[exit_idx].equity > 1.0);
-        assert!((series.points[entry_idx].z - 2.2).abs() < 1e-9);
-        assert!(series.points[exit_idx].z < series.points[entry_idx].z);
-        assert!(series.points[exit_idx].z.abs() < series.points[entry_idx].z.abs());
-        assert!((series.points[entry_idx].signal_z - 2.2).abs() < 1e-9);
-    }
-
-    #[test]
-    fn backtest_skips_entry_when_trade_sigma_is_unavailable() {
-        let timestamps = synthetic_timestamps(5);
-        let left = vec![100.0; 5];
-        let right = vec![100.0; 5];
-        let spread_values = build_executable_spread_series(&left, &right, 1.0, 1.0);
-        let z_scores = vec![0.0, -2.2, -2.0, -1.8, -1.6];
-        let executable_unit = test_executable_unit(1.0, 1.0, &left, &right);
-
-        let series = compute_backtest_series_from_zscores(
-            &timestamps,
-            &left,
-            &right,
-            &spread_values,
-            &z_scores,
-            BacktestConfig {
-                hedge_ratio: 1.0,
-                selected_variant: SignalVariant::CointegrationZ,
-                z_window: 3,
-                funding_drag_bps: 0.0,
-                entry_band: 1.8,
-                exit_band: 0.5,
-                stop_band: 3.2,
-                round_trip_cost_bps: 0.0,
-                exit_mode: BacktestExitMode::MeanRevert,
-                left_constraints: None,
-                right_constraints: None,
-            },
-            executable_unit,
-        );
-
-        assert!(series.markers.is_empty());
-        assert!(series.points.iter().all(|point| point.z == point.signal_z));
     }
 
     fn synthetic_pair_series(n: usize) -> (Vec<chrono::DateTime<Utc>>, Vec<f64>, Vec<f64>) {
