@@ -39,6 +39,7 @@ Hard constraint:
 3. Cost-aware edge: expected edge must exceed explicit fee + funding + slippage budget.
 4. Manual-first UX: surface best opportunities and risk context, operator decides entry/exit.
 5. Additive interfaces only: avoid breaking existing contracts.
+6. Tradable economics first: strategy signal ranking, replay, expectancy, and live-trade monitoring should share one executable spread basis built from lot-rounded leg quantities and marked prices.
 
 ## Strategy Stack (Target)
 
