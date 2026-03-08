@@ -464,3 +464,44 @@ Configured historical bounds file:
 
 ## Versioning
 See `docs/02-versioning-and-releases.md` and `CHANGELOG.md`.
+
+## Signal Lab
+
+Keep the alpha/demo stack on `main` and run signal-engine experiments from the separate worktree created with:
+
+```bash
+git worktree add ../Crypto_PairsTrader-signal-redesign -b codex/signal-lab main
+```
+
+Inside the signal-lab worktree:
+
+```bash
+cp infra/env/signal-lab-mode.env.example .env.signal-lab
+bash scripts/start-signal-lab.sh
+```
+
+This starts an isolated stack on alternate ports:
+
+- data-service: `18080`
+- account-service: `18081`
+- execution-service: `18082`
+- strategy-service: `18083`
+- Postgres: `15432`
+- Redis: `16379`
+
+Stop it with:
+
+```bash
+bash scripts/stop-signal-lab.sh
+```
+
+To point the local web app at the experimental APIs:
+
+```bash
+cd apps/web
+VITE_DATA_SERVICE_BASE_URL=http://127.0.0.1:18080 \
+VITE_ACCOUNT_SERVICE_BASE_URL=http://127.0.0.1:18081 \
+VITE_EXECUTION_SERVICE_BASE_URL=http://127.0.0.1:18082 \
+VITE_STRATEGY_SERVICE_BASE_URL=http://127.0.0.1:18083 \
+npm run dev -- --host 127.0.0.1 --port 5174
+```
