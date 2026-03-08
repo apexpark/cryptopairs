@@ -9,8 +9,6 @@
       "direction": "SHORT_SPREAD",
       "spread_units": 1.0,
       "entry_z": 2.01,
-      "trade_entry_z": 2.01,
-      "trade_z_now": 1.85,
       "updated_at": "2026-03-04T05:29:55Z",
       "pnl_status": "LIVE",
       "unrealized_pnl_usd": 18.42,

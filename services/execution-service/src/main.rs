@@ -1065,7 +1065,7 @@ impl ExecutionRepository {
         let rows = self
             .client
             .query(
-                "SELECT i.pair_id, i.instrument, i.action, i.spread_z, i.side, i.qty, i.sizing_json
+                "SELECT i.pair_id, i.instrument, i.action, i.side, i.qty, i.sizing_json
                  FROM execution_order_intents i
                  JOIN (
                     SELECT DISTINCT ON (idempotency_key)
@@ -1090,10 +1090,9 @@ impl ExecutionRepository {
                 pair_id: row.get(0),
                 instrument: row.get(1),
                 action: row.get(2),
-                spread_z: row.get(3),
-                side: row.get(4),
-                qty: row.get(5),
-                sizing_json: row.get(6),
+                side: row.get(3),
+                qty: row.get(4),
+                sizing_json: row.get(5),
             })
             .collect())
     }
@@ -1469,7 +1468,6 @@ struct SpreadSizingRequest {
     achieved_hedge_ratio: f64,
     notional_drift_pct: f64,
     hedge_ratio_drift_pct: f64,
-    trade_sigma_usd: Option<f64>,
     tolerance_notional_drift_pct: Option<f64>,
     tolerance_hedge_ratio_drift_pct: Option<f64>,
 }
@@ -1564,7 +1562,6 @@ struct SpreadOpenTradeEvent {
     pair_id: String,
     instrument: String,
     action: String,
-    spread_z: Option<f64>,
     side: String,
     qty: f64,
     sizing_json: Option<String>,
@@ -1574,26 +1571,6 @@ struct SpreadOpenTradeEvent {
 struct FoldedOpenTradeLeg {
     signed_qty: f64,
     avg_entry_ref_price: Option<f64>,
-}
-
-#[derive(Debug, Clone, Default)]
-struct FoldedTradeMonitor {
-    covered_left_qty: f64,
-    uncovered_left_qty: f64,
-    total_sigma_usd: f64,
-    weighted_entry_z_sigma: f64,
-}
-
-impl FoldedTradeMonitor {
-    fn total_left_qty(&self) -> f64 {
-        self.covered_left_qty + self.uncovered_left_qty
-    }
-
-    fn is_fully_covered(&self) -> bool {
-        self.uncovered_left_qty <= f64::EPSILON
-            && self.covered_left_qty > f64::EPSILON
-            && self.total_sigma_usd > f64::EPSILON
-    }
 }
 
 #[derive(Debug, Default)]
@@ -1651,8 +1628,6 @@ struct OpenTradeRow {
     direction: String,
     spread_units: f64,
     entry_z: f64,
-    trade_entry_z: Option<f64>,
-    trade_z_now: Option<f64>,
     updated_at: DateTime<Utc>,
     pnl_status: String,
     unrealized_pnl_usd: Option<f64>,
@@ -2646,11 +2621,6 @@ fn extract_reference_price_for_event(event: &SpreadOpenTradeEvent) -> Option<f64
     None
 }
 
-fn extract_spread_sizing_for_event(event: &SpreadOpenTradeEvent) -> Option<SpreadSizingRequest> {
-    let sizing_json = event.sizing_json.as_ref()?;
-    serde_json::from_str(sizing_json).ok()
-}
-
 fn fold_leg_fill(leg: &mut FoldedOpenTradeLeg, delta_signed_qty: f64, fill_price: Option<f64>) {
     if !delta_signed_qty.is_finite() || delta_signed_qty.abs() <= f64::EPSILON {
         return;
@@ -2725,67 +2695,6 @@ fn fold_open_trade_legs(
         pair_legs.retain(|_, leg| leg.signed_qty.abs() > f64::EPSILON);
     }
     by_pair.retain(|_, legs| !legs.is_empty());
-    by_pair
-}
-
-fn fold_open_trade_monitor(
-    events: &[SpreadOpenTradeEvent],
-    active_pairs: &HashMap<String, PortfolioPositionRow>,
-) -> HashMap<String, FoldedTradeMonitor> {
-    let mut by_pair: HashMap<String, FoldedTradeMonitor> = HashMap::new();
-    for event in events {
-        if !active_pairs.contains_key(&event.pair_id) {
-            continue;
-        }
-        if event.action != "ENTRY"
-            && event.action != "EXIT"
-            && event.action != "EMERGENCY_STOP_CLOSE"
-        {
-            continue;
-        }
-        let Some((pair_left, _)) = parse_pair_instruments(&event.pair_id) else {
-            continue;
-        };
-        let normalized_pair_left = normalize_kraken_perp_symbol(&pair_left);
-        let normalized_event_instrument = normalize_kraken_perp_symbol(&event.instrument);
-        if normalized_pair_left != normalized_event_instrument {
-            continue;
-        }
-        let qty = event.qty.abs();
-        if !qty.is_finite() || qty <= f64::EPSILON {
-            continue;
-        }
-        let monitor = by_pair.entry(event.pair_id.clone()).or_default();
-        match event.action.as_str() {
-            "ENTRY" => {
-                let valid_sigma = extract_spread_sizing_for_event(event)
-                    .and_then(|sizing| sizing.trade_sigma_usd)
-                    .filter(|value| value.is_finite() && *value > f64::EPSILON);
-                let valid_spread_z = event.spread_z.filter(|value| value.is_finite());
-                if let (Some(trade_sigma_usd), Some(spread_z)) = (valid_sigma, valid_spread_z) {
-                    monitor.covered_left_qty += qty;
-                    monitor.total_sigma_usd += trade_sigma_usd;
-                    monitor.weighted_entry_z_sigma += trade_sigma_usd * spread_z;
-                } else {
-                    monitor.uncovered_left_qty += qty;
-                }
-            }
-            "EXIT" | "EMERGENCY_STOP_CLOSE" => {
-                let total_before = monitor.total_left_qty();
-                if total_before <= f64::EPSILON {
-                    continue;
-                }
-                let reduction_fraction = (qty / total_before).clamp(0.0, 1.0);
-                let retain_fraction = 1.0 - reduction_fraction;
-                monitor.covered_left_qty *= retain_fraction;
-                monitor.uncovered_left_qty *= retain_fraction;
-                monitor.total_sigma_usd *= retain_fraction;
-                monitor.weighted_entry_z_sigma *= retain_fraction;
-            }
-            _ => {}
-        }
-    }
-    by_pair.retain(|_, monitor| monitor.total_left_qty() > f64::EPSILON);
     by_pair
 }
 
@@ -2897,7 +2806,6 @@ async fn portfolio_open_trades(
         .await
         .map_err(|error| ApiError::Upstream(error.to_string()))?;
     let folded_legs_by_pair = fold_open_trade_legs(&open_trade_events, &active_pairs);
-    let folded_trade_monitor_by_pair = fold_open_trade_monitor(&open_trade_events, &active_pairs);
     let leg_instruments = folded_legs_by_pair
         .values()
         .flat_map(|legs| legs.keys().cloned())
@@ -2974,36 +2882,11 @@ async fn portfolio_open_trades(
         } else {
             "UNAVAILABLE".to_string()
         };
-        let trade_monitor = folded_trade_monitor_by_pair.get(&position.pair_id);
-        let trade_entry_z = trade_monitor
-            .filter(|monitor| monitor.is_fully_covered())
-            .map(|monitor| monitor.weighted_entry_z_sigma / monitor.total_sigma_usd);
-        let trade_z_now = if all_live {
-            match (
-                trade_entry_z,
-                unrealized_pnl_usd,
-                trade_monitor.filter(|monitor| monitor.is_fully_covered()),
-            ) {
-                (Some(entry_z), Some(pnl_usd), Some(monitor)) => {
-                    let direction_sign = if position.direction == "LONG_SPREAD" {
-                        1.0
-                    } else {
-                        -1.0
-                    };
-                    Some(entry_z + direction_sign * (pnl_usd / monitor.total_sigma_usd))
-                }
-                _ => None,
-            }
-        } else {
-            None
-        };
         trades.push(OpenTradeRow {
             pair_id: position.pair_id,
             direction: position.direction,
             spread_units: position.total_size,
             entry_z: position.avg_entry_z,
-            trade_entry_z,
-            trade_z_now,
             updated_at: position.updated_at,
             pnl_status,
             unrealized_pnl_usd,
@@ -4080,13 +3963,6 @@ fn validate_spread_sizing_request(
             "invalid spread sizing metadata: all prices, ratios, notionals, and planned quantities must be finite and > 0".to_string(),
         ));
     }
-    if let Some(trade_sigma_usd) = sizing.trade_sigma_usd {
-        if !trade_sigma_usd.is_finite() || trade_sigma_usd <= 0.0 {
-            return Err(ApiError::BadRequest(
-                "trade_sigma_usd must be finite and > 0 when provided".to_string(),
-            ));
-        }
-    }
 
     let notional_tolerance_pct = sizing
         .tolerance_notional_drift_pct
@@ -4230,19 +4106,17 @@ mod tests {
     use super::{
         ack_watchdog_enabled_for_dispatch_mode, build_execution_alerts, build_uri_component,
         bypass_safety_gates_for_dispatch_mode, derive_open_order_transition,
-        derive_order_status_transition, fold_open_trade_monitor, fold_spread_positions,
-        is_snapshot_stale, is_terminal_state, parse_ingest_target_state,
-        parse_kraken_open_orders_response, parse_kraken_order_status_response,
-        parse_kraken_submit_response, resolve_secret_value, safe_ratio,
-        sign_kraken_futures_payload, validate_manual_controls, validate_order_qty_constraints,
-        validate_spread_sizing_request, ApiError, DispatchMode, ExecutionObservabilityMetricsRaw,
-        ExecutionObservabilityThresholds, KrakenOpenOrder, KrakenStatusOrder, PortfolioPositionRow,
-        SpreadLedgerEvent, SpreadOpenTradeEvent, SpreadSizingRequest,
+        derive_order_status_transition, fold_spread_positions, is_snapshot_stale,
+        is_terminal_state, parse_ingest_target_state, parse_kraken_open_orders_response,
+        parse_kraken_order_status_response, parse_kraken_submit_response, resolve_secret_value,
+        safe_ratio, sign_kraken_futures_payload, validate_manual_controls,
+        validate_order_qty_constraints, validate_spread_sizing_request, ApiError, DispatchMode,
+        ExecutionObservabilityMetricsRaw, ExecutionObservabilityThresholds, KrakenOpenOrder,
+        KrakenStatusOrder, SpreadLedgerEvent, SpreadSizingRequest,
     };
     use chrono::{DateTime, Duration, Utc};
     use execution_service::{OrderIntentAction, OrderLifecycleState};
-    use serde::{Deserialize, Serialize};
-    use std::collections::HashMap;
+    use serde::Deserialize;
 
     #[derive(Debug, Deserialize)]
     struct NormalizationMatrixFixture {
@@ -4262,46 +4136,6 @@ mod tests {
         current_state: String,
         order: KrakenStatusOrder,
         expected_to_state: Option<String>,
-    }
-
-    #[derive(Debug, Serialize)]
-    struct TestSpreadSizingPayload {
-        target_notional_usd: f64,
-        target_hedge_ratio: f64,
-        reference_left_instrument: String,
-        reference_right_instrument: String,
-        reference_left_price: f64,
-        reference_right_price: f64,
-        planned_left_qty: f64,
-        planned_right_qty: f64,
-        achieved_notional_usd: f64,
-        achieved_hedge_ratio: f64,
-        notional_drift_pct: f64,
-        hedge_ratio_drift_pct: f64,
-        trade_sigma_usd: Option<f64>,
-        tolerance_notional_drift_pct: Option<f64>,
-        tolerance_hedge_ratio_drift_pct: Option<f64>,
-    }
-
-    fn test_sizing_json(left_qty: f64, right_qty: f64, trade_sigma_usd: Option<f64>) -> String {
-        serde_json::to_string(&TestSpreadSizingPayload {
-            target_notional_usd: 1000.0,
-            target_hedge_ratio: 1.0,
-            reference_left_instrument: "PF_TAOUSD".to_string(),
-            reference_right_instrument: "PF_HYPEUSD".to_string(),
-            reference_left_price: 100.0,
-            reference_right_price: 10.0,
-            planned_left_qty: left_qty,
-            planned_right_qty: right_qty,
-            achieved_notional_usd: 1000.0,
-            achieved_hedge_ratio: 1.0,
-            notional_drift_pct: 0.0,
-            hedge_ratio_drift_pct: 0.0,
-            trade_sigma_usd,
-            tolerance_notional_drift_pct: Some(12.0),
-            tolerance_hedge_ratio_drift_pct: Some(25.0),
-        })
-        .expect("test sizing json")
     }
 
     #[test]
@@ -4851,7 +4685,6 @@ mod tests {
             achieved_hedge_ratio: 2.0303,
             notional_drift_pct: 0.0,
             hedge_ratio_drift_pct: 1.515,
-            trade_sigma_usd: None,
             tolerance_notional_drift_pct: Some(2.0),
             tolerance_hedge_ratio_drift_pct: Some(3.0),
         };
@@ -4881,7 +4714,6 @@ mod tests {
             achieved_hedge_ratio: 1.0,
             notional_drift_pct: 80.0,
             hedge_ratio_drift_pct: 0.0,
-            trade_sigma_usd: None,
             tolerance_notional_drift_pct: Some(5.0),
             tolerance_hedge_ratio_drift_pct: Some(5.0),
         };
@@ -4913,7 +4745,6 @@ mod tests {
             achieved_hedge_ratio: 0.8756,
             notional_drift_pct: 0.001,
             hedge_ratio_drift_pct: 0.03,
-            trade_sigma_usd: None,
             tolerance_notional_drift_pct: Some(2.0),
             tolerance_hedge_ratio_drift_pct: Some(25.0),
         };
@@ -4926,100 +4757,6 @@ mod tests {
             36_113.0,
         );
         assert!(result.is_ok());
-    }
-
-    #[test]
-    fn spread_sizing_validation_accepts_optional_trade_sigma() {
-        let sizing = SpreadSizingRequest {
-            target_notional_usd: 100.0,
-            target_hedge_ratio: 1.0,
-            reference_left_instrument: "PF_XBTUSD".to_string(),
-            reference_right_instrument: "PF_XRPUSD".to_string(),
-            reference_left_price: 1.0,
-            reference_right_price: 1.0,
-            planned_left_qty: 50.0,
-            planned_right_qty: 50.0,
-            achieved_notional_usd: 100.0,
-            achieved_hedge_ratio: 1.0,
-            notional_drift_pct: 0.0,
-            hedge_ratio_drift_pct: 0.0,
-            trade_sigma_usd: Some(12.5),
-            tolerance_notional_drift_pct: Some(2.0),
-            tolerance_hedge_ratio_drift_pct: Some(2.0),
-        };
-        let result = validate_spread_sizing_request(
-            "PF_XBTUSD",
-            Some("PF_XBTUSD__PF_XRPUSD"),
-            &sizing,
-            2.0,
-            2.0,
-            50.0,
-        );
-        assert!(result.is_ok());
-    }
-
-    #[test]
-    fn fold_open_trade_monitor_derives_long_trade_z_from_pnl() {
-        let active_pairs = HashMap::from([(
-            "PF_TAOUSD__PF_HYPEUSD".to_string(),
-            PortfolioPositionRow {
-                pair_id: "PF_TAOUSD__PF_HYPEUSD".to_string(),
-                direction: "LONG_SPREAD".to_string(),
-                total_size: 2.0,
-                avg_entry_z: -2.0,
-                updated_at: Utc::now(),
-            },
-        )]);
-        let events = vec![SpreadOpenTradeEvent {
-            pair_id: "PF_TAOUSD__PF_HYPEUSD".to_string(),
-            instrument: "PF_TAOUSD".to_string(),
-            action: "ENTRY".to_string(),
-            spread_z: Some(-2.0),
-            side: "BUY".to_string(),
-            qty: 2.0,
-            sizing_json: Some(test_sizing_json(2.0, 20.0, Some(5.0))),
-        }];
-        let monitors = fold_open_trade_monitor(&events, &active_pairs);
-        let monitor = monitors
-            .get("PF_TAOUSD__PF_HYPEUSD")
-            .expect("monitor should exist");
-        assert!(monitor.is_fully_covered());
-        let trade_entry_z = monitor.weighted_entry_z_sigma / monitor.total_sigma_usd;
-        let trade_z_now = trade_entry_z + (3.0 / monitor.total_sigma_usd);
-        assert!((trade_entry_z + 2.0).abs() < 1e-9);
-        assert!((trade_z_now + 1.4).abs() < 1e-9);
-    }
-
-    #[test]
-    fn fold_open_trade_monitor_derives_short_trade_z_from_pnl() {
-        let active_pairs = HashMap::from([(
-            "PF_TAOUSD__PF_HYPEUSD".to_string(),
-            PortfolioPositionRow {
-                pair_id: "PF_TAOUSD__PF_HYPEUSD".to_string(),
-                direction: "SHORT_SPREAD".to_string(),
-                total_size: 2.0,
-                avg_entry_z: 2.0,
-                updated_at: Utc::now(),
-            },
-        )]);
-        let events = vec![SpreadOpenTradeEvent {
-            pair_id: "PF_TAOUSD__PF_HYPEUSD".to_string(),
-            instrument: "PF_TAOUSD".to_string(),
-            action: "ENTRY".to_string(),
-            spread_z: Some(2.0),
-            side: "SELL".to_string(),
-            qty: 2.0,
-            sizing_json: Some(test_sizing_json(2.0, 20.0, Some(4.0))),
-        }];
-        let monitors = fold_open_trade_monitor(&events, &active_pairs);
-        let monitor = monitors
-            .get("PF_TAOUSD__PF_HYPEUSD")
-            .expect("monitor should exist");
-        assert!(monitor.is_fully_covered());
-        let trade_entry_z = monitor.weighted_entry_z_sigma / monitor.total_sigma_usd;
-        let trade_z_now = trade_entry_z - (2.0 / monitor.total_sigma_usd);
-        assert!((trade_entry_z - 2.0).abs() < 1e-9);
-        assert!((trade_z_now - 1.5).abs() < 1e-9);
     }
 
     #[test]

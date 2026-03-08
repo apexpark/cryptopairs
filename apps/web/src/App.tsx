@@ -18,7 +18,6 @@ import {
   fetchExecutionDispatchMode,
   fetchExecutionOpenTrades,
   fetchExecutionPortfolioPositions,
-  fetchDataQuery,
   dispatchOrderIntent,
   fetchExecutionDecision,
   fetchKillSwitchState,
@@ -42,7 +41,6 @@ import {
 import type {
   ChartMarker,
   BacktestExitMode,
-  DataQueryCandle,
   DispatchIntentResponse,
   DirectionHint,
   ExecutionDispatchModeResponse,
@@ -259,22 +257,6 @@ function formatSignedMetric(value: number | null | undefined, digits = 3): strin
   return `${value >= 0 ? "+" : "-"}${abs}`;
 }
 
-function formatDirectionalTargetZ(
-  exitBand: number | null | undefined,
-  direction: DirectionHint | "NONE"
-): string {
-  if (exitBand == null || !Number.isFinite(exitBand)) {
-    return "--";
-  }
-  if (direction === "LONG_SPREAD") {
-    return (-Math.abs(exitBand)).toFixed(2);
-  }
-  if (direction === "SHORT_SPREAD") {
-    return Math.abs(exitBand).toFixed(2);
-  }
-  return "--";
-}
-
 function formatUsdAxisValue(value: number): string {
   const abs = Math.abs(value);
   if (abs >= 1_000_000) {
@@ -436,9 +418,6 @@ function formatQtyForStep(qty: number, step?: number): string {
 
 const DEFAULT_SIZING_TOLERANCE_NOTIONAL_DRIFT_PCT = 12;
 const DEFAULT_SIZING_TOLERANCE_HEDGE_RATIO_DRIFT_PCT = 25;
-const TRADE_SIGMA_FETCH_BARS = 240;
-const TRADE_SIGMA_WINDOW_BARS = 180;
-const TRADE_SIGMA_MIN_ALIGNED_BARS = 30;
 
 interface SpreadSizingPlan {
   targetNotionalUsd: number;
@@ -656,104 +635,6 @@ function deriveSpreadSizingPlan(params: {
 
 function normalizeUsdValue(value: number): number {
   return Number(value.toFixed(2));
-}
-
-function timeframeToMs(timeframe: Timeframe): number {
-  if (timeframe === "1m") {
-    return 60_000;
-  }
-  if (timeframe === "15m") {
-    return 15 * 60_000;
-  }
-  return 60 * 60_000;
-}
-
-function sampleStandardDeviation(values: number[]): number | null {
-  if (values.length < 2) {
-    return null;
-  }
-  const mean = values.reduce((sum, value) => sum + value, 0) / values.length;
-  const variance =
-    values.reduce((sum, value) => sum + (value - mean) ** 2, 0) / (values.length - 1);
-  const sigma = Math.sqrt(Math.max(variance, 0));
-  return Number.isFinite(sigma) && sigma > 1e-9 ? sigma : null;
-}
-
-function buildExecutableSpreadSeries(params: {
-  leftCandles: DataQueryCandle[];
-  rightCandles: DataQueryCandle[];
-  leftQty: number;
-  rightQty: number;
-}): number[] {
-  const rightByTimestamp = new Map(
-    params.rightCandles.map((candle) => [candle.ts, candle.close] as const)
-  );
-  const aligned: number[] = [];
-  for (const leftCandle of params.leftCandles) {
-    const rightClose = rightByTimestamp.get(leftCandle.ts);
-    if (!Number.isFinite(rightClose ?? NaN)) {
-      continue;
-    }
-    aligned.push(params.leftQty * leftCandle.close - params.rightQty * (rightClose as number));
-  }
-  if (aligned.length <= TRADE_SIGMA_WINDOW_BARS) {
-    return aligned;
-  }
-  return aligned.slice(-TRADE_SIGMA_WINDOW_BARS);
-}
-
-async function computeTradeSigmaUsd(params: {
-  timeframe: Timeframe;
-  leftInstrument: string;
-  rightInstrument: string;
-  leftQty: number;
-  rightQty: number;
-}): Promise<{ sigmaUsd: number | null; reason: string | null }> {
-  if (
-    !Number.isFinite(params.leftQty) ||
-    params.leftQty <= 0 ||
-    !Number.isFinite(params.rightQty) ||
-    params.rightQty <= 0
-  ) {
-    return { sigmaUsd: null, reason: "Executable trade sigma requires valid leg quantities." };
-  }
-  const windowMs = timeframeToMs(params.timeframe) * TRADE_SIGMA_FETCH_BARS;
-  const endTs = new Date();
-  const startTs = new Date(endTs.getTime() - windowMs);
-  const [leftResponse, rightResponse] = await Promise.all([
-    fetchDataQuery({
-      instrument: params.leftInstrument,
-      timeframe: params.timeframe,
-      start_ts: startTs.toISOString(),
-      end_ts: endTs.toISOString(),
-    }),
-    fetchDataQuery({
-      instrument: params.rightInstrument,
-      timeframe: params.timeframe,
-      start_ts: startTs.toISOString(),
-      end_ts: endTs.toISOString(),
-    }),
-  ]);
-  const spreadSeries = buildExecutableSpreadSeries({
-    leftCandles: leftResponse.candles,
-    rightCandles: rightResponse.candles,
-    leftQty: params.leftQty,
-    rightQty: params.rightQty,
-  });
-  if (spreadSeries.length < TRADE_SIGMA_MIN_ALIGNED_BARS) {
-    return {
-      sigmaUsd: null,
-      reason: `Executable trade sigma needs at least ${TRADE_SIGMA_MIN_ALIGNED_BARS} aligned candles.`,
-    };
-  }
-  const sigmaUsd = sampleStandardDeviation(spreadSeries);
-  if (sigmaUsd == null) {
-    return {
-      sigmaUsd: null,
-      reason: "Executable trade sigma is unavailable because the recent spread variation is too small.",
-    };
-  }
-  return { sigmaUsd, reason: null };
 }
 
 function derivePairNotionalRules(params: {
@@ -1175,13 +1056,6 @@ function App(): JSX.Element {
     () => openTradesResponse?.trades.find((trade) => trade.pair_id === currentPairId) ?? null,
     [openTradesResponse, currentPairId]
   );
-  const openTradesByPair = useMemo(
-    () =>
-      Object.fromEntries(
-        (openTradesResponse?.trades ?? []).map((trade) => [trade.pair_id, trade] as const)
-      ),
-    [openTradesResponse]
-  );
   const openTradePairIds = useMemo(
     () => new Set((openTradesResponse?.trades ?? []).map((trade) => trade.pair_id)),
     [openTradesResponse]
@@ -1190,45 +1064,32 @@ function App(): JSX.Element {
     if (!zSeries.length) {
       return zSeries;
     }
-    const overrideZ =
-      currentOpenTrade?.trade_z_now ??
-      (liveZTick?.pairId === currentPairId && Number.isFinite(liveZTick.z) ? liveZTick.z : null);
-    if (!Number.isFinite(overrideZ ?? NaN)) {
+    if (!liveZTick || liveZTick.pairId !== currentPairId || !Number.isFinite(liveZTick.z)) {
       return zSeries;
     }
     const next = [...zSeries];
-    next[next.length - 1] = overrideZ as number;
+    next[next.length - 1] = liveZTick.z;
     return next;
-  }, [zSeries, currentOpenTrade, liveZTick, currentPairId]);
+  }, [zSeries, liveZTick, currentPairId]);
   const tradeZTimestamps = useMemo(() => {
     if (!zTimestamps.length) {
       return zTimestamps;
     }
-    const overrideTs =
-      currentOpenTrade?.updated_at ??
-      (liveZTick?.pairId === currentPairId && liveZTick.ts.trim().length ? liveZTick.ts : null);
-    if (!overrideTs?.trim().length) {
+    if (!liveZTick || liveZTick.pairId !== currentPairId || !liveZTick.ts.trim().length) {
       return zTimestamps;
     }
     const next = [...zTimestamps];
-    next[next.length - 1] = overrideTs;
+    next[next.length - 1] = liveZTick.ts;
     return next;
-  }, [zTimestamps, currentOpenTrade, liveZTick, currentPairId]);
+  }, [zTimestamps, liveZTick, currentPairId]);
   const currentLiveZ = useMemo(() => {
-    const tradeZNow = currentOpenTrade?.trade_z_now;
-    if (Number.isFinite(tradeZNow ?? NaN)) {
-      return tradeZNow as number;
-    }
     if (tradeZSeries.length && analyticsSeriesPairId === currentPairId) {
       return tradeZSeries[tradeZSeries.length - 1];
     }
     const cachedZ = liveZByPair[currentPairId]?.z;
     return Number.isFinite(cachedZ ?? NaN) ? (cachedZ as number) : null;
-  }, [currentOpenTrade, liveZByPair, tradeZSeries, analyticsSeriesPairId, currentPairId]);
+  }, [liveZByPair, tradeZSeries, analyticsSeriesPairId, currentPairId]);
   const currentLiveZUpdatedAt = useMemo(() => {
-    if (currentOpenTrade?.updated_at?.trim().length) {
-      return currentOpenTrade.updated_at;
-    }
     if (liveZTick && liveZTick.pairId === currentPairId) {
       return liveZTick.ts;
     }
@@ -1237,7 +1098,7 @@ function App(): JSX.Element {
     }
     const cachedTs = liveZByPair[currentPairId]?.ts;
     return cachedTs?.trim().length ? cachedTs : null;
-  }, [currentOpenTrade, liveZByPair, liveZTick, currentPairId, tradeZTimestamps, analyticsSeriesPairId]);
+  }, [liveZByPair, liveZTick, currentPairId, tradeZTimestamps, analyticsSeriesPairId]);
   const currentTimeline = timelineByPair[currentPairId] ?? [];
   const currentIntentHistory = intentHistoryByPair[currentPairId] ?? [];
   useEffect(() => {
@@ -2492,7 +2353,6 @@ function App(): JSX.Element {
           achieved_hedge_ratio: number;
           notional_drift_pct: number;
           hedge_ratio_drift_pct: number;
-          trade_sigma_usd?: number;
           tolerance_notional_drift_pct: number;
           tolerance_hedge_ratio_drift_pct: number;
         }
@@ -2523,20 +2383,6 @@ function App(): JSX.Element {
       }
       leftLegQty = plan.plannedLeftQty;
       rightLegQty = plan.plannedRightQty;
-      const tradeSigmaUsd =
-        action === "ENTRY"
-          ? await computeTradeSigmaUsd({
-              timeframe,
-              leftInstrument: plan.leftInstrument,
-              rightInstrument: plan.rightInstrument,
-              leftQty: plan.plannedLeftQty,
-              rightQty: plan.plannedRightQty,
-            })
-          : { sigmaUsd: null, reason: null };
-      if (action === "ENTRY" && (tradeSigmaUsd.reason || tradeSigmaUsd.sigmaUsd == null)) {
-        setTradeMessage(tradeSigmaUsd.reason ?? "Executable trade sigma is unavailable.");
-        return;
-      }
       sizingPayload = {
         target_notional_usd: plan.targetNotionalUsd,
         target_hedge_ratio: plan.targetHedgeRatio,
@@ -2550,7 +2396,6 @@ function App(): JSX.Element {
         achieved_hedge_ratio: plan.achievedHedgeRatio,
         notional_drift_pct: plan.notionalDriftPct,
         hedge_ratio_drift_pct: plan.hedgeRatioDriftPct,
-        trade_sigma_usd: tradeSigmaUsd.sigmaUsd ?? undefined,
         tolerance_notional_drift_pct: plan.toleranceNotionalDriftPct,
         tolerance_hedge_ratio_drift_pct: plan.toleranceHedgeRatioDriftPct,
       };
@@ -2799,7 +2644,6 @@ function App(): JSX.Element {
           analyticsError={analyticsError}
           currentPosition={currentPosition}
           openTrade={currentOpenTrade}
-          openTradesByPair={openTradesByPair}
           openTradePairIds={openTradePairIds}
           openTradesCount={openTradesResponse?.trades.length ?? 0}
           openTradesError={openTradesError}
@@ -3077,7 +2921,6 @@ function TradePage(props: {
   analyticsError: string | null;
   currentPosition: SpreadPosition;
   openTrade: ExecutionOpenTradesResponse["trades"][number] | null;
-  openTradesByPair: Record<string, ExecutionOpenTradesResponse["trades"][number]>;
   openTradePairIds: Set<string>;
   openTradesCount: number;
   openTradesError: string | null;
@@ -3443,11 +3286,7 @@ function TradePage(props: {
                   props.dataDegraded,
                   props.openTradePairIds.has(entry.cue.pair_id)
                 );
-                const tradeZNow = props.openTradesByPair[entry.cue.pair_id]?.trade_z_now;
-                const displayZ =
-                  (Number.isFinite(tradeZNow ?? NaN) ? tradeZNow : null) ??
-                  props.liveZByPair[entry.cue.pair_id]?.z ??
-                  entry.cue.spread_z;
+                const displayZ = props.liveZByPair[entry.cue.pair_id]?.z ?? entry.cue.spread_z;
                 return (
                   <tr
                     key={entry.cue.pair_id}
@@ -3500,20 +3339,12 @@ function TradePage(props: {
         />
 
         <div className="chip-row">
-          {(() => {
-            const currentTradeZNow = props.openTrade?.trade_z_now;
-            const label = Number.isFinite(currentTradeZNow ?? NaN) ? "Trade Z" : "Live Z";
-            return (
-              <span className="chip tone-info">
-                {label}: {props.liveCurrentZ != null ? props.liveCurrentZ.toFixed(2) : "--"}
-                {props.liveCurrentZUpdatedAt
-                  ? ` @ ${formatLocalTime(props.liveCurrentZUpdatedAt)}`
-                  : ""}
-              </span>
-            );
-          })()}
           <span className="chip">Signal dots: entry/exit/stop (recomputed)</span>
           <span className="chip tone-info">Execution dots: persist from executed intents</span>
+          <span className="chip tone-info">
+            Live Z: {props.liveCurrentZ != null ? props.liveCurrentZ.toFixed(2) : "--"}
+            {props.liveCurrentZUpdatedAt ? ` @ ${formatLocalTime(props.liveCurrentZUpdatedAt)}` : ""}
+          </span>
         </div>
 
         <div className="chip-row">
@@ -3580,21 +3411,14 @@ function TradePage(props: {
                 </table>
               </div>
               <div className="mini-card open-trades-summary">
-                {(() => {
-                  const tradeEntryZ = props.openTrade.trade_entry_z ?? props.openTrade.entry_z;
-                  const tradeNowZ = props.openTrade.trade_z_now ?? props.liveCurrentZ;
-                  return (
-                    <>
                 <p>
                   Spread: {props.openTrade.direction} | Size {props.openTrade.spread_units.toFixed(2)} units | Status{" "}
                   {props.openTrade.pnl_status}
                 </p>
                 <p>
-                  Z now {tradeNowZ != null ? tradeNowZ.toFixed(2) : "--"} | Entry Z{" "}
-                  {tradeEntryZ.toFixed(2)} | Target Z{" "}
-                  {selectedCue
-                    ? formatDirectionalTargetZ(selectedCue.cue.exit_band, props.openTrade.direction)
-                    : "--"}
+                  Z now {props.liveCurrentZ != null ? props.liveCurrentZ.toFixed(2) : "--"} | Entry Z{" "}
+                  {props.openTrade.entry_z.toFixed(2)} | Target Z{" "}
+                  {selectedCue ? selectedCue.cue.exit_band.toFixed(2) : "--"}
                 </p>
                 <p
                   className={
@@ -3613,9 +3437,6 @@ function TradePage(props: {
                       ).toFixed(2)}`}
                 </p>
                 <p className="open-trades-updated">Updated: {formatLocalTime(props.openTrade.updated_at)}</p>
-                    </>
-                  );
-                })()}
               </div>
             </>
           ) : (
