@@ -76,6 +76,9 @@
           "z": {
             "type": "number"
           },
+          "signal_z": {
+            "type": "number"
+          },
           "equity": {
             "type": "number",
             "exclusiveMinimum": 0
