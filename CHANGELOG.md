@@ -10,6 +10,15 @@ This project follows SemVer as defined in `docs/02-versioning-and-releases.md`.
   - Live/backtest z-series now use the same variant-aware z-score construction as strategy evaluation instead of a separate full-sample static normalization path.
 
 ### Added
+- PnL-reliable live trade z-score monitoring for open spread positions:
+  - Entry intents now carry optional executable spread sigma metadata (`sizing.trade_sigma_usd`) so live trade monitoring can preserve entry normalization.
+  - `GET /v1/execution/portfolio/open-trades` now returns optional `trade_entry_z` and `trade_z_now`.
+  - Trade UI now prefers frozen trade-z for active positions in:
+    - the Open Trades summary,
+    - the live z chip,
+    - the latest chart point,
+    - and the Opportunities table for pairs with active trades.
+  - This preserves the invariant that improving trade-z direction corresponds to improving marked spread PnL for the open trade monitor.
 - Execution open-trades API and Trade tab live position view for SIM/manual operations:
   - New endpoint: `GET /v1/execution/portfolio/open-trades` (pair-level spread + per-leg live unrealized PnL using data-service marks).
   - New contracts/examples:

@@ -57,6 +57,12 @@
           "entry_z": {
             "type": "number"
           },
+          "trade_entry_z": {
+            "type": ["number", "null"]
+          },
+          "trade_z_now": {
+            "type": ["number", "null"]
+          },
           "updated_at": {
             "type": "string",
             "format": "date-time"

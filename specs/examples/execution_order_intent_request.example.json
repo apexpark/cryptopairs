@@ -23,6 +23,7 @@
     "achieved_hedge_ratio": 0.8571428571,
     "notional_drift_pct": 4.6,
     "hedge_ratio_drift_pct": 6.8322981366,
+    "trade_sigma_usd": 118.42,
     "tolerance_notional_drift_pct": 12.0,
     "tolerance_hedge_ratio_drift_pct": 25.0
   },
