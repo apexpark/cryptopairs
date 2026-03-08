@@ -1,13 +1,6 @@
 use chrono::{DateTime, Utc};
-use common_types::{
-    kraken_perp_constraints, quantize_price_to_tick, quantize_to_step,
-    InstrumentTradingConstraints, Timeframe,
-};
+use common_types::{quantize_price_to_tick, InstrumentTradingConstraints, Timeframe};
 use serde::Serialize;
-
-const EXECUTABLE_SPREAD_NOTIONAL_DRIFT_TOLERANCE_PCT: f64 = 12.0;
-const EXECUTABLE_SPREAD_HEDGE_DRIFT_TOLERANCE_PCT: f64 = 25.0;
-const EXECUTABLE_SPREAD_SEARCH_STEPS: usize = 240;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 pub enum Regime {
@@ -404,13 +397,6 @@ pub struct BacktestConfig {
     pub exit_mode: BacktestExitMode,
     pub left_constraints: Option<InstrumentTradingConstraints>,
     pub right_constraints: Option<InstrumentTradingConstraints>,
-}
-
-#[derive(Debug, Clone, Copy)]
-struct ExecutableSpreadUnit {
-    left_qty: f64,
-    right_qty: f64,
-    achieved_notional_usd: f64,
 }
 
 #[derive(Debug, Clone)]
@@ -873,50 +859,16 @@ pub fn evaluate_pair(input: PairEvaluationInput) -> anyhow::Result<PairEvaluatio
         .collect::<Vec<_>>();
 
     let hedge_ratio = ols_beta(&left_log, &right_log).unwrap_or(1.0);
-    let left_constraints = kraken_perp_constraints(&input.left_instrument);
-    let right_constraints = kraken_perp_constraints(&input.right_instrument);
-    let left_prices = quantize_close_series_to_ticks(
-        &input.left_closes,
-        left_constraints.map(|value| value.tick_size),
-    );
-    let right_prices = quantize_close_series_to_ticks(
-        &input.right_closes,
-        right_constraints.map(|value| value.tick_size),
-    );
-    let executable_unit = derive_executable_spread_unit(
-        *left_prices
-            .last()
-            .ok_or_else(|| anyhow::anyhow!("missing left close for {}", input.pair_id))?,
-        *right_prices
-            .last()
-            .ok_or_else(|| anyhow::anyhow!("missing right close for {}", input.pair_id))?,
-        hedge_ratio,
-        left_constraints,
-        right_constraints,
-    )
-    .ok_or_else(|| {
-        anyhow::anyhow!(
-            "unable to derive executable spread unit for pair={} left={} right={}",
-            input.pair_id,
-            input.left_instrument,
-            input.right_instrument
-        )
-    })?;
-    let spread = build_executable_spread_series(
-        &left_prices,
-        &right_prices,
-        executable_unit.left_qty,
-        executable_unit.right_qty,
-    );
+    let spread = left_log
+        .iter()
+        .zip(right_log.iter())
+        .map(|(left, right)| left - hedge_ratio * right)
+        .collect::<Vec<_>>();
     let spread_diffs = spread
         .windows(2)
         .map(|window| window[1] - window[0])
         .collect::<Vec<_>>();
-    let spread_vol_bps = if executable_unit.achieved_notional_usd > 0.0 {
-        (stddev(&spread_diffs) / executable_unit.achieved_notional_usd) * 10_000.0
-    } else {
-        0.0
-    };
+    let spread_vol_bps = stddev(&spread_diffs) * 10_000.0;
 
     let half_life_bars = estimate_half_life(&spread);
     let hedge_ratio_stability = estimate_hedge_ratio_stability(&left_log, &right_log);
@@ -943,10 +895,10 @@ pub fn evaluate_pair(input: PairEvaluationInput) -> anyhow::Result<PairEvaluatio
         let score_last = *series.last().unwrap_or(&0.0);
         let (sample_count, win_rate, edge_bps) = estimate_edge_bps(
             &spread,
+            &input.left_closes,
             series,
             input.entry_band,
             input.hold_bars,
-            executable_unit.achieved_notional_usd,
         );
         let reliability = reliability(sample_count, win_rate, input.min_samples_target);
         let regime_fit = regime_fit_multiplier(regime, variant);
@@ -1086,32 +1038,11 @@ pub fn compute_backtest_series(
         };
     }
 
-    let left_prices = quantize_close_series_to_ticks(
-        left_closes,
-        config.left_constraints.map(|value| value.tick_size),
-    );
-    let right_prices = quantize_close_series_to_ticks(
-        right_closes,
-        config.right_constraints.map(|value| value.tick_size),
-    );
-    let Some(executable_unit) = derive_executable_spread_unit(
-        *left_prices.last().unwrap_or(&0.0),
-        *right_prices.last().unwrap_or(&0.0),
-        config.hedge_ratio,
-        config.left_constraints,
-        config.right_constraints,
-    ) else {
-        return BacktestSeries {
-            points: vec![],
-            markers: vec![],
-        };
-    };
-    let spread = build_executable_spread_series(
-        &left_prices,
-        &right_prices,
-        executable_unit.left_qty,
-        executable_unit.right_qty,
-    );
+    let spread = left_closes
+        .iter()
+        .zip(right_closes.iter())
+        .map(|(left, right)| left.max(1e-9).ln() - config.hedge_ratio * right.max(1e-9).ln())
+        .collect::<Vec<_>>();
     let signal_series =
         build_variant_score_series(&spread, config.z_window, config.funding_drag_bps);
     let z_scores = signal_series.for_variant(config.selected_variant);
@@ -1122,27 +1053,17 @@ pub fn compute_backtest_series(
         };
     }
 
-    compute_backtest_series_from_zscores(
-        timestamps,
-        &left_prices,
-        &right_prices,
-        &spread,
-        z_scores,
-        config,
-        executable_unit,
-    )
+    compute_backtest_series_from_zscores(timestamps, left_closes, right_closes, z_scores, config)
 }
 
 fn compute_backtest_series_from_zscores(
     timestamps: &[DateTime<Utc>],
     left_closes: &[f64],
     right_closes: &[f64],
-    spread_values: &[f64],
     z_scores: &[f64],
     config: BacktestConfig,
-    executable_unit: ExecutableSpreadUnit,
 ) -> BacktestSeries {
-    if z_scores.len() != timestamps.len() || spread_values.len() != timestamps.len() {
+    if z_scores.len() != timestamps.len() {
         return BacktestSeries {
             points: vec![],
             markers: vec![],
@@ -1153,10 +1074,15 @@ fn compute_backtest_series_from_zscores(
     let mut markers = vec![];
     let mut position: i8 = 0;
     let mut equity = 1.0;
-    let mut entry_spread_value: Option<f64> = None;
-    let mut entry_notional_usd = 0.0;
-    let mut equity_at_entry = 1.0;
     let round_trip_cost = (config.round_trip_cost_bps.max(0.0) / 20_000.0).clamp(0.0, 1.0);
+    let left_tick = config
+        .left_constraints
+        .filter(|constraints| constraints.tick_size.is_finite() && constraints.tick_size > 0.0)
+        .map(|constraints| constraints.tick_size);
+    let right_tick = config
+        .right_constraints
+        .filter(|constraints| constraints.tick_size.is_finite() && constraints.tick_size > 0.0)
+        .map(|constraints| constraints.tick_size);
     let stop_abs = config.stop_band.abs();
     let entry_abs = config.entry_band.abs().max(0.0);
     let stop_to_entry_span = (stop_abs - entry_abs).max(0.0);
@@ -1166,9 +1092,37 @@ fn compute_backtest_series_from_zscores(
 
     for idx in 1..timestamps.len() {
         let z = z_scores[idx];
-        let left_now = left_closes[idx];
-        let right_now = right_closes[idx];
-        let current_spread_value = spread_values[idx];
+        let left_prev = if let Some(tick) = left_tick {
+            quantize_price_to_tick(left_closes[idx - 1], tick).unwrap_or(left_closes[idx - 1])
+        } else {
+            left_closes[idx - 1]
+        };
+        let left_now = if let Some(tick) = left_tick {
+            quantize_price_to_tick(left_closes[idx], tick).unwrap_or(left_closes[idx])
+        } else {
+            left_closes[idx]
+        };
+        let right_prev = if let Some(tick) = right_tick {
+            quantize_price_to_tick(right_closes[idx - 1], tick).unwrap_or(right_closes[idx - 1])
+        } else {
+            right_closes[idx - 1]
+        };
+        let right_now = if let Some(tick) = right_tick {
+            quantize_price_to_tick(right_closes[idx], tick).unwrap_or(right_closes[idx])
+        } else {
+            right_closes[idx]
+        };
+        let left_return = if left_prev > 0.0 {
+            (left_now / left_prev) - 1.0
+        } else {
+            0.0
+        };
+        let right_return = if right_prev > 0.0 {
+            (right_now / right_prev) - 1.0
+        } else {
+            0.0
+        };
+        let spread_return = left_return - config.hedge_ratio * right_return;
         let position_at_bar_start = position;
         if stop_abs > 0.0 {
             if z >= stop_abs {
@@ -1192,15 +1146,7 @@ fn compute_backtest_series_from_zscores(
             } else if z <= -config.entry_band {
                 if !long_entry_cooldown_active {
                     position = 1;
-                    entry_spread_value = Some(current_spread_value);
-                    entry_notional_usd = executable_spread_notional_usd(
-                        left_now,
-                        right_now,
-                        executable_unit.left_qty,
-                        executable_unit.right_qty,
-                    );
                     equity *= 1.0 - round_trip_cost;
-                    equity_at_entry = equity;
                     markers.push(BacktestMarker {
                         index: points.len(),
                         kind: "entry".to_string(),
@@ -1208,15 +1154,7 @@ fn compute_backtest_series_from_zscores(
                 }
             } else if z >= config.entry_band && !short_entry_cooldown_active {
                 position = -1;
-                entry_spread_value = Some(current_spread_value);
-                entry_notional_usd = executable_spread_notional_usd(
-                    left_now,
-                    right_now,
-                    executable_unit.left_qty,
-                    executable_unit.right_qty,
-                );
                 equity *= 1.0 - round_trip_cost;
-                equity_at_entry = equity;
                 markers.push(BacktestMarker {
                     index: points.len(),
                     kind: "entry".to_string(),
@@ -1225,25 +1163,16 @@ fn compute_backtest_series_from_zscores(
         } else {
             // Only evaluate close conditions for positions that were open
             // at the start of this bar. This prevents same-bar entry+stop overlays.
-            let open_spread_value = entry_spread_value.unwrap_or(current_spread_value);
-            let pnl_usd = if position == 1 {
-                current_spread_value - open_spread_value
+            let signed_return = if position == 1 {
+                spread_return
             } else {
-                open_spread_value - current_spread_value
+                -spread_return
             };
-            let pnl_return = if entry_notional_usd > 0.0 {
-                pnl_usd / entry_notional_usd
-            } else {
-                0.0
-            };
-            equity = equity_at_entry * (1.0 + pnl_return);
+            equity *= 1.0 + signed_return;
 
             if z.abs() >= config.stop_band {
                 position = 0;
                 equity *= 1.0 - round_trip_cost;
-                entry_spread_value = None;
-                entry_notional_usd = 0.0;
-                equity_at_entry = equity;
                 markers.push(BacktestMarker {
                     index: points.len(),
                     kind: "stop".to_string(),
@@ -1259,9 +1188,6 @@ fn compute_backtest_series_from_zscores(
                 if should_exit {
                     position = 0;
                     equity *= 1.0 - round_trip_cost;
-                    entry_spread_value = None;
-                    entry_notional_usd = 0.0;
-                    equity_at_entry = equity;
                     markers.push(BacktestMarker {
                         index: points.len(),
                         kind: "exit".to_string(),
@@ -1424,12 +1350,14 @@ fn classify_regime(spread: &[f64], latest_z: f64) -> Regime {
 
 fn estimate_edge_bps(
     spread: &[f64],
+    left_prices: &[f64],
     scores: &[f64],
     entry_band: f64,
     hold_bars: usize,
-    achieved_notional_usd: f64,
 ) -> (usize, f64, f64) {
-    if spread.len() < hold_bars + 2 || scores.len() != spread.len() || achieved_notional_usd <= 0.0
+    if spread.len() < hold_bars + 2
+        || scores.len() != spread.len()
+        || left_prices.len() != spread.len()
     {
         return (0, 0.0, 0.0);
     }
@@ -1444,7 +1372,8 @@ fn estimate_edge_bps(
         } else {
             continue;
         };
-        let pnl_bps = (pnl / achieved_notional_usd) * 10_000.0;
+        let left_price = left_prices[idx].abs().max(1e-9);
+        let pnl_bps = (pnl / left_price) * 10_000.0;
         outcomes.push(pnl_bps);
     }
 
@@ -1456,141 +1385,6 @@ fn estimate_edge_bps(
     let win_rate = wins as f64 / outcomes.len() as f64;
     let edge_bps = mean(&outcomes);
     (outcomes.len(), win_rate, edge_bps)
-}
-
-fn lot_step(constraints: Option<InstrumentTradingConstraints>) -> f64 {
-    constraints
-        .filter(|value| value.min_lot.is_finite() && value.min_lot > 0.0)
-        .map(|value| value.min_lot)
-        .unwrap_or(1.0)
-}
-
-fn quantize_close_series_to_ticks(values: &[f64], tick_size: Option<f64>) -> Vec<f64> {
-    values
-        .iter()
-        .map(|value| {
-            if let Some(tick) =
-                tick_size.filter(|candidate| candidate.is_finite() && *candidate > 0.0)
-            {
-                quantize_price_to_tick(*value, tick).unwrap_or(*value)
-            } else {
-                *value
-            }
-        })
-        .collect()
-}
-
-fn build_executable_spread_series(
-    left_prices: &[f64],
-    right_prices: &[f64],
-    left_qty: f64,
-    right_qty: f64,
-) -> Vec<f64> {
-    left_prices
-        .iter()
-        .zip(right_prices.iter())
-        .map(|(left, right)| left_qty * *left - right_qty * *right)
-        .collect()
-}
-
-fn executable_spread_notional_usd(
-    left_price: f64,
-    right_price: f64,
-    left_qty: f64,
-    right_qty: f64,
-) -> f64 {
-    (left_price * left_qty).abs() + (right_price * right_qty).abs()
-}
-
-fn derive_executable_spread_unit(
-    left_price: f64,
-    right_price: f64,
-    hedge_ratio: f64,
-    left_constraints: Option<InstrumentTradingConstraints>,
-    right_constraints: Option<InstrumentTradingConstraints>,
-) -> Option<ExecutableSpreadUnit> {
-    if !left_price.is_finite()
-        || left_price <= 0.0
-        || !right_price.is_finite()
-        || right_price <= 0.0
-    {
-        return None;
-    }
-
-    let target_hedge_ratio = if hedge_ratio.is_finite() && hedge_ratio.abs() > 1e-9 {
-        hedge_ratio.abs()
-    } else {
-        1.0
-    };
-    let ratio_scale = 1.0 + target_hedge_ratio;
-    if !ratio_scale.is_finite() || ratio_scale <= 0.0 {
-        return None;
-    }
-
-    let left_step = lot_step(left_constraints);
-    let right_step = lot_step(right_constraints);
-    let increment_candidates = [
-        left_step * left_price * ratio_scale,
-        right_step * right_price * (ratio_scale / target_hedge_ratio.max(1e-9)),
-    ];
-    let increment_notional_usd = increment_candidates
-        .into_iter()
-        .filter(|value| value.is_finite() && *value > 0.0)
-        .fold(f64::INFINITY, f64::min);
-    if !increment_notional_usd.is_finite() || increment_notional_usd <= 0.0 {
-        return None;
-    }
-
-    let mut best_plan: Option<(ExecutableSpreadUnit, f64)> = None;
-    for idx in 0..EXECUTABLE_SPREAD_SEARCH_STEPS {
-        let target_notional_usd = increment_notional_usd * (idx as f64 + 1.0);
-        let raw_left_qty = target_notional_usd / ratio_scale / left_price;
-        let raw_right_qty = target_notional_usd * target_hedge_ratio / ratio_scale / right_price;
-        let Some(left_qty) = quantize_to_step(raw_left_qty, left_step).filter(|value| *value > 0.0)
-        else {
-            continue;
-        };
-        let Some(right_qty) =
-            quantize_to_step(raw_right_qty, right_step).filter(|value| *value > 0.0)
-        else {
-            continue;
-        };
-        let achieved_left_notional = (left_qty * left_price).abs();
-        let achieved_right_notional = (right_qty * right_price).abs();
-        let achieved_notional_usd = achieved_left_notional + achieved_right_notional;
-        if !achieved_notional_usd.is_finite() || achieved_notional_usd <= 0.0 {
-            continue;
-        }
-        let achieved_hedge_ratio = if achieved_left_notional > 0.0 {
-            achieved_right_notional / achieved_left_notional
-        } else {
-            0.0
-        };
-        let notional_drift_pct =
-            ((achieved_notional_usd - target_notional_usd).abs() / target_notional_usd) * 100.0;
-        let hedge_ratio_drift_pct = if target_hedge_ratio > 0.0 {
-            ((achieved_hedge_ratio - target_hedge_ratio).abs() / target_hedge_ratio) * 100.0
-        } else {
-            0.0
-        };
-        let plan = ExecutableSpreadUnit {
-            left_qty,
-            right_qty,
-            achieved_notional_usd,
-        };
-        let drift_score = notional_drift_pct + hedge_ratio_drift_pct;
-        if notional_drift_pct <= EXECUTABLE_SPREAD_NOTIONAL_DRIFT_TOLERANCE_PCT
-            && hedge_ratio_drift_pct <= EXECUTABLE_SPREAD_HEDGE_DRIFT_TOLERANCE_PCT
-        {
-            return Some(plan);
-        }
-        match best_plan {
-            Some((_, best_score)) if drift_score >= best_score => {}
-            _ => best_plan = Some((plan, drift_score)),
-        }
-    }
-
-    best_plan.map(|(plan, _)| plan)
 }
 
 fn estimate_half_life(spread: &[f64]) -> f64 {
@@ -1843,17 +1637,16 @@ fn median(values: &[f64]) -> f64 {
 #[cfg(test)]
 mod tests {
     use super::{
-        annotate_with_shadow_model, build_executable_spread_series, build_portfolio_plan,
-        build_variant_score_series, compute_backtest_series, compute_backtest_series_from_zscores,
-        derive_executable_spread_unit, evaluate_cost_gate, evaluate_pair,
-        quantize_close_series_to_ticks, to_direction_hint_with_stop,
-        to_direction_hint_with_stop_retrace, train_shadow_model, BacktestConfig, BacktestExitMode,
-        CostGateDiagnostics, CostGateInput, DirectionHint, ExecutableSpreadUnit, FundingModel,
-        PairCue, PairEvaluationInput, PortfolioHint, Regime, SetupGateDiagnostics,
-        ShadowMlDiagnostics, ShadowModelTrainingRow, SignalVariant, TradeGateDiagnostics,
+        annotate_with_shadow_model, build_portfolio_plan, build_variant_score_series,
+        compute_backtest_series, compute_backtest_series_from_zscores, evaluate_cost_gate,
+        evaluate_pair, to_direction_hint_with_stop, to_direction_hint_with_stop_retrace,
+        train_shadow_model, BacktestConfig, BacktestExitMode, CostGateDiagnostics, CostGateInput,
+        DirectionHint, FundingModel, PairCue, PairEvaluationInput, PortfolioHint, Regime,
+        SetupGateDiagnostics, ShadowMlDiagnostics, ShadowModelTrainingRow, SignalVariant,
+        TradeGateDiagnostics,
     };
     use chrono::{Duration, Utc};
-    use common_types::{kraken_perp_constraints, Timeframe};
+    use common_types::Timeframe;
 
     #[test]
     fn evaluate_pair_emits_variant_metrics() {
@@ -1904,26 +1697,19 @@ mod tests {
         })
         .expect("pair evaluation should succeed");
 
-        let left_constraints = kraken_perp_constraints("PI_XBTUSD");
-        let right_constraints = kraken_perp_constraints("PI_ETHUSD");
-        let left_prices =
-            quantize_close_series_to_ticks(&left, left_constraints.map(|value| value.tick_size));
-        let right_prices =
-            quantize_close_series_to_ticks(&right, right_constraints.map(|value| value.tick_size));
-        let executable_unit = derive_executable_spread_unit(
-            *left_prices.last().expect("left last close"),
-            *right_prices.last().expect("right last close"),
-            result.hedge_ratio,
-            left_constraints,
-            right_constraints,
-        )
-        .expect("executable spread unit should derive");
-        let spread = build_executable_spread_series(
-            &left_prices,
-            &right_prices,
-            executable_unit.left_qty,
-            executable_unit.right_qty,
-        );
+        let left_log = left
+            .iter()
+            .map(|value| value.max(1e-9).ln())
+            .collect::<Vec<_>>();
+        let right_log = right
+            .iter()
+            .map(|value| value.max(1e-9).ln())
+            .collect::<Vec<_>>();
+        let spread = left_log
+            .iter()
+            .zip(right_log.iter())
+            .map(|(left_value, right_value)| left_value - result.hedge_ratio * right_value)
+            .collect::<Vec<_>>();
         let signal_series = build_variant_score_series(&spread, spread.len().clamp(30, 180), 0.6);
         let selected_variant = SignalVariant::parse(&result.cue.selected_variant)
             .expect("selected variant should parse");
@@ -2169,8 +1955,6 @@ mod tests {
     #[test]
     fn backtest_series_last_z_matches_selected_variant_cue() {
         let (timestamps, left, right) = synthetic_pair_series(260);
-        let left_constraints = kraken_perp_constraints("PI_XBTUSD");
-        let right_constraints = kraken_perp_constraints("PI_ETHUSD");
         let result = evaluate_pair(PairEvaluationInput {
             pair_id: "PI_XBTUSD__PI_ETHUSD".to_string(),
             left_instrument: "PI_XBTUSD".to_string(),
@@ -2205,8 +1989,8 @@ mod tests {
                 stop_band: result.cue.stop_band,
                 round_trip_cost_bps: result.cue.cost_estimate_bps,
                 exit_mode: BacktestExitMode::MeanRevert,
-                left_constraints,
-                right_constraints,
+                left_constraints: None,
+                right_constraints: None,
             },
         );
 
@@ -2329,14 +2113,11 @@ mod tests {
             0.0, 1.4, 1.8, 1.3, 0.7, 0.2, -0.1, -0.8, -1.3, -1.7, -1.2, -0.4, 0.3, 1.2,
         ];
         let (timestamps, left, right) = synthetic_spread_path(&z_scores);
-        let spread_values = build_executable_spread_series(&left, &right, 1.0, 1.0);
-        let executable_unit = test_executable_unit(1.0, 1.0, &left, &right);
 
         let mean_revert = compute_backtest_series_from_zscores(
             &timestamps,
             &left,
             &right,
-            &spread_values,
             &z_scores,
             BacktestConfig {
                 hedge_ratio: 1.0,
@@ -2351,13 +2132,11 @@ mod tests {
                 left_constraints: None,
                 right_constraints: None,
             },
-            executable_unit,
         );
         let opposite_extreme = compute_backtest_series_from_zscores(
             &timestamps,
             &left,
             &right,
-            &spread_values,
             &z_scores,
             BacktestConfig {
                 hedge_ratio: 1.0,
@@ -2372,7 +2151,6 @@ mod tests {
                 left_constraints: None,
                 right_constraints: None,
             },
-            executable_unit,
         );
 
         let mean_entry = mean_revert
@@ -2467,14 +2245,11 @@ mod tests {
         let entry_band = 1.0;
         let stop_band = 1.2;
         let rearm_level = stop_band - (stop_band - entry_band) * 0.25;
-        let spread_values = build_executable_spread_series(&left, &right, 1.0, 1.0);
-        let executable_unit = test_executable_unit(1.0, 1.0, &left, &right);
 
         let series = compute_backtest_series_from_zscores(
             &timestamps,
             &left,
             &right,
-            &spread_values,
             &z_scores,
             BacktestConfig {
                 hedge_ratio: 1.0,
@@ -2489,7 +2264,6 @@ mod tests {
                 left_constraints: None,
                 right_constraints: None,
             },
-            executable_unit,
         );
 
         let stop_marker = series
@@ -2521,104 +2295,6 @@ mod tests {
             !entry_before_rearm,
             "entry marker occurred before retrace cooldown rearm"
         );
-    }
-
-    #[test]
-    fn executable_backtest_long_spread_pnl_improves_when_spread_reverts_up() {
-        let timestamps = synthetic_timestamps(5);
-        let left = vec![100.0, 98.0, 99.0, 100.0, 101.0];
-        let right = vec![100.0; 5];
-        let spread_values = build_executable_spread_series(&left, &right, 1.0, 1.0);
-        let z_scores = vec![0.0, -2.2, -1.6, -1.0, -0.2];
-        let executable_unit = test_executable_unit(1.0, 1.0, &left, &right);
-
-        let series = compute_backtest_series_from_zscores(
-            &timestamps,
-            &left,
-            &right,
-            &spread_values,
-            &z_scores,
-            BacktestConfig {
-                hedge_ratio: 1.0,
-                selected_variant: SignalVariant::CointegrationZ,
-                z_window: 3,
-                funding_drag_bps: 0.0,
-                entry_band: 1.8,
-                exit_band: 0.5,
-                stop_band: 3.2,
-                round_trip_cost_bps: 0.0,
-                exit_mode: BacktestExitMode::MeanRevert,
-                left_constraints: None,
-                right_constraints: None,
-            },
-            executable_unit,
-        );
-
-        let entry_idx = series
-            .markers
-            .iter()
-            .find(|marker| marker.kind == "entry")
-            .expect("long entry marker")
-            .index;
-        let exit_idx = series
-            .markers
-            .iter()
-            .find(|marker| marker.kind == "exit")
-            .expect("long exit marker")
-            .index;
-
-        assert!(series.points[entry_idx].equity >= 1.0);
-        assert!(series.points[exit_idx].equity > series.points[entry_idx].equity);
-        assert!(series.points[exit_idx].equity > 1.0);
-    }
-
-    #[test]
-    fn executable_backtest_short_spread_pnl_improves_when_spread_reverts_down() {
-        let timestamps = synthetic_timestamps(5);
-        let left = vec![100.0, 102.0, 101.0, 100.0, 99.0];
-        let right = vec![100.0; 5];
-        let spread_values = build_executable_spread_series(&left, &right, 1.0, 1.0);
-        let z_scores = vec![0.0, 2.2, 1.6, 1.0, 0.2];
-        let executable_unit = test_executable_unit(1.0, 1.0, &left, &right);
-
-        let series = compute_backtest_series_from_zscores(
-            &timestamps,
-            &left,
-            &right,
-            &spread_values,
-            &z_scores,
-            BacktestConfig {
-                hedge_ratio: 1.0,
-                selected_variant: SignalVariant::CointegrationZ,
-                z_window: 3,
-                funding_drag_bps: 0.0,
-                entry_band: 1.8,
-                exit_band: 0.5,
-                stop_band: 3.2,
-                round_trip_cost_bps: 0.0,
-                exit_mode: BacktestExitMode::MeanRevert,
-                left_constraints: None,
-                right_constraints: None,
-            },
-            executable_unit,
-        );
-
-        let entry_idx = series
-            .markers
-            .iter()
-            .find(|marker| marker.kind == "entry")
-            .expect("short entry marker")
-            .index;
-        let exit_idx = series
-            .markers
-            .iter()
-            .find(|marker| marker.kind == "exit")
-            .expect("short exit marker")
-            .index;
-
-        assert!(series.points[entry_idx].equity >= 1.0);
-        assert!(series.points[exit_idx].equity > series.points[entry_idx].equity);
-        assert!(series.points[exit_idx].equity > 1.0);
     }
 
     fn synthetic_pair_series(n: usize) -> (Vec<chrono::DateTime<Utc>>, Vec<f64>, Vec<f64>) {
@@ -2654,33 +2330,6 @@ mod tests {
             left.push(100.0 * value.exp());
         }
         (timestamps, left, right)
-    }
-
-    fn synthetic_timestamps(n: usize) -> Vec<chrono::DateTime<Utc>> {
-        let start = Utc::now() - Duration::minutes(n as i64);
-        (0..n)
-            .map(|idx| start + Duration::minutes(idx as i64))
-            .collect()
-    }
-
-    fn test_executable_unit(
-        left_qty: f64,
-        right_qty: f64,
-        left_prices: &[f64],
-        right_prices: &[f64],
-    ) -> ExecutableSpreadUnit {
-        let achieved_notional_usd = left_prices
-            .last()
-            .zip(right_prices.last())
-            .map(|(left_price, right_price)| {
-                (left_qty * *left_price).abs() + (right_qty * *right_price).abs()
-            })
-            .unwrap_or(0.0);
-        ExecutableSpreadUnit {
-            left_qty,
-            right_qty,
-            achieved_notional_usd,
-        }
     }
 
     fn synthetic_shadow_training_rows(n: usize) -> Vec<ShadowModelTrainingRow> {
