@@ -528,11 +528,10 @@ This project follows SemVer as defined in `docs/02-versioning-and-releases.md`.
   - Expanded incident and execution runbooks with deterministic recovery command gates.
 
 ### Changed
-- Historical backtest/live-z trade paths now use a lagged executable-spread
-  `signal_z` for entries, then switch to frozen entry-normalized `trade_z`
-  while a simulated trade is open. Amber exits are now profit-gated after exit
-  cost so historical green-to-amber moves align with executable spread PnL
-  semantics. Backtest points now include additive `signal_z` for diagnostics.
+- Historical backtest/live-z trade paths now switch from scanner `signal_z` to
+  frozen entry-normalized `trade_z` while a simulated trade is open, so
+  historical green-to-amber moves align with executable spread PnL semantics.
+  Backtest points now include additive `signal_z` for diagnostics.
 - Product/risk/architecture docs now explicitly define manual-first live trading for MVP.
 - Operator-facing execution settings docs now use friendly labels with technical key mapping,
   with a dedicated runbook: `docs/playbooks/execution-operations-runbook.md`.
