@@ -4,11 +4,6 @@ All notable changes to this project will be documented in this file.
 This project follows SemVer as defined in `docs/02-versioning-and-releases.md`.
 
 ## Unreleased
-### Fixed
-- Strategy z-score consistency across cue, live-z, and backtest responses:
-  - `cue.spread_z` now reflects the selected signal variant rather than always the plain rolling cointegration z-score.
-  - Live/backtest z-series now use the same variant-aware z-score construction as strategy evaluation instead of a separate full-sample static normalization path.
-
 ### Added
 - Execution open-trades API and Trade tab live position view for SIM/manual operations:
   - New endpoint: `GET /v1/execution/portfolio/open-trades` (pair-level spread + per-leg live unrealized PnL using data-service marks).

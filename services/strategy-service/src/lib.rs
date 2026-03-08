@@ -387,9 +387,6 @@ impl BacktestExitMode {
 #[derive(Debug, Clone, Copy)]
 pub struct BacktestConfig {
     pub hedge_ratio: f64,
-    pub selected_variant: SignalVariant,
-    pub z_window: usize,
-    pub funding_drag_bps: f64,
     pub entry_band: f64,
     pub exit_band: f64,
     pub stop_band: f64,
@@ -874,12 +871,13 @@ pub fn evaluate_pair(input: PairEvaluationInput) -> anyhow::Result<PairEvaluatio
     let hedge_ratio_stability = estimate_hedge_ratio_stability(&left_log, &right_log);
 
     let lookback = input.left_closes.len().min(180);
-    let signal_window = lookback.max(30);
-    let signal_series = build_variant_score_series(&spread, signal_window, input.funding_drag_bps);
-    let z_scores = signal_series.cointegration_z.as_slice();
-    let robust_z_scores = signal_series.robust_z.as_slice();
-    let vol_norm_scores = signal_series.vol_normalized.as_slice();
-    let funding_scores = signal_series.funding_adjusted.as_slice();
+    let z_scores = rolling_z_scores(&spread, lookback.max(30));
+    let robust_z_scores = rolling_robust_z_scores(&spread, lookback.max(30));
+    let vol_norm_scores = rolling_vol_normalized_scores(&spread, lookback.max(30));
+    let funding_scores = z_scores
+        .iter()
+        .map(|value| value - (input.funding_drag_bps / 10.0))
+        .collect::<Vec<_>>();
 
     let spread_z = *z_scores.last().unwrap_or(&0.0);
     let regime = classify_regime(&spread, spread_z);
@@ -942,10 +940,13 @@ pub fn evaluate_pair(input: PairEvaluationInput) -> anyhow::Result<PairEvaluatio
 
     let mut cue_rationale = selected.rationale_codes.clone();
     let selected_variant = SignalVariant::parse(&selected.variant);
-    let selected_scores = selected_variant
-        .map(|variant| signal_series.for_variant(variant))
-        .unwrap_or(z_scores);
-    let selected_spread_z = *selected_scores.last().unwrap_or(&0.0);
+    let selected_scores = match selected_variant {
+        Some(SignalVariant::CointegrationZ) => z_scores.as_slice(),
+        Some(SignalVariant::RobustZ) => robust_z_scores.as_slice(),
+        Some(SignalVariant::VolNormalized) => vol_norm_scores.as_slice(),
+        Some(SignalVariant::FundingAdjusted) => funding_scores.as_slice(),
+        None => z_scores.as_slice(),
+    };
     let unbounded_direction_hint = to_direction_hint(selected.score_last, input.entry_band);
     let (mut direction_hint, entry_gate_block_reason) = to_direction_hint_with_stop_retrace(
         selected_scores,
@@ -989,7 +990,7 @@ pub fn evaluate_pair(input: PairEvaluationInput) -> anyhow::Result<PairEvaluatio
         regime: regime.as_str().to_string(),
         selected_variant: std::mem::take(&mut selected.variant),
         direction_hint: direction_hint.as_str().to_string(),
-        spread_z: selected_spread_z,
+        spread_z,
         opportunity_score: selected.opportunity_score,
         confidence_band: confidence_band.to_string(),
         entry_band: input.entry_band,
@@ -1043,27 +1044,9 @@ pub fn compute_backtest_series(
         .zip(right_closes.iter())
         .map(|(left, right)| left.max(1e-9).ln() - config.hedge_ratio * right.max(1e-9).ln())
         .collect::<Vec<_>>();
-    let signal_series =
-        build_variant_score_series(&spread, config.z_window, config.funding_drag_bps);
-    let z_scores = signal_series.for_variant(config.selected_variant);
-    if z_scores.len() != spread.len() {
-        return BacktestSeries {
-            points: vec![],
-            markers: vec![],
-        };
-    }
-
-    compute_backtest_series_from_zscores(timestamps, left_closes, right_closes, z_scores, config)
-}
-
-fn compute_backtest_series_from_zscores(
-    timestamps: &[DateTime<Utc>],
-    left_closes: &[f64],
-    right_closes: &[f64],
-    z_scores: &[f64],
-    config: BacktestConfig,
-) -> BacktestSeries {
-    if z_scores.len() != timestamps.len() {
+    let spread_mean = mean(&spread);
+    let spread_std = stddev(&spread);
+    if !spread_std.is_finite() || spread_std <= 0.0 {
         return BacktestSeries {
             points: vec![],
             markers: vec![],
@@ -1091,7 +1074,7 @@ fn compute_backtest_series_from_zscores(
     let mut long_entry_cooldown_active = false;
 
     for idx in 1..timestamps.len() {
-        let z = z_scores[idx];
+        let z = (spread[idx] - spread_mean) / spread_std;
         let left_prev = if let Some(tick) = left_tick {
             quantize_price_to_tick(left_closes[idx - 1], tick).unwrap_or(left_closes[idx - 1])
         } else {
@@ -1452,45 +1435,6 @@ fn rolling_z_scores(values: &[f64], window: usize) -> Vec<f64> {
     result
 }
 
-#[derive(Debug, Clone)]
-struct VariantScoreSeries {
-    cointegration_z: Vec<f64>,
-    robust_z: Vec<f64>,
-    vol_normalized: Vec<f64>,
-    funding_adjusted: Vec<f64>,
-}
-
-impl VariantScoreSeries {
-    fn for_variant(&self, variant: SignalVariant) -> &[f64] {
-        match variant {
-            SignalVariant::CointegrationZ => self.cointegration_z.as_slice(),
-            SignalVariant::RobustZ => self.robust_z.as_slice(),
-            SignalVariant::VolNormalized => self.vol_normalized.as_slice(),
-            SignalVariant::FundingAdjusted => self.funding_adjusted.as_slice(),
-        }
-    }
-}
-
-fn build_variant_score_series(
-    spread: &[f64],
-    window: usize,
-    funding_drag_bps: f64,
-) -> VariantScoreSeries {
-    let cointegration_z = rolling_z_scores(spread, window);
-    let robust_z = rolling_robust_z_scores(spread, window);
-    let vol_normalized = rolling_vol_normalized_scores(spread, window);
-    let funding_adjusted = cointegration_z
-        .iter()
-        .map(|value| value - (funding_drag_bps / 10.0))
-        .collect::<Vec<_>>();
-    VariantScoreSeries {
-        cointegration_z,
-        robust_z,
-        vol_normalized,
-        funding_adjusted,
-    }
-}
-
 fn rolling_robust_z_scores(values: &[f64], window: usize) -> Vec<f64> {
     if values.is_empty() {
         return vec![];
@@ -1637,13 +1581,12 @@ fn median(values: &[f64]) -> f64 {
 #[cfg(test)]
 mod tests {
     use super::{
-        annotate_with_shadow_model, build_portfolio_plan, build_variant_score_series,
-        compute_backtest_series, compute_backtest_series_from_zscores, evaluate_cost_gate,
-        evaluate_pair, to_direction_hint_with_stop, to_direction_hint_with_stop_retrace,
-        train_shadow_model, BacktestConfig, BacktestExitMode, CostGateDiagnostics, CostGateInput,
-        DirectionHint, FundingModel, PairCue, PairEvaluationInput, PortfolioHint, Regime,
-        SetupGateDiagnostics, ShadowMlDiagnostics, ShadowModelTrainingRow, SignalVariant,
-        TradeGateDiagnostics,
+        annotate_with_shadow_model, build_portfolio_plan, compute_backtest_series,
+        evaluate_cost_gate, evaluate_pair, to_direction_hint_with_stop,
+        to_direction_hint_with_stop_retrace, train_shadow_model, BacktestConfig, BacktestExitMode,
+        CostGateDiagnostics, CostGateInput, DirectionHint, FundingModel, PairCue,
+        PairEvaluationInput, PortfolioHint, Regime, SetupGateDiagnostics, ShadowMlDiagnostics,
+        ShadowModelTrainingRow, SignalVariant, TradeGateDiagnostics,
     };
     use chrono::{Duration, Utc};
     use common_types::Timeframe;
@@ -1673,52 +1616,6 @@ mod tests {
         assert_eq!(result.variants.len(), 4);
         assert!(!result.cue.selected_variant.is_empty());
         assert!(result.cue.entry_band > result.cue.exit_band);
-    }
-
-    #[test]
-    fn evaluate_pair_sets_cue_spread_z_from_selected_variant() {
-        let (timestamps, left, right) = synthetic_pair_series(260);
-        let result = evaluate_pair(PairEvaluationInput {
-            pair_id: "PI_XBTUSD__PI_ETHUSD".to_string(),
-            left_instrument: "PI_XBTUSD".to_string(),
-            right_instrument: "PI_ETHUSD".to_string(),
-            timeframe: Timeframe::OneMinute,
-            timestamps,
-            left_closes: left.clone(),
-            right_closes: right.clone(),
-            entry_band: 1.6,
-            exit_band: 0.5,
-            stop_band: 3.2,
-            hold_bars: 12,
-            max_half_life_bars: 120.0,
-            funding_drag_bps: 0.6,
-            taker_fee_bps: 1.2,
-            min_samples_target: 8,
-        })
-        .expect("pair evaluation should succeed");
-
-        let left_log = left
-            .iter()
-            .map(|value| value.max(1e-9).ln())
-            .collect::<Vec<_>>();
-        let right_log = right
-            .iter()
-            .map(|value| value.max(1e-9).ln())
-            .collect::<Vec<_>>();
-        let spread = left_log
-            .iter()
-            .zip(right_log.iter())
-            .map(|(left_value, right_value)| left_value - result.hedge_ratio * right_value)
-            .collect::<Vec<_>>();
-        let signal_series = build_variant_score_series(&spread, spread.len().clamp(30, 180), 0.6);
-        let selected_variant = SignalVariant::parse(&result.cue.selected_variant)
-            .expect("selected variant should parse");
-        let expected_z = *signal_series
-            .for_variant(selected_variant)
-            .last()
-            .expect("selected series should have last value");
-
-        assert!((result.cue.spread_z - expected_z).abs() < 1e-9);
     }
 
     #[test]
@@ -1934,9 +1831,6 @@ mod tests {
             &right,
             BacktestConfig {
                 hedge_ratio: 1.15,
-                selected_variant: SignalVariant::CointegrationZ,
-                z_window: timestamps.len().min(180),
-                funding_drag_bps: 0.0,
                 entry_band: 1.6,
                 exit_band: 0.6,
                 stop_band: 3.2,
@@ -1953,52 +1847,6 @@ mod tests {
     }
 
     #[test]
-    fn backtest_series_last_z_matches_selected_variant_cue() {
-        let (timestamps, left, right) = synthetic_pair_series(260);
-        let result = evaluate_pair(PairEvaluationInput {
-            pair_id: "PI_XBTUSD__PI_ETHUSD".to_string(),
-            left_instrument: "PI_XBTUSD".to_string(),
-            right_instrument: "PI_ETHUSD".to_string(),
-            timeframe: Timeframe::OneMinute,
-            timestamps: timestamps.clone(),
-            left_closes: left.clone(),
-            right_closes: right.clone(),
-            entry_band: 1.6,
-            exit_band: 0.5,
-            stop_band: 3.2,
-            hold_bars: 12,
-            max_half_life_bars: 120.0,
-            funding_drag_bps: 0.6,
-            taker_fee_bps: 1.2,
-            min_samples_target: 8,
-        })
-        .expect("pair evaluation should succeed");
-
-        let series = compute_backtest_series(
-            &timestamps,
-            &left,
-            &right,
-            BacktestConfig {
-                hedge_ratio: result.hedge_ratio,
-                selected_variant: SignalVariant::parse(&result.cue.selected_variant)
-                    .expect("selected variant should parse"),
-                z_window: timestamps.len().min(180),
-                funding_drag_bps: 0.6,
-                entry_band: result.cue.entry_band,
-                exit_band: result.cue.exit_band,
-                stop_band: result.cue.stop_band,
-                round_trip_cost_bps: result.cue.cost_estimate_bps,
-                exit_mode: BacktestExitMode::MeanRevert,
-                left_constraints: None,
-                right_constraints: None,
-            },
-        );
-
-        let last_chart_z = series.points.last().expect("series should have points").z;
-        assert!((last_chart_z - result.cue.spread_z).abs() < 1e-9);
-    }
-
-    #[test]
     fn backtest_series_returns_empty_when_lengths_mismatch() {
         let (timestamps, left, right) = synthetic_pair_series(40);
         let series = compute_backtest_series(
@@ -2007,9 +1855,6 @@ mod tests {
             &right,
             BacktestConfig {
                 hedge_ratio: 1.0,
-                selected_variant: SignalVariant::CointegrationZ,
-                z_window: timestamps.len().min(180),
-                funding_drag_bps: 0.0,
                 entry_band: 1.8,
                 exit_band: 0.6,
                 stop_band: 3.2,
@@ -2036,9 +1881,6 @@ mod tests {
             &right,
             BacktestConfig {
                 hedge_ratio: 1.15,
-                selected_variant: SignalVariant::CointegrationZ,
-                z_window: timestamps.len().min(180),
-                funding_drag_bps: 0.0,
                 entry_band: 1.0,
                 exit_band: 0.2,
                 stop_band: 1.2,
@@ -2070,9 +1912,6 @@ mod tests {
             &right,
             BacktestConfig {
                 hedge_ratio: 1.15,
-                selected_variant: SignalVariant::CointegrationZ,
-                z_window: timestamps.len().min(180),
-                funding_drag_bps: 0.0,
                 entry_band: 1.0,
                 exit_band: 0.2,
                 stop_band,
@@ -2109,21 +1948,17 @@ mod tests {
 
     #[test]
     fn backtest_exit_mode_opposite_extreme_holds_longer_than_mean_revert() {
-        let z_scores = vec![
-            0.0, 1.4, 1.8, 1.3, 0.7, 0.2, -0.1, -0.8, -1.3, -1.7, -1.2, -0.4, 0.3, 1.2,
+        let spread = vec![
+            0.0, 1.8, 2.2, 1.5, 0.4, 0.1, -0.2, -1.2, -1.8, -2.1, -1.0, 0.2, 1.3, 1.9,
         ];
-        let (timestamps, left, right) = synthetic_spread_path(&z_scores);
+        let (timestamps, left, right) = synthetic_spread_path(&spread);
 
-        let mean_revert = compute_backtest_series_from_zscores(
+        let mean_revert = compute_backtest_series(
             &timestamps,
             &left,
             &right,
-            &z_scores,
             BacktestConfig {
                 hedge_ratio: 1.0,
-                selected_variant: SignalVariant::CointegrationZ,
-                z_window: 3,
-                funding_drag_bps: 0.0,
                 entry_band: 1.0,
                 exit_band: 0.25,
                 stop_band: 4.0,
@@ -2133,16 +1968,12 @@ mod tests {
                 right_constraints: None,
             },
         );
-        let opposite_extreme = compute_backtest_series_from_zscores(
+        let opposite_extreme = compute_backtest_series(
             &timestamps,
             &left,
             &right,
-            &z_scores,
             BacktestConfig {
                 hedge_ratio: 1.0,
-                selected_variant: SignalVariant::CointegrationZ,
-                z_window: 3,
-                funding_drag_bps: 0.0,
                 entry_band: 1.0,
                 exit_band: 0.25,
                 stop_band: 4.0,
@@ -2238,24 +2069,20 @@ mod tests {
 
     #[test]
     fn backtest_retrace_cooldown_blocks_reentry_until_rearm_level() {
-        let z_scores = vec![
+        let spread = vec![
             -0.5, 0.3, 1.1, 1.3, 1.25, 1.18, 1.15, 0.9, 0.2, -0.4, -1.0, -1.2, -1.0, -0.6, -0.1,
         ];
-        let (timestamps, left, right) = synthetic_spread_path(&z_scores);
+        let (timestamps, left, right) = synthetic_spread_path(&spread);
         let entry_band = 1.0;
         let stop_band = 1.2;
         let rearm_level = stop_band - (stop_band - entry_band) * 0.25;
 
-        let series = compute_backtest_series_from_zscores(
+        let series = compute_backtest_series(
             &timestamps,
             &left,
             &right,
-            &z_scores,
             BacktestConfig {
                 hedge_ratio: 1.0,
-                selected_variant: SignalVariant::CointegrationZ,
-                z_window: 3,
-                funding_drag_bps: 0.0,
                 entry_band,
                 exit_band: 0.3,
                 stop_band,
