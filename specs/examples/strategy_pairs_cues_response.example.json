@@ -80,6 +80,19 @@
           "source": "EVALUATED_BEST",
           "validation_state": "BEST_IS_CHAMPION"
         },
+        "selected_signal_config": {
+          "variant": "ROBUST_Z",
+          "entry_band": 1.8,
+          "exit_band": 0.6,
+          "stop_band": 3.2,
+          "lookback_bars": 520,
+          "hold_bars": 20,
+          "max_half_life_bars": 120.0,
+          "train_bars": 64800,
+          "validation_bars": 30240,
+          "source": "AUTO_CHAMPION",
+          "updated_at": "2026-02-18T20:09:00Z"
+        },
         "evaluated_at": "2026-02-18T20:09:00Z"
       },
       "variants": [
