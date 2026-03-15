@@ -19,6 +19,35 @@ This project follows SemVer as defined in `docs/02-versioning-and-releases.md`.
   - `AGENTS.md` §8 defines Local vs Remote agent roles, the canonical-source rule, work allocation defaults, branch/PR conventions, and a mandatory hydration sequence (`AGENTS.md` → `docs/AGENT_STATE.md` → `docs/playbooks/remote-agent-bootstrap.md` → task brief → code).
   - `docs/AGENT_STATE.md` is a living state file: sprint pin, in-flight work, blocked items, open follow-ups (S4/S6-S8 from Slice A review, B1-B6 from Slice B review including the new B6 Postgres-backed test harness item, X1-X2 cross-cutting), and update protocol. Curated by the local agent; deltas proposed by remote agents in their PRs.
   - New `docs/playbooks/remote-agent-bootstrap.md` is the operational procedure for §8.4: bootstrap prompt, self-preflight (pin match / clean tree / fresh feature branch / base up to date), claim protocol via the open-follow-ups table, verification sequence (calls `scripts/check-rust-ci.sh` so it stays in sync with the pre-push hook, plus tsc and JSON-schema validation), branch/commit/PR templates, design-proposal-first PR variant, blocking protocol, local review checklist.
+- Strategy live selected-signal config scaffolding:
+  - `strategy_selected_signal` now persists additive `config_json` metadata for the active live signal configuration.
+  - Strategy cues now expose `selected_signal_config` so operators can inspect the live bands/lookback/holding parameters driving evaluation.
+  - Live evaluation now hydrates its bands/lookback/hold settings from persisted selected-signal config with legacy fallback to settings defaults.
+- Strategy reoptimize control-plane hardening (Slice C):
+  - `POST /v1/strategy/pairs/reoptimize` now returns explicit run status fields:
+    - `status` (`OK|DEGRADED|FAILED`)
+    - `critical_error_count`
+    - `non_critical_error_count`
+    - `timeframe_statuses[]`
+    - `flatline_summary`
+  - Reoptimize errors are now tagged with additive `code` and `severity` (`CRITICAL|NON_CRITICAL`).
+  - Reoptimize mutation path now aborts remaining writes for a timeframe after first critical optimizer failure (fail-closed continuation guard).
+  - Canonical selected-variant flatline diagnostics are computed during evaluation and aggregated in reoptimize observability.
+- Strategy backtest leakage hardening (Slice D):
+  - `compute_backtest_series` now uses causal prior-window z-score normalization instead of full-sample mean/stddev normalization.
+  - Added regression coverage proving backtest points before the final bar are invariant to future-only tail spikes.
+  - Updated deterministic backtest scenarios to include warm-up history under prior-window normalization.
+- Strategy champion selection stability and full-config lock semantics (Slice E):
+  - Champion transition now applies configurable hysteresis during post-switch cooldown:
+    - `STRATEGY_CHAMPION_SWITCH_HYSTERESIS_DELTA`
+    - `STRATEGY_CHAMPION_SWITCH_COOLDOWN_SECS`
+  - On `KEEP_CHAMPION`, persisted champion config (bands/windows) is retained instead of inheriting challenger config fields.
+  - Added unit coverage for cooldown hysteresis behavior and champion-config retention on lock.
+- Strategy signal-math refinement and unit consistency (Slice F):
+  - `FUNDING_ADJUSTED` now converts funding drag from bps into a dimensionless z-penalty using spread volatility, then shrinks score magnitude symmetrically (`long`/`short`) instead of applying a raw bps subtraction.
+  - Variant edge estimation now runs in executable leg-return space (`left_return - hedge_ratio * right_return`) and reports outcome in bps, removing prior log-spread/spot-price unit mismatch.
+  - Vol-normalized scores now use robust volatility pressure from absolute spread-diff robust z-scores, reducing outlier sensitivity.
+  - Added unit coverage for funding penalty scaling/symmetry, return-domain edge estimation, and robust vol-normalized suppression behavior.
 - Execution open-trades API and Trade tab live position view for SIM/manual operations:
   - New endpoint: `GET /v1/execution/portfolio/open-trades` (pair-level spread + per-leg live unrealized PnL using data-service marks).
   - New contracts/examples:
