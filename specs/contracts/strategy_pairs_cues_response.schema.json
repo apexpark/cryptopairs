@@ -193,6 +193,39 @@
                   }
                 }
               },
+              "selected_signal_config": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "variant",
+                  "entry_band",
+                  "exit_band",
+                  "stop_band",
+                  "lookback_bars",
+                  "hold_bars",
+                  "max_half_life_bars",
+                  "train_bars",
+                  "validation_bars",
+                  "source",
+                  "updated_at"
+                ],
+                "properties": {
+                  "variant": {
+                    "type": "string",
+                    "enum": ["COINTEGRATION_Z", "ROBUST_Z", "VOL_NORMALIZED", "FUNDING_ADJUSTED"]
+                  },
+                  "entry_band": { "type": "number" },
+                  "exit_band": { "type": "number" },
+                  "stop_band": { "type": "number" },
+                  "lookback_bars": { "type": "integer", "minimum": 1 },
+                  "hold_bars": { "type": "integer", "minimum": 1 },
+                  "max_half_life_bars": { "type": "number", "exclusiveMinimum": 0 },
+                  "train_bars": { "type": "integer", "minimum": 1 },
+                  "validation_bars": { "type": "integer", "minimum": 1 },
+                  "source": { "type": "string" },
+                  "updated_at": { "type": "string", "format": "date-time" }
+                }
+              },
               "evaluated_at": { "type": "string", "format": "date-time" }
             }
           },

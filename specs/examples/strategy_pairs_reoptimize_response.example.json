@@ -1,5 +1,6 @@
 {
   "generated_at": "2026-02-18T20:11:00Z",
+  "status": "DEGRADED",
   "timeframes": ["1m", "15m", "1h"],
   "pairs_processed": 3,
   "cues_generated": 1,
@@ -15,11 +16,65 @@
   "cost_gate_fail": 1,
   "portfolio_advice_available": 2,
   "portfolio_advice_unavailable": 1,
+  "critical_error_count": 1,
+  "non_critical_error_count": 1,
+  "timeframe_statuses": [
+    {
+      "timeframe": "1m",
+      "status": "OK",
+      "pairs_evaluated": 1,
+      "critical_error_count": 0,
+      "non_critical_error_count": 0,
+      "flatline_summary": {
+        "healthy_pairs": 1,
+        "warn_pairs": 0,
+        "flatline_pairs": 0
+      }
+    },
+    {
+      "timeframe": "15m",
+      "status": "DEGRADED",
+      "pairs_evaluated": 1,
+      "critical_error_count": 0,
+      "non_critical_error_count": 1,
+      "flatline_summary": {
+        "healthy_pairs": 0,
+        "warn_pairs": 1,
+        "flatline_pairs": 0
+      }
+    },
+    {
+      "timeframe": "1h",
+      "status": "FAILED",
+      "pairs_evaluated": 1,
+      "critical_error_count": 1,
+      "non_critical_error_count": 0,
+      "flatline_summary": {
+        "healthy_pairs": 0,
+        "warn_pairs": 0,
+        "flatline_pairs": 1
+      }
+    }
+  ],
+  "flatline_summary": {
+    "healthy_pairs": 1,
+    "warn_pairs": 1,
+    "flatline_pairs": 1
+  },
   "errors": [
     {
       "pair_id": "PI_XBTUSD__PI_ETHUSD",
       "timeframe": "1h",
+      "code": "CUE_EVAL_FAILED",
+      "severity": "CRITICAL",
       "error": "insufficient aligned candles for pair=PI_XBTUSD__PI_ETHUSD timeframe=1h bars=81"
+    },
+    {
+      "pair_id": "PI_XBTUSD__PI_ETHUSD",
+      "timeframe": "15m",
+      "code": "SHADOW_MODEL_RUN_PERSIST_FAILED",
+      "severity": "NON_CRITICAL",
+      "error": "shadow model run persist failed: database timeout"
     }
   ]
 }
