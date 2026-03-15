@@ -21,8 +21,8 @@ use strategy_service::{
     annotate_with_shadow_model, apply_portfolio_plan_to_cues, build_portfolio_plan,
     compute_backtest_series, evaluate_pair, train_shadow_model, BacktestConfig, BacktestExitMode,
     CandidateSetDiagnostics, CueSelectionState, FundingModel, PairCue, PairEvaluationInput,
-    PairEvaluationOutput, PortfolioPlan, Regime, ShadowModel, ShadowModelTrainingRow,
-    SignalVariant,
+    PairEvaluationOutput, PortfolioPlan, Regime, SelectedSignalConfig, ShadowModel,
+    ShadowModelTrainingRow, SignalVariant,
 };
 use tokio::net::TcpListener;
 use tokio::sync::RwLock;
@@ -107,6 +107,8 @@ struct StrategySettings {
     advisory_per_pair_cap: f64,
     advisory_enabled: bool,
     champion_switch_min_delta: f64,
+    champion_switch_hysteresis_delta: f64,
+    champion_switch_cooldown_secs: u64,
     block_on_champion_drift: bool,
     research_sweep_execution_cap: usize,
     research_sweep_top_k: usize,
@@ -239,6 +241,10 @@ impl StrategySettings {
         let advisory_per_pair_cap = parse_env_f64("STRATEGY_ADVISORY_PER_PAIR_CAP", 0.35);
         let advisory_enabled = parse_env_bool("STRATEGY_ADVISORY_ENABLED", true);
         let champion_switch_min_delta = parse_env_f64("STRATEGY_CHAMPION_SWITCH_MIN_DELTA", 0.25);
+        let champion_switch_hysteresis_delta =
+            parse_env_f64("STRATEGY_CHAMPION_SWITCH_HYSTERESIS_DELTA", 0.15).max(0.0);
+        let champion_switch_cooldown_secs =
+            parse_env_u64("STRATEGY_CHAMPION_SWITCH_COOLDOWN_SECS", 900);
         let block_on_champion_drift = parse_env_bool("STRATEGY_BLOCK_ON_CHAMPION_DRIFT", true);
         let research_sweep_execution_cap =
             parse_env_usize("STRATEGY_RESEARCH_SWEEP_EXECUTION_CAP", 20_000).clamp(1, 1_000_000);
@@ -347,6 +353,8 @@ impl StrategySettings {
             advisory_per_pair_cap,
             advisory_enabled,
             champion_switch_min_delta,
+            champion_switch_hysteresis_delta,
+            champion_switch_cooldown_secs,
             block_on_champion_drift,
             research_sweep_execution_cap,
             research_sweep_top_k,
@@ -431,6 +439,122 @@ impl StrategySettings {
     }
 }
 
+fn default_selected_signal_config(
+    settings: &StrategySettings,
+    timeframe: Timeframe,
+    variant: String,
+    source: &str,
+    updated_at: DateTime<Utc>,
+) -> SelectedSignalConfig {
+    SelectedSignalConfig {
+        variant,
+        entry_band: settings.entry_band,
+        exit_band: settings.exit_band,
+        stop_band: settings.stop_band,
+        lookback_bars: settings.lookback_bars(timeframe),
+        hold_bars: settings.hold_bars(timeframe),
+        max_half_life_bars: settings.max_half_life_bars(timeframe),
+        train_bars: settings.optimizer_train_bars(timeframe),
+        validation_bars: settings.optimizer_validation_bars(timeframe),
+        source: source.to_string(),
+        updated_at,
+    }
+}
+
+fn selected_signal_config_from_expectancy(
+    config: &ExpectancyConfig,
+    settings: &StrategySettings,
+    timeframe: Timeframe,
+    source: &str,
+    updated_at: DateTime<Utc>,
+) -> SelectedSignalConfig {
+    SelectedSignalConfig {
+        variant: config.z_method.clone(),
+        entry_band: config.entry_z,
+        exit_band: config.exit_z,
+        stop_band: config.stop_z,
+        lookback_bars: config.lookback_bars,
+        hold_bars: settings.hold_bars(timeframe),
+        max_half_life_bars: settings.max_half_life_bars(timeframe),
+        train_bars: config.train_bars,
+        validation_bars: config.validation_bars,
+        source: source.to_string(),
+        updated_at,
+    }
+}
+
+fn sanitize_selected_signal_config(
+    config: &SelectedSignalConfig,
+    settings: &StrategySettings,
+    timeframe: Timeframe,
+) -> Option<SelectedSignalConfig> {
+    let variant = parse_z_method(Some(config.variant.as_str())).ok()?;
+    let mut sanitized = default_selected_signal_config(
+        settings,
+        timeframe,
+        variant,
+        &config.source,
+        config.updated_at,
+    );
+    if config.entry_band.is_finite() && (0.2..=8.0).contains(&config.entry_band.abs()) {
+        sanitized.entry_band = config.entry_band.abs();
+    }
+    if config.exit_band.is_finite() && (0.0..sanitized.entry_band).contains(&config.exit_band.abs())
+    {
+        sanitized.exit_band = config.exit_band.abs();
+    }
+    if config.stop_band.is_finite()
+        && (sanitized.entry_band..=12.0).contains(&config.stop_band.abs())
+    {
+        sanitized.stop_band = config.stop_band.abs();
+    }
+    sanitized.lookback_bars = config.lookback_bars.clamp(120, 10_000);
+    sanitized.hold_bars = config.hold_bars.max(1);
+    if config.max_half_life_bars.is_finite() && config.max_half_life_bars > 0.0 {
+        sanitized.max_half_life_bars = config.max_half_life_bars;
+    }
+    sanitized.train_bars = config.train_bars.clamp(sanitized.lookback_bars, 500_000);
+    sanitized.validation_bars = config.validation_bars.clamp(1, 500_000);
+    if !config.source.trim().is_empty() {
+        sanitized.source = config.source.clone();
+    }
+    sanitized.updated_at = config.updated_at;
+    Some(sanitized)
+}
+
+fn resolve_selected_signal_config(
+    selected_signal: Option<&SelectedSignalRow>,
+    settings: &StrategySettings,
+    timeframe: Timeframe,
+) -> Option<SelectedSignalConfig> {
+    let row = selected_signal?;
+    if let Some(config_json) = row.config_json.as_ref() {
+        match serde_json::from_str::<SelectedSignalConfig>(config_json)
+            .ok()
+            .and_then(|config| sanitize_selected_signal_config(&config, settings, timeframe))
+        {
+            Some(mut config) => {
+                config.updated_at = row.updated_at;
+                return Some(config);
+            }
+            None => {
+                tracing::warn!(
+                    timeframe = %timeframe.as_str(),
+                    variant = %row.signal_variant,
+                    "selected signal config_json invalid; falling back to legacy defaults"
+                );
+            }
+        }
+    }
+    Some(default_selected_signal_config(
+        settings,
+        timeframe,
+        row.signal_variant.clone(),
+        "LEGACY_ROW_FALLBACK",
+        row.updated_at,
+    ))
+}
+
 #[derive(Clone)]
 struct StrategyRepository {
     client: Arc<Client>,
@@ -446,6 +570,8 @@ struct ClosePoint {
 struct SelectedSignalRow {
     signal_variant: String,
     opportunity_score: f64,
+    updated_at: DateTime<Utc>,
+    config_json: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -674,6 +800,7 @@ impl StrategyMetrics {
 struct ChampionTransition {
     selected_variant: String,
     selected_score: f64,
+    selected_config: SelectedSignalConfig,
     champion_variant: String,
     challenger_variant: String,
     champion_score: f64,
@@ -746,6 +873,7 @@ struct CandidateProbationRow {
     timeframe: Timeframe,
     candidate_id: String,
     candidate_variant: String,
+    candidate_config: ExpectancyConfig,
     objective_score: f64,
     state: CandidateLifecycleState,
     eligible_after: DateTime<Utc>,
@@ -850,9 +978,12 @@ impl StrategyRepository {
                     timeframe TEXT NOT NULL,
                     signal_variant TEXT NOT NULL,
                     opportunity_score DOUBLE PRECISION NOT NULL,
+                    config_json TEXT,
                     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
                     PRIMARY KEY (pair_id, timeframe)
                  );
+                 ALTER TABLE strategy_selected_signal
+                 ADD COLUMN IF NOT EXISTS config_json TEXT;
                  ALTER TABLE strategy_signal_performance
                  ADD COLUMN IF NOT EXISTS score_last DOUBLE PRECISION NOT NULL DEFAULT 0;
                  CREATE TABLE IF NOT EXISTS strategy_shadow_model_runs (
@@ -1058,7 +1189,7 @@ impl StrategyRepository {
         &self,
         timeframe: Timeframe,
         evaluation: &PairEvaluationOutput,
-        champion_switch_min_delta: f64,
+        settings: &StrategySettings,
     ) -> anyhow::Result<PersistSummary> {
         let mut summary = PersistSummary {
             performance_rows_written: 0,
@@ -1108,10 +1239,15 @@ impl StrategyRepository {
         let existing = self
             .fetch_selected_signal(&evaluation.cue.pair_id, timeframe)
             .await?;
+        let existing_config =
+            resolve_selected_signal_config(existing.as_ref(), settings, timeframe);
         let transition = decide_champion_transition(
             existing.as_ref(),
+            existing_config.as_ref(),
             evaluation,
-            champion_switch_min_delta.max(0.0),
+            settings.champion_switch_min_delta.max(0.0),
+            settings.champion_switch_hysteresis_delta.max(0.0),
+            settings.champion_switch_cooldown_secs,
         );
         let selected_written = self
             .upsert_selected_signal(
@@ -1119,6 +1255,7 @@ impl StrategyRepository {
                 timeframe,
                 &transition.selected_variant,
                 transition.selected_score,
+                &transition.selected_config,
                 evaluation.cue.evaluated_at,
             )
             .await?;
@@ -1828,6 +1965,7 @@ impl StrategyRepository {
                         p.timeframe,
                         p.candidate_id,
                         r.candidate_variant,
+                        r.config_json,
                         r.objective_score,
                         p.state,
                         p.started_at,
@@ -1849,7 +1987,7 @@ impl StrategyRepository {
         let Some(row) = row else {
             return Ok(None);
         };
-        let state_raw: String = row.get(5);
+        let state_raw: String = row.get(6);
         let state = CandidateLifecycleState::parse(&state_raw).ok_or_else(|| {
             anyhow::anyhow!(
                 "invalid candidate probation state '{}' for pair={} timeframe={}",
@@ -1863,14 +2001,15 @@ impl StrategyRepository {
             timeframe: timeframe_from_str(row.get::<usize, String>(1).as_str())?,
             candidate_id: row.get(2),
             candidate_variant: row.get(3),
-            objective_score: row.get(4),
+            candidate_config: serde_json::from_str(&row.get::<usize, String>(4))?,
+            objective_score: row.get(5),
             state,
-            eligible_after: row.get(8),
-            probation_samples: row.get::<usize, i32>(9).max(0) as usize,
-            promotable: row.get(10),
-            last_candidate_score: row.get(12),
-            last_champion_score: row.get(13),
-            last_objective_delta: row.get(14),
+            eligible_after: row.get(9),
+            probation_samples: row.get::<usize, i32>(10).max(0) as usize,
+            promotable: row.get(11),
+            last_candidate_score: row.get(13),
+            last_champion_score: row.get(14),
+            last_objective_delta: row.get(15),
         }))
     }
 
@@ -2037,24 +2176,28 @@ impl StrategyRepository {
         timeframe: Timeframe,
         selected_variant: &str,
         selected_score: f64,
+        selected_config: &SelectedSignalConfig,
         evaluated_at: DateTime<Utc>,
     ) -> anyhow::Result<u64> {
+        let config_json = serde_json::to_string(selected_config)?;
         let written = self
             .client
             .execute(
                 "INSERT INTO strategy_selected_signal
-                 (pair_id, timeframe, signal_variant, opportunity_score, updated_at)
-                 VALUES ($1,$2,$3,$4,$5)
+                 (pair_id, timeframe, signal_variant, opportunity_score, config_json, updated_at)
+                 VALUES ($1,$2,$3,$4,$5,$6)
                  ON CONFLICT (pair_id, timeframe)
                  DO UPDATE SET
                    signal_variant = EXCLUDED.signal_variant,
                    opportunity_score = EXCLUDED.opportunity_score,
+                   config_json = EXCLUDED.config_json,
                    updated_at = EXCLUDED.updated_at",
                 &[
                     &pair_id as &(dyn ToSql + Sync),
                     &timeframe.as_str(),
                     &selected_variant,
                     &selected_score,
+                    &config_json,
                     &evaluated_at,
                 ],
             )
@@ -2196,7 +2339,7 @@ impl StrategyRepository {
         let row = self
             .client
             .query_opt(
-                "SELECT signal_variant, opportunity_score
+                "SELECT signal_variant, opportunity_score, updated_at, config_json
                  FROM strategy_selected_signal
                  WHERE pair_id=$1 AND timeframe=$2",
                 &[&pair_id, &timeframe.as_str()],
@@ -2205,6 +2348,8 @@ impl StrategyRepository {
         Ok(row.map(|row| SelectedSignalRow {
             signal_variant: row.get(0),
             opportunity_score: row.get(1),
+            updated_at: row.get(2),
+            config_json: row.get(3),
         }))
     }
 }
@@ -2236,16 +2381,21 @@ fn resolve_variant_score(evaluation: &PairEvaluationOutput, variant: &str, fallb
 
 fn decide_champion_transition(
     existing: Option<&SelectedSignalRow>,
+    existing_config: Option<&SelectedSignalConfig>,
     evaluation: &PairEvaluationOutput,
     champion_switch_min_delta: f64,
+    champion_switch_hysteresis_delta: f64,
+    champion_switch_cooldown_secs: u64,
 ) -> ChampionTransition {
     let challenger_variant = evaluation.cue.selected_variant.clone();
     let challenger_score = evaluation.cue.opportunity_score;
+    let challenger_config = evaluation.cue.selected_signal_config.clone();
 
     match existing {
         None => ChampionTransition {
             selected_variant: challenger_variant.clone(),
             selected_score: challenger_score,
+            selected_config: challenger_config.clone(),
             champion_variant: challenger_variant.clone(),
             challenger_variant,
             champion_score: challenger_score,
@@ -2256,6 +2406,7 @@ fn decide_champion_transition(
         Some(current) if current.signal_variant == challenger_variant => ChampionTransition {
             selected_variant: challenger_variant.clone(),
             selected_score: challenger_score,
+            selected_config: challenger_config.clone(),
             champion_variant: current.signal_variant.clone(),
             challenger_variant,
             champion_score: challenger_score,
@@ -2270,10 +2421,25 @@ fn decide_champion_transition(
                 current.opportunity_score,
             );
             let score_delta = challenger_score - champion_score;
-            if score_delta >= champion_switch_min_delta {
+            let elapsed_since_champion_update = evaluation
+                .cue
+                .evaluated_at
+                .signed_duration_since(current.updated_at);
+            let cooldown_active = elapsed_since_champion_update
+                < chrono::Duration::seconds(
+                    champion_switch_cooldown_secs.min(i64::MAX as u64) as i64
+                );
+            let required_delta = champion_switch_min_delta
+                + if cooldown_active {
+                    champion_switch_hysteresis_delta
+                } else {
+                    0.0
+                };
+            if score_delta >= required_delta {
                 ChampionTransition {
                     selected_variant: challenger_variant.clone(),
                     selected_score: challenger_score,
+                    selected_config: challenger_config.clone(),
                     champion_variant: current.signal_variant.clone(),
                     challenger_variant,
                     champion_score,
@@ -2282,9 +2448,21 @@ fn decide_champion_transition(
                     decision: ChampionDecision::PromoteChallenger,
                 }
             } else {
+                let mut selected_config =
+                    existing_config
+                        .cloned()
+                        .unwrap_or_else(|| SelectedSignalConfig {
+                            variant: current.signal_variant.clone(),
+                            source: "CHAMPION_LOCK_FALLBACK".to_string(),
+                            updated_at: current.updated_at,
+                            ..challenger_config.clone()
+                        });
+                selected_config.variant = current.signal_variant.clone();
+                selected_config.updated_at = current.updated_at;
                 ChampionTransition {
                     selected_variant: current.signal_variant.clone(),
                     selected_score: champion_score,
+                    selected_config,
                     champion_variant: current.signal_variant.clone(),
                     challenger_variant,
                     champion_score,
@@ -3758,6 +3936,7 @@ struct CandidateActionResponse {
 #[derive(Debug, Serialize)]
 struct ReoptimizeResponse {
     generated_at: DateTime<Utc>,
+    status: String,
     timeframes: Vec<String>,
     pairs_processed: usize,
     cues_generated: usize,
@@ -3773,7 +3952,28 @@ struct ReoptimizeResponse {
     cost_gate_fail: usize,
     portfolio_advice_available: usize,
     portfolio_advice_unavailable: usize,
+    critical_error_count: usize,
+    non_critical_error_count: usize,
+    timeframe_statuses: Vec<ReoptimizeTimeframeStatus>,
+    flatline_summary: ReoptFlatlineSummary,
     errors: Vec<ReoptError>,
+}
+
+#[derive(Debug, Serialize, Default, Clone)]
+struct ReoptFlatlineSummary {
+    healthy_pairs: usize,
+    warn_pairs: usize,
+    flatline_pairs: usize,
+}
+
+#[derive(Debug, Serialize)]
+struct ReoptimizeTimeframeStatus {
+    timeframe: String,
+    status: String,
+    pairs_evaluated: usize,
+    critical_error_count: usize,
+    non_critical_error_count: usize,
+    flatline_summary: ReoptFlatlineSummary,
 }
 
 #[derive(Debug, Serialize)]
@@ -3901,7 +4101,41 @@ impl MaintenanceAction {
 struct ReoptError {
     pair_id: String,
     timeframe: String,
+    code: String,
+    severity: String,
     error: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ReoptErrorSeverity {
+    Critical,
+    NonCritical,
+}
+
+impl ReoptErrorSeverity {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Critical => "CRITICAL",
+            Self::NonCritical => "NON_CRITICAL",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ReoptimizeRunStatus {
+    Ok,
+    Degraded,
+    Failed,
+}
+
+impl ReoptimizeRunStatus {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Ok => "OK",
+            Self::Degraded => "DEGRADED",
+            Self::Failed => "FAILED",
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -4070,6 +4304,8 @@ async fn main() -> anyhow::Result<()> {
         advisory_gross_cap = settings.advisory_gross_cap,
         advisory_per_pair_cap = settings.advisory_per_pair_cap,
         champion_switch_min_delta = settings.champion_switch_min_delta,
+        champion_switch_hysteresis_delta = settings.champion_switch_hysteresis_delta,
+        champion_switch_cooldown_secs = settings.champion_switch_cooldown_secs,
         block_on_champion_drift = settings.block_on_champion_drift,
         research_sweep_execution_cap = settings.research_sweep_execution_cap,
         research_sweep_top_k = settings.research_sweep_top_k,
@@ -4338,11 +4574,7 @@ fn spawn_reoptimize_worker(state: AppState) -> tokio::task::JoinHandle<()> {
 
                     match state
                         .repository
-                        .record_evaluation(
-                            *timeframe,
-                            &output,
-                            state.settings.champion_switch_min_delta,
-                        )
+                        .record_evaluation(*timeframe, &output, &state.settings)
                         .await
                     {
                         Ok(summary) => {
@@ -7217,6 +7449,13 @@ async fn pairs_candidate_action(
                     "candidate is not promotion-ready; use HOLD or REJECT".to_string(),
                 ));
             }
+            let selected_config = selected_signal_config_from_expectancy(
+                &probation.candidate_config,
+                &state.settings,
+                timeframe,
+                "OPERATOR_PROMOTION",
+                Utc::now(),
+            );
             state
                 .repository
                 .upsert_selected_signal(
@@ -7224,6 +7463,7 @@ async fn pairs_candidate_action(
                     timeframe,
                     &probation.candidate_variant,
                     probation.objective_score,
+                    &selected_config,
                     Utc::now(),
                 )
                 .await
@@ -7446,7 +7686,18 @@ async fn pairs_live_z(
         )));
     };
 
-    let lookback = std::cmp::max(state.settings.lookback_bars(timeframe), window_bars + 32) as i64;
+    let selected_signal = state
+        .repository
+        .fetch_selected_signal(&pair.pair_id(), timeframe)
+        .await
+        .map_err(|error| ApiError::Upstream(error.to_string()))?;
+    let selected_signal_config =
+        resolve_selected_signal_config(selected_signal.as_ref(), &state.settings, timeframe);
+    let configured_lookback = selected_signal_config
+        .as_ref()
+        .map(|config| config.lookback_bars)
+        .unwrap_or_else(|| state.settings.lookback_bars(timeframe));
+    let lookback = std::cmp::max(configured_lookback, window_bars + 32) as i64;
     let left = state
         .repository
         .fetch_recent_closes(&pair.left, timeframe, lookback)
@@ -7496,12 +7747,17 @@ async fn pairs_live_z(
     }
 
     let taker_fee_bps = resolve_taker_fee_bps(query.taker_fee_bps, state.settings.trading_fee_bps)?;
-    let output = evaluate_pair_for_timeframe(
+    let output = evaluate_pair_from_snapshot(
         &state,
         pair,
         timeframe,
         state.settings.advisory_enabled,
         taker_fee_bps,
+        timestamps.clone(),
+        left_closes.clone(),
+        right_closes.clone(),
+        lookback as usize,
+        selected_signal_config,
     )
     .await
     .map_err(|error| ApiError::Upstream(error.to_string()))?;
@@ -7601,6 +7857,68 @@ async fn pairs_portfolio_plan(
     }))
 }
 
+#[derive(Debug, Default, Clone, Copy)]
+struct ReoptErrorCounts {
+    critical: usize,
+    non_critical: usize,
+}
+
+fn classify_reopt_error_severity(code: &str) -> ReoptErrorSeverity {
+    match code {
+        "CUE_EVAL_FAILED"
+        | "RECORD_EVALUATION_FAILED"
+        | "CANDIDATE_PROBATION_UPDATE_FAILED"
+        | "TIMEFRAME_ABORTED_CRITICAL" => ReoptErrorSeverity::Critical,
+        _ => ReoptErrorSeverity::NonCritical,
+    }
+}
+
+fn push_reopt_error(
+    errors: &mut Vec<ReoptError>,
+    pair_id: String,
+    timeframe: String,
+    code: &str,
+    error: String,
+    counts: &mut ReoptErrorCounts,
+) {
+    let severity = classify_reopt_error_severity(code);
+    match severity {
+        ReoptErrorSeverity::Critical => counts.critical = counts.critical.saturating_add(1),
+        ReoptErrorSeverity::NonCritical => {
+            counts.non_critical = counts.non_critical.saturating_add(1)
+        }
+    }
+    errors.push(ReoptError {
+        pair_id,
+        timeframe,
+        code: code.to_string(),
+        severity: severity.as_str().to_string(),
+        error,
+    });
+}
+
+fn increment_flatline_summary(summary: &mut ReoptFlatlineSummary, status: &str) {
+    match status {
+        "FLATLINE" => summary.flatline_pairs = summary.flatline_pairs.saturating_add(1),
+        "WARN" => summary.warn_pairs = summary.warn_pairs.saturating_add(1),
+        _ => summary.healthy_pairs = summary.healthy_pairs.saturating_add(1),
+    }
+}
+
+fn resolve_reoptimize_status(
+    critical_error_count: usize,
+    non_critical_error_count: usize,
+    flatline_pairs: usize,
+) -> ReoptimizeRunStatus {
+    if critical_error_count > 0 {
+        ReoptimizeRunStatus::Failed
+    } else if non_critical_error_count > 0 || flatline_pairs > 0 {
+        ReoptimizeRunStatus::Degraded
+    } else {
+        ReoptimizeRunStatus::Ok
+    }
+}
+
 async fn reoptimize(
     State(state): State<AppState>,
     Json(payload): Json<ReoptimizeRequest>,
@@ -7640,6 +7958,9 @@ async fn reoptimize(
     let mut portfolio_advice_available = 0usize;
     let mut portfolio_advice_unavailable = 0usize;
     let mut errors = vec![];
+    let mut error_counts = ReoptErrorCounts::default();
+    let mut timeframe_statuses = vec![];
+    let mut flatline_summary = ReoptFlatlineSummary::default();
 
     for timeframe in &requested_timeframes {
         let mut timeframe_selected_rows_written = 0usize;
@@ -7647,6 +7968,10 @@ async fn reoptimize(
         let mut candidate_probation_pass_total = 0usize;
         let mut candidate_probation_fail_total = 0usize;
         let mut candidate_probation_fail_reasons: HashMap<String, usize> = HashMap::new();
+        let mut timeframe_error_counts = ReoptErrorCounts::default();
+        let mut timeframe_flatline_summary = ReoptFlatlineSummary::default();
+        let mut timeframe_aborted = false;
+        let mut abort_notice_emitted = false;
         let (outputs, skipped, plan) = evaluate_timeframe_outputs(
             &state,
             *timeframe,
@@ -7662,14 +7987,22 @@ async fn reoptimize(
         }
 
         for skipped_pair in skipped {
-            errors.push(ReoptError {
-                pair_id: skipped_pair.pair_id,
-                timeframe: timeframe.as_str().to_string(),
-                error: skipped_pair.reason,
-            });
+            push_reopt_error(
+                &mut errors,
+                skipped_pair.pair_id,
+                timeframe.as_str().to_string(),
+                "CUE_EVAL_FAILED",
+                skipped_pair.reason,
+                &mut timeframe_error_counts,
+            );
+            timeframe_aborted = true;
         }
 
         for output in outputs {
+            increment_flatline_summary(
+                &mut timeframe_flatline_summary,
+                &output.flatline_diagnostics.status,
+            );
             cues_generated += usize::from(output.cue.actionable);
             match output.cue.shadow_ml.status.as_str() {
                 "AVAILABLE" => shadow_model_available += 1,
@@ -7682,13 +8015,24 @@ async fn reoptimize(
                     cost_gate_fail += 1;
                 }
             }
+            if timeframe_aborted {
+                if !abort_notice_emitted {
+                    push_reopt_error(
+                        &mut errors,
+                        output.cue.pair_id.clone(),
+                        timeframe.as_str().to_string(),
+                        "TIMEFRAME_ABORTED_CRITICAL",
+                        "timeframe mutation path skipped after critical optimizer failure"
+                            .to_string(),
+                        &mut timeframe_error_counts,
+                    );
+                    abort_notice_emitted = true;
+                }
+                continue;
+            }
             match state
                 .repository
-                .record_evaluation(
-                    *timeframe,
-                    &output,
-                    state.settings.champion_switch_min_delta,
-                )
+                .record_evaluation(*timeframe, &output, &state.settings)
                 .await
             {
                 Ok(summary) => {
@@ -7698,11 +8042,18 @@ async fn reoptimize(
                     drift_rows_written += summary.drift_rows_written;
                     timeframe_transition_counts.accumulate(summary.transition_counts);
                 }
-                Err(error) => errors.push(ReoptError {
-                    pair_id: output.cue.pair_id.clone(),
-                    timeframe: timeframe.as_str().to_string(),
-                    error: error.to_string(),
-                }),
+                Err(error) => {
+                    push_reopt_error(
+                        &mut errors,
+                        output.cue.pair_id.clone(),
+                        timeframe.as_str().to_string(),
+                        "RECORD_EVALUATION_FAILED",
+                        error.to_string(),
+                        &mut timeframe_error_counts,
+                    );
+                    timeframe_aborted = true;
+                    continue;
+                }
             }
             if let Err(error) = state
                 .repository
@@ -7710,11 +8061,14 @@ async fn reoptimize(
                 .await
                 .map(|written| shadow_model_runs_written += written)
             {
-                errors.push(ReoptError {
-                    pair_id: output.cue.pair_id,
-                    timeframe: timeframe.as_str().to_string(),
-                    error: format!("shadow model run persist failed: {error}"),
-                });
+                push_reopt_error(
+                    &mut errors,
+                    output.cue.pair_id.clone(),
+                    timeframe.as_str().to_string(),
+                    "SHADOW_MODEL_RUN_PERSIST_FAILED",
+                    format!("shadow model run persist failed: {error}"),
+                    &mut timeframe_error_counts,
+                );
                 continue;
             }
             if let Err(error) = state
@@ -7722,11 +8076,14 @@ async fn reoptimize(
                 .record_opportunity_history(*timeframe, &output)
                 .await
             {
-                errors.push(ReoptError {
-                    pair_id: output.cue.pair_id.clone(),
-                    timeframe: timeframe.as_str().to_string(),
-                    error: format!("opportunity history persist failed: {error}"),
-                });
+                push_reopt_error(
+                    &mut errors,
+                    output.cue.pair_id.clone(),
+                    timeframe.as_str().to_string(),
+                    "OPPORTUNITY_HISTORY_PERSIST_FAILED",
+                    format!("opportunity history persist failed: {error}"),
+                    &mut timeframe_error_counts,
+                );
             }
             let pair_spec = PairSpec {
                 left: output.cue.left_instrument.clone(),
@@ -7736,11 +8093,14 @@ async fn reoptimize(
                 compute_and_record_paper_trades_for_output(&state, &pair_spec, *timeframe, &output)
                     .await
             {
-                errors.push(ReoptError {
-                    pair_id: output.cue.pair_id.clone(),
-                    timeframe: timeframe.as_str().to_string(),
-                    error: format!("paper trade history persist failed: {error}"),
-                });
+                push_reopt_error(
+                    &mut errors,
+                    output.cue.pair_id.clone(),
+                    timeframe.as_str().to_string(),
+                    "PAPER_TRADE_HISTORY_PERSIST_FAILED",
+                    format!("paper trade history persist failed: {error}"),
+                    &mut timeframe_error_counts,
+                );
             }
             match advance_candidate_probation_for_output(&state, *timeframe, &output).await {
                 Ok(result) => {
@@ -7756,23 +8116,78 @@ async fn reoptimize(
                         }
                     }
                 }
-                Err(error) => errors.push(ReoptError {
-                    pair_id: output.cue.pair_id.clone(),
-                    timeframe: timeframe.as_str().to_string(),
-                    error: format!("candidate probation update failed: {error}"),
-                }),
+                Err(error) => {
+                    push_reopt_error(
+                        &mut errors,
+                        output.cue.pair_id.clone(),
+                        timeframe.as_str().to_string(),
+                        "CANDIDATE_PROBATION_UPDATE_FAILED",
+                        format!("candidate probation update failed: {error}"),
+                        &mut timeframe_error_counts,
+                    );
+                    timeframe_aborted = true;
+                }
             }
         }
-        let promotable_total = state
+        let promotable_total = match state
             .repository
             .count_promotable_candidates(*timeframe)
             .await
-            .unwrap_or(0);
+        {
+            Ok(value) => value,
+            Err(error) => {
+                push_reopt_error(
+                    &mut errors,
+                    "SYSTEM".to_string(),
+                    timeframe.as_str().to_string(),
+                    "PROMOTABLE_COUNT_FAILED",
+                    format!("promotable candidate count failed: {error}"),
+                    &mut timeframe_error_counts,
+                );
+                0
+            }
+        };
+        flatline_summary.healthy_pairs = flatline_summary
+            .healthy_pairs
+            .saturating_add(timeframe_flatline_summary.healthy_pairs);
+        flatline_summary.warn_pairs = flatline_summary
+            .warn_pairs
+            .saturating_add(timeframe_flatline_summary.warn_pairs);
+        flatline_summary.flatline_pairs = flatline_summary
+            .flatline_pairs
+            .saturating_add(timeframe_flatline_summary.flatline_pairs);
+        error_counts.critical = error_counts
+            .critical
+            .saturating_add(timeframe_error_counts.critical);
+        error_counts.non_critical = error_counts
+            .non_critical
+            .saturating_add(timeframe_error_counts.non_critical);
         let rejected_total: usize = candidate_probation_fail_reasons.values().sum();
+        let timeframe_status = resolve_reoptimize_status(
+            timeframe_error_counts.critical,
+            timeframe_error_counts.non_critical,
+            timeframe_flatline_summary.flatline_pairs,
+        );
+        timeframe_statuses.push(ReoptimizeTimeframeStatus {
+            timeframe: timeframe.as_str().to_string(),
+            status: timeframe_status.as_str().to_string(),
+            pairs_evaluated: timeframe_flatline_summary
+                .healthy_pairs
+                .saturating_add(timeframe_flatline_summary.warn_pairs)
+                .saturating_add(timeframe_flatline_summary.flatline_pairs),
+            critical_error_count: timeframe_error_counts.critical,
+            non_critical_error_count: timeframe_error_counts.non_critical,
+            flatline_summary: timeframe_flatline_summary.clone(),
+        });
         info!(
             timeframe = %timeframe.as_str(),
+            optimizer_cycle_status = %timeframe_status.as_str(),
             optimizer_cycle_total = 1usize,
-            optimizer_cycle_status = "manual_reoptimize",
+            optimizer_critical_error_count = timeframe_error_counts.critical,
+            optimizer_non_critical_error_count = timeframe_error_counts.non_critical,
+            signal_flatline_pairs = timeframe_flatline_summary.flatline_pairs,
+            signal_warn_pairs = timeframe_flatline_summary.warn_pairs,
+            signal_healthy_pairs = timeframe_flatline_summary.healthy_pairs,
             optimizer_candidate_promotable_total = promotable_total,
             optimizer_candidate_rejected_total = rejected_total,
             candidate_probation_pass_total,
@@ -7817,8 +8232,15 @@ async fn reoptimize(
         "manual reoptimize complete"
     );
 
+    let status = resolve_reoptimize_status(
+        error_counts.critical,
+        error_counts.non_critical,
+        flatline_summary.flatline_pairs,
+    );
+
     Ok(Json(ReoptimizeResponse {
         generated_at: Utc::now(),
+        status: status.as_str().to_string(),
         timeframes: requested_timeframes
             .iter()
             .map(|timeframe| timeframe.as_str().to_string())
@@ -7836,6 +8258,10 @@ async fn reoptimize(
         cost_gate_fail,
         portfolio_advice_available,
         portfolio_advice_unavailable,
+        critical_error_count: error_counts.critical,
+        non_critical_error_count: error_counts.non_critical,
+        timeframe_statuses,
+        flatline_summary,
         errors,
     }))
 }
@@ -7997,7 +8423,19 @@ async fn evaluate_pair_for_timeframe(
     taker_fee_bps: f64,
 ) -> anyhow::Result<PairEvaluationOutput> {
     let pair_id = pair.pair_id();
-    let lookback = state.settings.lookback_bars(timeframe) as i64;
+    let selected_signal = state
+        .repository
+        .fetch_selected_signal(&pair_id, timeframe)
+        .await?;
+    let stored_champion_variant = selected_signal
+        .as_ref()
+        .map(|row| row.signal_variant.clone());
+    let selected_signal_config =
+        resolve_selected_signal_config(selected_signal.as_ref(), &state.settings, timeframe);
+    let lookback = selected_signal_config
+        .as_ref()
+        .map(|config| config.lookback_bars)
+        .unwrap_or_else(|| state.settings.lookback_bars(timeframe)) as i64;
     let left = state
         .repository
         .fetch_recent_closes(&pair.left, timeframe, lookback)
@@ -8017,14 +8455,52 @@ async fn evaluate_pair_for_timeframe(
         ));
     }
 
-    let selected_signal = state
-        .repository
-        .fetch_selected_signal(&pair_id, timeframe)
-        .await?;
+    let mut output = evaluate_pair_from_snapshot(
+        state,
+        pair,
+        timeframe,
+        advisory_enabled,
+        taker_fee_bps,
+        timestamps,
+        left_closes,
+        right_closes,
+        lookback as usize,
+        selected_signal_config,
+    )
+    .await?;
+    output.stored_champion_variant = stored_champion_variant;
+    state
+        .metrics
+        .record_cue_projection(CueProjectionOutcome::NotRequired);
+
+    Ok(output)
+}
+
+async fn evaluate_pair_from_snapshot(
+    state: &AppState,
+    pair: &PairSpec,
+    timeframe: Timeframe,
+    advisory_enabled: bool,
+    taker_fee_bps: f64,
+    timestamps: Vec<DateTime<Utc>>,
+    left_closes: Vec<f64>,
+    right_closes: Vec<f64>,
+    lookback_bars: usize,
+    selected_signal_config: Option<SelectedSignalConfig>,
+) -> anyhow::Result<PairEvaluationOutput> {
+    if timestamps.len() < 120 {
+        return Err(anyhow::anyhow!(
+            "insufficient aligned candles for pair={} timeframe={} bars={}",
+            pair.pair_id(),
+            timeframe.as_str(),
+            timestamps.len()
+        ));
+    }
+
     let (training_rows_len, training_query_failed, model) = match state
         .repository
         .fetch_shadow_training_rows(
-            &pair_id,
+            &pair.pair_id(),
             timeframe,
             state.settings.shadow_ml_training_limit as i64,
         )
@@ -8037,7 +8513,7 @@ async fn evaluate_pair_for_timeframe(
         }
         Err(error) => {
             tracing::warn!(
-                pair_id = %pair_id,
+                pair_id = %pair.pair_id(),
                 timeframe = %timeframe.as_str(),
                 error = %error,
                 "shadow training history unavailable"
@@ -8046,23 +8522,55 @@ async fn evaluate_pair_for_timeframe(
         }
     };
 
+    let entry_band = selected_signal_config
+        .as_ref()
+        .map(|config| config.entry_band)
+        .unwrap_or(state.settings.entry_band);
+    let exit_band = selected_signal_config
+        .as_ref()
+        .map(|config| config.exit_band)
+        .unwrap_or(state.settings.exit_band);
+    let stop_band = selected_signal_config
+        .as_ref()
+        .map(|config| config.stop_band)
+        .unwrap_or(state.settings.stop_band);
+    let hold_bars = selected_signal_config
+        .as_ref()
+        .map(|config| config.hold_bars)
+        .unwrap_or_else(|| state.settings.hold_bars(timeframe));
+    let max_half_life_bars = selected_signal_config
+        .as_ref()
+        .map(|config| config.max_half_life_bars)
+        .unwrap_or_else(|| state.settings.max_half_life_bars(timeframe));
+    let train_bars = selected_signal_config
+        .as_ref()
+        .map(|config| config.train_bars)
+        .unwrap_or_else(|| state.settings.optimizer_train_bars(timeframe));
+    let validation_bars = selected_signal_config
+        .as_ref()
+        .map(|config| config.validation_bars)
+        .unwrap_or_else(|| state.settings.optimizer_validation_bars(timeframe));
+
     let mut output = evaluate_pair(PairEvaluationInput {
-        pair_id: pair_id.clone(),
+        pair_id: pair.pair_id(),
         left_instrument: pair.left.clone(),
         right_instrument: pair.right.clone(),
         timeframe,
-        timestamps: timestamps.clone(),
-        left_closes: left_closes.clone(),
-        right_closes: right_closes.clone(),
-        entry_band: state.settings.entry_band,
-        exit_band: state.settings.exit_band,
-        stop_band: state.settings.stop_band,
-        hold_bars: state.settings.hold_bars(timeframe),
-        max_half_life_bars: state.settings.max_half_life_bars(timeframe),
+        timestamps,
+        left_closes,
+        right_closes,
+        lookback_bars,
+        entry_band,
+        exit_band,
+        stop_band,
+        hold_bars,
+        max_half_life_bars,
+        train_bars,
+        validation_bars,
         funding_drag_bps: state.settings.funding_drag_bps,
         taker_fee_bps,
         min_samples_target: state.settings.min_samples_target,
-        preferred_variant: None,
+        selected_signal_config,
     })?;
     finalize_pair_evaluation_output(
         state,
@@ -8077,75 +8585,6 @@ async fn evaluate_pair_for_timeframe(
         &mut output,
     )
     .await?;
-
-    output.stored_champion_variant = selected_signal
-        .as_ref()
-        .map(|row| row.signal_variant.clone());
-    let mut projection_outcome = CueProjectionOutcome::NotRequired;
-    if let Some(preferred) = selected_signal.as_ref() {
-        if preferred.signal_variant != output.cue.selected_variant {
-            if output
-                .variants
-                .iter()
-                .any(|variant| variant.variant == preferred.signal_variant)
-            {
-                let mut champion_projection = match evaluate_pair(PairEvaluationInput {
-                    pair_id,
-                    left_instrument: pair.left.clone(),
-                    right_instrument: pair.right.clone(),
-                    timeframe,
-                    timestamps,
-                    left_closes,
-                    right_closes,
-                    entry_band: state.settings.entry_band,
-                    exit_band: state.settings.exit_band,
-                    stop_band: state.settings.stop_band,
-                    hold_bars: state.settings.hold_bars(timeframe),
-                    max_half_life_bars: state.settings.max_half_life_bars(timeframe),
-                    funding_drag_bps: state.settings.funding_drag_bps,
-                    taker_fee_bps,
-                    min_samples_target: state.settings.min_samples_target,
-                    preferred_variant: Some(preferred.signal_variant.clone()),
-                }) {
-                    Ok(projection) => projection,
-                    Err(error) => {
-                        state
-                            .metrics
-                            .record_cue_projection(CueProjectionOutcome::ProjectionFailed);
-                        return Err(error);
-                    }
-                };
-                if let Err(error) = finalize_pair_evaluation_output(
-                    state,
-                    timeframe,
-                    advisory_enabled,
-                    taker_fee_bps,
-                    ShadowModelContext {
-                        rows_len: training_rows_len,
-                        query_failed: training_query_failed,
-                        model: model.as_ref(),
-                    },
-                    &mut champion_projection,
-                )
-                .await
-                {
-                    state
-                        .metrics
-                        .record_cue_projection(CueProjectionOutcome::ProjectionFailed);
-                    return Err(error);
-                }
-                output.stored_champion_projection = Some(champion_projection.cue);
-                projection_outcome = if state.settings.block_on_champion_drift {
-                    CueProjectionOutcome::ProjectedBlocked
-                } else {
-                    CueProjectionOutcome::Projected
-                };
-            } else {
-                projection_outcome = CueProjectionOutcome::ProjectionFailed;
-            }
-        }
-    }
-    state.metrics.record_cue_projection(projection_outcome);
 
     Ok(output)
 }
@@ -8535,9 +8974,10 @@ fn parse_env_bool(key: &str, default: bool) -> bool {
 mod tests {
     use super::{
         artifact_download_path, bootstrap_deviation_exceeds_threshold, bootstrap_snapshot_is_fresh,
-        canonical_metric_instrument, classify_expectancy_result, compute_expectancy_metrics,
-        compute_pair_funding_bps_per_event, compute_pair_slippage_sample_bps,
-        compute_walk_forward_summary, cue_for_pairs_response, days_covered,
+        canonical_metric_instrument, classify_expectancy_result, classify_reopt_error_severity,
+        compute_expectancy_metrics, compute_pair_funding_bps_per_event,
+        compute_pair_slippage_sample_bps, compute_walk_forward_summary, cue_for_pairs_response,
+        days_covered,
         decide_candidate_probation_transition, decide_champion_transition,
         derive_paper_trades_from_series, derive_replay_trades_from_series,
         estimate_research_combinations, evaluate_recent_performance_gate,
@@ -8546,25 +8986,44 @@ mod tests {
         parse_expectancy_query, parse_opportunity_history_stats_timeframe,
         parse_opportunity_history_window, parse_paper_trades_window, parse_replay_trades_query,
         percentile, project_continuous_funding_bps, refresh_setup_gate, resolve_artifact_path,
-        resolve_taker_fee_bps, retention_cutoff_ts, summarize_recent_performance,
+        resolve_reoptimize_status, resolve_selected_signal_config, resolve_taker_fee_bps,
+        retention_cutoff_ts, selected_signal_config_from_expectancy, summarize_recent_performance,
         update_persist_summary_for_transition, CandidateInboxQuery, CandidateLifecycleState,
         CandidateOperatorAction, CandidateProbationInputs, ChampionDecision, CueProjectionOutcome,
-        ExpectancyMetrics, ExpectancyQuery, FundingCostEstimate, FundingRateInputMode,
-        MaintenanceAction, OpportunityHistoryQuery, OpportunityHistoryStatsQuery, PaperTradesQuery,
-        PersistSummary, ReoptError, ReoptimizeResponse, ReplayTradeEntry, ReplayTradePathSummary,
-        ReplayTradesQuery, ResearchSweepRequest, SampledSlippageStatus, SelectedSignalRow,
-        SelectionTransitionCounts, StrategyMarketMetricsResponse, StrategyMetrics,
-        StrategySettings,
+        ExpectancyConfig, ExpectancyMetrics, ExpectancyQuery, FundingCostEstimate,
+        FundingRateInputMode, MaintenanceAction, OpportunityHistoryQuery,
+        OpportunityHistoryStatsQuery, PaperTradesQuery, PersistSummary, ReoptError,
+        ReoptErrorSeverity, ReoptimizeResponse, ReoptimizeRunStatus, ReplayTradeEntry,
+        ReplayTradePathSummary, ReplayTradesQuery, ResearchSweepRequest, SampledSlippageStatus,
+        SelectedSignalRow, SelectionTransitionCounts, StrategyMarketMetricsResponse,
+        StrategyMetrics, StrategySettings,
     };
-    use chrono::Utc;
+    use chrono::{Duration, Utc};
     use common_types::Timeframe;
     use std::fs;
     use std::path::PathBuf;
     use strategy_service::{
         BacktestExitMode, BacktestMarker, BacktestPoint, BacktestSeries, CostGateDiagnostics,
-        FundingModel, PairCue, PairEvaluationOutput, PortfolioHint, SetupGateDiagnostics,
-        ShadowMlDiagnostics, TradeGateDiagnostics, VariantEvaluation,
+        FundingModel, PairCue, PairEvaluationOutput, PortfolioHint, SelectedSignalConfig,
+        SetupGateDiagnostics, ShadowMlDiagnostics, SignalFlatlineDiagnostics, TradeGateDiagnostics,
+        VariantEvaluation,
     };
+
+    fn selected_signal_config(variant: &str) -> SelectedSignalConfig {
+        SelectedSignalConfig {
+            variant: variant.to_string(),
+            entry_band: 1.8,
+            exit_band: 0.6,
+            stop_band: 3.2,
+            lookback_bars: 520,
+            hold_bars: 20,
+            max_half_life_bars: 120.0,
+            train_bars: 64_800,
+            validation_bars: 30_240,
+            source: "TEST".to_string(),
+            updated_at: Utc::now(),
+        }
+    }
 
     fn output(
         selected_variant: &str,
@@ -8598,6 +9057,7 @@ mod tests {
                 portfolio_hint: PortfolioHint::unavailable(vec![]),
                 shadow_ml: ShadowMlDiagnostics::unavailable(vec![]),
                 selection_state: None,
+                selected_signal_config: selected_signal_config(selected_variant),
                 evaluated_at: Utc::now(),
             },
             variants: vec![
@@ -8634,13 +9094,23 @@ mod tests {
             spread_vol_bps: 2.0,
             stored_champion_variant: None,
             stored_champion_projection: None,
+            flatline_diagnostics: SignalFlatlineDiagnostics {
+                status: "HEALTHY".to_string(),
+                window_bars: 720,
+                z_stddev: 1.0,
+                z_p95_minus_p5: 2.0,
+                zero_crossings: 3,
+                entry_band_crossings: 1,
+                max_abs_z: 2.1,
+                rationale_codes: vec![],
+            },
         }
     }
 
     #[test]
     fn champion_transition_initializes_when_no_previous_selection() {
         let evaluation = output("VOL_NORMALIZED", 2.0, 1.0, 2.0);
-        let transition = decide_champion_transition(None, &evaluation, 0.25);
+        let transition = decide_champion_transition(None, None, &evaluation, 0.25, 0.15, 900);
         assert_eq!(transition.decision, ChampionDecision::Initialize);
         assert_eq!(transition.selected_variant, "VOL_NORMALIZED");
     }
@@ -8650,9 +9120,18 @@ mod tests {
         let existing = SelectedSignalRow {
             signal_variant: "ROBUST_Z".to_string(),
             opportunity_score: 1.0,
+            updated_at: Utc::now(),
+            config_json: None,
         };
         let evaluation = output("VOL_NORMALIZED", 2.0, 1.0, 2.0);
-        let transition = decide_champion_transition(Some(&existing), &evaluation, 0.25);
+        let transition = decide_champion_transition(
+            Some(&existing),
+            Some(&selected_signal_config("ROBUST_Z")),
+            &evaluation,
+            0.25,
+            0.15,
+            900,
+        );
         assert_eq!(transition.decision, ChampionDecision::PromoteChallenger);
         assert_eq!(transition.selected_variant, "VOL_NORMALIZED");
         assert!((transition.score_delta - 1.0).abs() < 1e-9);
@@ -8663,9 +9142,18 @@ mod tests {
         let existing = SelectedSignalRow {
             signal_variant: "ROBUST_Z".to_string(),
             opportunity_score: 1.0,
+            updated_at: Utc::now(),
+            config_json: None,
         };
         let evaluation = output("VOL_NORMALIZED", 1.1, 1.0, 1.1);
-        let transition = decide_champion_transition(Some(&existing), &evaluation, 0.25);
+        let transition = decide_champion_transition(
+            Some(&existing),
+            Some(&selected_signal_config("ROBUST_Z")),
+            &evaluation,
+            0.25,
+            0.15,
+            900,
+        );
         assert_eq!(transition.decision, ChampionDecision::KeepChampion);
         assert_eq!(transition.selected_variant, "ROBUST_Z");
         assert!(transition.score_delta < 0.25);
@@ -8898,6 +9386,191 @@ mod tests {
     }
 
     #[test]
+    fn champion_transition_hysteresis_locks_during_cooldown() {
+        let existing = SelectedSignalRow {
+            signal_variant: "ROBUST_Z".to_string(),
+            opportunity_score: 1.0,
+            updated_at: Utc::now(),
+            config_json: None,
+        };
+        let evaluation = output("VOL_NORMALIZED", 1.30, 1.0, 1.30);
+        let transition = decide_champion_transition(
+            Some(&existing),
+            Some(&selected_signal_config("ROBUST_Z")),
+            &evaluation,
+            0.25,
+            0.20,
+            3_600,
+        );
+        assert_eq!(transition.decision, ChampionDecision::KeepChampion);
+        assert_eq!(transition.selected_variant, "ROBUST_Z");
+        assert!((transition.score_delta - 0.30).abs() < 1e-9);
+    }
+
+    #[test]
+    fn champion_transition_promotes_after_cooldown_when_delta_exceeds_base() {
+        let existing = SelectedSignalRow {
+            signal_variant: "ROBUST_Z".to_string(),
+            opportunity_score: 1.0,
+            updated_at: Utc::now() - Duration::hours(2),
+            config_json: None,
+        };
+        let evaluation = output("VOL_NORMALIZED", 1.30, 1.0, 1.30);
+        let transition = decide_champion_transition(
+            Some(&existing),
+            Some(&selected_signal_config("ROBUST_Z")),
+            &evaluation,
+            0.25,
+            0.20,
+            3_600,
+        );
+        assert_eq!(transition.decision, ChampionDecision::PromoteChallenger);
+        assert_eq!(transition.selected_variant, "VOL_NORMALIZED");
+        assert!((transition.score_delta - 0.30).abs() < 1e-9);
+    }
+
+    #[test]
+    fn champion_transition_keeps_persisted_config_on_lock() {
+        let settings = StrategySettings::from_env();
+        let updated_at = Utc::now();
+        let mut persisted = selected_signal_config("ROBUST_Z");
+        persisted.entry_band = 2.35;
+        persisted.exit_band = 0.55;
+        persisted.stop_band = 3.9;
+        persisted.lookback_bars = 880;
+        persisted.source = "AUTO_CHAMPION".to_string();
+        persisted.updated_at = updated_at;
+        let existing = SelectedSignalRow {
+            signal_variant: "ROBUST_Z".to_string(),
+            opportunity_score: 1.0,
+            updated_at,
+            config_json: Some(serde_json::to_string(&persisted).expect("persisted config")),
+        };
+        let existing_config =
+            resolve_selected_signal_config(Some(&existing), &settings, Timeframe::OneMinute)
+                .expect("resolved selected config");
+        let evaluation = output("VOL_NORMALIZED", 1.1, 1.0, 1.1);
+        let transition = decide_champion_transition(
+            Some(&existing),
+            Some(&existing_config),
+            &evaluation,
+            0.25,
+            0.15,
+            900,
+        );
+        assert_eq!(transition.decision, ChampionDecision::KeepChampion);
+        assert_eq!(transition.selected_variant, "ROBUST_Z");
+        assert!((transition.selected_config.entry_band - 2.35).abs() < 1e-9);
+        assert_eq!(transition.selected_config.lookback_bars, 880);
+        assert_eq!(transition.selected_config.source, "AUTO_CHAMPION");
+    }
+
+    #[test]
+    fn selected_signal_config_from_expectancy_uses_candidate_windows() {
+        let settings = StrategySettings::from_env();
+        let config = ExpectancyConfig {
+            entry_z: 2.1,
+            exit_z: 0.4,
+            stop_z: 3.6,
+            z_method: "VOL_NORMALIZED".to_string(),
+            hedge_method: "HEDGE_RATIO_OLS".to_string(),
+            lookback_bars: 440,
+            train_bars: 2_200,
+            validation_bars: 880,
+        };
+        let updated_at = Utc::now();
+        let selected = selected_signal_config_from_expectancy(
+            &config,
+            &settings,
+            Timeframe::OneMinute,
+            "OPERATOR_PROMOTION",
+            updated_at,
+        );
+        assert_eq!(selected.variant, "VOL_NORMALIZED");
+        assert_eq!(selected.entry_band, 2.1);
+        assert_eq!(selected.lookback_bars, 440);
+        assert_eq!(selected.train_bars, 2_200);
+        assert_eq!(selected.validation_bars, 880);
+        assert_eq!(selected.hold_bars, settings.hold_bars(Timeframe::OneMinute));
+        assert_eq!(selected.source, "OPERATOR_PROMOTION");
+    }
+
+    #[test]
+    fn resolve_selected_signal_config_falls_back_for_legacy_rows() {
+        let settings = StrategySettings::from_env();
+        let updated_at = Utc::now();
+        let row = SelectedSignalRow {
+            signal_variant: "ROBUST_Z".to_string(),
+            opportunity_score: 1.5,
+            updated_at,
+            config_json: None,
+        };
+        let selected = resolve_selected_signal_config(Some(&row), &settings, Timeframe::OneHour)
+            .expect("legacy fallback config");
+        assert_eq!(selected.variant, "ROBUST_Z");
+        assert_eq!(selected.entry_band, settings.entry_band);
+        assert_eq!(
+            selected.lookback_bars,
+            settings.lookback_bars(Timeframe::OneHour)
+        );
+        assert_eq!(selected.source, "LEGACY_ROW_FALLBACK");
+        assert_eq!(selected.updated_at, updated_at);
+    }
+
+    #[test]
+    fn resolve_selected_signal_config_prefers_serialized_config() {
+        let settings = StrategySettings::from_env();
+        let updated_at = Utc::now();
+        let config = SelectedSignalConfig {
+            variant: "COINTEGRATION_Z".to_string(),
+            entry_band: 2.2,
+            exit_band: 0.5,
+            stop_band: 3.8,
+            lookback_bars: 660,
+            hold_bars: 14,
+            max_half_life_bars: 80.0,
+            train_bars: 2_640,
+            validation_bars: 960,
+            source: "AUTO_CHAMPION".to_string(),
+            updated_at,
+        };
+        let row = SelectedSignalRow {
+            signal_variant: "ROBUST_Z".to_string(),
+            opportunity_score: 2.5,
+            updated_at,
+            config_json: Some(serde_json::to_string(&config).expect("config json")),
+        };
+        let selected =
+            resolve_selected_signal_config(Some(&row), &settings, Timeframe::FifteenMinutes)
+                .expect("selected config");
+        assert_eq!(selected.variant, "COINTEGRATION_Z");
+        assert_eq!(selected.entry_band, 2.2);
+        assert_eq!(selected.lookback_bars, 660);
+        assert_eq!(selected.hold_bars, 14);
+        assert_eq!(selected.source, "AUTO_CHAMPION");
+    }
+
+    #[test]
+    fn reopt_error_severity_classifies_critical_codes() {
+        assert_eq!(
+            classify_reopt_error_severity("CUE_EVAL_FAILED"),
+            ReoptErrorSeverity::Critical
+        );
+        assert_eq!(
+            classify_reopt_error_severity("RECORD_EVALUATION_FAILED"),
+            ReoptErrorSeverity::Critical
+        );
+        assert_eq!(
+            classify_reopt_error_severity("CANDIDATE_PROBATION_UPDATE_FAILED"),
+            ReoptErrorSeverity::Critical
+        );
+        assert_eq!(
+            classify_reopt_error_severity("SHADOW_MODEL_RUN_PERSIST_FAILED"),
+            ReoptErrorSeverity::NonCritical
+        );
+    }
+
+    #[test]
     fn cue_for_pairs_response_blocks_when_projection_is_unavailable() {
         let mut evaluation = output("VOL_NORMALIZED", 2.0, 1.0, 2.0);
         evaluation.stored_champion_variant = Some("ROBUST_Z".to_string());
@@ -8949,6 +9622,23 @@ mod tests {
             Some("ROBUST_Z")
         );
         assert!(!selection_state.drift_active);
+    }
+
+    #[test]
+    fn reoptimize_status_follows_decision_table() {
+        assert_eq!(
+            resolve_reoptimize_status(1, 0, 0),
+            ReoptimizeRunStatus::Failed
+        );
+        assert_eq!(
+            resolve_reoptimize_status(0, 1, 0),
+            ReoptimizeRunStatus::Degraded
+        );
+        assert_eq!(
+            resolve_reoptimize_status(0, 0, 2),
+            ReoptimizeRunStatus::Degraded
+        );
+        assert_eq!(resolve_reoptimize_status(0, 0, 0), ReoptimizeRunStatus::Ok);
     }
 
     fn temp_dir(name: &str) -> PathBuf {
@@ -10090,6 +10780,7 @@ mod tests {
             portfolio_hint: PortfolioHint::unavailable(vec![]),
             shadow_ml: ShadowMlDiagnostics::unavailable(vec![]),
             selection_state: None,
+            selected_signal_config: selected_signal_config("COINTEGRATION_Z"),
             evaluated_at: Utc::now(),
         };
 
@@ -10213,6 +10904,7 @@ mod tests {
             portfolio_hint: PortfolioHint::unavailable(vec![]),
             shadow_ml: ShadowMlDiagnostics::unavailable(vec![]),
             selection_state: None,
+            selected_signal_config: selected_signal_config("COINTEGRATION_Z"),
             evaluated_at: Utc::now(),
         };
 
