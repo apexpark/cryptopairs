@@ -89,6 +89,7 @@ struct StrategySettings {
     sampled_slippage_interval_ms: u64,
     sampled_slippage_warmup_secs: u64,
     sampled_slippage_stale_secs: u64,
+    data_stale_bars: u64,
     sampled_slippage_ewma_alpha: f64,
     sampled_slippage_state_path: String,
     sampled_slippage_persist_secs: u64,
@@ -205,6 +206,7 @@ impl StrategySettings {
         let sampled_slippage_warmup_secs =
             parse_env_u64("STRATEGY_SAMPLED_SLIPPAGE_WARMUP_SECS", 300);
         let sampled_slippage_stale_secs = parse_env_u64("STRATEGY_SAMPLED_SLIPPAGE_STALE_SECS", 20);
+        let data_stale_bars = parse_env_u64("STRATEGY_DATA_STALE_BARS", 3).max(1);
         let sampled_slippage_ewma_alpha =
             parse_env_f64("STRATEGY_SAMPLED_SLIPPAGE_EWMA_ALPHA", 0.2).clamp(0.01, 1.0);
         let sampled_slippage_state_path = std::env::var("STRATEGY_SAMPLED_SLIPPAGE_STATE_PATH")
@@ -335,6 +337,7 @@ impl StrategySettings {
             sampled_slippage_interval_ms,
             sampled_slippage_warmup_secs,
             sampled_slippage_stale_secs,
+            data_stale_bars,
             sampled_slippage_ewma_alpha,
             sampled_slippage_state_path,
             sampled_slippage_persist_secs,
@@ -436,6 +439,11 @@ impl StrategySettings {
 
     fn ui_access_enabled(&self) -> bool {
         !self.ui_access_password.trim().is_empty()
+    }
+
+    fn max_data_staleness_seconds(&self, timeframe: Timeframe) -> i64 {
+        let step_seconds = timeframe.step_seconds().max(1);
+        step_seconds.saturating_mul(self.data_stale_bars as i64)
     }
 }
 
@@ -4289,6 +4297,7 @@ async fn main() -> anyhow::Result<()> {
         sampled_slippage_interval_ms = settings.sampled_slippage_interval_ms,
         sampled_slippage_warmup_secs = settings.sampled_slippage_warmup_secs,
         sampled_slippage_stale_secs = settings.sampled_slippage_stale_secs,
+        data_stale_bars = settings.data_stale_bars,
         sampled_slippage_ewma_alpha = settings.sampled_slippage_ewma_alpha,
         sampled_slippage_state_path = %settings.sampled_slippage_state_path,
         sampled_slippage_persist_secs = settings.sampled_slippage_persist_secs,
@@ -4507,6 +4516,119 @@ async fn fetch_pair_live_marks(
     match (left_metric, right_metric) {
         (Some(left), Some(right)) => Ok(Some((left, right))),
         _ => Ok(None),
+    }
+}
+
+fn resolve_pair_live_marks_from_map<'a>(
+    metrics: &'a HashMap<String, StrategyMarketMetricsResponse>,
+    pair: &PairSpec,
+) -> Option<(
+    &'a StrategyMarketMetricsResponse,
+    &'a StrategyMarketMetricsResponse,
+)> {
+    let left_key = canonical_metric_instrument(&pair.left);
+    let right_key = canonical_metric_instrument(&pair.right);
+    let left = metrics.get(&left_key)?;
+    let right = metrics.get(&right_key)?;
+    Some((left, right))
+}
+
+fn apply_live_mark_override_to_snapshot(
+    timestamps: &mut [DateTime<Utc>],
+    left_closes: &mut [f64],
+    right_closes: &mut [f64],
+    left_live: &StrategyMarketMetricsResponse,
+    right_live: &StrategyMarketMetricsResponse,
+) -> bool {
+    if timestamps.is_empty() || left_closes.is_empty() || right_closes.is_empty() {
+        return false;
+    }
+    let mut applied = false;
+    let last_idx = timestamps.len() - 1;
+    if left_live.mark.is_finite() && left_live.mark > 0.0 {
+        left_closes[last_idx] = left_live.mark;
+        applied = true;
+    }
+    if right_live.mark.is_finite() && right_live.mark > 0.0 {
+        right_closes[last_idx] = right_live.mark;
+        applied = true;
+    }
+    if applied {
+        let latest_ts = std::cmp::max(left_live.server_time, right_live.server_time);
+        if latest_ts > timestamps[last_idx] {
+            timestamps[last_idx] = latest_ts;
+        }
+    }
+    applied
+}
+
+async fn maybe_apply_live_mark_override(
+    state: &AppState,
+    pair: &PairSpec,
+    timeframe: Timeframe,
+    timestamps: &mut [DateTime<Utc>],
+    left_closes: &mut [f64],
+    right_closes: &mut [f64],
+    metrics_cache: Option<&HashMap<String, StrategyMarketMetricsResponse>>,
+    source: &str,
+) -> bool {
+    if timestamps.is_empty() || left_closes.is_empty() || right_closes.is_empty() {
+        return false;
+    }
+    let max_data_staleness_seconds = state.settings.max_data_staleness_seconds(timeframe);
+    let aligned_latest_ts = timestamps[timestamps.len() - 1];
+    let aligned_age_seconds = compute_candle_age_seconds(Utc::now(), aligned_latest_ts);
+    if aligned_age_seconds > max_data_staleness_seconds {
+        tracing::warn!(
+            source,
+            pair_id = %pair.pair_id(),
+            timeframe = %timeframe.as_str(),
+            aligned_age_seconds,
+            max_data_staleness_seconds,
+            "skipping live mark override due stale aligned candles"
+        );
+        return false;
+    }
+
+    if let Some((left_live, right_live)) =
+        metrics_cache.and_then(|metrics| resolve_pair_live_marks_from_map(metrics, pair))
+    {
+        return apply_live_mark_override_to_snapshot(
+            timestamps,
+            left_closes,
+            right_closes,
+            left_live,
+            right_live,
+        );
+    }
+
+    match fetch_pair_live_marks(state, &pair.left, &pair.right).await {
+        Ok(Some((left_live, right_live))) => apply_live_mark_override_to_snapshot(
+            timestamps,
+            left_closes,
+            right_closes,
+            &left_live,
+            &right_live,
+        ),
+        Ok(None) => {
+            tracing::warn!(
+                source,
+                pair_id = %pair.pair_id(),
+                timeframe = %timeframe.as_str(),
+                "live mark override skipped; upstream metrics missing one or both instruments"
+            );
+            false
+        }
+        Err(error) => {
+            tracing::warn!(
+                source,
+                pair_id = %pair.pair_id(),
+                timeframe = %timeframe.as_str(),
+                error = %error,
+                "live mark override unavailable; using aligned closes"
+            );
+            false
+        }
     }
 }
 
@@ -6496,6 +6618,7 @@ async fn pairs_expectancy(
         timeframe,
         false,
         state.settings.trading_fee_bps,
+        None,
     )
     .await
     .map_err(|error| ApiError::Upstream(error.to_string()))?;
@@ -6643,6 +6766,7 @@ async fn pairs_replay_trades(
         timeframe,
         false,
         state.settings.trading_fee_bps,
+        None,
     )
     .await
     .map_err(|error| ApiError::Upstream(error.to_string()))?;
@@ -7148,6 +7272,7 @@ async fn pairs_research_sweep(
                     tf,
                     false,
                     state.settings.trading_fee_bps,
+                    None,
                 )
                 .await
                 .map_err(|error| ApiError::Upstream(error.to_string()))?;
@@ -7591,6 +7716,7 @@ async fn pairs_backtest(
         timeframe,
         state.settings.advisory_enabled,
         taker_fee_bps,
+        None,
     )
     .await
     .map_err(|error| ApiError::Upstream(error.to_string()))?;
@@ -7718,33 +7844,17 @@ async fn pairs_live_z(
             timestamps.len()
         )));
     }
-
-    match fetch_pair_live_marks(&state, &pair.left, &pair.right).await {
-        Ok(Some((left_live, right_live))) => {
-            if !timestamps.is_empty() && !left_closes.is_empty() && !right_closes.is_empty() {
-                let last_idx = timestamps.len() - 1;
-                if left_live.mark.is_finite() && left_live.mark > 0.0 {
-                    left_closes[last_idx] = left_live.mark;
-                }
-                if right_live.mark.is_finite() && right_live.mark > 0.0 {
-                    right_closes[last_idx] = right_live.mark;
-                }
-                let latest_ts = std::cmp::max(left_live.server_time, right_live.server_time);
-                if latest_ts > timestamps[last_idx] {
-                    timestamps[last_idx] = latest_ts;
-                }
-            }
-        }
-        Ok(None) => {}
-        Err(error) => {
-            tracing::warn!(
-                pair_id = %query.pair_id,
-                timeframe = %timeframe.as_str(),
-                error = %error,
-                "live-z mark override unavailable; falling back to aligned closes"
-            );
-        }
-    }
+    let _ = maybe_apply_live_mark_override(
+        &state,
+        pair,
+        timeframe,
+        &mut timestamps,
+        &mut left_closes,
+        &mut right_closes,
+        None,
+        "live_z",
+    )
+    .await;
 
     let taker_fee_bps = resolve_taker_fee_bps(query.taker_fee_bps, state.settings.trading_fee_bps)?;
     let output = evaluate_pair_from_snapshot(
@@ -7797,7 +7907,7 @@ async fn pairs_live_z(
     );
 
     let points_start_index = series.points.len().saturating_sub(points);
-    let response_points = series
+    let mut response_points = series
         .points
         .iter()
         .skip(points_start_index)
@@ -7806,6 +7916,10 @@ async fn pairs_live_z(
             z: point.z,
         })
         .collect::<Vec<_>>();
+    if let Some(last_point) = response_points.last_mut() {
+        // Keep live-z right-edge numerically aligned with cue z from the same snapshot.
+        last_point.z = output.cue.spread_z;
+    }
     let response_markers = series
         .markers
         .iter()
@@ -8272,11 +8386,78 @@ struct ShadowModelContext<'a> {
     model: Option<&'a ShadowModel>,
 }
 
+async fn evaluate_pair_for_timeframe(
+    state: &AppState,
+    pair: &PairSpec,
+    timeframe: Timeframe,
+    advisory_enabled: bool,
+    taker_fee_bps: f64,
+    live_marks: Option<&HashMap<String, StrategyMarketMetricsResponse>>,
+) -> anyhow::Result<PairEvaluationOutput> {
+    let pair_id = pair.pair_id();
+    let selected_signal = state
+        .repository
+        .fetch_selected_signal(&pair_id, timeframe)
+        .await?;
+    let stored_champion_variant = selected_signal
+        .as_ref()
+        .map(|row| row.signal_variant.clone());
+    let selected_signal_config =
+        resolve_selected_signal_config(selected_signal.as_ref(), &state.settings, timeframe);
+    let lookback = selected_signal_config
+        .as_ref()
+        .map(|config| config.lookback_bars)
+        .unwrap_or_else(|| state.settings.lookback_bars(timeframe)) as i64;
+    let left = state
+        .repository
+        .fetch_recent_closes(&pair.left, timeframe, lookback)
+        .await?;
+    let right = state
+        .repository
+        .fetch_recent_closes(&pair.right, timeframe, lookback)
+        .await?;
+
+    let (mut timestamps, mut left_closes, mut right_closes) = align_closes(left, right);
+    let _ = maybe_apply_live_mark_override(
+        state,
+        pair,
+        timeframe,
+        &mut timestamps,
+        &mut left_closes,
+        &mut right_closes,
+        live_marks,
+        "scanner",
+    )
+    .await;
+
+    let mut output = evaluate_pair_from_snapshot(
+        state,
+        pair,
+        timeframe,
+        advisory_enabled,
+        taker_fee_bps,
+        timestamps,
+        left_closes,
+        right_closes,
+        lookback as usize,
+        selected_signal_config,
+    )
+    .await?;
+    output.stored_champion_variant = stored_champion_variant;
+    state
+        .metrics
+        .record_cue_projection(CueProjectionOutcome::NotRequired);
+
+    Ok(output)
+}
+
 async fn finalize_pair_evaluation_output(
     state: &AppState,
     timeframe: Timeframe,
     advisory_enabled: bool,
     taker_fee_bps: f64,
+    data_age_seconds: i64,
+    max_data_staleness_seconds: i64,
     shadow: ShadowModelContext<'_>,
     output: &mut PairEvaluationOutput,
 ) -> anyhow::Result<()> {
@@ -8411,69 +8592,23 @@ async fn finalize_pair_evaluation_output(
     }
 
     refresh_setup_gate(&mut output.cue);
+    apply_data_freshness_gate(
+        &mut output.cue,
+        data_age_seconds,
+        max_data_staleness_seconds,
+    );
     finalize_trade_gate(&mut output.cue);
-    Ok(())
-}
-
-async fn evaluate_pair_for_timeframe(
-    state: &AppState,
-    pair: &PairSpec,
-    timeframe: Timeframe,
-    advisory_enabled: bool,
-    taker_fee_bps: f64,
-) -> anyhow::Result<PairEvaluationOutput> {
-    let pair_id = pair.pair_id();
-    let selected_signal = state
-        .repository
-        .fetch_selected_signal(&pair_id, timeframe)
-        .await?;
-    let stored_champion_variant = selected_signal
-        .as_ref()
-        .map(|row| row.signal_variant.clone());
-    let selected_signal_config =
-        resolve_selected_signal_config(selected_signal.as_ref(), &state.settings, timeframe);
-    let lookback = selected_signal_config
-        .as_ref()
-        .map(|config| config.lookback_bars)
-        .unwrap_or_else(|| state.settings.lookback_bars(timeframe)) as i64;
-    let left = state
-        .repository
-        .fetch_recent_closes(&pair.left, timeframe, lookback)
-        .await?;
-    let right = state
-        .repository
-        .fetch_recent_closes(&pair.right, timeframe, lookback)
-        .await?;
-
-    let (timestamps, left_closes, right_closes) = align_closes(left, right);
-    if timestamps.len() < 120 {
-        return Err(anyhow::anyhow!(
-            "insufficient aligned candles for pair={} timeframe={} bars={}",
-            pair_id,
-            timeframe.as_str(),
-            timestamps.len()
-        ));
+    if data_age_seconds > max_data_staleness_seconds {
+        tracing::warn!(
+            pair_id = %output.cue.pair_id,
+            timeframe = %timeframe.as_str(),
+            data_age_seconds,
+            max_data_staleness_seconds,
+            "strategy cue forced to WAIT due stale candles"
+        );
     }
 
-    let mut output = evaluate_pair_from_snapshot(
-        state,
-        pair,
-        timeframe,
-        advisory_enabled,
-        taker_fee_bps,
-        timestamps,
-        left_closes,
-        right_closes,
-        lookback as usize,
-        selected_signal_config,
-    )
-    .await?;
-    output.stored_champion_variant = stored_champion_variant;
-    state
-        .metrics
-        .record_cue_projection(CueProjectionOutcome::NotRequired);
-
-    Ok(output)
+    Ok(())
 }
 
 async fn evaluate_pair_from_snapshot(
@@ -8496,6 +8631,11 @@ async fn evaluate_pair_from_snapshot(
             timestamps.len()
         ));
     }
+    let latest_aligned_ts = *timestamps
+        .last()
+        .ok_or_else(|| anyhow::anyhow!("aligned timestamps unexpectedly empty"))?;
+    let data_age_seconds = compute_candle_age_seconds(Utc::now(), latest_aligned_ts);
+    let max_data_staleness_seconds = state.settings.max_data_staleness_seconds(timeframe);
 
     let (training_rows_len, training_query_failed, model) = match state
         .repository
@@ -8577,6 +8717,8 @@ async fn evaluate_pair_from_snapshot(
         timeframe,
         advisory_enabled,
         taker_fee_bps,
+        data_age_seconds,
+        max_data_staleness_seconds,
         ShadowModelContext {
             rows_len: training_rows_len,
             query_failed: training_query_failed,
@@ -8746,6 +8888,37 @@ fn is_cost_reason(code: &str) -> bool {
     )
 }
 
+fn compute_candle_age_seconds(now: DateTime<Utc>, latest_ts: DateTime<Utc>) -> i64 {
+    now.signed_duration_since(latest_ts).num_seconds().max(0)
+}
+
+fn apply_data_freshness_gate(
+    cue: &mut PairCue,
+    data_age_seconds: i64,
+    max_data_staleness_seconds: i64,
+) {
+    if data_age_seconds <= max_data_staleness_seconds {
+        return;
+    }
+    cue.setup_actionable = false;
+    cue.actionable = false;
+    if !cue.rationale_codes.iter().any(|code| code == "DATA_STALE") {
+        cue.rationale_codes.push("DATA_STALE".to_string());
+    }
+    if !cue
+        .setup_gate
+        .rationale_codes
+        .iter()
+        .any(|code| code == "DATA_STALE")
+    {
+        cue.setup_gate
+            .rationale_codes
+            .push("DATA_STALE".to_string());
+    }
+    cue.setup_gate.status = "WAIT".to_string();
+    cue.setup_gate.pass = false;
+}
+
 fn refresh_setup_gate(cue: &mut PairCue) {
     let mut setup_reasons = cue
         .rationale_codes
@@ -8808,15 +8981,34 @@ async fn evaluate_timeframe_outputs(
 ) -> (Vec<PairEvaluationOutput>, Vec<SkippedPair>, PortfolioPlan) {
     let mut outputs = vec![];
     let mut skipped = vec![];
+    let mut handles = Vec::with_capacity(state.settings.pairs.len());
+    for pair in state.settings.pairs.iter().cloned() {
+        let app_state = state.clone();
+        handles.push(tokio::spawn(async move {
+            let pair_id = pair.pair_id();
+            let result = evaluate_pair_for_timeframe(
+                &app_state,
+                &pair,
+                timeframe,
+                advisory_enabled,
+                taker_fee_bps,
+                None,
+            )
+            .await;
+            (pair_id, result)
+        }));
+    }
 
-    for pair in &state.settings.pairs {
-        match evaluate_pair_for_timeframe(state, pair, timeframe, advisory_enabled, taker_fee_bps)
-            .await
-        {
-            Ok(output) => outputs.push(output),
-            Err(error) => skipped.push(SkippedPair {
-                pair_id: pair.pair_id(),
+    for handle in handles {
+        match handle.await {
+            Ok((_, Ok(output))) => outputs.push(output),
+            Ok((pair_id, Err(error))) => skipped.push(SkippedPair {
+                pair_id,
                 reason: error.to_string(),
+            }),
+            Err(error) => skipped.push(SkippedPair {
+                pair_id: "SYSTEM".to_string(),
+                reason: format!("pair evaluation task join failed: {error}"),
             }),
         }
     }
@@ -8973,9 +9165,10 @@ fn parse_env_bool(key: &str, default: bool) -> bool {
 #[cfg(test)]
 mod tests {
     use super::{
-        artifact_download_path, bootstrap_deviation_exceeds_threshold, bootstrap_snapshot_is_fresh,
+        apply_data_freshness_gate, apply_live_mark_override_to_snapshot, artifact_download_path,
+        bootstrap_deviation_exceeds_threshold, bootstrap_snapshot_is_fresh,
         canonical_metric_instrument, classify_expectancy_result, classify_reopt_error_severity,
-        compute_expectancy_metrics, compute_pair_funding_bps_per_event,
+        compute_candle_age_seconds, compute_expectancy_metrics, compute_pair_funding_bps_per_event,
         compute_pair_slippage_sample_bps, compute_walk_forward_summary, cue_for_pairs_response,
         days_covered,
         decide_candidate_probation_transition, decide_champion_transition,
@@ -9022,6 +9215,24 @@ mod tests {
             validation_bars: 30_240,
             source: "TEST".to_string(),
             updated_at: Utc::now(),
+        }
+    }
+
+    fn market_metric(
+        instrument: &str,
+        mark: f64,
+        server_time: chrono::DateTime<Utc>,
+    ) -> StrategyMarketMetricsResponse {
+        StrategyMarketMetricsResponse {
+            instrument: instrument.to_string(),
+            server_time,
+            bid: mark,
+            ask: mark,
+            mark,
+            index: mark,
+            change_24h_pct: 0.0,
+            funding_rate: 0.0,
+            open_interest: 0.0,
         }
     }
 
@@ -10913,5 +11124,109 @@ mod tests {
         assert_eq!(cue.trade_gate.status, "WAIT");
         assert_eq!(cue.trade_gate.blocked_by, "WAIT");
         assert!(!cue.trade_gate.pass);
+    }
+
+    #[test]
+    fn apply_data_freshness_gate_forces_setup_wait_when_stale() {
+        let mut cue = PairCue {
+            pair_id: "PF_XBTUSD__PF_ETHUSD".to_string(),
+            left_instrument: "PF_XBTUSD".to_string(),
+            right_instrument: "PF_ETHUSD".to_string(),
+            timeframe: "1m".to_string(),
+            regime: "CALM".to_string(),
+            selected_variant: "COINTEGRATION_Z".to_string(),
+            direction_hint: "LONG_SPREAD".to_string(),
+            spread_z: -2.1,
+            opportunity_score: 1.0,
+            confidence_band: "HIGH".to_string(),
+            entry_band: 1.8,
+            exit_band: 0.6,
+            stop_band: 3.2,
+            expected_hold_bars: 12,
+            cost_estimate_bps: 0.0,
+            setup_actionable: true,
+            actionable: true,
+            rationale_codes: vec!["BELOW_ENTRY_BAND".to_string()],
+            setup_gate: SetupGateDiagnostics {
+                status: "AVAILABLE".to_string(),
+                pass: true,
+                rationale_codes: vec![],
+            },
+            cost_gate: CostGateDiagnostics::unavailable(vec![]),
+            trade_gate: TradeGateDiagnostics::unavailable(vec![]),
+            portfolio_hint: PortfolioHint::unavailable(vec![]),
+            shadow_ml: ShadowMlDiagnostics::unavailable(vec![]),
+            selected_signal_config: selected_signal_config("COINTEGRATION_Z"),
+            evaluated_at: Utc::now(),
+        };
+
+        apply_data_freshness_gate(&mut cue, 240, 180);
+
+        assert!(!cue.setup_actionable);
+        assert!(!cue.actionable);
+        assert_eq!(cue.setup_gate.status, "WAIT");
+        assert!(!cue.setup_gate.pass);
+        assert!(cue.rationale_codes.iter().any(|code| code == "DATA_STALE"));
+        assert!(cue
+            .setup_gate
+            .rationale_codes
+            .iter()
+            .any(|code| code == "DATA_STALE"));
+    }
+
+    #[test]
+    fn compute_candle_age_seconds_clamps_future_timestamps_to_zero() {
+        let now = Utc::now();
+        let future = now + Duration::seconds(60);
+        assert_eq!(compute_candle_age_seconds(now, future), 0);
+
+        let past = now - Duration::seconds(42);
+        assert_eq!(compute_candle_age_seconds(now, past), 42);
+    }
+
+    #[test]
+    fn apply_live_mark_override_to_snapshot_replaces_tail_and_time() {
+        let now = Utc::now();
+        let mut timestamps = vec![now - Duration::seconds(120), now - Duration::seconds(60)];
+        let mut left = vec![100.0, 101.0];
+        let mut right = vec![10.0, 11.0];
+        let left_live = market_metric("PF_XBTUSD", 102.5, now - Duration::seconds(1));
+        let right_live = market_metric("PF_ETHUSD", 12.5, now);
+
+        let applied = apply_live_mark_override_to_snapshot(
+            &mut timestamps,
+            &mut left,
+            &mut right,
+            &left_live,
+            &right_live,
+        );
+
+        assert!(applied);
+        assert_eq!(left[1], 102.5);
+        assert_eq!(right[1], 12.5);
+        assert_eq!(timestamps[1], now);
+    }
+
+    #[test]
+    fn apply_live_mark_override_to_snapshot_ignores_invalid_marks() {
+        let now = Utc::now();
+        let mut timestamps = vec![now - Duration::seconds(120), now - Duration::seconds(60)];
+        let mut left = vec![100.0, 101.0];
+        let mut right = vec![10.0, 11.0];
+        let left_live = market_metric("PF_XBTUSD", f64::NAN, now);
+        let right_live = market_metric("PF_ETHUSD", -1.0, now);
+
+        let applied = apply_live_mark_override_to_snapshot(
+            &mut timestamps,
+            &mut left,
+            &mut right,
+            &left_live,
+            &right_live,
+        );
+
+        assert!(!applied);
+        assert_eq!(left[1], 101.0);
+        assert_eq!(right[1], 11.0);
+        assert_eq!(timestamps[1], now - Duration::seconds(60));
     }
 }
