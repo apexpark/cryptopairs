@@ -128,7 +128,7 @@ impl IntegrityStatus {
     }
 }
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash)]
 pub enum Timeframe {
     #[serde(rename = "1m")]
     OneMinute,
