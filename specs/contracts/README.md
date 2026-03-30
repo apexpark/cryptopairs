@@ -46,5 +46,6 @@ Current baseline contracts:
 - `specs/contracts/strategy_pairs_candidate_action_request.schema.json`
 - `specs/contracts/strategy_pairs_candidate_action_response.schema.json`
 - `specs/contracts/strategy_pairs_portfolio_plan_response.schema.json`
+- `specs/contracts/signal_learning_cycle_report.schema.json`
 - `specs/contracts/strategy_tuning_report.schema.json`
 - `specs/contracts/strategy_maintenance_latest_response.schema.json`

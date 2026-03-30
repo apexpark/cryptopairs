@@ -19,6 +19,28 @@ This project follows SemVer as defined in `docs/02-versioning-and-releases.md`.
   - `AGENTS.md` §8 defines Local vs Remote agent roles, the canonical-source rule, work allocation defaults, branch/PR conventions, and a mandatory hydration sequence (`AGENTS.md` → `docs/AGENT_STATE.md` → `docs/playbooks/remote-agent-bootstrap.md` → task brief → code).
   - `docs/AGENT_STATE.md` is a living state file: sprint pin, in-flight work, blocked items, open follow-ups (S4/S6-S8 from Slice A review, B1-B6 from Slice B review including the new B6 Postgres-backed test harness item, X1-X2 cross-cutting), and update protocol. Curated by the local agent; deltas proposed by remote agents in their PRs.
   - New `docs/playbooks/remote-agent-bootstrap.md` is the operational procedure for §8.4: bootstrap prompt, self-preflight (pin match / clean tree / fresh feature branch / base up to date), claim protocol via the open-follow-ups table, verification sequence (calls `scripts/check-rust-ci.sh` so it stays in sync with the pre-push hook, plus tsc and JSON-schema validation), branch/commit/PR templates, design-proposal-first PR variant, blocking protocol, local review checklist.
+- Experimental signal-learning cycle tooling (recommendation-only):
+  - New policy file for confidence-gated recursive signal logic updates:
+    - `infra/config/signal_learning_policy.json`
+  - New script:
+    - `tools/scripts/signal_learning_cycle.py`
+    - Periodically samples cues/expectancy/paper-trades by pair/timeframe.
+    - Persists immutable cycle reports + rolling state artifacts.
+    - Recursively updates `artifacts/signal_learning/signal_logic.json` with confidence-gated `PROMOTE|DEMOTE|HOLD` recommendations.
+    - Ranks `trade_eligible` rows into deterministic universe-selection outputs (`selection.top_1` and `selection.top_k`) using configurable utility weights and per-base-asset concentration caps.
+    - Supports configurable reason-aware utility penalties (for example `PAPER_LOW_SAMPLE`) when ranking selected candidates.
+    - Emits selection observability diagnostics:
+      - `selected_with_paper_low_sample_count`
+      - `top1_dwell_cycles_by_pair_tf`
+      - `selection_turnover_rate`
+    - Enforces non-invasive behavior (no runtime config mutation/deploy writes).
+  - New runbook:
+    - `docs/playbooks/signal-learning-runbook.md`
+  - New artifact contract/example:
+    - `specs/contracts/signal_learning_cycle_report.schema.json`
+    - `specs/examples/signal_learning_cycle_report.example.json`
+  - New unit coverage:
+    - `tools/scripts/tests/test_signal_learning_cycle.py`
 - Strategy live selected-signal config scaffolding:
   - `strategy_selected_signal` now persists additive `config_json` metadata for the active live signal configuration.
   - Strategy cues now expose `selected_signal_config` so operators can inspect the live bands/lookback/holding parameters driving evaluation.
