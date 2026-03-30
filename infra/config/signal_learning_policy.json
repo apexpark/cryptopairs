@@ -1,0 +1,89 @@
+{
+  "schema_version": "1.0.0",
+  "sampling": {
+    "timeframes": ["1m", "15m", "1h"],
+    "cues_limit": 20,
+    "paper_hours": 168,
+    "paper_limit": 2000
+  },
+  "confidence_gates": {
+    "min_cycles_for_confidence": 6,
+    "min_combined_trades": 30,
+    "min_expectancy_trades_for_score": 55,
+    "min_paper_trades_for_score": 20,
+    "min_combined_avg_net_bps": 2.0,
+    "min_combined_robust_net_bps": 1.5,
+    "max_negative_avg_net_bps": -1.2,
+    "max_negative_robust_net_bps": -1.0,
+    "positive_cycle_score_threshold": 0.25,
+    "negative_cycle_score_threshold": -0.2,
+    "required_positive_cycle_ratio": 0.7,
+    "required_negative_cycle_ratio": 0.6,
+    "max_history_points": 120
+  },
+  "arbitration": {
+    "enabled": true,
+    "min_timeframes_for_enable": 2,
+    "min_confidence_for_promote": 0.75,
+    "min_trades_per_timeframe": 70,
+    "demote_veto_confidence": 0.8,
+    "demote_veto_min_trades": 80
+  },
+  "sizing_caps": {
+    "high_conf_threshold": 0.9,
+    "mid_conf_threshold": 0.75,
+    "high_conf_min_trades": 120,
+    "mid_conf_min_trades": 80,
+    "high_conf_cap": 1.5,
+    "mid_conf_cap": 1.25,
+    "low_conf_cap": 0.9
+  },
+  "selection": {
+    "enabled": true,
+    "top_k": 3,
+    "min_utility_score": 0.55,
+    "min_paper_trades_for_selection": 20,
+    "allow_low_sample_backfill": true,
+    "max_per_base_asset": 1,
+    "dwell_penalty_start_cycles": 24,
+    "dwell_penalty_per_cycle": 0.01,
+    "dwell_penalty_cap": 0.2,
+    "robust_scale_bps": 20.0,
+    "depth_scale_trades": 120.0,
+    "weights": {
+      "cycle_score": 0.3,
+      "confidence": 0.15,
+      "robust_net_bps": 0.35,
+      "trade_depth": 0.2
+    },
+    "reason_penalties": {
+      "PAPER_LOW_SAMPLE": 0.3
+    }
+  },
+  "hard_vetoes": [
+    {
+      "pair_id": "PF_XBTUSD__PF_ADAUSD",
+      "timeframe": "1h",
+      "enabled": true,
+      "veto_reason": "HARD_VETO_1H_NEGATIVE_POCKET",
+      "recovery": {
+        "min_cycles": 12,
+        "min_confidence": 0.8,
+        "min_trades": 140,
+        "min_robust_net_bps": 3.0,
+        "required_positive_ratio": 0.75
+      }
+    }
+  ],
+  "mutation": {
+    "cooldown_cycles_between_mutations": 6,
+    "entry_band_step": 0.05,
+    "size_step": 0.1,
+    "entry_band_multiplier_min": 0.85,
+    "entry_band_multiplier_max": 1.4,
+    "size_multiplier_min": 0.25,
+    "size_multiplier_max": 1.75,
+    "disable_when_size_multiplier_below": 0.3,
+    "severe_negative_avg_net_bps": -8.0
+  }
+}

@@ -39,5 +39,6 @@ Current baseline examples:
 - `specs/examples/strategy_pairs_replay_trades_response.example.json`
 - `specs/examples/strategy_pairs_research_sweep_response.example.json`
 - `specs/examples/strategy_pairs_portfolio_plan_response.example.json`
+- `specs/examples/signal_learning_cycle_report.example.json`
 - `specs/examples/strategy_tuning_report.example.json`
 - `specs/examples/strategy_maintenance_latest_response.example.json`

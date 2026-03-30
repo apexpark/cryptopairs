@@ -134,12 +134,21 @@ summarize_snapshot_tsv() {
   ' "$in_tsv"
 }
 
+filter_snapshot_to_pairs() {
+  local in_tsv="$1"
+  local pairs_file="$2"
+  local out_tsv="$3"
+  awk -F '\t' 'NR==FNR{keep[$1]=1; next} ($1 in keep){print}' "$pairs_file" "$in_tsv" > "$out_tsv"
+  sort -o "$out_tsv" "$out_tsv"
+}
+
 measure_cue_stability() {
   local base="$1"
   local tf="$2"
   local timeout_s="$3"
   local rounds="$4"
   local sleep_s="$5"
+  local pair_filter_file="${6:-}"
   local tmp_dir prev_file i
   tmp_dir="$(mktemp -d)"
   prev_file=""
@@ -147,10 +156,17 @@ measure_cue_stability() {
   : > "$tmp_dir/drift.tsv"
 
   while [[ "$i" -le "$rounds" ]]; do
+    local snap_raw="$tmp_dir/snap_raw_${i}.tsv"
     local snap="$tmp_dir/snap_${i}.tsv"
     curl -fsS --max-time "$timeout_s" "${base%/}/v1/strategy/pairs/cues?timeframe=${tf}&limit=50" \
       | jq -er '.cues[] | [.cue.pair_id, .cue.spread_z] | @tsv' \
-      | sort > "$snap"
+      | sort > "$snap_raw"
+    if [[ -n "$pair_filter_file" && -s "$pair_filter_file" ]]; then
+      awk -F '\t' 'NR==FNR{keep[$1]=1; next} ($1 in keep){print}' "$pair_filter_file" "$snap_raw" > "$snap"
+      sort -o "$snap" "$snap"
+    else
+      mv "$snap_raw" "$snap"
+    fi
     if [[ -n "$prev_file" ]]; then
       join -t $'\t' "$prev_file" "$snap" \
         | awk -F '\t' '{d=$2-$3; if(d<0)d=-d; printf "%s\t%.8f\n", $1, d}' >> "$tmp_dir/drift.tsv"
@@ -297,16 +313,36 @@ for tf in "${timeframes[@]}"; do
   fetch_snapshot_tsv "$exp_base" "$tf" "$timeout_s" "$exp_tsv"
   fetch_snapshot_tsv "$main_base" "$tf" "$timeout_s" "$main_tsv"
 
-  IFS=$'\t' read -r exp_n exp_coh_mean _ exp_age_mean _ exp_steperr_mean _ < <(summarize_snapshot_tsv "$exp_tsv")
-  IFS=$'\t' read -r main_n main_coh_mean _ main_age_mean _ main_steperr_mean _ < <(summarize_snapshot_tsv "$main_tsv")
+  raw_exp_n="$(wc -l < "$exp_tsv" | tr -d ' ')"
+  raw_main_n="$(wc -l < "$main_tsv" | tr -d ' ')"
+  exp_eval_tsv="$exp_tsv"
+  main_eval_tsv="$main_tsv"
+  pair_filter_file=""
 
+  if [[ "$raw_exp_n" -ne "$raw_main_n" ]]; then
+    pair_filter_file="$tmp_root/common_pairs_${tf}.txt"
+    comm -12 <(cut -f1 "$exp_tsv") <(cut -f1 "$main_tsv") > "$pair_filter_file"
+    common_n="$(wc -l < "$pair_filter_file" | tr -d ' ')"
+    if [[ "$common_n" -le 0 ]]; then
+      echo "ERROR: pair count mismatch for timeframe=$tf and no common pair intersection (exp=$raw_exp_n main=$raw_main_n)" >&2
+      exit 1
+    fi
+    echo "WARN: pair count mismatch for timeframe=$tf exp=$raw_exp_n main=$raw_main_n; benchmarking on common_pairs=$common_n" >&2
+    exp_eval_tsv="$tmp_root/exp_${tf}_aligned.tsv"
+    main_eval_tsv="$tmp_root/main_${tf}_aligned.tsv"
+    filter_snapshot_to_pairs "$exp_tsv" "$pair_filter_file" "$exp_eval_tsv"
+    filter_snapshot_to_pairs "$main_tsv" "$pair_filter_file" "$main_eval_tsv"
+  fi
+
+  IFS=$'\t' read -r exp_n exp_coh_mean _ exp_age_mean _ exp_steperr_mean _ < <(summarize_snapshot_tsv "$exp_eval_tsv")
+  IFS=$'\t' read -r main_n main_coh_mean _ main_age_mean _ main_steperr_mean _ < <(summarize_snapshot_tsv "$main_eval_tsv")
   if [[ "$exp_n" -ne "$main_n" ]]; then
-    echo "ERROR: pair count mismatch for timeframe=$tf exp=$exp_n main=$main_n" >&2
+    echo "ERROR: aligned pair count mismatch for timeframe=$tf exp=$exp_n main=$main_n" >&2
     exit 1
   fi
 
-  IFS=$'\t' read -r _ exp_stab_mean _ < <(measure_cue_stability "$exp_base" "$tf" "$timeout_s" "$rounds" "$sleep_s")
-  IFS=$'\t' read -r _ main_stab_mean _ < <(measure_cue_stability "$main_base" "$tf" "$timeout_s" "$rounds" "$sleep_s")
+  IFS=$'\t' read -r _ exp_stab_mean _ < <(measure_cue_stability "$exp_base" "$tf" "$timeout_s" "$rounds" "$sleep_s" "$pair_filter_file")
+  IFS=$'\t' read -r _ main_stab_mean _ < <(measure_cue_stability "$main_base" "$tf" "$timeout_s" "$rounds" "$sleep_s" "$pair_filter_file")
 
   printf "%-6s  %-8.4f %-8.4f  %-8.3f %-8.3f  %-8.2f %-8.2f  %-8.4f %-8.4f\n" \
     "$tf" \
@@ -342,4 +378,3 @@ if [[ "$exp_wins" -lt "$main_wins" ]]; then
 fi
 echo "VERDICT: TIE (no clear outperformance)."
 exit 3
-

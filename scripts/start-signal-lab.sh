@@ -91,7 +91,17 @@ if [[ "$NO_BUILD" == "false" ]]; then
   COMPOSE_ARGS+=(--build)
 fi
 
-"${COMPOSE[@]}" "${COMPOSE_ARGS[@]}"
+# Start infra dependencies first.
+"${COMPOSE[@]}" -f docker-compose.signal-lab.yml --env-file "$ENV_FILE" up -d timescaledb redis
+
+# Start application services sequentially to avoid concurrent heavy cargo compiles.
+for svc in data-service account-service execution-service strategy-service; do
+  if [[ "$NO_BUILD" == "false" ]]; then
+    "${COMPOSE[@]}" -f docker-compose.signal-lab.yml --env-file "$ENV_FILE" --profile app up -d --build "$svc"
+  else
+    "${COMPOSE[@]}" -f docker-compose.signal-lab.yml --env-file "$ENV_FILE" --profile app up -d "$svc"
+  fi
+done
 
 if [[ "$SKIP_HEALTH" == "false" ]]; then
   health_check "http://127.0.0.1:${SIGNAL_LAB_DATA_PORT:-18080}/health" "signal-lab data-service"
