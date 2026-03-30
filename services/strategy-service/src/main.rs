@@ -4562,6 +4562,7 @@ fn apply_live_mark_override_to_snapshot(
     applied
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn maybe_apply_live_mark_override(
     state: &AppState,
     pair: &PairSpec,
@@ -8451,6 +8452,7 @@ async fn evaluate_pair_for_timeframe(
     Ok(output)
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn finalize_pair_evaluation_output(
     state: &AppState,
     timeframe: Timeframe,
@@ -8611,6 +8613,7 @@ async fn finalize_pair_evaluation_output(
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn evaluate_pair_from_snapshot(
     state: &AppState,
     pair: &PairSpec,
@@ -8982,7 +8985,7 @@ async fn evaluate_timeframe_outputs(
     let mut outputs = vec![];
     let mut skipped = vec![];
     let mut handles = Vec::with_capacity(state.settings.pairs.len());
-    for pair in state.settings.pairs.iter().cloned() {
+    for pair in state.settings.pairs.clone() {
         let app_state = state.clone();
         handles.push(tokio::spawn(async move {
             let pair_id = pair.pair_id();
