@@ -37,6 +37,7 @@ struct BackfillWindowResult {
     latest_ts: Option<DateTime<Utc>>,
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn spawn_backfill_worker(
     state: AppState,
     symbols: Vec<String>,
