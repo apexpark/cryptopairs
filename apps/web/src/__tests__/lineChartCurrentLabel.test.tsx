@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import LineChart from "../components/LineChart";
 
 describe("LineChart current value label", () => {
@@ -79,5 +79,17 @@ describe("LineChart current value label", () => {
     );
     expect(labels320).toHaveLength(2);
     expect(labels320[0]?.getAttribute("y")).toEqual(labels320[1]?.getAttribute("y"));
+  });
+
+  it("supports zoom controls when enabled", () => {
+    const values = Array.from({ length: 120 }, (_, index) => Math.sin(index / 6));
+    const timestamps = values.map((_, index) =>
+      new Date(Date.UTC(2026, 1, 24, 0, index)).toISOString()
+    );
+    render(<LineChart values={values} timestamps={timestamps} zoomEnabled />);
+
+    expect(screen.getByText("120/120 bars")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "4x" }));
+    expect(screen.getByText("30/120 bars")).toBeInTheDocument();
   });
 });

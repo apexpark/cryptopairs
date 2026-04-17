@@ -1,3 +1,4 @@
+import { useEffect, useMemo, useState } from "react";
 import type { ChartMarker } from "../types";
 
 interface Threshold {
@@ -22,6 +23,7 @@ interface LineChartProps {
   mirrorThresholdLabels?: boolean;
   showLatestValueLabel?: boolean;
   latestValueLabelFormatter?: (value: number) => string;
+  zoomEnabled?: boolean;
 }
 
 function markerColor(kind: ChartMarker["kind"]): string {
@@ -103,8 +105,52 @@ export default function LineChart({
   mirrorThresholdLabels = false,
   showLatestValueLabel = false,
   latestValueLabelFormatter = (value) => value.toFixed(2),
+  zoomEnabled = false,
 }: LineChartProps): JSX.Element {
-  if (values.length < 2) {
+  const minZoomWindowPoints = Math.min(values.length, 24);
+  const zoomOptions = useMemo(() => {
+    const base = [1, 2, 4, 8, 16];
+    return base.filter((factor) => factor === 1 || Math.floor(values.length / factor) >= minZoomWindowPoints);
+  }, [minZoomWindowPoints, values.length]);
+  const [zoomFactor, setZoomFactor] = useState(1);
+  const [windowEndIndex, setWindowEndIndex] = useState(values.length - 1);
+
+  useEffect(() => {
+    if (!zoomEnabled) {
+      setZoomFactor(1);
+      setWindowEndIndex(values.length - 1);
+      return;
+    }
+    setZoomFactor((previous) => (zoomOptions.includes(previous) ? previous : 1));
+    setWindowEndIndex((previous) => {
+      const latest = values.length - 1;
+      if (previous >= latest - 1) {
+        return latest;
+      }
+      return clamp(previous, 0, latest);
+    });
+  }, [zoomEnabled, zoomOptions, values.length]);
+
+  const zoomIsActive = zoomEnabled && zoomOptions.length > 1;
+  const visiblePoints = zoomIsActive
+    ? clamp(Math.floor(values.length / zoomFactor), minZoomWindowPoints, values.length)
+    : values.length;
+  const maxEndIndex = values.length - 1;
+  const minEndIndex = visiblePoints - 1;
+  const effectiveEndIndex = zoomIsActive
+    ? clamp(windowEndIndex, minEndIndex, maxEndIndex)
+    : maxEndIndex;
+  const windowStartIndex = zoomIsActive ? effectiveEndIndex - visiblePoints + 1 : 0;
+  const plotValues = values.slice(windowStartIndex, effectiveEndIndex + 1);
+  const hasTimestampData = timestamps.length === values.length;
+  const plotTimestamps = hasTimestampData
+    ? timestamps.slice(windowStartIndex, effectiveEndIndex + 1)
+    : [];
+  const plotMarkers = markers
+    .filter((marker) => marker.index >= windowStartIndex && marker.index <= effectiveEndIndex)
+    .map((marker) => ({ ...marker, index: marker.index - windowStartIndex }));
+
+  if (values.length < 2 || plotValues.length < 2) {
     return (
       <div className="chart chart-empty" style={{ height: `${height}px` }}>
         {title ? <div className="chart-title">{title}</div> : null}
@@ -117,20 +163,20 @@ export default function LineChart({
   const leftPadding = 74;
   const rightPadding = showThresholdLabels ? 82 : 24;
   const topPadding = 10;
-  const hasTimestampAxis = timestamps.length === values.length && values.length >= 2;
+  const hasTimestampAxis = plotTimestamps.length === plotValues.length && plotValues.length >= 2;
   const bottomPadding = hasTimestampAxis ? 28 : 18;
   const chartBottom = height - bottomPadding;
   const thresholdValues = thresholds.map((item) => item.value);
   const domainValues = includeThresholdsInDomain
-    ? [...values, ...thresholdValues]
-    : values;
+    ? [...plotValues, ...thresholdValues]
+    : plotValues;
   const fullMin = Math.min(...domainValues);
   const fullMax = Math.max(...domainValues);
 
   let domainMin = fullMin;
   let domainMax = fullMax;
-  if (valueScaleMode === "trimmed" && values.length >= 20) {
-    const sorted = [...values].sort((left, right) => left - right);
+  if (valueScaleMode === "trimmed" && plotValues.length >= 20) {
+    const sorted = [...plotValues].sort((left, right) => left - right);
     const trimmedMin = percentile(sorted, 0.03);
     const trimmedMax = percentile(sorted, 0.97);
     const candidateMin =
@@ -144,8 +190,11 @@ export default function LineChart({
     const fullSpan = Math.max(fullMax - fullMin, 1e-6);
     const candidateSpan = Math.max(candidateMax - candidateMin, 1e-6);
     if (candidateSpan / fullSpan >= 0.2) {
-      const recentTailWindowSize = Math.min(values.length, Math.max(6, Math.ceil(values.length * 0.1)));
-      const recentTailValues = values.slice(-recentTailWindowSize);
+      const recentTailWindowSize = Math.min(
+        plotValues.length,
+        Math.max(6, Math.ceil(plotValues.length * 0.1))
+      );
+      const recentTailValues = plotValues.slice(-recentTailWindowSize);
       const recentTailMin = Math.min(...recentTailValues);
       const recentTailMax = Math.max(...recentTailValues);
       // Prevent right-edge clipping by always including the recent tail in trimmed mode.
@@ -156,15 +205,15 @@ export default function LineChart({
   const span = Math.max(domainMax - domainMin, 1e-6);
 
   const mapX = (index: number) =>
-    leftPadding + (index / (values.length - 1)) * (width - leftPadding - rightPadding);
+    leftPadding + (index / (plotValues.length - 1)) * (width - leftPadding - rightPadding);
   const mapY = (value: number) => {
     const raw = topPadding + (1 - (value - domainMin) / span) * (chartBottom - topPadding);
     return clamp(raw, topPadding, chartBottom);
   };
 
-  const points = values.map((value, index) => `${mapX(index)},${mapY(value)}`).join(" ");
-  const latestValueIndex = values.length - 1;
-  const latestValue = values[latestValueIndex];
+  const points = plotValues.map((value, index) => `${mapX(index)},${mapY(value)}`).join(" ");
+  const latestValueIndex = plotValues.length - 1;
+  const latestValue = plotValues[latestValueIndex];
   const latestX = mapX(latestValueIndex);
   const latestY = mapY(latestValue);
   const latestLabelY = clamp(latestY + 4, topPadding + 10, chartBottom - 4);
@@ -181,16 +230,18 @@ export default function LineChart({
           const value = domainMax - ratio * span;
           return { y, value };
         });
-  const axisTickIndexes = Array.from(new Set([0, Math.floor((values.length - 1) / 2), values.length - 1]));
+  const axisTickIndexes = Array.from(
+    new Set([0, Math.floor((plotValues.length - 1) / 2), plotValues.length - 1])
+  );
   const xAxisLabels = hasTimestampAxis
     ? axisTickIndexes.map((index) => {
-        const raw = timestamps[index];
+        const raw = plotTimestamps[index];
         const date = new Date(raw);
         if (Number.isNaN(date.getTime())) {
           return { index, label: `#${index}` };
         }
-        const earliest = new Date(timestamps[0]).getTime();
-        const latest = new Date(timestamps[timestamps.length - 1]).getTime();
+        const earliest = new Date(plotTimestamps[0]).getTime();
+        const latest = new Date(plotTimestamps[plotTimestamps.length - 1]).getTime();
         const showDate = Number.isFinite(earliest) && Number.isFinite(latest) && latest - earliest >= 86_400_000;
         return {
           index,
@@ -205,19 +256,87 @@ export default function LineChart({
       })
     : [];
 
+  const canPanLeft = zoomIsActive && windowStartIndex > 0;
+  const canPanRight = zoomIsActive && effectiveEndIndex < maxEndIndex;
+  const panStep = Math.max(1, Math.floor(visiblePoints * 0.2));
+
   return (
     <div className="chart" style={{ height: `${height}px` }}>
       {title ? <div className="chart-title">{title}</div> : null}
-      <svg viewBox={`0 0 ${width} ${height}`} preserveAspectRatio="none">
+      {zoomIsActive ? (
+        <div className="chart-toolbar">
+          <div className="chart-zoom-controls">
+            {zoomOptions.map((factor) => (
+              <button
+                key={`zoom-${factor}`}
+                type="button"
+                className={factor === zoomFactor ? "active" : ""}
+                onClick={() => {
+                  setZoomFactor(factor);
+                  setWindowEndIndex(values.length - 1);
+                }}
+              >
+                {factor === 1 ? "Full" : `${factor}x`}
+              </button>
+            ))}
+            <button
+              type="button"
+              onClick={() =>
+                setWindowEndIndex((previous) => clamp(previous - panStep, minEndIndex, maxEndIndex))
+              }
+              disabled={!canPanLeft}
+            >
+              ◀
+            </button>
+            <button
+              type="button"
+              onClick={() =>
+                setWindowEndIndex((previous) => clamp(previous + panStep, minEndIndex, maxEndIndex))
+              }
+              disabled={!canPanRight}
+            >
+              ▶
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setZoomFactor(1);
+                setWindowEndIndex(values.length - 1);
+              }}
+              disabled={zoomFactor === 1 && !canPanLeft && !canPanRight}
+            >
+              Reset
+            </button>
+          </div>
+          <span className="chart-zoom-meta">
+            {plotValues.length}/{values.length} bars
+          </span>
+        </div>
+      ) : null}
+      <svg viewBox={`0 0 ${width} ${height}`} preserveAspectRatio="xMidYMid meet">
         <g className="grid">
           {Array.from({ length: 9 }).map((_, i) => {
             const x = leftPadding + (i / 8) * (width - leftPadding - rightPadding);
             return (
-              <line key={`vx-${x}`} x1={x} y1={topPadding} x2={x} y2={chartBottom} />
+              <line
+                key={`vx-${x}`}
+                x1={x}
+                y1={topPadding}
+                x2={x}
+                y2={chartBottom}
+                vectorEffect="non-scaling-stroke"
+              />
             );
           })}
           {yAxisTicks.map((tick, index) => (
-            <line key={`hy-${index}`} x1={leftPadding} y1={tick.y} x2={width - rightPadding} y2={tick.y} />
+            <line
+              key={`hy-${index}`}
+              x1={leftPadding}
+              y1={tick.y}
+              x2={width - rightPadding}
+              y2={tick.y}
+              vectorEffect="non-scaling-stroke"
+            />
           ))}
         </g>
 
@@ -260,6 +379,7 @@ export default function LineChart({
                 stroke={thresholdColor(threshold.tone)}
                 strokeWidth={1}
                 opacity={0.9}
+                vectorEffect="non-scaling-stroke"
               />
               {showThresholdLabels && !mirrorThresholdLabels ? (
                 <text className="threshold-label" x={width - 6} y={thresholdLabelY} textAnchor="end">
@@ -270,11 +390,23 @@ export default function LineChart({
           );
         })}
 
-        <polyline fill="none" stroke="var(--tone-info)" strokeWidth={2} points={points} />
+        <polyline
+          fill="none"
+          stroke="var(--tone-info)"
+          strokeWidth={1.75}
+          points={points}
+          vectorEffect="non-scaling-stroke"
+        />
 
         {showLatestValueLabel ? (
           <>
-            <circle cx={latestX} cy={latestY} r={3.5} fill="var(--tone-info)" />
+            <circle
+              cx={latestX}
+              cy={latestY}
+              r={3.5}
+              fill="var(--tone-info)"
+              vectorEffect="non-scaling-stroke"
+            />
             <text
               className="current-value-label"
               x={latestX + 8}
@@ -286,17 +418,16 @@ export default function LineChart({
           </>
         ) : null}
 
-        {markers
-          .filter((marker) => marker.index >= 0 && marker.index < values.length)
-          .map((marker, index) => (
+        {plotMarkers.map((marker, index) => (
             <circle
               key={`${marker.kind}-${marker.index}-${index}`}
               cx={mapX(marker.index)}
-              cy={mapY(values[marker.index])}
+              cy={mapY(plotValues[marker.index])}
               r={markerRadiusForKind(marker.kind, markerRadius)}
               fill={markerColor(marker.kind)}
               stroke={markerStrokeColor(marker.kind)}
               strokeWidth={marker.kind.startsWith("execution-") ? 1.5 : 0}
+              vectorEffect="non-scaling-stroke"
             />
           ))}
 
