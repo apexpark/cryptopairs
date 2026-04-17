@@ -755,6 +755,49 @@ button:disabled {
   min-height: 0;
 }
 
+.chart-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin: 0 2px 6px 2px;
+}
+
+.chart-zoom-controls {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.chart-zoom-controls button {
+  width: auto;
+  margin-top: 0;
+  padding: 4px 8px;
+  font-size: 0.72rem;
+  font-weight: 600;
+  background: var(--button-bg);
+  color: var(--muted);
+  border: 1px solid var(--line-soft);
+}
+
+.chart-zoom-controls button.active {
+  background: var(--nav-active);
+  border-color: var(--line-strong);
+  color: var(--text);
+}
+
+.chart-zoom-controls button:disabled {
+  opacity: 0.55;
+  color: var(--muted);
+}
+
+.chart-zoom-meta {
+  font-size: 0.74rem;
+  color: var(--muted);
+  white-space: nowrap;
+}
+
 .chart-title {
   color: var(--muted);
   font-size: 0.84rem;
@@ -767,6 +810,8 @@ button:disabled {
   flex: 1 1 auto;
   min-height: 0;
   display: block;
+  shape-rendering: geometricPrecision;
+  text-rendering: geometricPrecision;
 }
 
 .chart .grid line {
@@ -949,6 +994,8 @@ button:disabled {
 
 .analysis-panel .chart {
   min-height: 250px;
+  max-width: min(1800px, 100%);
+  margin-inline: auto;
 }
 
 .analysis-panel .timeline-card {

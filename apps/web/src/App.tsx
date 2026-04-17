@@ -3336,6 +3336,7 @@ function TradePage(props: {
           includeThresholdsInDomain
           showLatestValueLabel
           latestValueLabelFormatter={(value) => `Z ${value.toFixed(2)}`}
+          zoomEnabled
         />
 
         <div className="chip-row">
