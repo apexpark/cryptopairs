@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { ChartMarker } from "../types";
 
 interface Threshold {
@@ -107,6 +107,8 @@ export default function LineChart({
   latestValueLabelFormatter = (value) => value.toFixed(2),
   zoomEnabled = false,
 }: LineChartProps): JSX.Element {
+  const containerRef = useRef<HTMLDivElement | null>(null);
+  const [svgWidth, setSvgWidth] = useState(1000);
   const minZoomWindowPoints = Math.min(values.length, 24);
   const zoomOptions = useMemo(() => {
     const base = [1, 2, 4, 8, 16];
@@ -131,6 +133,28 @@ export default function LineChart({
     });
   }, [zoomEnabled, zoomOptions, values.length]);
 
+  useEffect(() => {
+    const node = containerRef.current;
+    if (!node || typeof ResizeObserver === "undefined") {
+      return;
+    }
+
+    const minWidth = 420;
+    const horizontalPadding = 12;
+    const updateWidth = () => {
+      const nextWidth = Math.max(
+        minWidth,
+        Math.round(node.clientWidth - horizontalPadding)
+      );
+      setSvgWidth((previous) => (Math.abs(previous - nextWidth) >= 2 ? nextWidth : previous));
+    };
+
+    updateWidth();
+    const observer = new ResizeObserver(() => updateWidth());
+    observer.observe(node);
+    return () => observer.disconnect();
+  }, []);
+
   const zoomIsActive = zoomEnabled && zoomOptions.length > 1;
   const visiblePoints = zoomIsActive
     ? clamp(Math.floor(values.length / zoomFactor), minZoomWindowPoints, values.length)
@@ -152,14 +176,14 @@ export default function LineChart({
 
   if (values.length < 2 || plotValues.length < 2) {
     return (
-      <div className="chart chart-empty" style={{ height: `${height}px` }}>
+      <div ref={containerRef} className="chart chart-empty" style={{ height: `${height}px` }}>
         {title ? <div className="chart-title">{title}</div> : null}
         <div className="empty-text">{unavailableText}</div>
       </div>
     );
   }
 
-  const width = 1000;
+  const width = svgWidth;
   const leftPadding = 74;
   const rightPadding = showThresholdLabels ? 82 : 24;
   const topPadding = 10;
@@ -261,7 +285,7 @@ export default function LineChart({
   const panStep = Math.max(1, Math.floor(visiblePoints * 0.2));
 
   return (
-    <div className="chart" style={{ height: `${height}px` }}>
+    <div ref={containerRef} className="chart" style={{ height: `${height}px` }}>
       {title ? <div className="chart-title">{title}</div> : null}
       {zoomIsActive ? (
         <div className="chart-toolbar">
