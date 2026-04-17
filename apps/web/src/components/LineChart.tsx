@@ -176,7 +176,7 @@ export default function LineChart({
 
   if (values.length < 2 || plotValues.length < 2) {
     return (
-      <div className="chart chart-empty" style={{ height: `${height}px` }}>
+      <div ref={containerRef} className="chart chart-empty" style={{ height: `${height}px` }}>
         {title ? <div className="chart-title">{title}</div> : null}
         <div className="empty-text">{unavailableText}</div>
       </div>
