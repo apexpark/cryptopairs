@@ -84,6 +84,7 @@ impl DirectionHint {
 }
 
 const STOP_RETRACE_FRACTION: f64 = 0.25;
+const MIN_PRIOR_Z_STDDEV: f64 = 1e-6;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 pub enum FundingModel {
@@ -1653,7 +1654,7 @@ fn rolling_z_scores_prior(values: &[f64], window: usize) -> Vec<f64> {
         }
         let slice = &values[(idx - win)..idx];
         let std = stddev(slice);
-        if std > 0.0 {
+        if std.is_finite() && std >= MIN_PRIOR_Z_STDDEV {
             result[idx] = (values[idx] - mean(slice)) / std;
         }
     }
@@ -2236,6 +2237,17 @@ mod tests {
         assert!((z[2] - 0.0).abs() < 1e-12);
         // idx=3 uses only [1,2,3] as normalization window.
         assert!((z[3] - 120.02499739637572).abs() < 1e-9);
+    }
+
+    #[test]
+    fn rolling_prior_z_suppresses_nearly_flat_window_variance() {
+        let mut values = vec![7.428334145058403; 31];
+        values[29] += 1e-12;
+        values[30] = 7.428096919781667;
+
+        let z = rolling_z_scores_prior(&values, 30);
+
+        assert!((z[30] - 0.0).abs() < 1e-12);
     }
 
     #[test]
