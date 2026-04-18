@@ -396,4 +396,33 @@ describe("global timeframe switching", () => {
       );
     });
   });
+
+  it("warns when a persisted pair falls back to the live cue set without overwriting storage", async () => {
+    const missingPairId = "PI_SOLUSD__PI_AVAXUSD";
+    window.localStorage.setItem("cp.pair", JSON.stringify(missingPairId));
+
+    render(<App />);
+
+    await waitFor(() => {
+      expect(api.fetchStrategyBacktest).toHaveBeenCalledWith(
+        "1m",
+        PAIR_ID,
+        2000,
+        undefined,
+        "mean_revert"
+      );
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "Analytics" }));
+
+    expect(
+      screen.getByText(
+        "Saved pair SOLUSD/AVAXUSD is no longer in the live cue set. Analytics are currently showing XBTUSD/ETHUSD until you select another live pair."
+      )
+    ).toBeInTheDocument();
+    expect(screen.getByText(/Active chart pair:/i)).toHaveTextContent("XBTUSD/ETHUSD");
+    expect(screen.getByText(/Active chart pair:/i)).toHaveTextContent("Mean Revert");
+    expect(screen.getByText(/Active chart pair:/i)).toHaveTextContent("Backend default");
+    expect(JSON.parse(window.localStorage.getItem("cp.pair") ?? "null")).toBe(missingPairId);
+  });
 });

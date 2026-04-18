@@ -781,6 +781,15 @@ function formatPairLabel(pairId: string): string {
     .join("/");
 }
 
+function formatBacktestExitModeLabel(mode: BacktestExitMode): string {
+  switch (mode) {
+    case "mean_revert":
+      return "Mean Revert";
+    case "opposite_extreme":
+      return "Opposite Extreme";
+  }
+}
+
 function deriveOpportunityStatus(
   cue: StrategyPairsCuesResponse["cues"][number]["cue"],
   dataDegraded: boolean,
@@ -1023,10 +1032,27 @@ function App(): JSX.Element {
   }, [cuesResponse, selectedPairId]);
 
   useEffect(() => {
-    if (selectedCueRow && selectedPairId !== selectedCueRow.cue.pair_id) {
+    if (selectedCueRow && !selectedPairId.trim().length) {
       setSelectedPairId(selectedCueRow.cue.pair_id);
     }
   }, [selectedCueRow, selectedPairId, setSelectedPairId]);
+
+  const selectedPairFallbackWarning = useMemo(() => {
+    if (!selectedCueRow || !selectedPairId.trim().length || !cuesResponse?.cues.length) {
+      return null;
+    }
+    const selectedPairStillAvailable = cuesResponse.cues.some(
+      (entry) => entry.cue.pair_id === selectedPairId
+    );
+    if (selectedPairStillAvailable) {
+      return null;
+    }
+    return `Saved pair ${formatPairLabel(
+      selectedPairId
+    )} is no longer in the live cue set. Analytics are currently showing ${formatPairLabel(
+      selectedCueRow.cue.pair_id
+    )} until you select another live pair.`;
+  }, [cuesResponse, selectedCueRow, selectedPairId]);
 
   useEffect(() => {
     if (!cuesResponse?.cues.length) {
@@ -2691,6 +2717,8 @@ function App(): JSX.Element {
         <AnalyticsPage
           cues={cuesResponse}
           selectedPairId={currentPairId}
+          analyticsSeriesPairId={analyticsSeriesPairId}
+          selectedPairFallbackWarning={selectedPairFallbackWarning}
           onSelectPair={setSelectedPairId}
           zSeries={zSeries}
           zTimestamps={zTimestamps}
@@ -2699,6 +2727,8 @@ function App(): JSX.Element {
           equityTimestamps={equityTimestamps}
           loading={analyticsLoading}
           error={analyticsError}
+          effectiveTakerFeeBps={takerFeeBpsOverride}
+          backtestExitMode={backtestExitMode}
           paperTrades={paperTrades}
           paperTradesLoading={paperTradesLoading}
           paperTradesError={paperTradesError}
@@ -3615,6 +3645,8 @@ function TradePage(props: {
 function AnalyticsPage({
   cues,
   selectedPairId,
+  analyticsSeriesPairId,
+  selectedPairFallbackWarning,
   onSelectPair,
   zSeries,
   zTimestamps,
@@ -3623,6 +3655,8 @@ function AnalyticsPage({
   equityTimestamps,
   loading,
   error,
+  effectiveTakerFeeBps,
+  backtestExitMode,
   paperTrades,
   paperTradesLoading,
   paperTradesError,
@@ -3676,6 +3710,8 @@ function AnalyticsPage({
 }: {
   cues: StrategyPairsCuesResponse | null;
   selectedPairId: string;
+  analyticsSeriesPairId: string;
+  selectedPairFallbackWarning: string | null;
   onSelectPair: (value: string) => void;
   zSeries: number[];
   zTimestamps: string[];
@@ -3684,6 +3720,8 @@ function AnalyticsPage({
   equityTimestamps: string[];
   loading: boolean;
   error: string | null;
+  effectiveTakerFeeBps: number | null;
+  backtestExitMode: BacktestExitMode;
   paperTrades: StrategyPairsPaperTradesResponse | null;
   paperTradesLoading: boolean;
   paperTradesError: string | null;
@@ -3740,6 +3778,9 @@ function AnalyticsPage({
   chartHeight: number;
 }): JSX.Element {
   const selected = cues?.cues.find((entry) => entry.cue.pair_id === selectedPairId) ?? cues?.cues[0];
+  const analyticsPairId = analyticsSeriesPairId || selected?.cue.pair_id || "";
+  const analyticsCue =
+    cues?.cues.find((entry) => entry.cue.pair_id === analyticsPairId) ?? selected ?? null;
   const pairCount = cues?.cues.length ?? 0;
   const pairDrivenChartHeight = useMemo(
     () => Math.round(clampNumber(pairCount * 33, 350, 980)),
@@ -3774,6 +3815,10 @@ function AnalyticsPage({
         : null;
     return { returnPct, daysRepresented, annualizedReturnPct };
   }, [displayEquitySeries, equityTimestamps]);
+  const analyticsPairLabel = analyticsPairId ? formatPairLabel(analyticsPairId) : "--";
+  const effectiveFeeLabel =
+    effectiveTakerFeeBps == null ? "Backend default" : `${effectiveTakerFeeBps.toFixed(2)} bps`;
+  const exitModeLabel = formatBacktestExitModeLabel(backtestExitMode);
 
   return (
     <div className="analytics-layout">
@@ -4195,6 +4240,14 @@ function AnalyticsPage({
                     </p>
                   </div>
                 </div>
+                <p className="small-text tone-info">
+                  Active chart pair: <strong>{analyticsPairLabel}</strong> | Variant:{" "}
+                  <strong>{analyticsCue?.cue.selected_variant ?? "--"}</strong> | Exit mode:{" "}
+                  <strong>{exitModeLabel}</strong> | Fee basis: <strong>{effectiveFeeLabel}</strong>
+                </p>
+                {selectedPairFallbackWarning ? (
+                  <p className="small-text tone-warn">{selectedPairFallbackWarning}</p>
+                ) : null}
               </div>
               <LineChart
                 values={displayEquitySeries}

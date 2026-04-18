@@ -73,6 +73,9 @@ This project follows SemVer as defined in `docs/02-versioning-and-releases.md`.
     - `sizing_tolerance_hedge_ratio_drift_pct`
   - Execution service validates submitted sizing payload against pair/instrument, planned leg qty, and drift tolerances; rejects out-of-tolerance or inconsistent sizing fail-closed.
   - Trade UI now sizes entries/exits from target USD notional using live bid/ask, per-leg lot-step quantization, and pre-submit drift/tolerance preview.
+- Analytics chart provenance visibility:
+  - Analytics now shows the active chart pair, selected variant, exit mode, and effective fee basis above the equity curve.
+  - Persisted pair selections that are no longer present in the live cue set now surface an explicit warning instead of silently rewriting local storage to the first live cue.
 - Data horizon and retention controls for `data-service` candles:
   - Configurable backfill windows by timeframe (`1m/15m/1h`) with defaults aligned to long-horizon research (`120d/540d/1095d`).
   - Configurable candle retention pruning by timeframe plus periodic prune interval.
