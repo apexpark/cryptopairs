@@ -1,3 +1,4 @@
+use anyhow::Context;
 use axum::{
     extract::{Query, State},
     http::{header, HeaderMap, HeaderValue, StatusCode},
@@ -11,6 +12,7 @@ use common_types::{
 };
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
+use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -22,7 +24,7 @@ use strategy_service::{
 };
 use tokio::net::TcpListener;
 use tokio::sync::RwLock;
-use tokio_postgres::{types::ToSql, Client, NoTls};
+use tokio_postgres::{types::ToSql, Client, NoTls, Row};
 use tower_http::cors::{Any, CorsLayer};
 use tracing::info;
 
@@ -32,6 +34,7 @@ struct AppState {
     settings: Arc<StrategySettings>,
     http_client: reqwest::Client,
     sampled_slippage: Arc<SampledSlippageStore>,
+    trade_now_observability: Arc<TradeNowObservabilityStore>,
 }
 
 #[derive(Debug, Clone)]
@@ -51,6 +54,9 @@ struct StrategySettings {
     bind_addr: String,
     postgres_url: String,
     data_service_url: String,
+    execution_service_url: String,
+    execution_exchange: String,
+    execution_account_id: String,
     pairs: Vec<PairSpec>,
     timeframes: Vec<Timeframe>,
     entry_band: f64,
@@ -171,6 +177,16 @@ impl StrategySettings {
         });
         let data_service_url = std::env::var("STRATEGY_DATA_SERVICE_URL")
             .unwrap_or_else(|_| "http://data-service:8080".to_string());
+        let execution_service_url = std::env::var("STRATEGY_EXECUTION_SERVICE_URL")
+            .unwrap_or_else(|_| "http://execution-service:8082".to_string());
+        let execution_exchange = std::env::var("STRATEGY_EXECUTION_EXCHANGE")
+            .unwrap_or_else(|_| "kraken_futures".to_string())
+            .trim()
+            .to_string();
+        let execution_account_id = std::env::var("STRATEGY_EXECUTION_ACCOUNT_ID")
+            .unwrap_or_else(|_| "primary".to_string())
+            .trim()
+            .to_string();
 
         let pairs_raw =
             std::env::var("STRATEGY_PAIRS").unwrap_or_else(|_| {
@@ -290,6 +306,9 @@ impl StrategySettings {
             bind_addr: format!("0.0.0.0:{port}"),
             postgres_url,
             data_service_url,
+            execution_service_url,
+            execution_exchange,
+            execution_account_id,
             pairs,
             timeframes,
             entry_band,
@@ -430,6 +449,9 @@ impl StrategySettings {
     }
 }
 
+const SELECTED_CONFIG_SOURCE_LEGACY_FALLBACK: &str = "LEGACY_ROW_FALLBACK";
+const SELECTED_CONFIG_SOURCE_OPERATOR_PROMOTION: &str = "OPERATOR_PROMOTION";
+
 fn default_selected_signal_config(
     settings: &StrategySettings,
     timeframe: Timeframe,
@@ -541,7 +563,7 @@ fn resolve_selected_signal_config(
         settings,
         timeframe,
         row.signal_variant.clone(),
-        "LEGACY_ROW_FALLBACK",
+        SELECTED_CONFIG_SOURCE_LEGACY_FALLBACK,
         row.updated_at,
     ))
 }
@@ -718,6 +740,421 @@ struct CandidateProbationUpdate<'a> {
     last_objective_delta: f64,
 }
 
+const LEARNING_OVERLAY_REPORT_SUFFIX: &str = "signal-learning-cycle.json";
+const LEARNING_OVERLAY_RUNS_ROOT: &str = "artifacts/signal_learning/runs";
+const LEARNING_OVERLAY_TTL_SECS: u64 = 24 * 60 * 60;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+enum LearningRecommendation {
+    Promote,
+    Demote,
+    Hold,
+}
+
+impl LearningRecommendation {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Promote => "PROMOTE",
+            Self::Demote => "DEMOTE",
+            Self::Hold => "HOLD",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct LearningCycleReportArtifact {
+    generated_at: DateTime<Utc>,
+    timeframe_reports: Vec<LearningTimeframeArtifact>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct LearningCycleReportHeader {
+    generated_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct LearningTimeframeArtifact {
+    timeframe: Timeframe,
+    #[serde(default)]
+    pairs: Vec<LearningPairArtifact>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct LearningPairArtifact {
+    pair_id: String,
+    timeframe: Timeframe,
+    recommendation: LearningRecommendation,
+    trade_eligible: bool,
+    #[serde(default)]
+    selection_selected: bool,
+    #[serde(default)]
+    reason_codes: Vec<String>,
+    #[serde(default)]
+    arbitration_reason_codes: Vec<String>,
+    #[serde(default)]
+    hard_veto_active: bool,
+    #[serde(default)]
+    hard_veto_reason: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+struct LearningOverlayKey {
+    pair_id: String,
+    timeframe: String,
+}
+
+impl LearningOverlayKey {
+    fn new(pair_id: &str, timeframe: Timeframe) -> Self {
+        Self {
+            pair_id: pair_id.to_string(),
+            timeframe: timeframe.as_str().to_string(),
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+struct LearningOverlayEntry {
+    pair_id: String,
+    timeframe: Timeframe,
+    recommendation: LearningRecommendation,
+    trade_eligible: bool,
+    selection_selected: bool,
+    learning_reason_codes: Vec<String>,
+}
+
+impl LearningOverlayEntry {
+    fn from_artifact_row(row: LearningPairArtifact) -> Self {
+        let mut learning_reason_codes =
+            Vec::with_capacity(row.reason_codes.len() + row.arbitration_reason_codes.len() + 1);
+        append_unique_codes(&mut learning_reason_codes, &row.reason_codes);
+        append_unique_codes(&mut learning_reason_codes, &row.arbitration_reason_codes);
+        if row.hard_veto_active {
+            if let Some(reason) = row.hard_veto_reason.as_ref() {
+                push_unique_code(&mut learning_reason_codes, reason);
+            } else {
+                push_unique_code(&mut learning_reason_codes, "HARD_VETO_ACTIVE");
+            }
+        }
+        Self {
+            pair_id: row.pair_id,
+            timeframe: row.timeframe,
+            recommendation: row.recommendation,
+            trade_eligible: row.trade_eligible,
+            selection_selected: row.selection_selected,
+            learning_reason_codes,
+        }
+    }
+}
+
+#[allow(dead_code)]
+#[derive(Debug, Clone)]
+struct LearningOverlaySnapshot {
+    generated_at: Option<DateTime<Utc>>,
+    age_seconds: Option<f64>,
+    fresh: bool,
+    ttl_seconds: u64,
+    entries: HashMap<LearningOverlayKey, LearningOverlayEntry>,
+}
+
+impl LearningOverlaySnapshot {
+    fn missing(ttl_seconds: u64) -> Self {
+        Self {
+            generated_at: None,
+            age_seconds: None,
+            fresh: false,
+            ttl_seconds,
+            entries: HashMap::new(),
+        }
+    }
+
+    fn get(&self, pair_id: &str, timeframe: Timeframe) -> Option<&LearningOverlayEntry> {
+        self.entries
+            .get(&LearningOverlayKey::new(pair_id, timeframe))
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum LearningOverlayApprovalSource {
+    LearningSelection,
+    OperatorPromotedActiveChampion,
+    None,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum LearningOverlayUniverseBucket {
+    TradeNow,
+    Watchlist,
+    Excluded,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum LearningOverlayBlockedReason {
+    LegacyFallbackActive,
+    PendingChallengerRequiresPromotion,
+    OutsideApprovedUniverse,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum LearningOverlayWatchReason {
+    LearningEligibleNotSelected,
+    LearningOverlayStale,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct LearningOverlayPolicyDecision {
+    /// `None` does not mean learning was silent.
+    /// It can mean the overlay selected the pair/timeframe, but governance or provenance
+    /// currently blocks any active approval path from applying.
+    approval_source: LearningOverlayApprovalSource,
+    bucket: LearningOverlayUniverseBucket,
+    requires_fresh_overlay: bool,
+    blocked_reason: Option<LearningOverlayBlockedReason>,
+    watch_reason: Option<LearningOverlayWatchReason>,
+    learning_recommendation: Option<LearningRecommendation>,
+    learning_trade_eligible: Option<bool>,
+    learning_selection_selected: Option<bool>,
+    learning_reason_codes: Vec<String>,
+}
+
+#[allow(dead_code)]
+fn load_latest_learning_overlay(
+    runs_root: &Path,
+    now: DateTime<Utc>,
+    ttl_seconds: u64,
+) -> anyhow::Result<LearningOverlaySnapshot> {
+    let Some(path) = latest_learning_overlay_report_path(runs_root)? else {
+        return Ok(LearningOverlaySnapshot::missing(ttl_seconds));
+    };
+    let bytes = fs::read(&path)
+        .with_context(|| format!("reading learning overlay artifact '{}'", path.display()))?;
+    let report: LearningCycleReportArtifact = serde_json::from_slice(&bytes)
+        .with_context(|| format!("parsing learning overlay artifact '{}'", path.display()))?;
+
+    let mut entries = HashMap::new();
+    for timeframe_report in report.timeframe_reports {
+        for row in timeframe_report.pairs {
+            if row.timeframe != timeframe_report.timeframe {
+                return Err(anyhow::anyhow!(
+                    "learning overlay timeframe mismatch for pair={} report_timeframe={} row_timeframe={}",
+                    row.pair_id,
+                    timeframe_report.timeframe.as_str(),
+                    row.timeframe.as_str()
+                ));
+            }
+            let entry = LearningOverlayEntry::from_artifact_row(row);
+            entries.insert(
+                LearningOverlayKey::new(&entry.pair_id, entry.timeframe),
+                entry,
+            );
+        }
+    }
+
+    let age_seconds = now
+        .signed_duration_since(report.generated_at)
+        .num_seconds()
+        .max(0) as f64;
+    Ok(LearningOverlaySnapshot {
+        generated_at: Some(report.generated_at),
+        age_seconds: Some(age_seconds),
+        fresh: age_seconds <= ttl_seconds as f64,
+        ttl_seconds,
+        entries,
+    })
+}
+
+fn latest_learning_overlay_report_path(runs_root: &Path) -> anyhow::Result<Option<PathBuf>> {
+    if !runs_root.exists() {
+        return Ok(None);
+    }
+    let mut latest: Option<(DateTime<Utc>, SystemTime, PathBuf)> = None;
+    for entry in fs::read_dir(runs_root)
+        .with_context(|| format!("reading learning overlay root '{}'", runs_root.display()))?
+    {
+        let entry = entry?;
+        if !entry.file_type()?.is_file() {
+            continue;
+        }
+        let path = entry.path();
+        let file_name = path
+            .file_name()
+            .and_then(|value| value.to_str())
+            .unwrap_or("");
+        if !file_name.ends_with(LEARNING_OVERLAY_REPORT_SUFFIX) {
+            continue;
+        }
+        let modified = entry
+            .metadata()
+            .and_then(|metadata| metadata.modified())
+            .unwrap_or(UNIX_EPOCH);
+        let bytes = fs::read(&path).with_context(|| {
+            format!("reading learning overlay header from '{}'", path.display())
+        })?;
+        let header: LearningCycleReportHeader =
+            serde_json::from_slice(&bytes).with_context(|| {
+                format!("parsing learning overlay header from '{}'", path.display())
+            })?;
+        match latest.as_ref() {
+            Some((latest_generated_at, latest_modified, _))
+                if header.generated_at < *latest_generated_at
+                    || (header.generated_at == *latest_generated_at
+                        && modified <= *latest_modified) => {}
+            _ => latest = Some((header.generated_at, modified, path)),
+        }
+    }
+    Ok(latest.map(|(_, _, path)| path))
+}
+
+fn append_unique_codes(target: &mut Vec<String>, source: &[String]) {
+    for code in source {
+        push_unique_code(target, code);
+    }
+}
+
+fn push_unique_code(target: &mut Vec<String>, code: &str) {
+    if !code.trim().is_empty() && !target.iter().any(|existing| existing == code) {
+        target.push(code.to_string());
+    }
+}
+
+#[allow(dead_code)]
+fn resolve_learning_overlay_policy(
+    overlay: Option<&LearningOverlayEntry>,
+    overlay_snapshot: &LearningOverlaySnapshot,
+    selected_config_source: &str,
+    active_candidate_probation: Option<&CandidateProbationRow>,
+) -> LearningOverlayPolicyDecision {
+    let learning_recommendation = overlay.map(|entry| entry.recommendation);
+    let learning_trade_eligible = overlay.map(|entry| entry.trade_eligible);
+    let learning_selection_selected = overlay.map(|entry| entry.selection_selected);
+    let learning_reason_codes = overlay
+        .map(|entry| entry.learning_reason_codes.clone())
+        .unwrap_or_default();
+
+    if selected_config_source == SELECTED_CONFIG_SOURCE_LEGACY_FALLBACK {
+        return LearningOverlayPolicyDecision {
+            approval_source: LearningOverlayApprovalSource::None,
+            bucket: LearningOverlayUniverseBucket::Excluded,
+            requires_fresh_overlay: false,
+            blocked_reason: Some(LearningOverlayBlockedReason::LegacyFallbackActive),
+            watch_reason: None,
+            learning_recommendation,
+            learning_trade_eligible,
+            learning_selection_selected,
+            learning_reason_codes,
+        };
+    }
+
+    if selected_config_source == SELECTED_CONFIG_SOURCE_OPERATOR_PROMOTION {
+        return LearningOverlayPolicyDecision {
+            approval_source: LearningOverlayApprovalSource::OperatorPromotedActiveChampion,
+            bucket: LearningOverlayUniverseBucket::TradeNow,
+            requires_fresh_overlay: false,
+            blocked_reason: None,
+            watch_reason: None,
+            learning_recommendation,
+            learning_trade_eligible,
+            learning_selection_selected,
+            learning_reason_codes,
+        };
+    }
+
+    let pending_challenger = active_candidate_probation
+        .map(|row| match row.state {
+            CandidateLifecycleState::Champion | CandidateLifecycleState::Rejected => false,
+            CandidateLifecycleState::Challenger
+            | CandidateLifecycleState::PromotionReady
+            | CandidateLifecycleState::Hold => true,
+        })
+        .unwrap_or(false);
+
+    let Some(entry) = overlay else {
+        return LearningOverlayPolicyDecision {
+            approval_source: LearningOverlayApprovalSource::None,
+            bucket: LearningOverlayUniverseBucket::Excluded,
+            requires_fresh_overlay: false,
+            blocked_reason: Some(LearningOverlayBlockedReason::OutsideApprovedUniverse),
+            watch_reason: None,
+            learning_recommendation: None,
+            learning_trade_eligible: None,
+            learning_selection_selected: None,
+            learning_reason_codes,
+        };
+    };
+
+    if entry.selection_selected {
+        if pending_challenger {
+            return LearningOverlayPolicyDecision {
+                approval_source: LearningOverlayApprovalSource::None,
+                bucket: LearningOverlayUniverseBucket::Excluded,
+                requires_fresh_overlay: false,
+                blocked_reason: Some(
+                    LearningOverlayBlockedReason::PendingChallengerRequiresPromotion,
+                ),
+                watch_reason: None,
+                learning_recommendation,
+                learning_trade_eligible,
+                learning_selection_selected,
+                learning_reason_codes,
+            };
+        }
+        if overlay_snapshot.fresh {
+            return LearningOverlayPolicyDecision {
+                approval_source: LearningOverlayApprovalSource::LearningSelection,
+                bucket: LearningOverlayUniverseBucket::TradeNow,
+                requires_fresh_overlay: true,
+                blocked_reason: None,
+                watch_reason: None,
+                learning_recommendation,
+                learning_trade_eligible,
+                learning_selection_selected,
+                learning_reason_codes,
+            };
+        }
+        return LearningOverlayPolicyDecision {
+            approval_source: LearningOverlayApprovalSource::LearningSelection,
+            bucket: LearningOverlayUniverseBucket::Watchlist,
+            requires_fresh_overlay: true,
+            blocked_reason: None,
+            watch_reason: Some(LearningOverlayWatchReason::LearningOverlayStale),
+            learning_recommendation,
+            learning_trade_eligible,
+            learning_selection_selected,
+            learning_reason_codes,
+        };
+    }
+
+    if entry.trade_eligible {
+        return LearningOverlayPolicyDecision {
+            approval_source: LearningOverlayApprovalSource::None,
+            bucket: LearningOverlayUniverseBucket::Watchlist,
+            requires_fresh_overlay: false,
+            blocked_reason: None,
+            watch_reason: Some(if overlay_snapshot.fresh {
+                LearningOverlayWatchReason::LearningEligibleNotSelected
+            } else {
+                LearningOverlayWatchReason::LearningOverlayStale
+            }),
+            learning_recommendation,
+            learning_trade_eligible,
+            learning_selection_selected,
+            learning_reason_codes,
+        };
+    }
+
+    LearningOverlayPolicyDecision {
+        approval_source: LearningOverlayApprovalSource::None,
+        bucket: LearningOverlayUniverseBucket::Excluded,
+        requires_fresh_overlay: false,
+        blocked_reason: Some(LearningOverlayBlockedReason::OutsideApprovedUniverse),
+        watch_reason: None,
+        learning_recommendation,
+        learning_trade_eligible,
+        learning_selection_selected,
+        learning_reason_codes,
+    }
+}
+
 #[derive(Debug)]
 struct PersistSummary {
     performance_rows_written: usize,
@@ -728,6 +1165,35 @@ struct PersistSummary {
 }
 
 impl StrategyRepository {
+    fn candidate_probation_row_from_db_row(row: &Row) -> anyhow::Result<CandidateProbationRow> {
+        let pair_id: String = row.get(0);
+        let timeframe_raw: String = row.get(1);
+        let state_raw: String = row.get(6);
+        let state = CandidateLifecycleState::parse(&state_raw).ok_or_else(|| {
+            anyhow::anyhow!(
+                "invalid candidate probation state '{}' for pair={} timeframe={}",
+                state_raw,
+                pair_id,
+                timeframe_raw
+            )
+        })?;
+        Ok(CandidateProbationRow {
+            pair_id,
+            timeframe: timeframe_from_str(timeframe_raw.as_str())?,
+            candidate_id: row.get(2),
+            candidate_variant: row.get(3),
+            candidate_config: serde_json::from_str(&row.get::<usize, String>(4))?,
+            objective_score: row.get(5),
+            state,
+            eligible_after: row.get(9),
+            probation_samples: row.get::<usize, i32>(10).max(0) as usize,
+            promotable: row.get(11),
+            last_candidate_score: row.get(13),
+            last_champion_score: row.get(14),
+            last_objective_delta: row.get(15),
+        })
+    }
+
     async fn connect(connection_string: &str) -> anyhow::Result<Self> {
         let (client, connection) = tokio_postgres::connect(connection_string, NoTls).await?;
         tokio::spawn(async move {
@@ -1742,30 +2208,51 @@ impl StrategyRepository {
         let Some(row) = row else {
             return Ok(None);
         };
-        let state_raw: String = row.get(6);
-        let state = CandidateLifecycleState::parse(&state_raw).ok_or_else(|| {
-            anyhow::anyhow!(
-                "invalid candidate probation state '{}' for pair={} timeframe={}",
-                state_raw,
-                pair_id,
-                timeframe.as_str()
+        Ok(Some(Self::candidate_probation_row_from_db_row(&row)?))
+    }
+
+    async fn fetch_active_candidate_probation_map(
+        &self,
+        pair_ids: &[String],
+        timeframe: Timeframe,
+    ) -> anyhow::Result<HashMap<String, CandidateProbationRow>> {
+        if pair_ids.is_empty() {
+            return Ok(HashMap::new());
+        }
+
+        let rows = self
+            .client
+            .query(
+                "SELECT p.pair_id,
+                        p.timeframe,
+                        p.candidate_id,
+                        r.candidate_variant,
+                        r.config_json,
+                        r.objective_score,
+                        p.state,
+                        p.started_at,
+                        p.updated_at,
+                        p.eligible_after,
+                        p.probation_samples,
+                        p.promotable,
+                        p.last_reason,
+                        p.last_candidate_score,
+                        p.last_champion_score,
+                        p.last_objective_delta
+                 FROM strategy_candidate_probation p
+                 JOIN strategy_candidate_runs r ON r.candidate_id = p.candidate_id
+                 WHERE p.timeframe = $1
+                   AND p.pair_id = ANY($2)",
+                &[&timeframe.as_str(), &pair_ids],
             )
-        })?;
-        Ok(Some(CandidateProbationRow {
-            pair_id: row.get(0),
-            timeframe: timeframe_from_str(row.get::<usize, String>(1).as_str())?,
-            candidate_id: row.get(2),
-            candidate_variant: row.get(3),
-            candidate_config: serde_json::from_str(&row.get::<usize, String>(4))?,
-            objective_score: row.get(5),
-            state,
-            eligible_after: row.get(9),
-            probation_samples: row.get::<usize, i32>(10).max(0) as usize,
-            promotable: row.get(11),
-            last_candidate_score: row.get(13),
-            last_champion_score: row.get(14),
-            last_objective_delta: row.get(15),
-        }))
+            .await?;
+
+        let mut rows_by_pair = HashMap::with_capacity(rows.len());
+        for row in rows {
+            let parsed = Self::candidate_probation_row_from_db_row(&row)?;
+            rows_by_pair.insert(parsed.pair_id.clone(), parsed);
+        }
+        Ok(rows_by_pair)
     }
 
     async fn update_candidate_probation_state(
@@ -2218,6 +2705,13 @@ fn decide_champion_transition(
 struct CuesQuery {
     timeframe: String,
     limit: Option<usize>,
+    include_advisory: Option<bool>,
+    taker_fee_bps: Option<f64>,
+}
+
+#[derive(Debug, Deserialize)]
+struct TradeNowQuery {
+    timeframe: Option<String>,
     include_advisory: Option<bool>,
     taker_fee_bps: Option<f64>,
 }
@@ -3280,6 +3774,130 @@ struct CuesResponse {
 }
 
 #[derive(Debug, Serialize)]
+struct TradeNowRow {
+    pair_id: String,
+    left_instrument: String,
+    right_instrument: String,
+    timeframe: String,
+    selected_variant: String,
+    direction_hint: String,
+    spread_z: f64,
+    opportunity_score: f64,
+    confidence_band: String,
+    expected_hold_bars: i64,
+    net_edge_bps: f64,
+    setup_gate_pass: bool,
+    cost_gate_pass: bool,
+    trade_gate_pass: bool,
+    open_live_trade: bool,
+    portfolio_target_weight: Option<f64>,
+    portfolio_risk_contribution: Option<f64>,
+    approval_source: String,
+    requires_fresh_overlay: bool,
+    learning_recommendation: Option<String>,
+    learning_trade_eligible: Option<bool>,
+    learning_selection_selected: Option<bool>,
+    learning_reason_codes: Vec<String>,
+    learning_cycle_generated_at: Option<DateTime<Utc>>,
+    selected_config_source: String,
+    legacy_fallback_active: bool,
+    decision_bucket: String,
+    decision_reason_code: String,
+    blocked_reason_code: Option<String>,
+    watch_reason_code: Option<String>,
+    rationale_codes: Vec<String>,
+}
+
+#[derive(Debug, Serialize)]
+struct TradeNowResponse {
+    generated_at: DateTime<Utc>,
+    timeframe_filter: Option<String>,
+    learning_overlay_generated_at: Option<DateTime<Utc>>,
+    learning_overlay_age_seconds: Option<f64>,
+    learning_overlay_fresh: bool,
+    learning_overlay_ttl_seconds: u64,
+    tradable_now: Vec<TradeNowRow>,
+    watchlist: Vec<TradeNowRow>,
+    excluded: Vec<TradeNowRow>,
+}
+
+#[derive(Debug, Serialize)]
+struct TradeNowObservabilitySuppressedRow {
+    pair_id: String,
+    timeframe: String,
+    suppressed_total: u64,
+}
+
+#[derive(Debug, Serialize)]
+struct TradeNowObservabilityResponse {
+    generated_at: DateTime<Utc>,
+    learning_challenger_bypass_suppressed_total: u64,
+    learning_challenger_bypass_suppressed: Vec<TradeNowObservabilitySuppressedRow>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ExecutionOpenTradesResponse {
+    trades: Vec<ExecutionOpenTradeRow>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ExecutionOpenTradeRow {
+    pair_id: String,
+}
+
+#[derive(Debug, Default)]
+struct TradeNowObservabilityStore {
+    challenger_bypass_suppressed_total: RwLock<u64>,
+    challenger_bypass_suppressed_by_pair: RwLock<HashMap<(String, String), u64>>,
+}
+
+impl TradeNowObservabilityStore {
+    async fn record_learning_challenger_bypass_suppressed(
+        &self,
+        pair_id: &str,
+        timeframe: Timeframe,
+    ) {
+        {
+            let mut total = self.challenger_bypass_suppressed_total.write().await;
+            *total = total.saturating_add(1);
+        }
+        let mut breakdown = self.challenger_bypass_suppressed_by_pair.write().await;
+        let key = (pair_id.to_string(), timeframe.as_str().to_string());
+        let entry = breakdown.entry(key).or_insert(0);
+        *entry = entry.saturating_add(1);
+    }
+
+    async fn snapshot(&self, generated_at: DateTime<Utc>) -> TradeNowObservabilityResponse {
+        let total = *self.challenger_bypass_suppressed_total.read().await;
+        let mut suppressed = self
+            .challenger_bypass_suppressed_by_pair
+            .read()
+            .await
+            .iter()
+            .map(
+                |((pair_id, timeframe), suppressed_total)| TradeNowObservabilitySuppressedRow {
+                    pair_id: pair_id.clone(),
+                    timeframe: timeframe.clone(),
+                    suppressed_total: *suppressed_total,
+                },
+            )
+            .collect::<Vec<_>>();
+        suppressed.sort_by(|left, right| {
+            right
+                .suppressed_total
+                .cmp(&left.suppressed_total)
+                .then_with(|| left.timeframe.cmp(&right.timeframe))
+                .then_with(|| left.pair_id.cmp(&right.pair_id))
+        });
+        TradeNowObservabilityResponse {
+            generated_at,
+            learning_challenger_bypass_suppressed_total: total,
+            learning_challenger_bypass_suppressed: suppressed,
+        }
+    }
+}
+
+#[derive(Debug, Serialize)]
 struct BacktestPointResponse {
     ts: DateTime<Utc>,
     z: f64,
@@ -3880,11 +4498,13 @@ async fn main() -> anyhow::Result<()> {
             "sampled slippage warm-start hydration failed"
         ),
     }
+    let trade_now_observability = Arc::new(TradeNowObservabilityStore::default());
     let state = AppState {
         repository,
         settings: settings.clone(),
         http_client,
         sampled_slippage,
+        trade_now_observability,
     };
 
     let _slippage_worker = spawn_sampled_slippage_worker(state.clone());
@@ -3899,7 +4519,12 @@ async fn main() -> anyhow::Result<()> {
         .route("/v1/strategy/ui-auth/status", get(ui_auth_status))
         .route("/v1/strategy/ui-auth/verify", post(ui_auth_verify))
         .route("/v1/strategy/market/metrics", get(strategy_market_metrics))
+        .route(
+            "/v1/strategy/observability/trade-now",
+            get(strategy_trade_now_observability),
+        )
         .route("/v1/strategy/pairs/cues", get(pairs_cues))
+        .route("/v1/strategy/pairs/trade-now", get(pairs_trade_now))
         .route("/v1/strategy/pairs/backtest", get(pairs_backtest))
         .route("/v1/strategy/pairs/live-z", get(pairs_live_z))
         .route("/v1/strategy/pairs/cost-gate", get(pairs_cost_gate))
@@ -3952,6 +4577,9 @@ async fn main() -> anyhow::Result<()> {
     info!(
         bind_addr = %settings.bind_addr,
         data_service_url = %settings.data_service_url,
+        execution_service_url = %settings.execution_service_url,
+        execution_exchange = %settings.execution_exchange,
+        execution_account_id = %settings.execution_account_id,
         pairs = ?settings.pairs.iter().map(|p| p.pair_id()).collect::<Vec<_>>(),
         timeframes = ?settings.timeframes.iter().map(|t| t.as_str()).collect::<Vec<_>>(),
         entry_band = settings.entry_band,
@@ -4888,6 +5516,466 @@ async fn maintenance_action(
     }))
 }
 
+async fn cue_with_champion_drift_applied(
+    state: &AppState,
+    timeframe: Timeframe,
+    output: &PairEvaluationOutput,
+) -> Result<PairCue, ApiError> {
+    let preferred_signal = state
+        .repository
+        .fetch_selected_signal(&output.cue.pair_id, timeframe)
+        .await
+        .map_err(|error| ApiError::Upstream(error.to_string()))?;
+
+    let mut cue = output.cue.clone();
+    if let Some(preferred) = preferred_signal {
+        if preferred.signal_variant != output.cue.selected_variant {
+            cue.rationale_codes.push("CHAMPION_DRIFT".to_string());
+            cue.rationale_codes
+                .push(format!("CHAMPION_SELECTED:{}", preferred.signal_variant));
+            cue.rationale_codes.push(format!(
+                "CHALLENGER_SELECTED:{}",
+                output.cue.selected_variant
+            ));
+            if state.settings.block_on_champion_drift {
+                cue.setup_actionable = false;
+                cue.actionable = false;
+                cue.direction_hint = "NONE".to_string();
+                cue.rationale_codes
+                    .push("CHAMPION_DRIFT_BLOCKED".to_string());
+            }
+        }
+    }
+    refresh_setup_gate(&mut cue);
+    finalize_trade_gate(&mut cue);
+    Ok(cue)
+}
+
+fn resolve_trade_now_live_watch_reason_code(cue: &PairCue, open_live_trade: bool) -> &'static str {
+    if open_live_trade {
+        return "OPEN_POSITION_CONFLICT";
+    }
+    if cue.setup_gate.status != "AVAILABLE"
+        || cue.cost_gate.status != "AVAILABLE"
+        || cue.trade_gate.status != "AVAILABLE"
+    {
+        return "LIVE_TRIGGER_NOT_READY";
+    }
+    if !cue.setup_gate.pass {
+        return "SETUP_GATE_NOT_PASSING";
+    }
+    if !cue.cost_gate.pass {
+        return "COST_GATE_NOT_PASSING";
+    }
+    "TRADE_GATE_NOT_PASSING"
+}
+
+async fn fetch_open_live_trade_pairs(
+    http_client: &reqwest::Client,
+    settings: &StrategySettings,
+) -> Result<HashSet<String>, ApiError> {
+    let upstream_base = settings.execution_service_url.trim_end_matches('/');
+    let url = reqwest::Url::parse_with_params(
+        &format!("{upstream_base}/v1/execution/portfolio/open-trades"),
+        &[
+            ("exchange", settings.execution_exchange.as_str()),
+            ("account_id", settings.execution_account_id.as_str()),
+        ],
+    )
+    .map_err(|error| ApiError::Upstream(format!("invalid execution open-trades url: {error}")))?;
+    let response = http_client.get(url).send().await.map_err(|error| {
+        ApiError::Upstream(format!(
+            "execution open-trades upstream request failed: {error}"
+        ))
+    })?;
+    let status = response.status();
+    if !status.is_success() {
+        let body = response.text().await.unwrap_or_default();
+        tracing::warn!(
+            status = %status,
+            exchange = %settings.execution_exchange,
+            account_id = %settings.execution_account_id,
+            body = %body,
+            "trade-now execution open-trades upstream returned error"
+        );
+        return Err(ApiError::Upstream(format!(
+            "execution open-trades upstream status={} body={}",
+            status, body
+        )));
+    }
+    let payload = response
+        .json::<ExecutionOpenTradesResponse>()
+        .await
+        .map_err(|error| {
+            ApiError::Upstream(format!("execution open-trades decode failed: {error}"))
+        })?;
+    Ok(payload
+        .trades
+        .into_iter()
+        .map(|trade| trade.pair_id)
+        .collect())
+}
+
+fn resolve_trade_now_blocked_reason_code(policy: &LearningOverlayPolicyDecision) -> &'static str {
+    match policy.blocked_reason {
+        Some(LearningOverlayBlockedReason::LegacyFallbackActive) => "LEGACY_FALLBACK_ACTIVE",
+        Some(LearningOverlayBlockedReason::PendingChallengerRequiresPromotion) => {
+            "PENDING_CHALLENGER_REQUIRES_PROMOTION"
+        }
+        _ => match (
+            policy.learning_recommendation,
+            policy.learning_trade_eligible,
+        ) {
+            (Some(LearningRecommendation::Hold), _) => "LEARNING_HOLD",
+            (_, Some(false)) => "LEARNING_NOT_TRADE_ELIGIBLE",
+            _ => "OUTSIDE_APPROVED_UNIVERSE",
+        },
+    }
+}
+
+fn sort_trade_now_rows(rows: &mut [TradeNowRow]) {
+    rows.sort_by(|left, right| {
+        right
+            .opportunity_score
+            .partial_cmp(&left.opportunity_score)
+            .unwrap_or(std::cmp::Ordering::Equal)
+            .then_with(|| left.timeframe.cmp(&right.timeframe))
+            .then_with(|| left.pair_id.cmp(&right.pair_id))
+    });
+}
+
+fn group_trade_now_rows(
+    generated_at: DateTime<Utc>,
+    timeframe_filter: Option<Timeframe>,
+    overlay_snapshot: &LearningOverlaySnapshot,
+    rows: Vec<TradeNowRow>,
+) -> TradeNowResponse {
+    let mut tradable_now = vec![];
+    let mut watchlist = vec![];
+    let mut excluded = vec![];
+
+    for row in rows {
+        match row.decision_bucket.as_str() {
+            "TRADE_NOW" => tradable_now.push(row),
+            "WATCHLIST" => watchlist.push(row),
+            _ => excluded.push(row),
+        }
+    }
+
+    sort_trade_now_rows(&mut tradable_now);
+    sort_trade_now_rows(&mut watchlist);
+    sort_trade_now_rows(&mut excluded);
+
+    TradeNowResponse {
+        generated_at,
+        timeframe_filter: timeframe_filter.map(|value| value.as_str().to_string()),
+        learning_overlay_generated_at: overlay_snapshot.generated_at,
+        learning_overlay_age_seconds: overlay_snapshot.age_seconds,
+        learning_overlay_fresh: overlay_snapshot.fresh,
+        learning_overlay_ttl_seconds: overlay_snapshot.ttl_seconds,
+        tradable_now,
+        watchlist,
+        excluded,
+    }
+}
+
+fn build_trade_now_row(
+    cue: &PairCue,
+    overlay_snapshot: &LearningOverlaySnapshot,
+    policy: &LearningOverlayPolicyDecision,
+    open_live_trade: bool,
+) -> TradeNowRow {
+    let selected_config_source = cue.selected_signal_config.source.clone();
+    let legacy_fallback_active = selected_config_source == SELECTED_CONFIG_SOURCE_LEGACY_FALLBACK;
+    let setup_gate_pass = cue.setup_gate.status == "AVAILABLE" && cue.setup_gate.pass;
+    let cost_gate_pass = cue.cost_gate.status == "AVAILABLE" && cue.cost_gate.pass;
+    let trade_gate_pass = cue.trade_gate.status == "AVAILABLE" && cue.trade_gate.pass;
+    let portfolio_target_weight =
+        (cue.portfolio_hint.status == "AVAILABLE").then_some(cue.portfolio_hint.target_weight);
+    let portfolio_risk_contribution =
+        (cue.portfolio_hint.status == "AVAILABLE").then_some(cue.portfolio_hint.risk_contribution);
+
+    let (decision_bucket, decision_reason_code, blocked_reason_code, watch_reason_code) =
+        match policy.bucket {
+            LearningOverlayUniverseBucket::Excluded => {
+                let blocked_reason_code = resolve_trade_now_blocked_reason_code(policy);
+                let decision_reason_code = match policy.blocked_reason {
+                    Some(LearningOverlayBlockedReason::LegacyFallbackActive) => {
+                        "PROVENANCE_POLICY_BLOCKED"
+                    }
+                    Some(LearningOverlayBlockedReason::PendingChallengerRequiresPromotion) => {
+                        "GOVERNANCE_POLICY_BLOCKED"
+                    }
+                    _ => "OUTSIDE_APPROVED_UNIVERSE",
+                };
+                (
+                    "EXCLUDED",
+                    decision_reason_code,
+                    Some(blocked_reason_code),
+                    None,
+                )
+            }
+            LearningOverlayUniverseBucket::Watchlist => {
+                let (decision_reason_code, watch_reason_code) = match policy.watch_reason {
+                    Some(LearningOverlayWatchReason::LearningEligibleNotSelected) => (
+                        "LEARNING_POSITIVE_BUT_NOT_SELECTED",
+                        "LEARNING_ELIGIBLE_NOT_SELECTED",
+                    ),
+                    Some(LearningOverlayWatchReason::LearningOverlayStale) => (
+                        "STALE_OVERLAY_DOWNGRADED_TO_WATCHLIST",
+                        "LEARNING_OVERLAY_STALE",
+                    ),
+                    None => (
+                        "APPROVED_BUT_WAITING_ON_LIVE_CONDITIONS",
+                        resolve_trade_now_live_watch_reason_code(cue, open_live_trade),
+                    ),
+                };
+                (
+                    "WATCHLIST",
+                    decision_reason_code,
+                    None,
+                    Some(watch_reason_code),
+                )
+            }
+            LearningOverlayUniverseBucket::TradeNow if open_live_trade || !trade_gate_pass => (
+                "WATCHLIST",
+                "APPROVED_BUT_WAITING_ON_LIVE_CONDITIONS",
+                None,
+                Some(resolve_trade_now_live_watch_reason_code(
+                    cue,
+                    open_live_trade,
+                )),
+            ),
+            LearningOverlayUniverseBucket::TradeNow => (
+                "TRADE_NOW",
+                match policy.approval_source {
+                    LearningOverlayApprovalSource::LearningSelection => {
+                        "LEARNING_SELECTED_AND_LIVE_GATES_PASS"
+                    }
+                    LearningOverlayApprovalSource::OperatorPromotedActiveChampion => {
+                        "OPERATOR_PROMOTED_AND_LIVE_GATES_PASS"
+                    }
+                    LearningOverlayApprovalSource::None => {
+                        "APPROVED_BUT_WAITING_ON_LIVE_CONDITIONS"
+                    }
+                },
+                None,
+                None,
+            ),
+        };
+
+    let mut rationale_codes = vec![];
+    if policy.learning_selection_selected == Some(true) {
+        push_unique_code(&mut rationale_codes, "APPROVAL_SOURCE_LEARNING_SELECTION");
+        push_unique_code(&mut rationale_codes, "LEARNING_SELECTION_SELECTED");
+    }
+    if policy.approval_source == LearningOverlayApprovalSource::OperatorPromotedActiveChampion {
+        push_unique_code(&mut rationale_codes, "APPROVAL_SOURCE_OPERATOR_PROMOTED");
+        push_unique_code(&mut rationale_codes, "OPERATOR_PROMOTION_ACTIVE");
+    }
+    if policy.learning_trade_eligible == Some(true) {
+        push_unique_code(&mut rationale_codes, "LEARNING_TRADE_ELIGIBLE");
+    }
+    if policy.learning_recommendation == Some(LearningRecommendation::Hold) {
+        push_unique_code(&mut rationale_codes, "LEARNING_HOLD");
+    }
+    if policy.learning_trade_eligible == Some(false) {
+        push_unique_code(&mut rationale_codes, "LEARNING_NOT_TRADE_ELIGIBLE");
+    }
+    if overlay_snapshot.generated_at.is_some() {
+        push_unique_code(
+            &mut rationale_codes,
+            if overlay_snapshot.fresh {
+                "LEARNING_OVERLAY_FRESH"
+            } else {
+                "LEARNING_OVERLAY_STALE"
+            },
+        );
+    }
+    if policy.requires_fresh_overlay {
+        push_unique_code(&mut rationale_codes, "REQUIRES_FRESH_OVERLAY");
+    }
+    push_unique_code(
+        &mut rationale_codes,
+        if setup_gate_pass {
+            "LIVE_SETUP_GATE_PASS"
+        } else {
+            "LIVE_SETUP_GATE_FAIL"
+        },
+    );
+    push_unique_code(
+        &mut rationale_codes,
+        if cost_gate_pass {
+            "LIVE_COST_GATE_PASS"
+        } else {
+            "LIVE_COST_GATE_FAIL"
+        },
+    );
+    push_unique_code(
+        &mut rationale_codes,
+        if trade_gate_pass {
+            "LIVE_TRADE_GATE_PASS"
+        } else {
+            "LIVE_TRADE_GATE_FAIL"
+        },
+    );
+    if watch_reason_code == Some("LIVE_TRIGGER_NOT_READY") {
+        push_unique_code(&mut rationale_codes, "LIVE_TRIGGER_NOT_READY");
+    }
+    if open_live_trade {
+        push_unique_code(&mut rationale_codes, "OPEN_POSITION_CONFLICT");
+    }
+    if legacy_fallback_active {
+        push_unique_code(&mut rationale_codes, "LEGACY_FALLBACK_ACTIVE");
+    } else {
+        push_unique_code(&mut rationale_codes, "NON_LEGACY_CHAMPION");
+    }
+    if policy.blocked_reason
+        == Some(LearningOverlayBlockedReason::PendingChallengerRequiresPromotion)
+    {
+        push_unique_code(&mut rationale_codes, "PENDING_CHALLENGER_REVIEW");
+    }
+    if matches!(policy.bucket, LearningOverlayUniverseBucket::Excluded)
+        && policy.blocked_reason != Some(LearningOverlayBlockedReason::LegacyFallbackActive)
+        && policy.blocked_reason
+            != Some(LearningOverlayBlockedReason::PendingChallengerRequiresPromotion)
+    {
+        push_unique_code(&mut rationale_codes, "OUTSIDE_APPROVED_UNIVERSE");
+    }
+
+    TradeNowRow {
+        pair_id: cue.pair_id.clone(),
+        left_instrument: cue.left_instrument.clone(),
+        right_instrument: cue.right_instrument.clone(),
+        timeframe: cue.timeframe.clone(),
+        selected_variant: cue.selected_variant.clone(),
+        direction_hint: cue.direction_hint.clone(),
+        spread_z: cue.spread_z,
+        opportunity_score: cue.opportunity_score,
+        confidence_band: cue.confidence_band.clone(),
+        expected_hold_bars: cue.expected_hold_bars,
+        net_edge_bps: cue.cost_gate.net_edge_bps,
+        setup_gate_pass,
+        cost_gate_pass,
+        trade_gate_pass,
+        open_live_trade,
+        portfolio_target_weight,
+        portfolio_risk_contribution,
+        approval_source: match policy.approval_source {
+            LearningOverlayApprovalSource::LearningSelection => "LEARNING_SELECTION",
+            LearningOverlayApprovalSource::OperatorPromotedActiveChampion => {
+                "OPERATOR_PROMOTED_ACTIVE_CHAMPION"
+            }
+            LearningOverlayApprovalSource::None => "NONE",
+        }
+        .to_string(),
+        requires_fresh_overlay: policy.requires_fresh_overlay,
+        learning_recommendation: policy
+            .learning_recommendation
+            .map(LearningRecommendation::as_str)
+            .map(str::to_string),
+        learning_trade_eligible: policy.learning_trade_eligible,
+        learning_selection_selected: policy.learning_selection_selected,
+        learning_reason_codes: policy.learning_reason_codes.clone(),
+        learning_cycle_generated_at: overlay_snapshot.generated_at,
+        selected_config_source,
+        legacy_fallback_active,
+        decision_bucket: decision_bucket.to_string(),
+        decision_reason_code: decision_reason_code.to_string(),
+        blocked_reason_code: blocked_reason_code.map(str::to_string),
+        watch_reason_code: watch_reason_code.map(str::to_string),
+        rationale_codes,
+    }
+}
+
+async fn pairs_trade_now(
+    State(state): State<AppState>,
+    Query(query): Query<TradeNowQuery>,
+) -> Result<Json<TradeNowResponse>, ApiError> {
+    let (timeframe_filter, include_advisory, taker_fee_bps) = parse_trade_now_query(
+        &query,
+        state.settings.advisory_enabled,
+        state.settings.trading_fee_bps,
+    )?;
+    let generated_at = Utc::now();
+    let overlay_root = resolve_workspace_path(LEARNING_OVERLAY_RUNS_ROOT);
+    let overlay_snapshot =
+        load_latest_learning_overlay(&overlay_root, generated_at, LEARNING_OVERLAY_TTL_SECS)
+            .map_err(|error| {
+                ApiError::Upstream(format!("learning overlay load failed: {error}"))
+            })?;
+
+    let timeframes = timeframe_filter
+        .as_ref()
+        .copied()
+        .map(|value| vec![value])
+        .unwrap_or_else(|| state.settings.timeframes.clone());
+    let open_live_trade_pairs =
+        fetch_open_live_trade_pairs(&state.http_client, &state.settings).await?;
+    let mut rows = vec![];
+
+    for timeframe in timeframes {
+        let (outputs, _skipped, _portfolio_plan) =
+            evaluate_timeframe_outputs(&state, timeframe, include_advisory, taker_fee_bps).await;
+        let mut cues = Vec::with_capacity(outputs.len());
+        for output in outputs {
+            cues.push(cue_with_champion_drift_applied(&state, timeframe, &output).await?);
+        }
+        let pair_ids = cues
+            .iter()
+            .map(|cue| cue.pair_id.clone())
+            .collect::<Vec<_>>();
+        let active_candidate_probation_by_pair = state
+            .repository
+            .fetch_active_candidate_probation_map(&pair_ids, timeframe)
+            .await
+            .map_err(|error| ApiError::Upstream(error.to_string()))?;
+
+        for cue in cues {
+            let overlay = overlay_snapshot.get(&cue.pair_id, timeframe);
+            let policy = resolve_learning_overlay_policy(
+                overlay,
+                &overlay_snapshot,
+                &cue.selected_signal_config.source,
+                active_candidate_probation_by_pair.get(&cue.pair_id),
+            );
+            if policy.blocked_reason
+                == Some(LearningOverlayBlockedReason::PendingChallengerRequiresPromotion)
+            {
+                tracing::info!(
+                    pair_id = %cue.pair_id,
+                    timeframe = timeframe.as_str(),
+                    "trade-now suppressed learning-selected row pending challenger promotion"
+                );
+                state
+                    .trade_now_observability
+                    .record_learning_challenger_bypass_suppressed(&cue.pair_id, timeframe)
+                    .await;
+            }
+            let row = build_trade_now_row(
+                &cue,
+                &overlay_snapshot,
+                &policy,
+                open_live_trade_pairs.contains(&cue.pair_id),
+            );
+            rows.push(row);
+        }
+    }
+
+    Ok(Json(group_trade_now_rows(
+        generated_at,
+        timeframe_filter,
+        &overlay_snapshot,
+        rows,
+    )))
+}
+
+async fn strategy_trade_now_observability(
+    State(state): State<AppState>,
+) -> Json<TradeNowObservabilityResponse> {
+    Json(state.trade_now_observability.snapshot(Utc::now()).await)
+}
+
 async fn pairs_cues(
     State(state): State<AppState>,
     Query(query): Query<CuesQuery>,
@@ -5103,6 +6191,25 @@ fn parse_candidate_inbox_query(
         .transpose()?;
     let limit = query.limit.unwrap_or(default_limit).clamp(1, 100);
     Ok((timeframe, limit))
+}
+
+fn parse_trade_now_query(
+    query: &TradeNowQuery,
+    default_include_advisory: bool,
+    default_taker_fee_bps: f64,
+) -> Result<(Option<Timeframe>, bool, f64), ApiError> {
+    let timeframe = query
+        .timeframe
+        .as_ref()
+        .map(|value| {
+            Timeframe::parse(value).ok_or_else(|| {
+                ApiError::BadRequest("invalid timeframe; expected 1m, 15m, 1h".to_string())
+            })
+        })
+        .transpose()?;
+    let include_advisory = query.include_advisory.unwrap_or(default_include_advisory);
+    let taker_fee_bps = resolve_taker_fee_bps(query.taker_fee_bps, default_taker_fee_bps)?;
+    Ok((timeframe, include_advisory, taker_fee_bps))
 }
 
 fn parse_z_method(raw: Option<&str>) -> Result<String, ApiError> {
@@ -7086,7 +8193,7 @@ async fn pairs_candidate_action(
                 &probation.candidate_config,
                 &state.settings,
                 timeframe,
-                "OPERATOR_PROMOTION",
+                SELECTED_CONFIG_SOURCE_OPERATOR_PROMOTION,
                 Utc::now(),
             );
             state
@@ -8580,29 +9687,39 @@ fn parse_env_bool(key: &str, default: bool) -> bool {
 mod tests {
     use super::{
         apply_data_freshness_gate, apply_live_mark_override_to_snapshot, artifact_download_path,
-        bootstrap_deviation_exceeds_threshold, bootstrap_snapshot_is_fresh,
+        bootstrap_deviation_exceeds_threshold, bootstrap_snapshot_is_fresh, build_trade_now_row,
         canonical_metric_instrument, classify_expectancy_result, classify_reopt_error_severity,
         compute_candle_age_seconds, compute_expectancy_metrics, compute_pair_funding_bps_per_event,
         compute_pair_slippage_sample_bps, compute_walk_forward_summary, days_covered,
         decide_candidate_probation_transition, decide_champion_transition,
         derive_paper_trades_from_series, derive_replay_trades_from_series,
         estimate_research_combinations, evaluate_recent_performance_gate,
-        expectancy_objective_score, expected_funding_events_crossed, finalize_trade_gate,
+        expectancy_objective_score, expected_funding_events_crossed, fetch_open_live_trade_pairs,
+        finalize_trade_gate, group_trade_now_rows, load_latest_learning_overlay,
         normalize_funding_rate, parse_backtest_exit_mode, parse_candidate_inbox_query,
         parse_expectancy_query, parse_opportunity_history_stats_timeframe,
         parse_opportunity_history_window, parse_paper_trades_window, parse_replay_trades_query,
-        percentile, project_continuous_funding_bps, refresh_setup_gate, resolve_artifact_path,
-        resolve_reoptimize_status, resolve_selected_signal_config, resolve_taker_fee_bps,
+        parse_trade_now_query, percentile, project_continuous_funding_bps, refresh_setup_gate,
+        resolve_artifact_path, resolve_learning_overlay_policy, resolve_reoptimize_status,
+        resolve_selected_signal_config, resolve_taker_fee_bps,
         selected_signal_config_from_expectancy, summarize_recent_performance, CandidateInboxQuery,
         CandidateLifecycleState, CandidateOperatorAction, CandidateProbationInputs,
-        ChampionDecision, ExpectancyConfig, ExpectancyMetrics, ExpectancyQuery,
-        FundingCostEstimate, FundingRateInputMode, MaintenanceAction, OpportunityHistoryQuery,
-        OpportunityHistoryStatsQuery, PaperTradesQuery, ReoptErrorSeverity, ReoptimizeRunStatus,
-        ReplayTradeEntry, ReplayTradePathSummary, ReplayTradesQuery, ResearchSweepRequest,
-        SampledSlippageStatus, SelectedSignalRow, StrategyMarketMetricsResponse, StrategySettings,
+        CandidateProbationRow, ChampionDecision, ExpectancyConfig, ExpectancyMetrics,
+        ExpectancyQuery, FundingCostEstimate, FundingRateInputMode, LearningOverlayApprovalSource,
+        LearningOverlayBlockedReason, LearningOverlayEntry, LearningOverlaySnapshot,
+        LearningOverlayUniverseBucket, LearningOverlayWatchReason, LearningRecommendation,
+        MaintenanceAction, OpportunityHistoryQuery, OpportunityHistoryStatsQuery, PaperTradesQuery,
+        ReoptErrorSeverity, ReoptimizeRunStatus, ReplayTradeEntry, ReplayTradePathSummary,
+        ReplayTradesQuery, ResearchSweepRequest, SampledSlippageStatus, SelectedSignalRow,
+        StrategyMarketMetricsResponse, StrategySettings, TradeNowObservabilityStore, TradeNowQuery,
+        LEARNING_OVERLAY_TTL_SECS, SELECTED_CONFIG_SOURCE_LEGACY_FALLBACK,
+        SELECTED_CONFIG_SOURCE_OPERATOR_PROMOTION,
     };
+    use axum::{routing::get, Json, Router};
     use chrono::{Duration, Utc};
     use common_types::Timeframe;
+    use jsonschema::{Draft, JSONSchema};
+    use std::collections::HashMap;
     use std::fs;
     use std::path::PathBuf;
     use strategy_service::{
@@ -8611,6 +9728,7 @@ mod tests {
         SetupGateDiagnostics, ShadowMlDiagnostics, SignalFlatlineDiagnostics, TradeGateDiagnostics,
         VariantEvaluation,
     };
+    use tokio::net::TcpListener;
 
     fn selected_signal_config(variant: &str) -> SelectedSignalConfig {
         SelectedSignalConfig {
@@ -8723,6 +9841,112 @@ mod tests {
                 rationale_codes: vec![],
             },
         }
+    }
+
+    fn candidate_config(variant: &str) -> ExpectancyConfig {
+        ExpectancyConfig {
+            entry_z: 2.0,
+            exit_z: 0.5,
+            stop_z: 3.2,
+            z_method: variant.to_string(),
+            hedge_method: "HEDGE_RATIO_OLS".to_string(),
+            lookback_bars: 440,
+            train_bars: 2_200,
+            validation_bars: 880,
+        }
+    }
+
+    fn candidate_probation_row(state: CandidateLifecycleState) -> CandidateProbationRow {
+        CandidateProbationRow {
+            pair_id: "PF_DOGEUSD__PF_PEPEUSD".to_string(),
+            timeframe: Timeframe::FifteenMinutes,
+            candidate_id: "cand-1".to_string(),
+            candidate_variant: "ROBUST_Z".to_string(),
+            candidate_config: candidate_config("ROBUST_Z"),
+            objective_score: 1.8,
+            state,
+            eligible_after: Utc::now(),
+            probation_samples: 10,
+            promotable: state == CandidateLifecycleState::PromotionReady,
+            last_candidate_score: 1.8,
+            last_champion_score: 1.2,
+            last_objective_delta: 0.6,
+        }
+    }
+
+    fn overlay_snapshot(fresh: bool) -> LearningOverlaySnapshot {
+        LearningOverlaySnapshot {
+            generated_at: Some(Utc::now()),
+            age_seconds: Some(if fresh { 60.0 } else { 90_000.0 }),
+            fresh,
+            ttl_seconds: LEARNING_OVERLAY_TTL_SECS,
+            entries: HashMap::new(),
+        }
+    }
+
+    fn overlay_entry(
+        pair_id: &str,
+        timeframe: Timeframe,
+        recommendation: LearningRecommendation,
+        trade_eligible: bool,
+        selection_selected: bool,
+    ) -> LearningOverlayEntry {
+        LearningOverlayEntry {
+            pair_id: pair_id.to_string(),
+            timeframe,
+            recommendation,
+            trade_eligible,
+            selection_selected,
+            learning_reason_codes: vec!["TEST_REASON".to_string()],
+        }
+    }
+
+    fn trade_now_ready_cue(pair_id: &str, timeframe: Timeframe, source: &str) -> PairCue {
+        let mut cue = output("ROBUST_Z", 8.5, 8.5, 7.1).cue;
+        cue.pair_id = pair_id.to_string();
+        cue.timeframe = timeframe.as_str().to_string();
+        cue.direction_hint = "LONG_SPREAD".to_string();
+        cue.spread_z = -2.2;
+        cue.setup_actionable = true;
+        cue.actionable = true;
+        cue.setup_gate = SetupGateDiagnostics {
+            status: "AVAILABLE".to_string(),
+            pass: true,
+            rationale_codes: vec![],
+        };
+        cue.cost_gate = CostGateDiagnostics {
+            status: "AVAILABLE".to_string(),
+            expected_edge_bps: 15.0,
+            fee_bps: 1.2,
+            funding_model: FundingModel::Static.as_str().to_string(),
+            funding_events: 0,
+            funding_bps_per_event: 0.0,
+            funding_bps: 0.0,
+            slippage_bps: 0.5,
+            net_edge_bps: 13.3,
+            pass: true,
+            rationale_codes: vec![],
+        };
+        cue.trade_gate = TradeGateDiagnostics {
+            status: "AVAILABLE".to_string(),
+            pass: true,
+            blocked_by: "NONE".to_string(),
+            rationale_codes: vec![],
+        };
+        cue.portfolio_hint = PortfolioHint {
+            status: "AVAILABLE".to_string(),
+            target_weight: 0.33,
+            risk_contribution: 0.27,
+            cap_applied: false,
+            rationale_codes: vec![],
+        };
+        cue.selected_signal_config.source = source.to_string();
+        cue
+    }
+
+    fn trade_now_schema_path() -> PathBuf {
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../specs/contracts/strategy_pairs_trade_now_response.schema.json")
     }
 
     #[test]
@@ -8875,7 +10099,7 @@ mod tests {
             &config,
             &settings,
             Timeframe::OneMinute,
-            "OPERATOR_PROMOTION",
+            SELECTED_CONFIG_SOURCE_OPERATOR_PROMOTION,
             updated_at,
         );
         assert_eq!(selected.variant, "VOL_NORMALIZED");
@@ -8884,7 +10108,7 @@ mod tests {
         assert_eq!(selected.train_bars, 2_200);
         assert_eq!(selected.validation_bars, 880);
         assert_eq!(selected.hold_bars, settings.hold_bars(Timeframe::OneMinute));
-        assert_eq!(selected.source, "OPERATOR_PROMOTION");
+        assert_eq!(selected.source, SELECTED_CONFIG_SOURCE_OPERATOR_PROMOTION);
     }
 
     #[test]
@@ -8905,7 +10129,7 @@ mod tests {
             selected.lookback_bars,
             settings.lookback_bars(Timeframe::OneHour)
         );
-        assert_eq!(selected.source, "LEGACY_ROW_FALLBACK");
+        assert_eq!(selected.source, SELECTED_CONFIG_SOURCE_LEGACY_FALLBACK);
         assert_eq!(selected.updated_at, updated_at);
     }
 
@@ -8940,6 +10164,824 @@ mod tests {
         assert_eq!(selected.lookback_bars, 660);
         assert_eq!(selected.hold_bars, 14);
         assert_eq!(selected.source, "AUTO_CHAMPION");
+    }
+
+    #[test]
+    fn learning_overlay_loader_reads_latest_artifact_rows() {
+        let root = temp_dir("learning-overlay-loader");
+        let artifact = serde_json::json!({
+            "generated_at": "2026-04-17T02:06:50Z",
+            "timeframe_reports": [
+                {
+                    "timeframe": "15m",
+                    "pairs": [
+                        {
+                            "pair_id": "PF_XBTUSD__PF_AVAXUSD",
+                            "timeframe": "15m",
+                            "recommendation": "PROMOTE",
+                            "trade_eligible": true,
+                            "selection_selected": true,
+                            "reason_codes": ["POSITIVE_STABILITY_CONFIRMED"],
+                            "arbitration_reason_codes": ["PAIR_CROSS_TF_CONSENSUS_NOT_MET"],
+                            "hard_veto_active": false,
+                            "hard_veto_reason": null
+                        }
+                    ]
+                }
+            ]
+        });
+        let path = root.join("2026-04-17T02-06-50Z-signal-learning-cycle.json");
+        fs::write(
+            &path,
+            serde_json::to_vec(&artifact).expect("serialize overlay artifact"),
+        )
+        .expect("write overlay artifact");
+
+        let snapshot = load_latest_learning_overlay(
+            &root,
+            chrono::DateTime::parse_from_rfc3339("2026-04-17T03:06:50Z")
+                .expect("parse now")
+                .with_timezone(&Utc),
+            LEARNING_OVERLAY_TTL_SECS,
+        )
+        .expect("load overlay snapshot");
+
+        assert!(snapshot.fresh);
+        assert_eq!(snapshot.ttl_seconds, LEARNING_OVERLAY_TTL_SECS);
+        let entry = snapshot
+            .get("PF_XBTUSD__PF_AVAXUSD", Timeframe::FifteenMinutes)
+            .expect("overlay entry");
+        assert_eq!(entry.recommendation, LearningRecommendation::Promote);
+        assert!(entry.trade_eligible);
+        assert!(entry.selection_selected);
+        assert_eq!(
+            entry.learning_reason_codes,
+            vec![
+                "POSITIVE_STABILITY_CONFIRMED".to_string(),
+                "PAIR_CROSS_TF_CONSENSUS_NOT_MET".to_string()
+            ]
+        );
+
+        fs::remove_dir_all(&root).expect("cleanup root");
+    }
+
+    #[test]
+    fn learning_overlay_loader_prefers_generated_at_over_mtime() {
+        let root = temp_dir("learning-overlay-ordering");
+        let newer_generated = serde_json::json!({
+            "generated_at": "2026-04-17T03:06:50Z",
+            "timeframe_reports": [
+                {
+                    "timeframe": "15m",
+                    "pairs": [
+                        {
+                            "pair_id": "PF_SOLUSD__PF_AVAXUSD",
+                            "timeframe": "15m",
+                            "recommendation": "PROMOTE",
+                            "trade_eligible": true,
+                            "selection_selected": true,
+                            "reason_codes": ["NEWER_GENERATED_AT"],
+                            "arbitration_reason_codes": [],
+                            "hard_veto_active": false,
+                            "hard_veto_reason": null
+                        }
+                    ]
+                }
+            ]
+        });
+        let older_generated = serde_json::json!({
+            "generated_at": "2026-04-17T02:06:50Z",
+            "timeframe_reports": [
+                {
+                    "timeframe": "15m",
+                    "pairs": [
+                        {
+                            "pair_id": "PF_XBTUSD__PF_ETHUSD",
+                            "timeframe": "15m",
+                            "recommendation": "HOLD",
+                            "trade_eligible": false,
+                            "selection_selected": false,
+                            "reason_codes": ["OLDER_GENERATED_AT"],
+                            "arbitration_reason_codes": [],
+                            "hard_veto_active": false,
+                            "hard_veto_reason": null
+                        }
+                    ]
+                }
+            ]
+        });
+        fs::write(
+            root.join("newer-generated-signal-learning-cycle.json"),
+            serde_json::to_vec(&newer_generated).expect("serialize newer artifact"),
+        )
+        .expect("write newer artifact");
+        std::thread::sleep(std::time::Duration::from_secs(1));
+        fs::write(
+            root.join("older-generated-signal-learning-cycle.json"),
+            serde_json::to_vec(&older_generated).expect("serialize older artifact"),
+        )
+        .expect("write older artifact");
+
+        let snapshot = load_latest_learning_overlay(
+            &root,
+            chrono::DateTime::parse_from_rfc3339("2026-04-17T04:06:50Z")
+                .expect("parse now")
+                .with_timezone(&Utc),
+            LEARNING_OVERLAY_TTL_SECS,
+        )
+        .expect("load overlay snapshot");
+
+        let entry = snapshot
+            .get("PF_SOLUSD__PF_AVAXUSD", Timeframe::FifteenMinutes)
+            .expect("entry from newer generated_at artifact");
+        assert_eq!(
+            entry.learning_reason_codes,
+            vec!["NEWER_GENERATED_AT".to_string()]
+        );
+        assert!(snapshot
+            .get("PF_XBTUSD__PF_ETHUSD", Timeframe::FifteenMinutes)
+            .is_none());
+
+        fs::remove_dir_all(&root).expect("cleanup root");
+    }
+
+    #[test]
+    fn learning_overlay_policy_keeps_selected_rows_in_trade_now_when_fresh() {
+        let entry = overlay_entry(
+            "PF_XBTUSD__PF_AVAXUSD",
+            Timeframe::FifteenMinutes,
+            LearningRecommendation::Promote,
+            true,
+            true,
+        );
+        let decision = resolve_learning_overlay_policy(
+            Some(&entry),
+            &overlay_snapshot(true),
+            "AUTO_CHAMPION",
+            None,
+        );
+
+        assert_eq!(
+            decision.approval_source,
+            LearningOverlayApprovalSource::LearningSelection
+        );
+        assert_eq!(decision.bucket, LearningOverlayUniverseBucket::TradeNow);
+        assert!(decision.requires_fresh_overlay);
+        assert_eq!(decision.blocked_reason, None);
+        assert_eq!(decision.watch_reason, None);
+        assert_eq!(decision.learning_selection_selected, Some(true));
+    }
+
+    #[test]
+    fn learning_overlay_policy_splits_trade_eligible_non_selected_rows_into_watchlist() {
+        let entry = overlay_entry(
+            "PF_SOLUSD__PF_AVAXUSD",
+            Timeframe::OneHour,
+            LearningRecommendation::Promote,
+            true,
+            false,
+        );
+        let decision = resolve_learning_overlay_policy(
+            Some(&entry),
+            &overlay_snapshot(true),
+            "AUTO_CHAMPION",
+            None,
+        );
+
+        assert_eq!(
+            decision.approval_source,
+            LearningOverlayApprovalSource::None
+        );
+        assert_eq!(decision.bucket, LearningOverlayUniverseBucket::Watchlist);
+        assert!(!decision.requires_fresh_overlay);
+        assert_eq!(
+            decision.watch_reason,
+            Some(LearningOverlayWatchReason::LearningEligibleNotSelected)
+        );
+    }
+
+    #[test]
+    fn learning_overlay_policy_downgrades_selected_rows_when_overlay_is_stale() {
+        let entry = overlay_entry(
+            "PF_XBTUSD__PF_AVAXUSD",
+            Timeframe::FifteenMinutes,
+            LearningRecommendation::Promote,
+            true,
+            true,
+        );
+        let decision = resolve_learning_overlay_policy(
+            Some(&entry),
+            &overlay_snapshot(false),
+            "AUTO_CHAMPION",
+            None,
+        );
+
+        assert_eq!(
+            decision.approval_source,
+            LearningOverlayApprovalSource::LearningSelection
+        );
+        assert_eq!(decision.bucket, LearningOverlayUniverseBucket::Watchlist);
+        assert!(decision.requires_fresh_overlay);
+        assert_eq!(
+            decision.watch_reason,
+            Some(LearningOverlayWatchReason::LearningOverlayStale)
+        );
+    }
+
+    #[test]
+    fn learning_overlay_policy_allows_operator_promoted_rows_when_overlay_is_stale() {
+        let entry = overlay_entry(
+            "PF_SOLUSD__PF_AVAXUSD",
+            Timeframe::FifteenMinutes,
+            LearningRecommendation::Hold,
+            false,
+            false,
+        );
+        let decision = resolve_learning_overlay_policy(
+            Some(&entry),
+            &overlay_snapshot(false),
+            SELECTED_CONFIG_SOURCE_OPERATOR_PROMOTION,
+            None,
+        );
+
+        assert_eq!(
+            decision.approval_source,
+            LearningOverlayApprovalSource::OperatorPromotedActiveChampion
+        );
+        assert_eq!(decision.bucket, LearningOverlayUniverseBucket::TradeNow);
+        assert!(!decision.requires_fresh_overlay);
+        assert_eq!(decision.blocked_reason, None);
+        assert_eq!(decision.watch_reason, None);
+    }
+
+    #[test]
+    fn learning_overlay_policy_allows_operator_promoted_rows_against_fresh_learning_hold() {
+        let entry = overlay_entry(
+            "PF_SOLUSD__PF_AVAXUSD",
+            Timeframe::FifteenMinutes,
+            LearningRecommendation::Hold,
+            false,
+            false,
+        );
+        let decision = resolve_learning_overlay_policy(
+            Some(&entry),
+            &overlay_snapshot(true),
+            SELECTED_CONFIG_SOURCE_OPERATOR_PROMOTION,
+            None,
+        );
+
+        assert_eq!(
+            decision.approval_source,
+            LearningOverlayApprovalSource::OperatorPromotedActiveChampion
+        );
+        assert_eq!(decision.bucket, LearningOverlayUniverseBucket::TradeNow);
+        assert!(!decision.requires_fresh_overlay);
+        assert_eq!(
+            decision.learning_recommendation,
+            Some(LearningRecommendation::Hold)
+        );
+    }
+
+    #[test]
+    fn learning_overlay_policy_blocks_pending_challengers_from_bypassing_governance() {
+        let entry = overlay_entry(
+            "PF_DOGEUSD__PF_PEPEUSD",
+            Timeframe::FifteenMinutes,
+            LearningRecommendation::Promote,
+            true,
+            true,
+        );
+        let decision = resolve_learning_overlay_policy(
+            Some(&entry),
+            &overlay_snapshot(true),
+            "AUTO_CHAMPION",
+            Some(&candidate_probation_row(
+                CandidateLifecycleState::PromotionReady,
+            )),
+        );
+
+        assert_eq!(
+            decision.approval_source,
+            LearningOverlayApprovalSource::None
+        );
+        assert_eq!(decision.bucket, LearningOverlayUniverseBucket::Excluded);
+        assert!(!decision.requires_fresh_overlay);
+        assert_eq!(
+            decision.blocked_reason,
+            Some(LearningOverlayBlockedReason::PendingChallengerRequiresPromotion)
+        );
+        assert_eq!(decision.learning_selection_selected, Some(true));
+    }
+
+    #[test]
+    fn learning_overlay_policy_excludes_legacy_fallback_rows() {
+        let entry = overlay_entry(
+            "PF_XBTUSD__PF_ETHUSD",
+            Timeframe::OneMinute,
+            LearningRecommendation::Hold,
+            false,
+            false,
+        );
+        let decision = resolve_learning_overlay_policy(
+            Some(&entry),
+            &overlay_snapshot(true),
+            SELECTED_CONFIG_SOURCE_LEGACY_FALLBACK,
+            None,
+        );
+
+        assert_eq!(
+            decision.approval_source,
+            LearningOverlayApprovalSource::None
+        );
+        assert_eq!(decision.bucket, LearningOverlayUniverseBucket::Excluded);
+        assert_eq!(
+            decision.blocked_reason,
+            Some(LearningOverlayBlockedReason::LegacyFallbackActive)
+        );
+    }
+
+    #[test]
+    fn trade_now_query_uses_defaults() {
+        let settings = StrategySettings::from_env();
+        let query = TradeNowQuery {
+            timeframe: None,
+            include_advisory: None,
+            taker_fee_bps: None,
+        };
+
+        let (timeframe, include_advisory, taker_fee_bps) =
+            parse_trade_now_query(&query, settings.advisory_enabled, settings.trading_fee_bps)
+                .expect("parse trade-now query");
+
+        assert!(timeframe.is_none());
+        assert_eq!(include_advisory, settings.advisory_enabled);
+        assert!((taker_fee_bps - settings.trading_fee_bps).abs() < 1e-9);
+    }
+
+    #[test]
+    fn trade_now_row_marks_fresh_learning_selection_as_tradable_when_live_ready() {
+        let cue = trade_now_ready_cue(
+            "PF_XBTUSD__PF_AVAXUSD",
+            Timeframe::FifteenMinutes,
+            "AUTO_CHAMPION",
+        );
+        let snapshot = overlay_snapshot(true);
+        let entry = overlay_entry(
+            "PF_XBTUSD__PF_AVAXUSD",
+            Timeframe::FifteenMinutes,
+            LearningRecommendation::Promote,
+            true,
+            true,
+        );
+        let policy =
+            resolve_learning_overlay_policy(Some(&entry), &snapshot, "AUTO_CHAMPION", None);
+        let row = build_trade_now_row(&cue, &snapshot, &policy, false);
+
+        assert_eq!(row.decision_bucket, "TRADE_NOW");
+        assert_eq!(
+            row.decision_reason_code,
+            "LEARNING_SELECTED_AND_LIVE_GATES_PASS"
+        );
+        assert_eq!(row.approval_source, "LEARNING_SELECTION");
+        assert!(row.trade_gate_pass);
+    }
+
+    #[test]
+    fn trade_now_row_downgrades_learning_selection_when_live_gate_waits() {
+        let mut cue = trade_now_ready_cue(
+            "PF_XBTUSD__PF_AVAXUSD",
+            Timeframe::FifteenMinutes,
+            "AUTO_CHAMPION",
+        );
+        cue.trade_gate.status = "WAIT".to_string();
+        cue.trade_gate.pass = false;
+        let snapshot = overlay_snapshot(true);
+        let entry = overlay_entry(
+            "PF_XBTUSD__PF_AVAXUSD",
+            Timeframe::FifteenMinutes,
+            LearningRecommendation::Promote,
+            true,
+            true,
+        );
+        let policy =
+            resolve_learning_overlay_policy(Some(&entry), &snapshot, "AUTO_CHAMPION", None);
+        let row = build_trade_now_row(&cue, &snapshot, &policy, false);
+
+        assert_eq!(row.decision_bucket, "WATCHLIST");
+        assert_eq!(
+            row.decision_reason_code,
+            "APPROVED_BUT_WAITING_ON_LIVE_CONDITIONS"
+        );
+        assert_eq!(
+            row.watch_reason_code.as_deref(),
+            Some("LIVE_TRIGGER_NOT_READY")
+        );
+    }
+
+    #[test]
+    fn trade_now_row_downgrades_learning_selection_when_open_live_trade_exists() {
+        let cue = trade_now_ready_cue(
+            "PF_XBTUSD__PF_AVAXUSD",
+            Timeframe::FifteenMinutes,
+            "AUTO_CHAMPION",
+        );
+        let snapshot = overlay_snapshot(true);
+        let entry = overlay_entry(
+            "PF_XBTUSD__PF_AVAXUSD",
+            Timeframe::FifteenMinutes,
+            LearningRecommendation::Promote,
+            true,
+            true,
+        );
+        let policy =
+            resolve_learning_overlay_policy(Some(&entry), &snapshot, "AUTO_CHAMPION", None);
+        let row = build_trade_now_row(&cue, &snapshot, &policy, true);
+
+        assert_eq!(row.decision_bucket, "WATCHLIST");
+        assert_eq!(
+            row.watch_reason_code.as_deref(),
+            Some("OPEN_POSITION_CONFLICT")
+        );
+        assert!(row.open_live_trade);
+    }
+
+    #[test]
+    fn trade_now_row_keeps_operator_promoted_rows_tradable_when_overlay_is_stale() {
+        let cue = trade_now_ready_cue(
+            "PF_SOLUSD__PF_AVAXUSD",
+            Timeframe::FifteenMinutes,
+            SELECTED_CONFIG_SOURCE_OPERATOR_PROMOTION,
+        );
+        let snapshot = overlay_snapshot(false);
+        let entry = overlay_entry(
+            "PF_SOLUSD__PF_AVAXUSD",
+            Timeframe::FifteenMinutes,
+            LearningRecommendation::Hold,
+            false,
+            false,
+        );
+        let policy = resolve_learning_overlay_policy(
+            Some(&entry),
+            &snapshot,
+            SELECTED_CONFIG_SOURCE_OPERATOR_PROMOTION,
+            None,
+        );
+        let row = build_trade_now_row(&cue, &snapshot, &policy, false);
+
+        assert_eq!(row.decision_bucket, "TRADE_NOW");
+        assert_eq!(
+            row.decision_reason_code,
+            "OPERATOR_PROMOTED_AND_LIVE_GATES_PASS"
+        );
+        assert_eq!(row.approval_source, "OPERATOR_PROMOTED_ACTIVE_CHAMPION");
+        assert_eq!(row.learning_recommendation.as_deref(), Some("HOLD"));
+    }
+
+    #[test]
+    fn trade_now_row_excludes_pending_challengers_even_when_learning_selected() {
+        let cue = trade_now_ready_cue(
+            "PF_DOGEUSD__PF_PEPEUSD",
+            Timeframe::FifteenMinutes,
+            "AUTO_CHAMPION",
+        );
+        let snapshot = overlay_snapshot(true);
+        let entry = overlay_entry(
+            "PF_DOGEUSD__PF_PEPEUSD",
+            Timeframe::FifteenMinutes,
+            LearningRecommendation::Promote,
+            true,
+            true,
+        );
+        let policy = resolve_learning_overlay_policy(
+            Some(&entry),
+            &snapshot,
+            "AUTO_CHAMPION",
+            Some(&candidate_probation_row(CandidateLifecycleState::Hold)),
+        );
+        let row = build_trade_now_row(&cue, &snapshot, &policy, false);
+
+        assert_eq!(row.decision_bucket, "EXCLUDED");
+        assert_eq!(row.decision_reason_code, "GOVERNANCE_POLICY_BLOCKED");
+        assert_eq!(
+            row.blocked_reason_code.as_deref(),
+            Some("PENDING_CHALLENGER_REQUIRES_PROMOTION")
+        );
+    }
+
+    #[test]
+    fn trade_now_response_groups_and_sorts_rows_by_bucket() {
+        let fresh_snapshot = overlay_snapshot(true);
+        let stale_snapshot = overlay_snapshot(false);
+
+        let mut lower_score_cue = trade_now_ready_cue(
+            "PF_SOLUSD__PF_AVAXUSD",
+            Timeframe::FifteenMinutes,
+            "AUTO_CHAMPION",
+        );
+        lower_score_cue.opportunity_score = 6.4;
+        let lower_score_policy = resolve_learning_overlay_policy(
+            Some(&overlay_entry(
+                "PF_SOLUSD__PF_AVAXUSD",
+                Timeframe::FifteenMinutes,
+                LearningRecommendation::Promote,
+                true,
+                true,
+            )),
+            &fresh_snapshot,
+            "AUTO_CHAMPION",
+            None,
+        );
+        let lower_score_row = build_trade_now_row(
+            &lower_score_cue,
+            &fresh_snapshot,
+            &lower_score_policy,
+            false,
+        );
+
+        let mut higher_score_cue = trade_now_ready_cue(
+            "PF_XBTUSD__PF_AVAXUSD",
+            Timeframe::FifteenMinutes,
+            "AUTO_CHAMPION",
+        );
+        higher_score_cue.opportunity_score = 9.2;
+        let higher_score_policy = resolve_learning_overlay_policy(
+            Some(&overlay_entry(
+                "PF_XBTUSD__PF_AVAXUSD",
+                Timeframe::FifteenMinutes,
+                LearningRecommendation::Promote,
+                true,
+                true,
+            )),
+            &fresh_snapshot,
+            "AUTO_CHAMPION",
+            None,
+        );
+        let higher_score_row = build_trade_now_row(
+            &higher_score_cue,
+            &fresh_snapshot,
+            &higher_score_policy,
+            false,
+        );
+
+        let watchlist_policy = resolve_learning_overlay_policy(
+            Some(&overlay_entry(
+                "PF_TAOUSD__PF_HYPEUSD",
+                Timeframe::FifteenMinutes,
+                LearningRecommendation::Promote,
+                true,
+                true,
+            )),
+            &stale_snapshot,
+            "AUTO_CHAMPION",
+            None,
+        );
+        let watchlist_row = build_trade_now_row(
+            &trade_now_ready_cue(
+                "PF_TAOUSD__PF_HYPEUSD",
+                Timeframe::FifteenMinutes,
+                "AUTO_CHAMPION",
+            ),
+            &stale_snapshot,
+            &watchlist_policy,
+            false,
+        );
+
+        let excluded_policy = resolve_learning_overlay_policy(
+            Some(&overlay_entry(
+                "PF_DOGEUSD__PF_PEPEUSD",
+                Timeframe::FifteenMinutes,
+                LearningRecommendation::Promote,
+                true,
+                true,
+            )),
+            &fresh_snapshot,
+            "AUTO_CHAMPION",
+            Some(&candidate_probation_row(
+                CandidateLifecycleState::PromotionReady,
+            )),
+        );
+        let excluded_row = build_trade_now_row(
+            &trade_now_ready_cue(
+                "PF_DOGEUSD__PF_PEPEUSD",
+                Timeframe::FifteenMinutes,
+                "AUTO_CHAMPION",
+            ),
+            &fresh_snapshot,
+            &excluded_policy,
+            false,
+        );
+
+        let response = group_trade_now_rows(
+            Utc::now(),
+            Some(Timeframe::FifteenMinutes),
+            &fresh_snapshot,
+            vec![
+                lower_score_row,
+                watchlist_row,
+                excluded_row,
+                higher_score_row,
+            ],
+        );
+
+        assert_eq!(response.timeframe_filter.as_deref(), Some("15m"));
+        assert_eq!(response.tradable_now.len(), 2);
+        assert_eq!(response.watchlist.len(), 1);
+        assert_eq!(response.excluded.len(), 1);
+        assert_eq!(response.tradable_now[0].pair_id, "PF_XBTUSD__PF_AVAXUSD");
+        assert_eq!(response.tradable_now[1].pair_id, "PF_SOLUSD__PF_AVAXUSD");
+        assert_eq!(
+            response.watchlist[0].watch_reason_code.as_deref(),
+            Some("LEARNING_OVERLAY_STALE")
+        );
+        assert_eq!(
+            response.excluded[0].blocked_reason_code.as_deref(),
+            Some("PENDING_CHALLENGER_REQUIRES_PROMOTION")
+        );
+    }
+
+    #[test]
+    fn trade_now_response_roundtrip_validates_against_contract_schema() {
+        let fresh_snapshot = overlay_snapshot(true);
+        let stale_snapshot = overlay_snapshot(false);
+
+        let tradable_policy = resolve_learning_overlay_policy(
+            Some(&overlay_entry(
+                "PF_XBTUSD__PF_AVAXUSD",
+                Timeframe::FifteenMinutes,
+                LearningRecommendation::Promote,
+                true,
+                true,
+            )),
+            &fresh_snapshot,
+            "AUTO_CHAMPION",
+            None,
+        );
+        let tradable_row = build_trade_now_row(
+            &trade_now_ready_cue(
+                "PF_XBTUSD__PF_AVAXUSD",
+                Timeframe::FifteenMinutes,
+                "AUTO_CHAMPION",
+            ),
+            &fresh_snapshot,
+            &tradable_policy,
+            false,
+        );
+
+        let watchlist_policy = resolve_learning_overlay_policy(
+            Some(&overlay_entry(
+                "PF_SOLUSD__PF_AVAXUSD",
+                Timeframe::FifteenMinutes,
+                LearningRecommendation::Promote,
+                true,
+                true,
+            )),
+            &stale_snapshot,
+            "AUTO_CHAMPION",
+            None,
+        );
+        let watchlist_row = build_trade_now_row(
+            &trade_now_ready_cue(
+                "PF_SOLUSD__PF_AVAXUSD",
+                Timeframe::FifteenMinutes,
+                "AUTO_CHAMPION",
+            ),
+            &stale_snapshot,
+            &watchlist_policy,
+            false,
+        );
+
+        let excluded_policy = resolve_learning_overlay_policy(
+            Some(&overlay_entry(
+                "PF_XBTUSD__PF_ETHUSD",
+                Timeframe::OneMinute,
+                LearningRecommendation::Hold,
+                false,
+                false,
+            )),
+            &fresh_snapshot,
+            SELECTED_CONFIG_SOURCE_LEGACY_FALLBACK,
+            None,
+        );
+        let excluded_row = build_trade_now_row(
+            &trade_now_ready_cue(
+                "PF_XBTUSD__PF_ETHUSD",
+                Timeframe::OneMinute,
+                SELECTED_CONFIG_SOURCE_LEGACY_FALLBACK,
+            ),
+            &fresh_snapshot,
+            &excluded_policy,
+            false,
+        );
+
+        let response = group_trade_now_rows(
+            Utc::now(),
+            None,
+            &fresh_snapshot,
+            vec![tradable_row, watchlist_row, excluded_row],
+        );
+        let instance = serde_json::to_value(&response).expect("serialize trade-now response");
+        let schema_path = trade_now_schema_path();
+        let schema_json: serde_json::Value = serde_json::from_slice(
+            &fs::read(&schema_path).expect("read trade-now response schema"),
+        )
+        .expect("parse trade-now response schema");
+        let compiled = JSONSchema::options()
+            .with_draft(Draft::Draft202012)
+            .compile(&schema_json)
+            .expect("compile trade-now schema");
+
+        let validation = compiled.validate(&instance);
+        let errors = match validation {
+            Ok(()) => vec![],
+            Err(errors) => errors.map(|error| error.to_string()).collect::<Vec<_>>(),
+        };
+        assert!(
+            errors.is_empty(),
+            "trade-now response must validate against schema at {}: {:?}",
+            schema_path.display(),
+            errors
+        );
+    }
+
+    #[tokio::test]
+    async fn trade_now_observability_tracks_challenger_bypass_suppression() {
+        let store = TradeNowObservabilityStore::default();
+        store
+            .record_learning_challenger_bypass_suppressed(
+                "PF_DOGEUSD__PF_PEPEUSD",
+                Timeframe::FifteenMinutes,
+            )
+            .await;
+        store
+            .record_learning_challenger_bypass_suppressed(
+                "PF_DOGEUSD__PF_PEPEUSD",
+                Timeframe::FifteenMinutes,
+            )
+            .await;
+        store
+            .record_learning_challenger_bypass_suppressed(
+                "PF_SOLUSD__PF_AVAXUSD",
+                Timeframe::OneHour,
+            )
+            .await;
+
+        let snapshot = store.snapshot(Utc::now()).await;
+        assert_eq!(snapshot.learning_challenger_bypass_suppressed_total, 3);
+        assert_eq!(snapshot.learning_challenger_bypass_suppressed.len(), 2);
+        assert_eq!(
+            snapshot.learning_challenger_bypass_suppressed[0].pair_id,
+            "PF_DOGEUSD__PF_PEPEUSD"
+        );
+        assert_eq!(
+            snapshot.learning_challenger_bypass_suppressed[0].timeframe,
+            "15m"
+        );
+        assert_eq!(
+            snapshot.learning_challenger_bypass_suppressed[0].suppressed_total,
+            2
+        );
+    }
+
+    #[tokio::test]
+    async fn trade_now_open_trade_fetch_reads_pair_ids_from_execution_service() {
+        let app = Router::new().route(
+            "/v1/execution/portfolio/open-trades",
+            get(|| async {
+                Json(serde_json::json!({
+                    "exchange": "kraken_futures",
+                    "account_id": "primary",
+                    "generated_at": Utc::now(),
+                    "warnings": [],
+                    "trades": [
+                        { "pair_id": "PF_XBTUSD__PF_ETHUSD" },
+                        { "pair_id": "PF_SOLUSD__PF_AVAXUSD" }
+                    ]
+                }))
+            }),
+        );
+        let listener = TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind execution test listener");
+        let addr = listener.local_addr().expect("execution test listener addr");
+        let server = tokio::spawn(async move {
+            axum::serve(listener, app)
+                .await
+                .expect("serve execution test app")
+        });
+
+        let mut settings = StrategySettings::from_env();
+        settings.execution_service_url = format!("http://{}", addr);
+        settings.execution_exchange = "kraken_futures".to_string();
+        settings.execution_account_id = "primary".to_string();
+        let pairs = fetch_open_live_trade_pairs(&reqwest::Client::new(), &settings)
+            .await
+            .expect("fetch open live trade pairs");
+
+        assert!(pairs.contains("PF_XBTUSD__PF_ETHUSD"));
+        assert!(pairs.contains("PF_SOLUSD__PF_AVAXUSD"));
+        assert_eq!(pairs.len(), 2);
+
+        server.abort();
     }
 
     #[test]

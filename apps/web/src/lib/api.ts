@@ -17,7 +17,10 @@ import type {
   StrategyPairsCandidateInboxResponse,
   StrategyPairsCuesResponse,
   StrategyPairsExpectancyResponse,
+  StrategyPairsOpportunityHistoryResponse,
+  StrategyPairsOpportunityHistoryStatsResponse,
   StrategyPairsPaperTradesResponse,
+  StrategyPairsTradeNowResponse,
   StrategyPairsReplayTradesResponse,
   StrategyPairsResearchSweepRequest,
   StrategyPairsResearchSweepResponse,
@@ -65,6 +68,22 @@ export async function fetchStrategyCues(
   return parseJson<StrategyPairsCuesResponse>(await fetch(url));
 }
 
+export async function fetchStrategyTradeNow(
+  timeframe?: Timeframe,
+  takerFeeBps?: number
+): Promise<StrategyPairsTradeNowResponse> {
+  const params = new URLSearchParams();
+  if (timeframe) {
+    params.set("timeframe", timeframe);
+  }
+  withOptionalTakerFeeBps(params, takerFeeBps);
+  const query = params.toString();
+  const url = `${STRATEGY_SERVICE_BASE_URL}/v1/strategy/pairs/trade-now${
+    query ? `?${query}` : ""
+  }`;
+  return parseJson<StrategyPairsTradeNowResponse>(await fetch(url));
+}
+
 export async function fetchStrategyBacktest(
   timeframe: Timeframe,
   pairId: string,
@@ -110,6 +129,35 @@ export async function fetchStrategyLiveZ(
 export async function fetchStrategyUiAuthStatus(): Promise<StrategyUiAuthStatusResponse> {
   const url = `${STRATEGY_SERVICE_BASE_URL}/v1/strategy/ui-auth/status`;
   return parseJson<StrategyUiAuthStatusResponse>(await fetch(url));
+}
+
+export async function fetchStrategyOpportunityHistory(
+  timeframe: Timeframe,
+  hours = 168,
+  onlyPass = false,
+  limit = 20_000
+): Promise<StrategyPairsOpportunityHistoryResponse> {
+  const params = new URLSearchParams();
+  params.set("timeframe", timeframe);
+  params.set("hours", hours.toString());
+  params.set("only_pass", onlyPass ? "true" : "false");
+  params.set("limit", limit.toString());
+  const url = `${STRATEGY_SERVICE_BASE_URL}/v1/strategy/pairs/opportunity-history?${params.toString()}`;
+  return parseJson<StrategyPairsOpportunityHistoryResponse>(await fetch(url));
+}
+
+export async function fetchStrategyOpportunityHistoryStats(
+  timeframe?: Timeframe
+): Promise<StrategyPairsOpportunityHistoryStatsResponse> {
+  const params = new URLSearchParams();
+  if (timeframe) {
+    params.set("timeframe", timeframe);
+  }
+  const query = params.toString();
+  const url = `${STRATEGY_SERVICE_BASE_URL}/v1/strategy/pairs/opportunity-history/stats${
+    query ? `?${query}` : ""
+  }`;
+  return parseJson<StrategyPairsOpportunityHistoryStatsResponse>(await fetch(url));
 }
 
 export async function verifyStrategyUiAccess(

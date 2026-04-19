@@ -31,9 +31,12 @@ const api = vi.hoisted(() => ({
   fetchMarketMetrics: vi.fn(),
   fetchOrderIntentHistory: vi.fn(),
   fetchReconcile: vi.fn(),
+  fetchStrategyOpportunityHistory: vi.fn(),
+  fetchStrategyOpportunityHistoryStats: vi.fn(),
   fetchStrategyBacktest: vi.fn(),
   fetchStrategyCues: vi.fn(),
   fetchStrategyLiveZ: vi.fn(),
+  fetchStrategyTradeNow: vi.fn(),
   fetchStrategyUiAuthStatus: vi.fn(),
   submitOrderIntent: vi.fn(),
   updateKillSwitchState: vi.fn(),
@@ -192,6 +195,142 @@ function buildBacktestResponse(timeframe: Timeframe): any {
   };
 }
 
+function buildTradeNowRow(pairId: string, timeframe: Timeframe, bucket: "TRADE_NOW" | "WATCHLIST" | "EXCLUDED"): any {
+  return {
+    pair_id: pairId,
+    left_instrument: pairId.split("__")[0],
+    right_instrument: pairId.split("__")[1],
+    timeframe,
+    selected_variant: "ROBUST_Z",
+    direction_hint: bucket === "EXCLUDED" ? "SHORT_SPREAD" : "LONG_SPREAD",
+    spread_z: bucket === "EXCLUDED" ? 1.2 : -2.1,
+    opportunity_score: bucket === "TRADE_NOW" ? 9.2 : bucket === "WATCHLIST" ? 7.4 : 1.1,
+    confidence_band: bucket === "EXCLUDED" ? "MEDIUM" : "HIGH",
+    expected_hold_bars: 18,
+    net_edge_bps: bucket === "EXCLUDED" ? 0.8 : 12.4,
+    setup_gate_pass: true,
+    cost_gate_pass: true,
+    trade_gate_pass: bucket !== "WATCHLIST",
+    open_live_trade: false,
+    portfolio_target_weight: bucket === "EXCLUDED" ? null : 0.3,
+    portfolio_risk_contribution: bucket === "EXCLUDED" ? null : 0.2,
+    approval_source:
+      bucket === "TRADE_NOW"
+        ? "LEARNING_SELECTION"
+        : bucket === "WATCHLIST"
+          ? "LEARNING_SELECTION"
+          : "NONE",
+    requires_fresh_overlay: bucket === "WATCHLIST",
+    learning_recommendation: bucket === "EXCLUDED" ? null : "PROMOTE",
+    learning_trade_eligible: bucket === "EXCLUDED" ? null : true,
+    learning_selection_selected: bucket === "EXCLUDED" ? null : true,
+    learning_reason_codes: bucket === "WATCHLIST" ? ["LEARNING_OVERLAY_STALE"] : [],
+    learning_cycle_generated_at: bucket === "EXCLUDED" ? null : "2026-02-20T00:00:00Z",
+    selected_config_source: bucket === "EXCLUDED" ? "LEGACY_ROW_FALLBACK" : "AUTO_CHAMPION",
+    legacy_fallback_active: bucket === "EXCLUDED",
+    decision_bucket: bucket,
+    decision_reason_code:
+      bucket === "TRADE_NOW"
+        ? "LEARNING_SELECTED_AND_LIVE_GATES_PASS"
+        : bucket === "WATCHLIST"
+          ? "STALE_OVERLAY_DOWNGRADED_TO_WATCHLIST"
+          : "PROVENANCE_POLICY_BLOCKED",
+    blocked_reason_code: bucket === "EXCLUDED" ? "LEGACY_FALLBACK_ACTIVE" : null,
+    watch_reason_code: bucket === "WATCHLIST" ? "LEARNING_OVERLAY_STALE" : null,
+    rationale_codes:
+      bucket === "EXCLUDED"
+        ? ["LEGACY_FALLBACK_ACTIVE", "OUTSIDE_APPROVED_UNIVERSE"]
+        : ["APPROVAL_SOURCE_LEARNING_SELECTION", "NON_LEGACY_CHAMPION"],
+  };
+}
+
+function buildTradeNowResponse(timeframe: Timeframe): any {
+  return {
+    generated_at: "2026-02-20T00:00:00Z",
+    timeframe_filter: timeframe,
+    learning_overlay_generated_at: "2026-02-20T00:00:00Z",
+    learning_overlay_age_seconds: 600,
+    learning_overlay_fresh: true,
+    learning_overlay_ttl_seconds: 86400,
+    tradable_now: [buildTradeNowRow(PAIR_ID, timeframe, "TRADE_NOW")],
+    watchlist: [buildTradeNowRow("PI_SOLUSD__PI_AVAXUSD", timeframe, "WATCHLIST")],
+    excluded: [buildTradeNowRow("PI_DOGEUSD__PI_PEPEUSD", timeframe, "EXCLUDED")],
+  };
+}
+
+function buildEmptyTradeNowResponse(timeframe: Timeframe): any {
+  return {
+    generated_at: "2026-02-20T00:00:00Z",
+    timeframe_filter: timeframe,
+    learning_overlay_generated_at: "2026-02-20T00:00:00Z",
+    learning_overlay_age_seconds: 600,
+    learning_overlay_fresh: true,
+    learning_overlay_ttl_seconds: 86400,
+    tradable_now: [],
+    watchlist: [],
+    excluded: [],
+  };
+}
+
+function buildOpportunityHistoryResponse(timeframe: Timeframe): any {
+  const start = Date.parse("2026-02-13T00:00:00Z");
+  const readyRows = [
+    { pair_id: PAIR_ID, offsetMinutes: 0, actionable: true, cost_gate_pass: true, rationale_codes: ["SETUP_PASS"], cost_gate_rationale_codes: [] },
+    { pair_id: PAIR_ID, offsetMinutes: 15, actionable: true, cost_gate_pass: true, rationale_codes: ["SETUP_PASS"], cost_gate_rationale_codes: [] },
+    { pair_id: PAIR_ID, offsetMinutes: 120, actionable: true, cost_gate_pass: true, rationale_codes: ["SETUP_PASS"], cost_gate_rationale_codes: [] },
+    { pair_id: "PI_SOLUSD__PI_AVAXUSD", offsetMinutes: 180, actionable: true, cost_gate_pass: true, rationale_codes: ["SETUP_PASS"], cost_gate_rationale_codes: [] },
+  ];
+  const blockedRows = [
+    { pair_id: PAIR_ID, offsetMinutes: 45, actionable: false, cost_gate_pass: true, rationale_codes: ["PERFORMANCE_HISTORY_WAIT"], cost_gate_rationale_codes: [] },
+    { pair_id: "PI_SOLUSD__PI_AVAXUSD", offsetMinutes: 240, actionable: true, cost_gate_pass: false, rationale_codes: ["SETUP_PASS"], cost_gate_rationale_codes: ["COST_GATE_BLOCKED"] },
+    { pair_id: "PI_SOLUSD__PI_AVAXUSD", offsetMinutes: 300, actionable: true, cost_gate_pass: false, rationale_codes: ["SETUP_PASS"], cost_gate_rationale_codes: ["COST_GATE_BLOCKED"] },
+  ];
+  const rows = [...readyRows, ...blockedRows].map((row, index) => ({
+    pair_id: row.pair_id,
+    left_instrument: row.pair_id.split("__")[0],
+    right_instrument: row.pair_id.split("__")[1],
+    timeframe,
+    selected_variant: "ROBUST_Z",
+    regime: "CALM",
+    direction_hint: "LONG_SPREAD",
+    spread_z: index % 2 === 0 ? -2.1 : -1.1,
+    opportunity_score: 7.5,
+    net_edge_bps: row.cost_gate_pass ? 12.4 : 2.1,
+    cost_gate_pass: row.cost_gate_pass,
+    actionable: row.actionable,
+    rationale_codes: row.rationale_codes,
+    cost_gate_rationale_codes: row.cost_gate_rationale_codes,
+    evaluated_at: new Date(start + row.offsetMinutes * 60_000).toISOString(),
+  }));
+  return {
+    timeframe,
+    generated_at: "2026-02-20T00:00:00Z",
+    hours: 168,
+    only_pass: false,
+    rows,
+  };
+}
+
+function buildOpportunityHistoryStatsResponse(timeframe: Timeframe): any {
+  return {
+    generated_at: "2026-02-20T00:00:00Z",
+    timeframe_filter: timeframe,
+    total_rows: 22056,
+    first_evaluated_at: "2026-01-01T00:00:00Z",
+    last_evaluated_at: "2026-02-24T00:00:00Z",
+    days_covered: 54.01,
+    by_timeframe: [
+      {
+        timeframe,
+        rows: 22056,
+        first_evaluated_at: "2026-01-01T00:00:00Z",
+        last_evaluated_at: "2026-02-24T00:00:00Z",
+        days_covered: 54.01,
+      },
+    ],
+  };
+}
+
 function selectTimeframe(next: Timeframe): void {
   fireEvent.click(screen.getByRole("button", { name: /Timeframe:/i }));
   fireEvent.click(screen.getByText(next));
@@ -205,6 +344,15 @@ beforeEach(() => {
 
   api.fetchStrategyCues.mockImplementation(async (timeframe: Timeframe) =>
     buildCuesResponse(timeframe)
+  );
+  api.fetchStrategyTradeNow.mockImplementation(async (timeframe: Timeframe) =>
+    timeframe === "1h" ? buildEmptyTradeNowResponse(timeframe) : buildTradeNowResponse(timeframe)
+  );
+  api.fetchStrategyOpportunityHistory.mockImplementation(async (timeframe: Timeframe) =>
+    buildOpportunityHistoryResponse(timeframe)
+  );
+  api.fetchStrategyOpportunityHistoryStats.mockImplementation(async (timeframe: Timeframe) =>
+    buildOpportunityHistoryStatsResponse(timeframe)
   );
   api.fetchStrategyLiveZ.mockImplementation(async (timeframe: Timeframe) =>
     buildLiveZResponse(timeframe)
@@ -279,6 +427,9 @@ describe("global timeframe switching", () => {
 
     await waitFor(() => {
       expect(api.fetchStrategyCues).toHaveBeenCalledWith("1m", 20);
+      expect(api.fetchStrategyTradeNow).toHaveBeenCalledWith("1m");
+      expect(api.fetchStrategyOpportunityHistory).toHaveBeenCalledWith("1m", 168, false, 20000);
+      expect(api.fetchStrategyOpportunityHistoryStats).toHaveBeenCalledWith("1m");
       expect(api.fetchStrategyLiveZ).toHaveBeenCalledWith(
         "1m",
         PAIR_ID,
@@ -308,6 +459,9 @@ describe("global timeframe switching", () => {
 
     await waitFor(() => {
       expect(api.fetchStrategyCues).toHaveBeenCalledWith("15m", 20);
+      expect(api.fetchStrategyTradeNow).toHaveBeenCalledWith("15m");
+      expect(api.fetchStrategyOpportunityHistory).toHaveBeenCalledWith("15m", 168, false, 20000);
+      expect(api.fetchStrategyOpportunityHistoryStats).toHaveBeenCalledWith("15m");
       expect(api.fetchExecutionDecision).toHaveBeenCalledWith(LEFT, "15m");
       expect(api.fetchExecutionDecision).toHaveBeenCalledWith(RIGHT, "15m");
       expect(api.fetchStrategyLiveZ).toHaveBeenCalledWith(
@@ -333,6 +487,8 @@ describe("global timeframe switching", () => {
     render(<App />);
 
     await waitFor(() => {
+      expect(api.fetchStrategyTradeNow).toHaveBeenCalledWith("1m");
+      expect(api.fetchStrategyOpportunityHistory).toHaveBeenCalledWith("1m", 168, false, 20000);
       expect(api.fetchStrategyLiveZ).toHaveBeenCalledWith(
         "1m",
         PAIR_ID,
@@ -346,6 +502,7 @@ describe("global timeframe switching", () => {
     selectTimeframe("1h");
 
     await waitFor(() => {
+      expect(api.fetchStrategyTradeNow).toHaveBeenCalledWith("1h");
       expect(api.fetchStrategyLiveZ).toHaveBeenCalledWith(
         "1h",
         PAIR_ID,
@@ -379,6 +536,8 @@ describe("global timeframe switching", () => {
 
     await waitFor(() => {
       expect(api.fetchStrategyCues).toHaveBeenCalledWith("1m", 20, 10);
+      expect(api.fetchStrategyTradeNow).toHaveBeenCalledWith("1m", 10);
+      expect(api.fetchStrategyOpportunityHistory).toHaveBeenCalledWith("1m", 168, false, 20000);
       expect(api.fetchStrategyLiveZ).toHaveBeenCalledWith(
         "1m",
         PAIR_ID,
@@ -413,16 +572,53 @@ describe("global timeframe switching", () => {
       );
     });
 
-    fireEvent.click(screen.getByRole("button", { name: "Analytics" }));
+    fireEvent.click(screen.getByRole("button", { name: "Research Bench" }));
 
     expect(
       screen.getByText(
-        "Saved pair SOLUSD/AVAXUSD is no longer in the live cue set. Analytics are currently showing XBTUSD/ETHUSD until you select another live pair."
+        "Saved pair SOLUSD/AVAXUSD is no longer in the live cue set. Research Bench is currently showing XBTUSD/ETHUSD until you select another live pair."
       )
     ).toBeInTheDocument();
     expect(screen.getByText(/Active chart pair:/i)).toHaveTextContent("XBTUSD/ETHUSD");
     expect(screen.getByText(/Active chart pair:/i)).toHaveTextContent("Mean Revert");
     expect(screen.getByText(/Active chart pair:/i)).toHaveTextContent("Backend default");
     expect(JSON.parse(window.localStorage.getItem("cp.pair") ?? "null")).toBe(missingPairId);
+  });
+
+  it("renders the trade-now buckets and explains when a timeframe has no approved universe rows", async () => {
+    render(<App />);
+
+    await waitFor(() => {
+      expect(api.fetchStrategyTradeNow).toHaveBeenCalledWith("1m");
+    });
+
+    expect(
+      screen.getByText(
+        "Approved operator surface: Trade Now, Watchlist, Excluded, and Research Bench."
+      )
+    ).toBeInTheDocument();
+    expect(screen.getByText("Watchlist")).toBeInTheDocument();
+    expect(screen.getByText("Excluded")).toBeInTheDocument();
+    expect(screen.getAllByText("Research Bench").length).toBeGreaterThan(0);
+    expect(screen.getByText("Cadence Snapshot")).toBeInTheDocument();
+    expect(screen.getByText("Approved-ready rows/day")).toBeInTheDocument();
+    expect(screen.getByText("Stored history coverage")).toBeInTheDocument();
+
+    selectTimeframe("1h");
+
+    await waitFor(() => {
+      expect(api.fetchStrategyTradeNow).toHaveBeenCalledWith("1h");
+    });
+
+    expect(
+      screen.getByText(
+        "No approved universe rows exist for 1h. This timeframe currently has no learning-selected or operator-promoted active rows, so Trade Now stays empty and the Research Bench below remains advisory only."
+      )
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        "No current approved universe rows exist for 1h, so cadence reporting stays unavailable until learning selection or operator promotion approves a live set."
+      )
+    ).toBeInTheDocument();
   });
 });

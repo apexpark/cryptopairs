@@ -1,0 +1,54 @@
+{
+  "$id": "https://cryptopairs/specs/contracts/strategy_trade_now_observability_response.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Strategy Trade Now Observability Response",
+  "description": "Operator-facing observability snapshot for trade-now governance suppressions.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "generated_at",
+    "learning_challenger_bypass_suppressed_total",
+    "learning_challenger_bypass_suppressed"
+  ],
+  "properties": {
+    "generated_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "learning_challenger_bypass_suppressed_total": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "learning_challenger_bypass_suppressed": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/suppressedRow"
+      }
+    }
+  },
+  "$defs": {
+    "suppressedRow": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "pair_id",
+        "timeframe",
+        "suppressed_total"
+      ],
+      "properties": {
+        "pair_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "timeframe": {
+          "type": "string",
+          "enum": ["1m", "15m", "1h"]
+        },
+        "suppressed_total": {
+          "type": "integer",
+          "minimum": 1
+        }
+      }
+    }
+  }
+}

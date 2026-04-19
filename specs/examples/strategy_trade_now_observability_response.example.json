@@ -1,0 +1,16 @@
+{
+  "generated_at": "2026-04-19T05:10:00Z",
+  "learning_challenger_bypass_suppressed_total": 3,
+  "learning_challenger_bypass_suppressed": [
+    {
+      "pair_id": "PF_DOGEUSD__PF_PEPEUSD",
+      "timeframe": "15m",
+      "suppressed_total": 2
+    },
+    {
+      "pair_id": "PF_SOLUSD__PF_AVAXUSD",
+      "timeframe": "1h",
+      "suppressed_total": 1
+    }
+  ]
+}
