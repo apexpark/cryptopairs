@@ -1,6 +1,6 @@
 use chrono::{DateTime, Utc};
 use common_types::{quantize_price_to_tick, InstrumentTradingConstraints, Timeframe};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 pub enum Regime {
@@ -84,6 +84,7 @@ impl DirectionHint {
 }
 
 const STOP_RETRACE_FRACTION: f64 = 0.25;
+const MIN_PRIOR_Z_STDDEV: f64 = 1e-6;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 pub enum FundingModel {
@@ -285,6 +286,21 @@ impl ShadowMlDiagnostics {
     }
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct SelectedSignalConfig {
+    pub variant: String,
+    pub entry_band: f64,
+    pub exit_band: f64,
+    pub stop_band: f64,
+    pub lookback_bars: usize,
+    pub hold_bars: usize,
+    pub max_half_life_bars: f64,
+    pub train_bars: usize,
+    pub validation_bars: usize,
+    pub source: String,
+    pub updated_at: DateTime<Utc>,
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub struct PairCue {
     pub pair_id: String,
@@ -310,6 +326,7 @@ pub struct PairCue {
     pub trade_gate: TradeGateDiagnostics,
     pub portfolio_hint: PortfolioHint,
     pub shadow_ml: ShadowMlDiagnostics,
+    pub selected_signal_config: SelectedSignalConfig,
     pub evaluated_at: DateTime<Utc>,
 }
 
@@ -322,14 +339,18 @@ pub struct PairEvaluationInput {
     pub timestamps: Vec<DateTime<Utc>>,
     pub left_closes: Vec<f64>,
     pub right_closes: Vec<f64>,
+    pub lookback_bars: usize,
     pub entry_band: f64,
     pub exit_band: f64,
     pub stop_band: f64,
     pub hold_bars: usize,
     pub max_half_life_bars: f64,
+    pub train_bars: usize,
+    pub validation_bars: usize,
     pub funding_drag_bps: f64,
     pub taker_fee_bps: f64,
     pub min_samples_target: usize,
+    pub selected_signal_config: Option<SelectedSignalConfig>,
 }
 
 #[derive(Debug, Clone)]
@@ -340,6 +361,19 @@ pub struct PairEvaluationOutput {
     pub hedge_ratio: f64,
     pub hedge_ratio_stability: f64,
     pub spread_vol_bps: f64,
+    pub flatline_diagnostics: SignalFlatlineDiagnostics,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct SignalFlatlineDiagnostics {
+    pub status: String,
+    pub window_bars: usize,
+    pub z_stddev: f64,
+    pub z_p95_minus_p5: f64,
+    pub zero_crossings: usize,
+    pub entry_band_crossings: usize,
+    pub max_abs_z: f64,
+    pub rationale_codes: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -874,9 +908,10 @@ pub fn evaluate_pair(input: PairEvaluationInput) -> anyhow::Result<PairEvaluatio
     let z_scores = rolling_z_scores(&spread, lookback.max(30));
     let robust_z_scores = rolling_robust_z_scores(&spread, lookback.max(30));
     let vol_norm_scores = rolling_vol_normalized_scores(&spread, lookback.max(30));
+    let funding_penalty_z = funding_drag_to_z_penalty(input.funding_drag_bps, spread_vol_bps);
     let funding_scores = z_scores
         .iter()
-        .map(|value| value - (input.funding_drag_bps / 10.0))
+        .map(|value| shrink_score_magnitude(*value, funding_penalty_z))
         .collect::<Vec<_>>();
 
     let spread_z = *z_scores.last().unwrap_or(&0.0);
@@ -892,8 +927,9 @@ pub fn evaluate_pair(input: PairEvaluationInput) -> anyhow::Result<PairEvaluatio
         };
         let score_last = *series.last().unwrap_or(&0.0);
         let (sample_count, win_rate, edge_bps) = estimate_edge_bps(
-            &spread,
             &input.left_closes,
+            &input.right_closes,
+            hedge_ratio,
             series,
             input.entry_band,
             input.hold_bars,
@@ -928,7 +964,7 @@ pub fn evaluate_pair(input: PairEvaluationInput) -> anyhow::Result<PairEvaluatio
         });
     }
 
-    let mut selected = variants
+    let fallback_selected = variants
         .iter()
         .max_by(|left, right| {
             left.opportunity_score
@@ -937,6 +973,37 @@ pub fn evaluate_pair(input: PairEvaluationInput) -> anyhow::Result<PairEvaluatio
         })
         .cloned()
         .ok_or_else(|| anyhow::anyhow!("no signal variants evaluated"))?;
+
+    let evaluated_at = input.timestamps.last().copied().unwrap_or_else(Utc::now);
+    let mut selected_signal_config = input
+        .selected_signal_config
+        .unwrap_or(SelectedSignalConfig {
+            variant: fallback_selected.variant.clone(),
+            entry_band: input.entry_band,
+            exit_band: input.exit_band,
+            stop_band: input.stop_band,
+            lookback_bars: input.lookback_bars,
+            hold_bars: input.hold_bars,
+            max_half_life_bars: input.max_half_life_bars,
+            train_bars: input.train_bars,
+            validation_bars: input.validation_bars,
+            source: "SETTINGS_DEFAULT".to_string(),
+            updated_at: evaluated_at,
+        });
+    let configured_variant = SignalVariant::parse(&selected_signal_config.variant);
+    let mut selected = configured_variant
+        .and_then(|variant| {
+            variants
+                .iter()
+                .find(|candidate| SignalVariant::parse(&candidate.variant) == Some(variant))
+                .cloned()
+        })
+        .unwrap_or_else(|| fallback_selected.clone());
+    if SignalVariant::parse(&selected_signal_config.variant).is_none()
+        || selected_signal_config.variant != selected.variant
+    {
+        selected_signal_config.variant = selected.variant.clone();
+    }
 
     let mut cue_rationale = selected.rationale_codes.clone();
     let selected_variant = SignalVariant::parse(&selected.variant);
@@ -947,6 +1014,8 @@ pub fn evaluate_pair(input: PairEvaluationInput) -> anyhow::Result<PairEvaluatio
         Some(SignalVariant::FundingAdjusted) => funding_scores.as_slice(),
         None => z_scores.as_slice(),
     };
+    let flatline_diagnostics =
+        compute_flatline_diagnostics(selected_scores, input.timeframe, input.entry_band);
     let unbounded_direction_hint = to_direction_hint(selected.score_last, input.entry_band);
     let (mut direction_hint, entry_gate_block_reason) = to_direction_hint_with_stop_retrace(
         selected_scores,
@@ -977,7 +1046,6 @@ pub fn evaluate_pair(input: PairEvaluationInput) -> anyhow::Result<PairEvaluatio
         selected.sample_count,
         input.min_samples_target,
     );
-    let evaluated_at = input.timestamps.last().copied().unwrap_or_else(Utc::now);
     let expected_hold_bars = half_life_bars
         .round()
         .clamp(1.0, (input.hold_bars as f64 * 3.0).max(1.0)) as i64;
@@ -1010,6 +1078,7 @@ pub fn evaluate_pair(input: PairEvaluationInput) -> anyhow::Result<PairEvaluatio
         trade_gate: TradeGateDiagnostics::unavailable(vec!["NOT_EVALUATED".to_string()]),
         portfolio_hint: PortfolioHint::unavailable(vec!["NOT_EVALUATED".to_string()]),
         shadow_ml: ShadowMlDiagnostics::unavailable(vec!["NOT_EVALUATED".to_string()]),
+        selected_signal_config,
         evaluated_at,
     };
 
@@ -1020,7 +1089,118 @@ pub fn evaluate_pair(input: PairEvaluationInput) -> anyhow::Result<PairEvaluatio
         hedge_ratio,
         hedge_ratio_stability,
         spread_vol_bps,
+        flatline_diagnostics,
     })
+}
+
+fn flatline_window_bars(timeframe: Timeframe) -> usize {
+    match timeframe {
+        Timeframe::OneMinute => 720,
+        Timeframe::FifteenMinutes => 384,
+        Timeframe::OneHour => 336,
+    }
+}
+
+fn compute_flatline_diagnostics(
+    selected_scores: &[f64],
+    timeframe: Timeframe,
+    entry_band: f64,
+) -> SignalFlatlineDiagnostics {
+    let window_bars = flatline_window_bars(timeframe);
+    let finite_scores = selected_scores
+        .iter()
+        .copied()
+        .filter(|value| value.is_finite())
+        .collect::<Vec<_>>();
+    let start_idx = finite_scores.len().saturating_sub(window_bars);
+    let window = &finite_scores[start_idx..];
+    if window.len() < 2 {
+        return SignalFlatlineDiagnostics {
+            status: "HEALTHY".to_string(),
+            window_bars,
+            z_stddev: 0.0,
+            z_p95_minus_p5: 0.0,
+            zero_crossings: 0,
+            entry_band_crossings: 0,
+            max_abs_z: 0.0,
+            rationale_codes: vec!["INSUFFICIENT_DATA".to_string()],
+        };
+    }
+
+    let z_stddev = stddev(window);
+    let z_p95_minus_p5 = percentile(window, 0.95) - percentile(window, 0.05);
+    let max_abs_z = window.iter().map(|value| value.abs()).fold(0.0, f64::max);
+    let mut zero_crossings = 0usize;
+    for pair in window.windows(2) {
+        let prev = pair[0];
+        let curr = pair[1];
+        if (prev <= 0.0 && curr > 0.0) || (prev >= 0.0 && curr < 0.0) {
+            zero_crossings = zero_crossings.saturating_add(1);
+        }
+    }
+    let mut entry_band_crossings = 0usize;
+    for pair in window.windows(2) {
+        let prev_outside = pair[0].abs() >= entry_band;
+        let curr_outside = pair[1].abs() >= entry_band;
+        if !prev_outside && curr_outside {
+            entry_band_crossings = entry_band_crossings.saturating_add(1);
+        }
+    }
+
+    let warn_checks = [
+        ("FLATLINE_LOW_STDDEV_WARN", z_stddev < 0.35),
+        ("FLATLINE_LOW_RANGE_WARN", z_p95_minus_p5 < 1.20),
+        ("FLATLINE_LOW_ZERO_CROSS_WARN", zero_crossings < 2),
+        (
+            "FLATLINE_NO_ENTRY_BAND_CROSS_WARN",
+            entry_band_crossings == 0,
+        ),
+    ];
+    let flatline_checks = [
+        ("FLATLINE_LOW_STDDEV", z_stddev < 0.20),
+        ("FLATLINE_LOW_RANGE", z_p95_minus_p5 < 0.70),
+        ("FLATLINE_NO_ZERO_CROSS", zero_crossings == 0),
+        ("FLATLINE_NO_ENTRY_BAND_CROSS", entry_band_crossings == 0),
+        (
+            "FLATLINE_LOW_MAX_ABS_Z",
+            max_abs_z < entry_band.abs().max(0.1) * 0.75,
+        ),
+    ];
+    let warn_hits = warn_checks.iter().filter(|(_, pass)| *pass).count();
+    let flatline_hits = flatline_checks.iter().filter(|(_, pass)| *pass).count();
+
+    let mut rationale_codes = vec![];
+    if flatline_hits >= 3 {
+        rationale_codes.extend(
+            flatline_checks
+                .iter()
+                .filter_map(|(code, pass)| (*pass).then_some((*code).to_string())),
+        );
+    } else if warn_hits >= 2 {
+        rationale_codes.extend(
+            warn_checks
+                .iter()
+                .filter_map(|(code, pass)| (*pass).then_some((*code).to_string())),
+        );
+    }
+    let status = if flatline_hits >= 3 {
+        "FLATLINE"
+    } else if warn_hits >= 2 {
+        "WARN"
+    } else {
+        "HEALTHY"
+    };
+
+    SignalFlatlineDiagnostics {
+        status: status.to_string(),
+        window_bars,
+        z_stddev,
+        z_p95_minus_p5,
+        zero_crossings,
+        entry_band_crossings,
+        max_abs_z,
+        rationale_codes,
+    }
 }
 
 pub fn compute_backtest_series(
@@ -1044,14 +1224,8 @@ pub fn compute_backtest_series(
         .zip(right_closes.iter())
         .map(|(left, right)| left.max(1e-9).ln() - config.hedge_ratio * right.max(1e-9).ln())
         .collect::<Vec<_>>();
-    let spread_mean = mean(&spread);
-    let spread_std = stddev(&spread);
-    if !spread_std.is_finite() || spread_std <= 0.0 {
-        return BacktestSeries {
-            points: vec![],
-            markers: vec![],
-        };
-    }
+    let z_window = 30;
+    let z_scores = rolling_z_scores_prior(&spread, z_window);
 
     let mut points = Vec::with_capacity(timestamps.len().saturating_sub(1));
     let mut markers = vec![];
@@ -1074,7 +1248,7 @@ pub fn compute_backtest_series(
     let mut long_entry_cooldown_active = false;
 
     for idx in 1..timestamps.len() {
-        let z = (spread[idx] - spread_mean) / spread_std;
+        let z = z_scores[idx];
         let left_prev = if let Some(tick) = left_tick {
             quantize_price_to_tick(left_closes[idx - 1], tick).unwrap_or(left_closes[idx - 1])
         } else {
@@ -1332,32 +1506,41 @@ fn classify_regime(spread: &[f64], latest_z: f64) -> Regime {
 }
 
 fn estimate_edge_bps(
-    spread: &[f64],
     left_prices: &[f64],
+    right_prices: &[f64],
+    hedge_ratio: f64,
     scores: &[f64],
     entry_band: f64,
     hold_bars: usize,
 ) -> (usize, f64, f64) {
-    if spread.len() < hold_bars + 2
-        || scores.len() != spread.len()
-        || left_prices.len() != spread.len()
+    if hold_bars == 0
+        || left_prices.len() < hold_bars + 1
+        || scores.len() != left_prices.len()
+        || right_prices.len() != left_prices.len()
     {
         return (0, 0.0, 0.0);
     }
 
     let mut outcomes = vec![];
-    for idx in 0..(spread.len() - hold_bars) {
+    for idx in 0..(left_prices.len() - hold_bars) {
         let score = scores[idx];
-        let pnl = if score >= entry_band {
-            spread[idx] - spread[idx + hold_bars]
+        let left_entry = left_prices[idx].abs().max(1e-9);
+        let left_exit = left_prices[idx + hold_bars].abs().max(1e-9);
+        let right_entry = right_prices[idx].abs().max(1e-9);
+        let right_exit = right_prices[idx + hold_bars].abs().max(1e-9);
+        let left_return = (left_exit / left_entry) - 1.0;
+        let right_return = (right_exit / right_entry) - 1.0;
+        let spread_return = left_return - hedge_ratio * right_return;
+        let pnl_return = if score >= entry_band {
+            -spread_return
         } else if score <= -entry_band {
-            spread[idx + hold_bars] - spread[idx]
+            spread_return
         } else {
             continue;
         };
-        let left_price = left_prices[idx].abs().max(1e-9);
-        let pnl_bps = (pnl / left_price) * 10_000.0;
-        outcomes.push(pnl_bps);
+        if pnl_return.is_finite() {
+            outcomes.push(pnl_return * 10_000.0);
+        }
     }
 
     if outcomes.is_empty() {
@@ -1435,6 +1618,25 @@ fn rolling_z_scores(values: &[f64], window: usize) -> Vec<f64> {
     result
 }
 
+fn rolling_z_scores_prior(values: &[f64], window: usize) -> Vec<f64> {
+    if values.len() < 2 {
+        return vec![0.0; values.len()];
+    }
+    let mut result = vec![0.0; values.len()];
+    let win = window.max(10).min(values.len() - 1);
+    for idx in 0..values.len() {
+        if idx < win {
+            continue;
+        }
+        let slice = &values[(idx - win)..idx];
+        let std = stddev(slice);
+        if std.is_finite() && std >= MIN_PRIOR_Z_STDDEV {
+            result[idx] = (values[idx] - mean(slice)) / std;
+        }
+    }
+    result
+}
+
 fn rolling_robust_z_scores(values: &[f64], window: usize) -> Vec<f64> {
     if values.is_empty() {
         return vec![];
@@ -1463,18 +1665,36 @@ fn rolling_vol_normalized_scores(values: &[f64], window: usize) -> Vec<f64> {
     if values.len() < 2 {
         return z;
     }
-    let diffs = values
+    let abs_diffs = values
         .windows(2)
-        .map(|window| window[1] - window[0])
+        .map(|window| (window[1] - window[0]).abs())
         .collect::<Vec<_>>();
-    let vol = rolling_z_scores(&diffs, window.max(10));
+    let vol_pressure = rolling_robust_z_scores(&abs_diffs, window.max(10));
     let mut normalized = vec![0.0; values.len()];
     for idx in 0..values.len() {
-        let vol_idx = idx.saturating_sub(1).min(vol.len().saturating_sub(1));
-        let vol_penalty = 1.0 + vol[vol_idx].abs();
+        let vol_idx = idx
+            .saturating_sub(1)
+            .min(vol_pressure.len().saturating_sub(1));
+        let vol_penalty = 1.0 + vol_pressure[vol_idx].max(0.0);
         normalized[idx] = z[idx] / vol_penalty;
     }
     normalized
+}
+
+fn funding_drag_to_z_penalty(funding_drag_bps: f64, spread_vol_bps: f64) -> f64 {
+    if !funding_drag_bps.is_finite() || funding_drag_bps <= 0.0 {
+        return 0.0;
+    }
+    let spread_vol = spread_vol_bps.abs().max(1.0);
+    (funding_drag_bps / spread_vol).clamp(0.0, 4.0)
+}
+
+fn shrink_score_magnitude(score: f64, penalty: f64) -> f64 {
+    if !score.is_finite() {
+        return 0.0;
+    }
+    let shrunk = (score.abs() - penalty.max(0.0)).max(0.0);
+    score.signum() * shrunk
 }
 
 fn shadow_features(
@@ -1578,18 +1798,54 @@ fn median(values: &[f64]) -> f64 {
     }
 }
 
+fn percentile(values: &[f64], percentile: f64) -> f64 {
+    if values.is_empty() {
+        return 0.0;
+    }
+    let mut sorted = values.to_vec();
+    sorted.sort_by(|left, right| left.partial_cmp(right).unwrap_or(std::cmp::Ordering::Equal));
+    let max_index = sorted.len().saturating_sub(1);
+    let target = percentile.clamp(0.0, 1.0) * max_index as f64;
+    let lower = target.floor() as usize;
+    let upper = target.ceil() as usize;
+    if lower == upper {
+        sorted[lower]
+    } else {
+        let weight = target - lower as f64;
+        sorted[lower] * (1.0 - weight) + sorted[upper] * weight
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
         annotate_with_shadow_model, build_portfolio_plan, compute_backtest_series,
-        evaluate_cost_gate, evaluate_pair, to_direction_hint_with_stop,
+        compute_flatline_diagnostics, estimate_edge_bps, evaluate_cost_gate, evaluate_pair,
+        funding_drag_to_z_penalty, rolling_vol_normalized_scores, rolling_z_scores,
+        rolling_z_scores_prior, shrink_score_magnitude, to_direction_hint_with_stop,
         to_direction_hint_with_stop_retrace, train_shadow_model, BacktestConfig, BacktestExitMode,
         CostGateDiagnostics, CostGateInput, DirectionHint, FundingModel, PairCue,
-        PairEvaluationInput, PortfolioHint, Regime, SetupGateDiagnostics, ShadowMlDiagnostics,
-        ShadowModelTrainingRow, SignalVariant, TradeGateDiagnostics,
+        PairEvaluationInput, PortfolioHint, Regime, SelectedSignalConfig, SetupGateDiagnostics,
+        ShadowMlDiagnostics, ShadowModelTrainingRow, SignalVariant, TradeGateDiagnostics,
     };
     use chrono::{Duration, Utc};
     use common_types::Timeframe;
+
+    fn test_selected_signal_config(variant: &str) -> SelectedSignalConfig {
+        SelectedSignalConfig {
+            variant: variant.to_string(),
+            entry_band: 1.8,
+            exit_band: 0.6,
+            stop_band: 3.2,
+            lookback_bars: 520,
+            hold_bars: 20,
+            max_half_life_bars: 120.0,
+            train_bars: 64_800,
+            validation_bars: 30_240,
+            source: "TEST".to_string(),
+            updated_at: Utc::now(),
+        }
+    }
 
     #[test]
     fn evaluate_pair_emits_variant_metrics() {
@@ -1602,20 +1858,54 @@ mod tests {
             timestamps,
             left_closes: left,
             right_closes: right,
+            lookback_bars: 520,
             entry_band: 1.6,
             exit_band: 0.5,
             stop_band: 3.2,
             hold_bars: 12,
             max_half_life_bars: 120.0,
+            train_bars: 64_800,
+            validation_bars: 30_240,
             funding_drag_bps: 0.6,
             taker_fee_bps: 1.2,
             min_samples_target: 8,
+            selected_signal_config: None,
         })
         .expect("pair evaluation should succeed");
 
         assert_eq!(result.variants.len(), 4);
         assert!(!result.cue.selected_variant.is_empty());
         assert!(result.cue.entry_band > result.cue.exit_band);
+    }
+
+    #[test]
+    fn evaluate_pair_uses_selected_signal_config_variant_when_provided() {
+        let (timestamps, left, right) = synthetic_pair_series(260);
+        let result = evaluate_pair(PairEvaluationInput {
+            pair_id: "PI_XBTUSD__PI_ETHUSD".to_string(),
+            left_instrument: "PI_XBTUSD".to_string(),
+            right_instrument: "PI_ETHUSD".to_string(),
+            timeframe: Timeframe::OneMinute,
+            timestamps,
+            left_closes: left,
+            right_closes: right,
+            lookback_bars: 520,
+            entry_band: 1.6,
+            exit_band: 0.5,
+            stop_band: 3.2,
+            hold_bars: 12,
+            max_half_life_bars: 120.0,
+            train_bars: 64_800,
+            validation_bars: 30_240,
+            funding_drag_bps: 0.6,
+            taker_fee_bps: 1.2,
+            min_samples_target: 8,
+            selected_signal_config: Some(test_selected_signal_config("ROBUST_Z")),
+        })
+        .expect("pair evaluation should succeed");
+
+        assert_eq!(result.cue.selected_variant, "ROBUST_Z");
+        assert_eq!(result.cue.selected_signal_config.variant, "ROBUST_Z");
     }
 
     #[test]
@@ -1629,14 +1919,18 @@ mod tests {
             timestamps,
             left_closes: left,
             right_closes: right,
+            lookback_bars: 520,
             entry_band: 1.6,
             exit_band: 0.5,
             stop_band: 3.2,
             hold_bars: 12,
             max_half_life_bars: 120.0,
+            train_bars: 64_800,
+            validation_bars: 30_240,
             funding_drag_bps: 0.6,
             taker_fee_bps: 1.2,
             min_samples_target: 8,
+            selected_signal_config: None,
         })
         .expect("pair evaluation should succeed");
 
@@ -1657,14 +1951,18 @@ mod tests {
             timestamps,
             left_closes: left,
             right_closes: right,
+            lookback_bars: 520,
             entry_band: 1.2,
             exit_band: 0.5,
             stop_band: 3.0,
             hold_bars: 8,
             max_half_life_bars: 10.0,
+            train_bars: 64_800,
+            validation_bars: 30_240,
             funding_drag_bps: 0.5,
             taker_fee_bps: 1.2,
             min_samples_target: 6,
+            selected_signal_config: None,
         })
         .expect("pair evaluation should succeed");
 
@@ -1673,6 +1971,26 @@ mod tests {
             .rationale_codes
             .iter()
             .any(|code| code == "HALF_LIFE_TOO_LONG"));
+    }
+
+    #[test]
+    fn flatline_diagnostics_marks_constant_series_as_flatline() {
+        let scores = vec![0.04; 800];
+        let diagnostics = compute_flatline_diagnostics(&scores, Timeframe::OneMinute, 1.8);
+        assert_eq!(diagnostics.status, "FLATLINE");
+        assert_eq!(diagnostics.window_bars, 720);
+        assert_eq!(diagnostics.zero_crossings, 0);
+        assert_eq!(diagnostics.entry_band_crossings, 0);
+    }
+
+    #[test]
+    fn flatline_diagnostics_marks_active_series_as_healthy() {
+        let scores = (0..900)
+            .map(|idx| ((idx as f64) / 13.0).sin() * 2.2)
+            .collect::<Vec<_>>();
+        let diagnostics = compute_flatline_diagnostics(&scores, Timeframe::OneMinute, 1.8);
+        assert_eq!(diagnostics.status, "HEALTHY");
+        assert!(diagnostics.zero_crossings > 2);
     }
 
     #[test]
@@ -1693,14 +2011,18 @@ mod tests {
             timestamps,
             left_closes: left,
             right_closes: right,
+            lookback_bars: 520,
             entry_band: 1.6,
             exit_band: 0.5,
             stop_band: 3.2,
             hold_bars: 10,
             max_half_life_bars: 120.0,
+            train_bars: 64_800,
+            validation_bars: 30_240,
             funding_drag_bps: 0.6,
             taker_fee_bps: 1.2,
             min_samples_target: 8,
+            selected_signal_config: None,
         })
         .expect("pair evaluation should succeed");
 
@@ -1789,6 +2111,42 @@ mod tests {
     }
 
     #[test]
+    fn funding_penalty_converts_bps_to_dimensionless_shrink() {
+        let low_vol_penalty = funding_drag_to_z_penalty(2.0, 10.0);
+        let high_vol_penalty = funding_drag_to_z_penalty(2.0, 200.0);
+        assert!(low_vol_penalty > high_vol_penalty);
+        let long_score = shrink_score_magnitude(-2.0, low_vol_penalty);
+        let short_score = shrink_score_magnitude(2.0, low_vol_penalty);
+        assert!(long_score.abs() < 2.0);
+        assert!(short_score.abs() < 2.0);
+        assert!(long_score < 0.0);
+        assert!(short_score > 0.0);
+    }
+
+    #[test]
+    fn estimate_edge_bps_uses_leg_return_domain() {
+        let left = vec![100.0, 101.0, 102.0];
+        let right = vec![100.0, 100.0, 100.0];
+        let scores = vec![-2.0, 2.0, 0.0];
+        let (samples, win_rate, edge_bps) = estimate_edge_bps(&left, &right, 1.0, &scores, 1.0, 1);
+        assert_eq!(samples, 2);
+        assert!((win_rate - 0.5).abs() < 1e-9);
+        // Long from 100->101 is +100bp, short from 101->102 is -99.0099bp.
+        assert!((edge_bps - 0.4950495).abs() < 1e-3);
+    }
+
+    #[test]
+    fn vol_normalized_uses_robust_vol_pressure() {
+        let values = vec![
+            0.0, 0.1, 0.0, 0.08, 0.0, 0.09, 0.0, 0.07, 0.0, 0.08, 0.0, 0.09, 3.0, -2.8, 2.6, -2.4,
+        ];
+        let raw = rolling_z_scores(&values, 10);
+        let normalized = rolling_vol_normalized_scores(&values, 10);
+        let idx = values.len() - 1;
+        assert!(normalized[idx].abs() <= raw[idx].abs() + 1e-9);
+    }
+
+    #[test]
     fn portfolio_plan_respects_caps_and_neutrality() {
         let cues = vec![
             synthetic_cue("PI_XBTUSD__PI_ETHUSD", "LONG_SPREAD", 8.0, 3.0),
@@ -1844,6 +2202,71 @@ mod tests {
         assert!(series.markers.iter().all(|marker| marker.kind == "entry"
             || marker.kind == "exit"
             || marker.kind == "stop"));
+    }
+
+    #[test]
+    fn rolling_prior_z_uses_only_past_window() {
+        let values = vec![1.0, 2.0, 3.0, 100.0];
+        let z = rolling_z_scores_prior(&values, 3);
+        assert!((z[0] - 0.0).abs() < 1e-12);
+        assert!((z[1] - 0.0).abs() < 1e-12);
+        assert!((z[2] - 0.0).abs() < 1e-12);
+        // idx=3 uses only [1,2,3] as normalization window.
+        assert!((z[3] - 120.02499739637572).abs() < 1e-9);
+    }
+
+    #[test]
+    fn rolling_prior_z_suppresses_nearly_flat_window_variance() {
+        let mut values = vec![7.428334145058403; 31];
+        values[29] += 1e-12;
+        values[30] = 7.428096919781667;
+
+        let z = rolling_z_scores_prior(&values, 30);
+
+        assert!((z[30] - 0.0).abs() < 1e-12);
+    }
+
+    #[test]
+    fn backtest_series_is_invariant_to_future_tail_spike_before_final_bar() {
+        let base_spread = (0..120)
+            .map(|idx| (idx as f64 / 8.0).sin() * 0.9 + (idx as f64 / 19.0).cos() * 0.35)
+            .collect::<Vec<_>>();
+        let mut shocked_spread = base_spread.clone();
+        let final_idx = shocked_spread.len() - 1;
+        shocked_spread[final_idx] += 12.0;
+
+        let (timestamps_a, left_a, right_a) = synthetic_spread_path(&base_spread);
+        let (timestamps_b, left_b, right_b) = synthetic_spread_path(&shocked_spread);
+        let config = BacktestConfig {
+            hedge_ratio: 1.0,
+            entry_band: 1.0,
+            exit_band: 0.25,
+            stop_band: 3.2,
+            round_trip_cost_bps: 0.0,
+            exit_mode: BacktestExitMode::MeanRevert,
+            left_constraints: None,
+            right_constraints: None,
+        };
+        let series_a = compute_backtest_series(&timestamps_a, &left_a, &right_a, config);
+        let series_b = compute_backtest_series(&timestamps_b, &left_b, &right_b, config);
+
+        assert_eq!(series_a.points.len(), series_b.points.len());
+        for idx in 0..series_a.points.len().saturating_sub(1) {
+            let z_diff = (series_a.points[idx].z - series_b.points[idx].z).abs();
+            let eq_diff = (series_a.points[idx].equity - series_b.points[idx].equity).abs();
+            assert!(
+                z_diff < 1e-12,
+                "z changed at idx {} due to future-only spike: {}",
+                idx,
+                z_diff
+            );
+            assert!(
+                eq_diff < 1e-12,
+                "equity changed at idx {} due to future-only spike: {}",
+                idx,
+                eq_diff
+            );
+        }
     }
 
     #[test]
@@ -1948,9 +2371,11 @@ mod tests {
 
     #[test]
     fn backtest_exit_mode_opposite_extreme_holds_longer_than_mean_revert() {
-        let spread = vec![
-            0.0, 1.8, 2.2, 1.5, 0.4, 0.1, -0.2, -1.2, -1.8, -2.1, -1.0, 0.2, 1.3, 1.9,
-        ];
+        let mut spread = vec![0.0; 40];
+        spread.extend([
+            0.2, 0.4, 0.6, 1.0, 1.5, 2.1, 1.7, 1.0, 0.3, 0.1, -0.1, -0.4, -0.9, -1.4, -1.9, -2.2,
+            -1.6, -1.0, -0.3, 0.2, 0.8, 1.4, 1.9,
+        ]);
         let (timestamps, left, right) = synthetic_spread_path(&spread);
 
         let mean_revert = compute_backtest_series(
@@ -2069,9 +2494,10 @@ mod tests {
 
     #[test]
     fn backtest_retrace_cooldown_blocks_reentry_until_rearm_level() {
-        let spread = vec![
-            -0.5, 0.3, 1.1, 1.3, 1.25, 1.18, 1.15, 0.9, 0.2, -0.4, -1.0, -1.2, -1.0, -0.6, -0.1,
-        ];
+        let mut spread = vec![0.0; 40];
+        spread.extend([
+            -0.5, 0.3, 1.4, 2.1, 2.4, 2.0, 1.7, 1.3, 0.9, 0.2, -0.4, -1.0, -1.2, -1.0, -0.6, -0.1,
+        ]);
         let (timestamps, left, right) = synthetic_spread_path(&spread);
         let entry_band = 1.0;
         let stop_band = 1.2;
@@ -2256,6 +2682,7 @@ mod tests {
             },
             portfolio_hint: PortfolioHint::unavailable(vec!["NOT_EVALUATED".to_string()]),
             shadow_ml: ShadowMlDiagnostics::unavailable(vec!["NOT_EVALUATED".to_string()]),
+            selected_signal_config: test_selected_signal_config("ROBUST_Z"),
             evaluated_at: Utc::now(),
         }
     }

@@ -1,3 +1,4 @@
+use anyhow::Context;
 use axum::{
     extract::{Query, State},
     http::{header, HeaderMap, HeaderValue, StatusCode},
@@ -11,6 +12,7 @@ use common_types::{
 };
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
+use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -18,11 +20,11 @@ use strategy_service::{
     annotate_with_shadow_model, apply_portfolio_plan_to_cues, build_portfolio_plan,
     compute_backtest_series, evaluate_pair, train_shadow_model, BacktestConfig, BacktestExitMode,
     CandidateSetDiagnostics, FundingModel, PairCue, PairEvaluationInput, PairEvaluationOutput,
-    PortfolioPlan, Regime, ShadowModelTrainingRow, SignalVariant,
+    PortfolioPlan, Regime, SelectedSignalConfig, ShadowModelTrainingRow, SignalVariant,
 };
 use tokio::net::TcpListener;
 use tokio::sync::RwLock;
-use tokio_postgres::{types::ToSql, Client, NoTls};
+use tokio_postgres::{types::ToSql, Client, NoTls, Row};
 use tower_http::cors::{Any, CorsLayer};
 use tracing::info;
 
@@ -32,6 +34,7 @@ struct AppState {
     settings: Arc<StrategySettings>,
     http_client: reqwest::Client,
     sampled_slippage: Arc<SampledSlippageStore>,
+    trade_now_observability: Arc<TradeNowObservabilityStore>,
 }
 
 #[derive(Debug, Clone)]
@@ -51,6 +54,9 @@ struct StrategySettings {
     bind_addr: String,
     postgres_url: String,
     data_service_url: String,
+    execution_service_url: String,
+    execution_exchange: String,
+    execution_account_id: String,
     pairs: Vec<PairSpec>,
     timeframes: Vec<Timeframe>,
     entry_band: f64,
@@ -84,6 +90,7 @@ struct StrategySettings {
     sampled_slippage_interval_ms: u64,
     sampled_slippage_warmup_secs: u64,
     sampled_slippage_stale_secs: u64,
+    data_stale_bars: u64,
     sampled_slippage_ewma_alpha: f64,
     sampled_slippage_state_path: String,
     sampled_slippage_persist_secs: u64,
@@ -102,6 +109,8 @@ struct StrategySettings {
     advisory_per_pair_cap: f64,
     advisory_enabled: bool,
     champion_switch_min_delta: f64,
+    champion_switch_hysteresis_delta: f64,
+    champion_switch_cooldown_secs: u64,
     block_on_champion_drift: bool,
     research_sweep_execution_cap: usize,
     research_sweep_top_k: usize,
@@ -168,6 +177,16 @@ impl StrategySettings {
         });
         let data_service_url = std::env::var("STRATEGY_DATA_SERVICE_URL")
             .unwrap_or_else(|_| "http://data-service:8080".to_string());
+        let execution_service_url = std::env::var("STRATEGY_EXECUTION_SERVICE_URL")
+            .unwrap_or_else(|_| "http://execution-service:8082".to_string());
+        let execution_exchange = std::env::var("STRATEGY_EXECUTION_EXCHANGE")
+            .unwrap_or_else(|_| "kraken_futures".to_string())
+            .trim()
+            .to_string();
+        let execution_account_id = std::env::var("STRATEGY_EXECUTION_ACCOUNT_ID")
+            .unwrap_or_else(|_| "primary".to_string())
+            .trim()
+            .to_string();
 
         let pairs_raw =
             std::env::var("STRATEGY_PAIRS").unwrap_or_else(|_| {
@@ -195,6 +214,7 @@ impl StrategySettings {
         let sampled_slippage_warmup_secs =
             parse_env_u64("STRATEGY_SAMPLED_SLIPPAGE_WARMUP_SECS", 300);
         let sampled_slippage_stale_secs = parse_env_u64("STRATEGY_SAMPLED_SLIPPAGE_STALE_SECS", 20);
+        let data_stale_bars = parse_env_u64("STRATEGY_DATA_STALE_BARS", 3).max(1);
         let sampled_slippage_ewma_alpha =
             parse_env_f64("STRATEGY_SAMPLED_SLIPPAGE_EWMA_ALPHA", 0.2).clamp(0.01, 1.0);
         let sampled_slippage_state_path = std::env::var("STRATEGY_SAMPLED_SLIPPAGE_STATE_PATH")
@@ -231,6 +251,10 @@ impl StrategySettings {
         let advisory_per_pair_cap = parse_env_f64("STRATEGY_ADVISORY_PER_PAIR_CAP", 0.35);
         let advisory_enabled = parse_env_bool("STRATEGY_ADVISORY_ENABLED", true);
         let champion_switch_min_delta = parse_env_f64("STRATEGY_CHAMPION_SWITCH_MIN_DELTA", 0.25);
+        let champion_switch_hysteresis_delta =
+            parse_env_f64("STRATEGY_CHAMPION_SWITCH_HYSTERESIS_DELTA", 0.15).max(0.0);
+        let champion_switch_cooldown_secs =
+            parse_env_u64("STRATEGY_CHAMPION_SWITCH_COOLDOWN_SECS", 900);
         let block_on_champion_drift = parse_env_bool("STRATEGY_BLOCK_ON_CHAMPION_DRIFT", true);
         let research_sweep_execution_cap =
             parse_env_usize("STRATEGY_RESEARCH_SWEEP_EXECUTION_CAP", 20_000).clamp(1, 1_000_000);
@@ -282,6 +306,9 @@ impl StrategySettings {
             bind_addr: format!("0.0.0.0:{port}"),
             postgres_url,
             data_service_url,
+            execution_service_url,
+            execution_exchange,
+            execution_account_id,
             pairs,
             timeframes,
             entry_band,
@@ -315,6 +342,7 @@ impl StrategySettings {
             sampled_slippage_interval_ms,
             sampled_slippage_warmup_secs,
             sampled_slippage_stale_secs,
+            data_stale_bars,
             sampled_slippage_ewma_alpha,
             sampled_slippage_state_path,
             sampled_slippage_persist_secs,
@@ -333,6 +361,8 @@ impl StrategySettings {
             advisory_per_pair_cap,
             advisory_enabled,
             champion_switch_min_delta,
+            champion_switch_hysteresis_delta,
+            champion_switch_cooldown_secs,
             block_on_champion_drift,
             research_sweep_execution_cap,
             research_sweep_top_k,
@@ -412,6 +442,130 @@ impl StrategySettings {
     fn ui_access_enabled(&self) -> bool {
         !self.ui_access_password.trim().is_empty()
     }
+
+    fn max_data_staleness_seconds(&self, timeframe: Timeframe) -> i64 {
+        let step_seconds = timeframe.step_seconds().max(1);
+        step_seconds.saturating_mul(self.data_stale_bars as i64)
+    }
+}
+
+const SELECTED_CONFIG_SOURCE_LEGACY_FALLBACK: &str = "LEGACY_ROW_FALLBACK";
+const SELECTED_CONFIG_SOURCE_OPERATOR_PROMOTION: &str = "OPERATOR_PROMOTION";
+
+fn default_selected_signal_config(
+    settings: &StrategySettings,
+    timeframe: Timeframe,
+    variant: String,
+    source: &str,
+    updated_at: DateTime<Utc>,
+) -> SelectedSignalConfig {
+    SelectedSignalConfig {
+        variant,
+        entry_band: settings.entry_band,
+        exit_band: settings.exit_band,
+        stop_band: settings.stop_band,
+        lookback_bars: settings.lookback_bars(timeframe),
+        hold_bars: settings.hold_bars(timeframe),
+        max_half_life_bars: settings.max_half_life_bars(timeframe),
+        train_bars: settings.optimizer_train_bars(timeframe),
+        validation_bars: settings.optimizer_validation_bars(timeframe),
+        source: source.to_string(),
+        updated_at,
+    }
+}
+
+fn selected_signal_config_from_expectancy(
+    config: &ExpectancyConfig,
+    settings: &StrategySettings,
+    timeframe: Timeframe,
+    source: &str,
+    updated_at: DateTime<Utc>,
+) -> SelectedSignalConfig {
+    SelectedSignalConfig {
+        variant: config.z_method.clone(),
+        entry_band: config.entry_z,
+        exit_band: config.exit_z,
+        stop_band: config.stop_z,
+        lookback_bars: config.lookback_bars,
+        hold_bars: settings.hold_bars(timeframe),
+        max_half_life_bars: settings.max_half_life_bars(timeframe),
+        train_bars: config.train_bars,
+        validation_bars: config.validation_bars,
+        source: source.to_string(),
+        updated_at,
+    }
+}
+
+fn sanitize_selected_signal_config(
+    config: &SelectedSignalConfig,
+    settings: &StrategySettings,
+    timeframe: Timeframe,
+) -> Option<SelectedSignalConfig> {
+    let variant = parse_z_method(Some(config.variant.as_str())).ok()?;
+    let mut sanitized = default_selected_signal_config(
+        settings,
+        timeframe,
+        variant,
+        &config.source,
+        config.updated_at,
+    );
+    if config.entry_band.is_finite() && (0.2..=8.0).contains(&config.entry_band.abs()) {
+        sanitized.entry_band = config.entry_band.abs();
+    }
+    if config.exit_band.is_finite() && (0.0..sanitized.entry_band).contains(&config.exit_band.abs())
+    {
+        sanitized.exit_band = config.exit_band.abs();
+    }
+    if config.stop_band.is_finite()
+        && (sanitized.entry_band..=12.0).contains(&config.stop_band.abs())
+    {
+        sanitized.stop_band = config.stop_band.abs();
+    }
+    sanitized.lookback_bars = config.lookback_bars.clamp(120, 10_000);
+    sanitized.hold_bars = config.hold_bars.max(1);
+    if config.max_half_life_bars.is_finite() && config.max_half_life_bars > 0.0 {
+        sanitized.max_half_life_bars = config.max_half_life_bars;
+    }
+    sanitized.train_bars = config.train_bars.clamp(sanitized.lookback_bars, 500_000);
+    sanitized.validation_bars = config.validation_bars.clamp(1, 500_000);
+    if !config.source.trim().is_empty() {
+        sanitized.source = config.source.clone();
+    }
+    sanitized.updated_at = config.updated_at;
+    Some(sanitized)
+}
+
+fn resolve_selected_signal_config(
+    selected_signal: Option<&SelectedSignalRow>,
+    settings: &StrategySettings,
+    timeframe: Timeframe,
+) -> Option<SelectedSignalConfig> {
+    let row = selected_signal?;
+    if let Some(config_json) = row.config_json.as_ref() {
+        match serde_json::from_str::<SelectedSignalConfig>(config_json)
+            .ok()
+            .and_then(|config| sanitize_selected_signal_config(&config, settings, timeframe))
+        {
+            Some(mut config) => {
+                config.updated_at = row.updated_at;
+                return Some(config);
+            }
+            None => {
+                tracing::warn!(
+                    timeframe = %timeframe.as_str(),
+                    variant = %row.signal_variant,
+                    "selected signal config_json invalid; falling back to legacy defaults"
+                );
+            }
+        }
+    }
+    Some(default_selected_signal_config(
+        settings,
+        timeframe,
+        row.signal_variant.clone(),
+        SELECTED_CONFIG_SOURCE_LEGACY_FALLBACK,
+        row.updated_at,
+    ))
 }
 
 #[derive(Clone)]
@@ -429,6 +583,8 @@ struct ClosePoint {
 struct SelectedSignalRow {
     signal_variant: String,
     opportunity_score: f64,
+    updated_at: DateTime<Utc>,
+    config_json: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -454,6 +610,7 @@ impl ChampionDecision {
 struct ChampionTransition {
     selected_variant: String,
     selected_score: f64,
+    selected_config: SelectedSignalConfig,
     champion_variant: String,
     challenger_variant: String,
     champion_score: f64,
@@ -526,6 +683,7 @@ struct CandidateProbationRow {
     timeframe: Timeframe,
     candidate_id: String,
     candidate_variant: String,
+    candidate_config: ExpectancyConfig,
     objective_score: f64,
     state: CandidateLifecycleState,
     eligible_after: DateTime<Utc>,
@@ -582,6 +740,421 @@ struct CandidateProbationUpdate<'a> {
     last_objective_delta: f64,
 }
 
+const LEARNING_OVERLAY_REPORT_SUFFIX: &str = "signal-learning-cycle.json";
+const LEARNING_OVERLAY_RUNS_ROOT: &str = "artifacts/signal_learning/runs";
+const LEARNING_OVERLAY_TTL_SECS: u64 = 24 * 60 * 60;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+enum LearningRecommendation {
+    Promote,
+    Demote,
+    Hold,
+}
+
+impl LearningRecommendation {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Promote => "PROMOTE",
+            Self::Demote => "DEMOTE",
+            Self::Hold => "HOLD",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct LearningCycleReportArtifact {
+    generated_at: DateTime<Utc>,
+    timeframe_reports: Vec<LearningTimeframeArtifact>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct LearningCycleReportHeader {
+    generated_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct LearningTimeframeArtifact {
+    timeframe: Timeframe,
+    #[serde(default)]
+    pairs: Vec<LearningPairArtifact>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct LearningPairArtifact {
+    pair_id: String,
+    timeframe: Timeframe,
+    recommendation: LearningRecommendation,
+    trade_eligible: bool,
+    #[serde(default)]
+    selection_selected: bool,
+    #[serde(default)]
+    reason_codes: Vec<String>,
+    #[serde(default)]
+    arbitration_reason_codes: Vec<String>,
+    #[serde(default)]
+    hard_veto_active: bool,
+    #[serde(default)]
+    hard_veto_reason: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+struct LearningOverlayKey {
+    pair_id: String,
+    timeframe: String,
+}
+
+impl LearningOverlayKey {
+    fn new(pair_id: &str, timeframe: Timeframe) -> Self {
+        Self {
+            pair_id: pair_id.to_string(),
+            timeframe: timeframe.as_str().to_string(),
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+struct LearningOverlayEntry {
+    pair_id: String,
+    timeframe: Timeframe,
+    recommendation: LearningRecommendation,
+    trade_eligible: bool,
+    selection_selected: bool,
+    learning_reason_codes: Vec<String>,
+}
+
+impl LearningOverlayEntry {
+    fn from_artifact_row(row: LearningPairArtifact) -> Self {
+        let mut learning_reason_codes =
+            Vec::with_capacity(row.reason_codes.len() + row.arbitration_reason_codes.len() + 1);
+        append_unique_codes(&mut learning_reason_codes, &row.reason_codes);
+        append_unique_codes(&mut learning_reason_codes, &row.arbitration_reason_codes);
+        if row.hard_veto_active {
+            if let Some(reason) = row.hard_veto_reason.as_ref() {
+                push_unique_code(&mut learning_reason_codes, reason);
+            } else {
+                push_unique_code(&mut learning_reason_codes, "HARD_VETO_ACTIVE");
+            }
+        }
+        Self {
+            pair_id: row.pair_id,
+            timeframe: row.timeframe,
+            recommendation: row.recommendation,
+            trade_eligible: row.trade_eligible,
+            selection_selected: row.selection_selected,
+            learning_reason_codes,
+        }
+    }
+}
+
+#[allow(dead_code)]
+#[derive(Debug, Clone)]
+struct LearningOverlaySnapshot {
+    generated_at: Option<DateTime<Utc>>,
+    age_seconds: Option<f64>,
+    fresh: bool,
+    ttl_seconds: u64,
+    entries: HashMap<LearningOverlayKey, LearningOverlayEntry>,
+}
+
+impl LearningOverlaySnapshot {
+    fn missing(ttl_seconds: u64) -> Self {
+        Self {
+            generated_at: None,
+            age_seconds: None,
+            fresh: false,
+            ttl_seconds,
+            entries: HashMap::new(),
+        }
+    }
+
+    fn get(&self, pair_id: &str, timeframe: Timeframe) -> Option<&LearningOverlayEntry> {
+        self.entries
+            .get(&LearningOverlayKey::new(pair_id, timeframe))
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum LearningOverlayApprovalSource {
+    LearningSelection,
+    OperatorPromotedActiveChampion,
+    None,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum LearningOverlayUniverseBucket {
+    TradeNow,
+    Watchlist,
+    Excluded,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum LearningOverlayBlockedReason {
+    LegacyFallbackActive,
+    PendingChallengerRequiresPromotion,
+    OutsideApprovedUniverse,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum LearningOverlayWatchReason {
+    LearningEligibleNotSelected,
+    LearningOverlayStale,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct LearningOverlayPolicyDecision {
+    /// `None` does not mean learning was silent.
+    /// It can mean the overlay selected the pair/timeframe, but governance or provenance
+    /// currently blocks any active approval path from applying.
+    approval_source: LearningOverlayApprovalSource,
+    bucket: LearningOverlayUniverseBucket,
+    requires_fresh_overlay: bool,
+    blocked_reason: Option<LearningOverlayBlockedReason>,
+    watch_reason: Option<LearningOverlayWatchReason>,
+    learning_recommendation: Option<LearningRecommendation>,
+    learning_trade_eligible: Option<bool>,
+    learning_selection_selected: Option<bool>,
+    learning_reason_codes: Vec<String>,
+}
+
+#[allow(dead_code)]
+fn load_latest_learning_overlay(
+    runs_root: &Path,
+    now: DateTime<Utc>,
+    ttl_seconds: u64,
+) -> anyhow::Result<LearningOverlaySnapshot> {
+    let Some(path) = latest_learning_overlay_report_path(runs_root)? else {
+        return Ok(LearningOverlaySnapshot::missing(ttl_seconds));
+    };
+    let bytes = fs::read(&path)
+        .with_context(|| format!("reading learning overlay artifact '{}'", path.display()))?;
+    let report: LearningCycleReportArtifact = serde_json::from_slice(&bytes)
+        .with_context(|| format!("parsing learning overlay artifact '{}'", path.display()))?;
+
+    let mut entries = HashMap::new();
+    for timeframe_report in report.timeframe_reports {
+        for row in timeframe_report.pairs {
+            if row.timeframe != timeframe_report.timeframe {
+                return Err(anyhow::anyhow!(
+                    "learning overlay timeframe mismatch for pair={} report_timeframe={} row_timeframe={}",
+                    row.pair_id,
+                    timeframe_report.timeframe.as_str(),
+                    row.timeframe.as_str()
+                ));
+            }
+            let entry = LearningOverlayEntry::from_artifact_row(row);
+            entries.insert(
+                LearningOverlayKey::new(&entry.pair_id, entry.timeframe),
+                entry,
+            );
+        }
+    }
+
+    let age_seconds = now
+        .signed_duration_since(report.generated_at)
+        .num_seconds()
+        .max(0) as f64;
+    Ok(LearningOverlaySnapshot {
+        generated_at: Some(report.generated_at),
+        age_seconds: Some(age_seconds),
+        fresh: age_seconds <= ttl_seconds as f64,
+        ttl_seconds,
+        entries,
+    })
+}
+
+fn latest_learning_overlay_report_path(runs_root: &Path) -> anyhow::Result<Option<PathBuf>> {
+    if !runs_root.exists() {
+        return Ok(None);
+    }
+    let mut latest: Option<(DateTime<Utc>, SystemTime, PathBuf)> = None;
+    for entry in fs::read_dir(runs_root)
+        .with_context(|| format!("reading learning overlay root '{}'", runs_root.display()))?
+    {
+        let entry = entry?;
+        if !entry.file_type()?.is_file() {
+            continue;
+        }
+        let path = entry.path();
+        let file_name = path
+            .file_name()
+            .and_then(|value| value.to_str())
+            .unwrap_or("");
+        if !file_name.ends_with(LEARNING_OVERLAY_REPORT_SUFFIX) {
+            continue;
+        }
+        let modified = entry
+            .metadata()
+            .and_then(|metadata| metadata.modified())
+            .unwrap_or(UNIX_EPOCH);
+        let bytes = fs::read(&path).with_context(|| {
+            format!("reading learning overlay header from '{}'", path.display())
+        })?;
+        let header: LearningCycleReportHeader =
+            serde_json::from_slice(&bytes).with_context(|| {
+                format!("parsing learning overlay header from '{}'", path.display())
+            })?;
+        match latest.as_ref() {
+            Some((latest_generated_at, latest_modified, _))
+                if header.generated_at < *latest_generated_at
+                    || (header.generated_at == *latest_generated_at
+                        && modified <= *latest_modified) => {}
+            _ => latest = Some((header.generated_at, modified, path)),
+        }
+    }
+    Ok(latest.map(|(_, _, path)| path))
+}
+
+fn append_unique_codes(target: &mut Vec<String>, source: &[String]) {
+    for code in source {
+        push_unique_code(target, code);
+    }
+}
+
+fn push_unique_code(target: &mut Vec<String>, code: &str) {
+    if !code.trim().is_empty() && !target.iter().any(|existing| existing == code) {
+        target.push(code.to_string());
+    }
+}
+
+#[allow(dead_code)]
+fn resolve_learning_overlay_policy(
+    overlay: Option<&LearningOverlayEntry>,
+    overlay_snapshot: &LearningOverlaySnapshot,
+    selected_config_source: &str,
+    active_candidate_probation: Option<&CandidateProbationRow>,
+) -> LearningOverlayPolicyDecision {
+    let learning_recommendation = overlay.map(|entry| entry.recommendation);
+    let learning_trade_eligible = overlay.map(|entry| entry.trade_eligible);
+    let learning_selection_selected = overlay.map(|entry| entry.selection_selected);
+    let learning_reason_codes = overlay
+        .map(|entry| entry.learning_reason_codes.clone())
+        .unwrap_or_default();
+
+    if selected_config_source == SELECTED_CONFIG_SOURCE_LEGACY_FALLBACK {
+        return LearningOverlayPolicyDecision {
+            approval_source: LearningOverlayApprovalSource::None,
+            bucket: LearningOverlayUniverseBucket::Excluded,
+            requires_fresh_overlay: false,
+            blocked_reason: Some(LearningOverlayBlockedReason::LegacyFallbackActive),
+            watch_reason: None,
+            learning_recommendation,
+            learning_trade_eligible,
+            learning_selection_selected,
+            learning_reason_codes,
+        };
+    }
+
+    if selected_config_source == SELECTED_CONFIG_SOURCE_OPERATOR_PROMOTION {
+        return LearningOverlayPolicyDecision {
+            approval_source: LearningOverlayApprovalSource::OperatorPromotedActiveChampion,
+            bucket: LearningOverlayUniverseBucket::TradeNow,
+            requires_fresh_overlay: false,
+            blocked_reason: None,
+            watch_reason: None,
+            learning_recommendation,
+            learning_trade_eligible,
+            learning_selection_selected,
+            learning_reason_codes,
+        };
+    }
+
+    let pending_challenger = active_candidate_probation
+        .map(|row| match row.state {
+            CandidateLifecycleState::Champion | CandidateLifecycleState::Rejected => false,
+            CandidateLifecycleState::Challenger
+            | CandidateLifecycleState::PromotionReady
+            | CandidateLifecycleState::Hold => true,
+        })
+        .unwrap_or(false);
+
+    let Some(entry) = overlay else {
+        return LearningOverlayPolicyDecision {
+            approval_source: LearningOverlayApprovalSource::None,
+            bucket: LearningOverlayUniverseBucket::Excluded,
+            requires_fresh_overlay: false,
+            blocked_reason: Some(LearningOverlayBlockedReason::OutsideApprovedUniverse),
+            watch_reason: None,
+            learning_recommendation: None,
+            learning_trade_eligible: None,
+            learning_selection_selected: None,
+            learning_reason_codes,
+        };
+    };
+
+    if entry.selection_selected {
+        if pending_challenger {
+            return LearningOverlayPolicyDecision {
+                approval_source: LearningOverlayApprovalSource::None,
+                bucket: LearningOverlayUniverseBucket::Excluded,
+                requires_fresh_overlay: false,
+                blocked_reason: Some(
+                    LearningOverlayBlockedReason::PendingChallengerRequiresPromotion,
+                ),
+                watch_reason: None,
+                learning_recommendation,
+                learning_trade_eligible,
+                learning_selection_selected,
+                learning_reason_codes,
+            };
+        }
+        if overlay_snapshot.fresh {
+            return LearningOverlayPolicyDecision {
+                approval_source: LearningOverlayApprovalSource::LearningSelection,
+                bucket: LearningOverlayUniverseBucket::TradeNow,
+                requires_fresh_overlay: true,
+                blocked_reason: None,
+                watch_reason: None,
+                learning_recommendation,
+                learning_trade_eligible,
+                learning_selection_selected,
+                learning_reason_codes,
+            };
+        }
+        return LearningOverlayPolicyDecision {
+            approval_source: LearningOverlayApprovalSource::LearningSelection,
+            bucket: LearningOverlayUniverseBucket::Watchlist,
+            requires_fresh_overlay: true,
+            blocked_reason: None,
+            watch_reason: Some(LearningOverlayWatchReason::LearningOverlayStale),
+            learning_recommendation,
+            learning_trade_eligible,
+            learning_selection_selected,
+            learning_reason_codes,
+        };
+    }
+
+    if entry.trade_eligible {
+        return LearningOverlayPolicyDecision {
+            approval_source: LearningOverlayApprovalSource::None,
+            bucket: LearningOverlayUniverseBucket::Watchlist,
+            requires_fresh_overlay: false,
+            blocked_reason: None,
+            watch_reason: Some(if overlay_snapshot.fresh {
+                LearningOverlayWatchReason::LearningEligibleNotSelected
+            } else {
+                LearningOverlayWatchReason::LearningOverlayStale
+            }),
+            learning_recommendation,
+            learning_trade_eligible,
+            learning_selection_selected,
+            learning_reason_codes,
+        };
+    }
+
+    LearningOverlayPolicyDecision {
+        approval_source: LearningOverlayApprovalSource::None,
+        bucket: LearningOverlayUniverseBucket::Excluded,
+        requires_fresh_overlay: false,
+        blocked_reason: Some(LearningOverlayBlockedReason::OutsideApprovedUniverse),
+        watch_reason: None,
+        learning_recommendation,
+        learning_trade_eligible,
+        learning_selection_selected,
+        learning_reason_codes,
+    }
+}
+
 #[derive(Debug)]
 struct PersistSummary {
     performance_rows_written: usize,
@@ -592,6 +1165,35 @@ struct PersistSummary {
 }
 
 impl StrategyRepository {
+    fn candidate_probation_row_from_db_row(row: &Row) -> anyhow::Result<CandidateProbationRow> {
+        let pair_id: String = row.get(0);
+        let timeframe_raw: String = row.get(1);
+        let state_raw: String = row.get(6);
+        let state = CandidateLifecycleState::parse(&state_raw).ok_or_else(|| {
+            anyhow::anyhow!(
+                "invalid candidate probation state '{}' for pair={} timeframe={}",
+                state_raw,
+                pair_id,
+                timeframe_raw
+            )
+        })?;
+        Ok(CandidateProbationRow {
+            pair_id,
+            timeframe: timeframe_from_str(timeframe_raw.as_str())?,
+            candidate_id: row.get(2),
+            candidate_variant: row.get(3),
+            candidate_config: serde_json::from_str(&row.get::<usize, String>(4))?,
+            objective_score: row.get(5),
+            state,
+            eligible_after: row.get(9),
+            probation_samples: row.get::<usize, i32>(10).max(0) as usize,
+            promotable: row.get(11),
+            last_candidate_score: row.get(13),
+            last_champion_score: row.get(14),
+            last_objective_delta: row.get(15),
+        })
+    }
+
     async fn connect(connection_string: &str) -> anyhow::Result<Self> {
         let (client, connection) = tokio_postgres::connect(connection_string, NoTls).await?;
         tokio::spawn(async move {
@@ -631,9 +1233,12 @@ impl StrategyRepository {
                     timeframe TEXT NOT NULL,
                     signal_variant TEXT NOT NULL,
                     opportunity_score DOUBLE PRECISION NOT NULL,
+                    config_json TEXT,
                     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
                     PRIMARY KEY (pair_id, timeframe)
                  );
+                 ALTER TABLE strategy_selected_signal
+                 ADD COLUMN IF NOT EXISTS config_json TEXT;
                  ALTER TABLE strategy_signal_performance
                  ADD COLUMN IF NOT EXISTS score_last DOUBLE PRECISION NOT NULL DEFAULT 0;
                  CREATE TABLE IF NOT EXISTS strategy_shadow_model_runs (
@@ -839,7 +1444,7 @@ impl StrategyRepository {
         &self,
         timeframe: Timeframe,
         evaluation: &PairEvaluationOutput,
-        champion_switch_min_delta: f64,
+        settings: &StrategySettings,
     ) -> anyhow::Result<PersistSummary> {
         let mut summary = PersistSummary {
             performance_rows_written: 0,
@@ -890,10 +1495,15 @@ impl StrategyRepository {
         let existing = self
             .fetch_selected_signal(&evaluation.cue.pair_id, timeframe)
             .await?;
+        let existing_config =
+            resolve_selected_signal_config(existing.as_ref(), settings, timeframe);
         let transition = decide_champion_transition(
             existing.as_ref(),
+            existing_config.as_ref(),
             evaluation,
-            champion_switch_min_delta.max(0.0),
+            settings.champion_switch_min_delta.max(0.0),
+            settings.champion_switch_hysteresis_delta.max(0.0),
+            settings.champion_switch_cooldown_secs,
         );
         let selected_written = self
             .upsert_selected_signal(
@@ -901,6 +1511,7 @@ impl StrategyRepository {
                 timeframe,
                 &transition.selected_variant,
                 transition.selected_score,
+                &transition.selected_config,
                 evaluation.cue.evaluated_at,
             )
             .await?;
@@ -1575,6 +2186,7 @@ impl StrategyRepository {
                         p.timeframe,
                         p.candidate_id,
                         r.candidate_variant,
+                        r.config_json,
                         r.objective_score,
                         p.state,
                         p.started_at,
@@ -1596,29 +2208,51 @@ impl StrategyRepository {
         let Some(row) = row else {
             return Ok(None);
         };
-        let state_raw: String = row.get(5);
-        let state = CandidateLifecycleState::parse(&state_raw).ok_or_else(|| {
-            anyhow::anyhow!(
-                "invalid candidate probation state '{}' for pair={} timeframe={}",
-                state_raw,
-                pair_id,
-                timeframe.as_str()
+        Ok(Some(Self::candidate_probation_row_from_db_row(&row)?))
+    }
+
+    async fn fetch_active_candidate_probation_map(
+        &self,
+        pair_ids: &[String],
+        timeframe: Timeframe,
+    ) -> anyhow::Result<HashMap<String, CandidateProbationRow>> {
+        if pair_ids.is_empty() {
+            return Ok(HashMap::new());
+        }
+
+        let rows = self
+            .client
+            .query(
+                "SELECT p.pair_id,
+                        p.timeframe,
+                        p.candidate_id,
+                        r.candidate_variant,
+                        r.config_json,
+                        r.objective_score,
+                        p.state,
+                        p.started_at,
+                        p.updated_at,
+                        p.eligible_after,
+                        p.probation_samples,
+                        p.promotable,
+                        p.last_reason,
+                        p.last_candidate_score,
+                        p.last_champion_score,
+                        p.last_objective_delta
+                 FROM strategy_candidate_probation p
+                 JOIN strategy_candidate_runs r ON r.candidate_id = p.candidate_id
+                 WHERE p.timeframe = $1
+                   AND p.pair_id = ANY($2)",
+                &[&timeframe.as_str(), &pair_ids],
             )
-        })?;
-        Ok(Some(CandidateProbationRow {
-            pair_id: row.get(0),
-            timeframe: timeframe_from_str(row.get::<usize, String>(1).as_str())?,
-            candidate_id: row.get(2),
-            candidate_variant: row.get(3),
-            objective_score: row.get(4),
-            state,
-            eligible_after: row.get(8),
-            probation_samples: row.get::<usize, i32>(9).max(0) as usize,
-            promotable: row.get(10),
-            last_candidate_score: row.get(12),
-            last_champion_score: row.get(13),
-            last_objective_delta: row.get(14),
-        }))
+            .await?;
+
+        let mut rows_by_pair = HashMap::with_capacity(rows.len());
+        for row in rows {
+            let parsed = Self::candidate_probation_row_from_db_row(&row)?;
+            rows_by_pair.insert(parsed.pair_id.clone(), parsed);
+        }
+        Ok(rows_by_pair)
     }
 
     async fn update_candidate_probation_state(
@@ -1784,24 +2418,28 @@ impl StrategyRepository {
         timeframe: Timeframe,
         selected_variant: &str,
         selected_score: f64,
+        selected_config: &SelectedSignalConfig,
         evaluated_at: DateTime<Utc>,
     ) -> anyhow::Result<u64> {
+        let config_json = serde_json::to_string(selected_config)?;
         let written = self
             .client
             .execute(
                 "INSERT INTO strategy_selected_signal
-                 (pair_id, timeframe, signal_variant, opportunity_score, updated_at)
-                 VALUES ($1,$2,$3,$4,$5)
+                 (pair_id, timeframe, signal_variant, opportunity_score, config_json, updated_at)
+                 VALUES ($1,$2,$3,$4,$5,$6)
                  ON CONFLICT (pair_id, timeframe)
                  DO UPDATE SET
                    signal_variant = EXCLUDED.signal_variant,
                    opportunity_score = EXCLUDED.opportunity_score,
+                   config_json = EXCLUDED.config_json,
                    updated_at = EXCLUDED.updated_at",
                 &[
                     &pair_id as &(dyn ToSql + Sync),
                     &timeframe.as_str(),
                     &selected_variant,
                     &selected_score,
+                    &config_json,
                     &evaluated_at,
                 ],
             )
@@ -1943,7 +2581,7 @@ impl StrategyRepository {
         let row = self
             .client
             .query_opt(
-                "SELECT signal_variant, opportunity_score
+                "SELECT signal_variant, opportunity_score, updated_at, config_json
                  FROM strategy_selected_signal
                  WHERE pair_id=$1 AND timeframe=$2",
                 &[&pair_id, &timeframe.as_str()],
@@ -1952,6 +2590,8 @@ impl StrategyRepository {
         Ok(row.map(|row| SelectedSignalRow {
             signal_variant: row.get(0),
             opportunity_score: row.get(1),
+            updated_at: row.get(2),
+            config_json: row.get(3),
         }))
     }
 }
@@ -1967,16 +2607,21 @@ fn resolve_variant_score(evaluation: &PairEvaluationOutput, variant: &str, fallb
 
 fn decide_champion_transition(
     existing: Option<&SelectedSignalRow>,
+    existing_config: Option<&SelectedSignalConfig>,
     evaluation: &PairEvaluationOutput,
     champion_switch_min_delta: f64,
+    champion_switch_hysteresis_delta: f64,
+    champion_switch_cooldown_secs: u64,
 ) -> ChampionTransition {
     let challenger_variant = evaluation.cue.selected_variant.clone();
     let challenger_score = evaluation.cue.opportunity_score;
+    let challenger_config = evaluation.cue.selected_signal_config.clone();
 
     match existing {
         None => ChampionTransition {
             selected_variant: challenger_variant.clone(),
             selected_score: challenger_score,
+            selected_config: challenger_config.clone(),
             champion_variant: challenger_variant.clone(),
             challenger_variant,
             champion_score: challenger_score,
@@ -1987,6 +2632,7 @@ fn decide_champion_transition(
         Some(current) if current.signal_variant == challenger_variant => ChampionTransition {
             selected_variant: challenger_variant.clone(),
             selected_score: challenger_score,
+            selected_config: challenger_config.clone(),
             champion_variant: current.signal_variant.clone(),
             challenger_variant,
             champion_score: challenger_score,
@@ -2001,10 +2647,25 @@ fn decide_champion_transition(
                 current.opportunity_score,
             );
             let score_delta = challenger_score - champion_score;
-            if score_delta >= champion_switch_min_delta {
+            let elapsed_since_champion_update = evaluation
+                .cue
+                .evaluated_at
+                .signed_duration_since(current.updated_at);
+            let cooldown_active = elapsed_since_champion_update
+                < chrono::Duration::seconds(
+                    champion_switch_cooldown_secs.min(i64::MAX as u64) as i64
+                );
+            let required_delta = champion_switch_min_delta
+                + if cooldown_active {
+                    champion_switch_hysteresis_delta
+                } else {
+                    0.0
+                };
+            if score_delta >= required_delta {
                 ChampionTransition {
                     selected_variant: challenger_variant.clone(),
                     selected_score: challenger_score,
+                    selected_config: challenger_config.clone(),
                     champion_variant: current.signal_variant.clone(),
                     challenger_variant,
                     champion_score,
@@ -2013,9 +2674,21 @@ fn decide_champion_transition(
                     decision: ChampionDecision::PromoteChallenger,
                 }
             } else {
+                let mut selected_config =
+                    existing_config
+                        .cloned()
+                        .unwrap_or_else(|| SelectedSignalConfig {
+                            variant: current.signal_variant.clone(),
+                            source: "CHAMPION_LOCK_FALLBACK".to_string(),
+                            updated_at: current.updated_at,
+                            ..challenger_config.clone()
+                        });
+                selected_config.variant = current.signal_variant.clone();
+                selected_config.updated_at = current.updated_at;
                 ChampionTransition {
                     selected_variant: current.signal_variant.clone(),
                     selected_score: champion_score,
+                    selected_config,
                     champion_variant: current.signal_variant.clone(),
                     challenger_variant,
                     champion_score,
@@ -2032,6 +2705,13 @@ fn decide_champion_transition(
 struct CuesQuery {
     timeframe: String,
     limit: Option<usize>,
+    include_advisory: Option<bool>,
+    taker_fee_bps: Option<f64>,
+}
+
+#[derive(Debug, Deserialize)]
+struct TradeNowQuery {
+    timeframe: Option<String>,
     include_advisory: Option<bool>,
     taker_fee_bps: Option<f64>,
 }
@@ -3094,6 +3774,130 @@ struct CuesResponse {
 }
 
 #[derive(Debug, Serialize)]
+struct TradeNowRow {
+    pair_id: String,
+    left_instrument: String,
+    right_instrument: String,
+    timeframe: String,
+    selected_variant: String,
+    direction_hint: String,
+    spread_z: f64,
+    opportunity_score: f64,
+    confidence_band: String,
+    expected_hold_bars: i64,
+    net_edge_bps: f64,
+    setup_gate_pass: bool,
+    cost_gate_pass: bool,
+    trade_gate_pass: bool,
+    open_live_trade: bool,
+    portfolio_target_weight: Option<f64>,
+    portfolio_risk_contribution: Option<f64>,
+    approval_source: String,
+    requires_fresh_overlay: bool,
+    learning_recommendation: Option<String>,
+    learning_trade_eligible: Option<bool>,
+    learning_selection_selected: Option<bool>,
+    learning_reason_codes: Vec<String>,
+    learning_cycle_generated_at: Option<DateTime<Utc>>,
+    selected_config_source: String,
+    legacy_fallback_active: bool,
+    decision_bucket: String,
+    decision_reason_code: String,
+    blocked_reason_code: Option<String>,
+    watch_reason_code: Option<String>,
+    rationale_codes: Vec<String>,
+}
+
+#[derive(Debug, Serialize)]
+struct TradeNowResponse {
+    generated_at: DateTime<Utc>,
+    timeframe_filter: Option<String>,
+    learning_overlay_generated_at: Option<DateTime<Utc>>,
+    learning_overlay_age_seconds: Option<f64>,
+    learning_overlay_fresh: bool,
+    learning_overlay_ttl_seconds: u64,
+    tradable_now: Vec<TradeNowRow>,
+    watchlist: Vec<TradeNowRow>,
+    excluded: Vec<TradeNowRow>,
+}
+
+#[derive(Debug, Serialize)]
+struct TradeNowObservabilitySuppressedRow {
+    pair_id: String,
+    timeframe: String,
+    suppressed_total: u64,
+}
+
+#[derive(Debug, Serialize)]
+struct TradeNowObservabilityResponse {
+    generated_at: DateTime<Utc>,
+    learning_challenger_bypass_suppressed_total: u64,
+    learning_challenger_bypass_suppressed: Vec<TradeNowObservabilitySuppressedRow>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ExecutionOpenTradesResponse {
+    trades: Vec<ExecutionOpenTradeRow>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ExecutionOpenTradeRow {
+    pair_id: String,
+}
+
+#[derive(Debug, Default)]
+struct TradeNowObservabilityStore {
+    challenger_bypass_suppressed_total: RwLock<u64>,
+    challenger_bypass_suppressed_by_pair: RwLock<HashMap<(String, String), u64>>,
+}
+
+impl TradeNowObservabilityStore {
+    async fn record_learning_challenger_bypass_suppressed(
+        &self,
+        pair_id: &str,
+        timeframe: Timeframe,
+    ) {
+        {
+            let mut total = self.challenger_bypass_suppressed_total.write().await;
+            *total = total.saturating_add(1);
+        }
+        let mut breakdown = self.challenger_bypass_suppressed_by_pair.write().await;
+        let key = (pair_id.to_string(), timeframe.as_str().to_string());
+        let entry = breakdown.entry(key).or_insert(0);
+        *entry = entry.saturating_add(1);
+    }
+
+    async fn snapshot(&self, generated_at: DateTime<Utc>) -> TradeNowObservabilityResponse {
+        let total = *self.challenger_bypass_suppressed_total.read().await;
+        let mut suppressed = self
+            .challenger_bypass_suppressed_by_pair
+            .read()
+            .await
+            .iter()
+            .map(
+                |((pair_id, timeframe), suppressed_total)| TradeNowObservabilitySuppressedRow {
+                    pair_id: pair_id.clone(),
+                    timeframe: timeframe.clone(),
+                    suppressed_total: *suppressed_total,
+                },
+            )
+            .collect::<Vec<_>>();
+        suppressed.sort_by(|left, right| {
+            right
+                .suppressed_total
+                .cmp(&left.suppressed_total)
+                .then_with(|| left.timeframe.cmp(&right.timeframe))
+                .then_with(|| left.pair_id.cmp(&right.pair_id))
+        });
+        TradeNowObservabilityResponse {
+            generated_at,
+            learning_challenger_bypass_suppressed_total: total,
+            learning_challenger_bypass_suppressed: suppressed,
+        }
+    }
+}
+
+#[derive(Debug, Serialize)]
 struct BacktestPointResponse {
     ts: DateTime<Utc>,
     z: f64,
@@ -3489,6 +4293,7 @@ struct CandidateActionResponse {
 #[derive(Debug, Serialize)]
 struct ReoptimizeResponse {
     generated_at: DateTime<Utc>,
+    status: String,
     timeframes: Vec<String>,
     pairs_processed: usize,
     cues_generated: usize,
@@ -3504,7 +4309,28 @@ struct ReoptimizeResponse {
     cost_gate_fail: usize,
     portfolio_advice_available: usize,
     portfolio_advice_unavailable: usize,
+    critical_error_count: usize,
+    non_critical_error_count: usize,
+    timeframe_statuses: Vec<ReoptimizeTimeframeStatus>,
+    flatline_summary: ReoptFlatlineSummary,
     errors: Vec<ReoptError>,
+}
+
+#[derive(Debug, Serialize, Default, Clone)]
+struct ReoptFlatlineSummary {
+    healthy_pairs: usize,
+    warn_pairs: usize,
+    flatline_pairs: usize,
+}
+
+#[derive(Debug, Serialize)]
+struct ReoptimizeTimeframeStatus {
+    timeframe: String,
+    status: String,
+    pairs_evaluated: usize,
+    critical_error_count: usize,
+    non_critical_error_count: usize,
+    flatline_summary: ReoptFlatlineSummary,
 }
 
 #[derive(Debug, Serialize)]
@@ -3579,7 +4405,41 @@ impl MaintenanceAction {
 struct ReoptError {
     pair_id: String,
     timeframe: String,
+    code: String,
+    severity: String,
     error: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ReoptErrorSeverity {
+    Critical,
+    NonCritical,
+}
+
+impl ReoptErrorSeverity {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Critical => "CRITICAL",
+            Self::NonCritical => "NON_CRITICAL",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ReoptimizeRunStatus {
+    Ok,
+    Degraded,
+    Failed,
+}
+
+impl ReoptimizeRunStatus {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Ok => "OK",
+            Self::Degraded => "DEGRADED",
+            Self::Failed => "FAILED",
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -3638,11 +4498,13 @@ async fn main() -> anyhow::Result<()> {
             "sampled slippage warm-start hydration failed"
         ),
     }
+    let trade_now_observability = Arc::new(TradeNowObservabilityStore::default());
     let state = AppState {
         repository,
         settings: settings.clone(),
         http_client,
         sampled_slippage,
+        trade_now_observability,
     };
 
     let _slippage_worker = spawn_sampled_slippage_worker(state.clone());
@@ -3657,7 +4519,12 @@ async fn main() -> anyhow::Result<()> {
         .route("/v1/strategy/ui-auth/status", get(ui_auth_status))
         .route("/v1/strategy/ui-auth/verify", post(ui_auth_verify))
         .route("/v1/strategy/market/metrics", get(strategy_market_metrics))
+        .route(
+            "/v1/strategy/observability/trade-now",
+            get(strategy_trade_now_observability),
+        )
         .route("/v1/strategy/pairs/cues", get(pairs_cues))
+        .route("/v1/strategy/pairs/trade-now", get(pairs_trade_now))
         .route("/v1/strategy/pairs/backtest", get(pairs_backtest))
         .route("/v1/strategy/pairs/live-z", get(pairs_live_z))
         .route("/v1/strategy/pairs/cost-gate", get(pairs_cost_gate))
@@ -3710,6 +4577,9 @@ async fn main() -> anyhow::Result<()> {
     info!(
         bind_addr = %settings.bind_addr,
         data_service_url = %settings.data_service_url,
+        execution_service_url = %settings.execution_service_url,
+        execution_exchange = %settings.execution_exchange,
+        execution_account_id = %settings.execution_account_id,
         pairs = ?settings.pairs.iter().map(|p| p.pair_id()).collect::<Vec<_>>(),
         timeframes = ?settings.timeframes.iter().map(|t| t.as_str()).collect::<Vec<_>>(),
         entry_band = settings.entry_band,
@@ -3729,6 +4599,7 @@ async fn main() -> anyhow::Result<()> {
         sampled_slippage_interval_ms = settings.sampled_slippage_interval_ms,
         sampled_slippage_warmup_secs = settings.sampled_slippage_warmup_secs,
         sampled_slippage_stale_secs = settings.sampled_slippage_stale_secs,
+        data_stale_bars = settings.data_stale_bars,
         sampled_slippage_ewma_alpha = settings.sampled_slippage_ewma_alpha,
         sampled_slippage_state_path = %settings.sampled_slippage_state_path,
         sampled_slippage_persist_secs = settings.sampled_slippage_persist_secs,
@@ -3744,6 +4615,8 @@ async fn main() -> anyhow::Result<()> {
         advisory_gross_cap = settings.advisory_gross_cap,
         advisory_per_pair_cap = settings.advisory_per_pair_cap,
         champion_switch_min_delta = settings.champion_switch_min_delta,
+        champion_switch_hysteresis_delta = settings.champion_switch_hysteresis_delta,
+        champion_switch_cooldown_secs = settings.champion_switch_cooldown_secs,
         block_on_champion_drift = settings.block_on_champion_drift,
         research_sweep_execution_cap = settings.research_sweep_execution_cap,
         research_sweep_top_k = settings.research_sweep_top_k,
@@ -3898,6 +4771,120 @@ async fn fetch_pair_live_marks(
     }
 }
 
+fn resolve_pair_live_marks_from_map<'a>(
+    metrics: &'a HashMap<String, StrategyMarketMetricsResponse>,
+    pair: &PairSpec,
+) -> Option<(
+    &'a StrategyMarketMetricsResponse,
+    &'a StrategyMarketMetricsResponse,
+)> {
+    let left_key = canonical_metric_instrument(&pair.left);
+    let right_key = canonical_metric_instrument(&pair.right);
+    let left = metrics.get(&left_key)?;
+    let right = metrics.get(&right_key)?;
+    Some((left, right))
+}
+
+fn apply_live_mark_override_to_snapshot(
+    timestamps: &mut [DateTime<Utc>],
+    left_closes: &mut [f64],
+    right_closes: &mut [f64],
+    left_live: &StrategyMarketMetricsResponse,
+    right_live: &StrategyMarketMetricsResponse,
+) -> bool {
+    if timestamps.is_empty() || left_closes.is_empty() || right_closes.is_empty() {
+        return false;
+    }
+    let mut applied = false;
+    let last_idx = timestamps.len() - 1;
+    if left_live.mark.is_finite() && left_live.mark > 0.0 {
+        left_closes[last_idx] = left_live.mark;
+        applied = true;
+    }
+    if right_live.mark.is_finite() && right_live.mark > 0.0 {
+        right_closes[last_idx] = right_live.mark;
+        applied = true;
+    }
+    if applied {
+        let latest_ts = std::cmp::max(left_live.server_time, right_live.server_time);
+        if latest_ts > timestamps[last_idx] {
+            timestamps[last_idx] = latest_ts;
+        }
+    }
+    applied
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn maybe_apply_live_mark_override(
+    state: &AppState,
+    pair: &PairSpec,
+    timeframe: Timeframe,
+    timestamps: &mut [DateTime<Utc>],
+    left_closes: &mut [f64],
+    right_closes: &mut [f64],
+    metrics_cache: Option<&HashMap<String, StrategyMarketMetricsResponse>>,
+    source: &str,
+) -> bool {
+    if timestamps.is_empty() || left_closes.is_empty() || right_closes.is_empty() {
+        return false;
+    }
+    let max_data_staleness_seconds = state.settings.max_data_staleness_seconds(timeframe);
+    let aligned_latest_ts = timestamps[timestamps.len() - 1];
+    let aligned_age_seconds = compute_candle_age_seconds(Utc::now(), aligned_latest_ts);
+    if aligned_age_seconds > max_data_staleness_seconds {
+        tracing::warn!(
+            source,
+            pair_id = %pair.pair_id(),
+            timeframe = %timeframe.as_str(),
+            aligned_age_seconds,
+            max_data_staleness_seconds,
+            "skipping live mark override due stale aligned candles"
+        );
+        return false;
+    }
+
+    if let Some((left_live, right_live)) =
+        metrics_cache.and_then(|metrics| resolve_pair_live_marks_from_map(metrics, pair))
+    {
+        return apply_live_mark_override_to_snapshot(
+            timestamps,
+            left_closes,
+            right_closes,
+            left_live,
+            right_live,
+        );
+    }
+
+    match fetch_pair_live_marks(state, &pair.left, &pair.right).await {
+        Ok(Some((left_live, right_live))) => apply_live_mark_override_to_snapshot(
+            timestamps,
+            left_closes,
+            right_closes,
+            &left_live,
+            &right_live,
+        ),
+        Ok(None) => {
+            tracing::warn!(
+                source,
+                pair_id = %pair.pair_id(),
+                timeframe = %timeframe.as_str(),
+                "live mark override skipped; upstream metrics missing one or both instruments"
+            );
+            false
+        }
+        Err(error) => {
+            tracing::warn!(
+                source,
+                pair_id = %pair.pair_id(),
+                timeframe = %timeframe.as_str(),
+                error = %error,
+                "live mark override unavailable; using aligned closes"
+            );
+            false
+        }
+    }
+}
+
 fn spawn_reoptimize_worker(state: AppState) -> tokio::task::JoinHandle<()> {
     tokio::spawn(async move {
         let interval_secs = state.settings.reopt_interval_secs.max(60);
@@ -3961,11 +4948,7 @@ fn spawn_reoptimize_worker(state: AppState) -> tokio::task::JoinHandle<()> {
 
                     match state
                         .repository
-                        .record_evaluation(
-                            *timeframe,
-                            &output,
-                            state.settings.champion_switch_min_delta,
-                        )
+                        .record_evaluation(*timeframe, &output, &state.settings)
                         .await
                     {
                         Ok(summary) => {
@@ -4533,6 +5516,466 @@ async fn maintenance_action(
     }))
 }
 
+async fn cue_with_champion_drift_applied(
+    state: &AppState,
+    timeframe: Timeframe,
+    output: &PairEvaluationOutput,
+) -> Result<PairCue, ApiError> {
+    let preferred_signal = state
+        .repository
+        .fetch_selected_signal(&output.cue.pair_id, timeframe)
+        .await
+        .map_err(|error| ApiError::Upstream(error.to_string()))?;
+
+    let mut cue = output.cue.clone();
+    if let Some(preferred) = preferred_signal {
+        if preferred.signal_variant != output.cue.selected_variant {
+            cue.rationale_codes.push("CHAMPION_DRIFT".to_string());
+            cue.rationale_codes
+                .push(format!("CHAMPION_SELECTED:{}", preferred.signal_variant));
+            cue.rationale_codes.push(format!(
+                "CHALLENGER_SELECTED:{}",
+                output.cue.selected_variant
+            ));
+            if state.settings.block_on_champion_drift {
+                cue.setup_actionable = false;
+                cue.actionable = false;
+                cue.direction_hint = "NONE".to_string();
+                cue.rationale_codes
+                    .push("CHAMPION_DRIFT_BLOCKED".to_string());
+            }
+        }
+    }
+    refresh_setup_gate(&mut cue);
+    finalize_trade_gate(&mut cue);
+    Ok(cue)
+}
+
+fn resolve_trade_now_live_watch_reason_code(cue: &PairCue, open_live_trade: bool) -> &'static str {
+    if open_live_trade {
+        return "OPEN_POSITION_CONFLICT";
+    }
+    if cue.setup_gate.status != "AVAILABLE"
+        || cue.cost_gate.status != "AVAILABLE"
+        || cue.trade_gate.status != "AVAILABLE"
+    {
+        return "LIVE_TRIGGER_NOT_READY";
+    }
+    if !cue.setup_gate.pass {
+        return "SETUP_GATE_NOT_PASSING";
+    }
+    if !cue.cost_gate.pass {
+        return "COST_GATE_NOT_PASSING";
+    }
+    "TRADE_GATE_NOT_PASSING"
+}
+
+async fn fetch_open_live_trade_pairs(
+    http_client: &reqwest::Client,
+    settings: &StrategySettings,
+) -> Result<HashSet<String>, ApiError> {
+    let upstream_base = settings.execution_service_url.trim_end_matches('/');
+    let url = reqwest::Url::parse_with_params(
+        &format!("{upstream_base}/v1/execution/portfolio/open-trades"),
+        &[
+            ("exchange", settings.execution_exchange.as_str()),
+            ("account_id", settings.execution_account_id.as_str()),
+        ],
+    )
+    .map_err(|error| ApiError::Upstream(format!("invalid execution open-trades url: {error}")))?;
+    let response = http_client.get(url).send().await.map_err(|error| {
+        ApiError::Upstream(format!(
+            "execution open-trades upstream request failed: {error}"
+        ))
+    })?;
+    let status = response.status();
+    if !status.is_success() {
+        let body = response.text().await.unwrap_or_default();
+        tracing::warn!(
+            status = %status,
+            exchange = %settings.execution_exchange,
+            account_id = %settings.execution_account_id,
+            body = %body,
+            "trade-now execution open-trades upstream returned error"
+        );
+        return Err(ApiError::Upstream(format!(
+            "execution open-trades upstream status={} body={}",
+            status, body
+        )));
+    }
+    let payload = response
+        .json::<ExecutionOpenTradesResponse>()
+        .await
+        .map_err(|error| {
+            ApiError::Upstream(format!("execution open-trades decode failed: {error}"))
+        })?;
+    Ok(payload
+        .trades
+        .into_iter()
+        .map(|trade| trade.pair_id)
+        .collect())
+}
+
+fn resolve_trade_now_blocked_reason_code(policy: &LearningOverlayPolicyDecision) -> &'static str {
+    match policy.blocked_reason {
+        Some(LearningOverlayBlockedReason::LegacyFallbackActive) => "LEGACY_FALLBACK_ACTIVE",
+        Some(LearningOverlayBlockedReason::PendingChallengerRequiresPromotion) => {
+            "PENDING_CHALLENGER_REQUIRES_PROMOTION"
+        }
+        _ => match (
+            policy.learning_recommendation,
+            policy.learning_trade_eligible,
+        ) {
+            (Some(LearningRecommendation::Hold), _) => "LEARNING_HOLD",
+            (_, Some(false)) => "LEARNING_NOT_TRADE_ELIGIBLE",
+            _ => "OUTSIDE_APPROVED_UNIVERSE",
+        },
+    }
+}
+
+fn sort_trade_now_rows(rows: &mut [TradeNowRow]) {
+    rows.sort_by(|left, right| {
+        right
+            .opportunity_score
+            .partial_cmp(&left.opportunity_score)
+            .unwrap_or(std::cmp::Ordering::Equal)
+            .then_with(|| left.timeframe.cmp(&right.timeframe))
+            .then_with(|| left.pair_id.cmp(&right.pair_id))
+    });
+}
+
+fn group_trade_now_rows(
+    generated_at: DateTime<Utc>,
+    timeframe_filter: Option<Timeframe>,
+    overlay_snapshot: &LearningOverlaySnapshot,
+    rows: Vec<TradeNowRow>,
+) -> TradeNowResponse {
+    let mut tradable_now = vec![];
+    let mut watchlist = vec![];
+    let mut excluded = vec![];
+
+    for row in rows {
+        match row.decision_bucket.as_str() {
+            "TRADE_NOW" => tradable_now.push(row),
+            "WATCHLIST" => watchlist.push(row),
+            _ => excluded.push(row),
+        }
+    }
+
+    sort_trade_now_rows(&mut tradable_now);
+    sort_trade_now_rows(&mut watchlist);
+    sort_trade_now_rows(&mut excluded);
+
+    TradeNowResponse {
+        generated_at,
+        timeframe_filter: timeframe_filter.map(|value| value.as_str().to_string()),
+        learning_overlay_generated_at: overlay_snapshot.generated_at,
+        learning_overlay_age_seconds: overlay_snapshot.age_seconds,
+        learning_overlay_fresh: overlay_snapshot.fresh,
+        learning_overlay_ttl_seconds: overlay_snapshot.ttl_seconds,
+        tradable_now,
+        watchlist,
+        excluded,
+    }
+}
+
+fn build_trade_now_row(
+    cue: &PairCue,
+    overlay_snapshot: &LearningOverlaySnapshot,
+    policy: &LearningOverlayPolicyDecision,
+    open_live_trade: bool,
+) -> TradeNowRow {
+    let selected_config_source = cue.selected_signal_config.source.clone();
+    let legacy_fallback_active = selected_config_source == SELECTED_CONFIG_SOURCE_LEGACY_FALLBACK;
+    let setup_gate_pass = cue.setup_gate.status == "AVAILABLE" && cue.setup_gate.pass;
+    let cost_gate_pass = cue.cost_gate.status == "AVAILABLE" && cue.cost_gate.pass;
+    let trade_gate_pass = cue.trade_gate.status == "AVAILABLE" && cue.trade_gate.pass;
+    let portfolio_target_weight =
+        (cue.portfolio_hint.status == "AVAILABLE").then_some(cue.portfolio_hint.target_weight);
+    let portfolio_risk_contribution =
+        (cue.portfolio_hint.status == "AVAILABLE").then_some(cue.portfolio_hint.risk_contribution);
+
+    let (decision_bucket, decision_reason_code, blocked_reason_code, watch_reason_code) =
+        match policy.bucket {
+            LearningOverlayUniverseBucket::Excluded => {
+                let blocked_reason_code = resolve_trade_now_blocked_reason_code(policy);
+                let decision_reason_code = match policy.blocked_reason {
+                    Some(LearningOverlayBlockedReason::LegacyFallbackActive) => {
+                        "PROVENANCE_POLICY_BLOCKED"
+                    }
+                    Some(LearningOverlayBlockedReason::PendingChallengerRequiresPromotion) => {
+                        "GOVERNANCE_POLICY_BLOCKED"
+                    }
+                    _ => "OUTSIDE_APPROVED_UNIVERSE",
+                };
+                (
+                    "EXCLUDED",
+                    decision_reason_code,
+                    Some(blocked_reason_code),
+                    None,
+                )
+            }
+            LearningOverlayUniverseBucket::Watchlist => {
+                let (decision_reason_code, watch_reason_code) = match policy.watch_reason {
+                    Some(LearningOverlayWatchReason::LearningEligibleNotSelected) => (
+                        "LEARNING_POSITIVE_BUT_NOT_SELECTED",
+                        "LEARNING_ELIGIBLE_NOT_SELECTED",
+                    ),
+                    Some(LearningOverlayWatchReason::LearningOverlayStale) => (
+                        "STALE_OVERLAY_DOWNGRADED_TO_WATCHLIST",
+                        "LEARNING_OVERLAY_STALE",
+                    ),
+                    None => (
+                        "APPROVED_BUT_WAITING_ON_LIVE_CONDITIONS",
+                        resolve_trade_now_live_watch_reason_code(cue, open_live_trade),
+                    ),
+                };
+                (
+                    "WATCHLIST",
+                    decision_reason_code,
+                    None,
+                    Some(watch_reason_code),
+                )
+            }
+            LearningOverlayUniverseBucket::TradeNow if open_live_trade || !trade_gate_pass => (
+                "WATCHLIST",
+                "APPROVED_BUT_WAITING_ON_LIVE_CONDITIONS",
+                None,
+                Some(resolve_trade_now_live_watch_reason_code(
+                    cue,
+                    open_live_trade,
+                )),
+            ),
+            LearningOverlayUniverseBucket::TradeNow => (
+                "TRADE_NOW",
+                match policy.approval_source {
+                    LearningOverlayApprovalSource::LearningSelection => {
+                        "LEARNING_SELECTED_AND_LIVE_GATES_PASS"
+                    }
+                    LearningOverlayApprovalSource::OperatorPromotedActiveChampion => {
+                        "OPERATOR_PROMOTED_AND_LIVE_GATES_PASS"
+                    }
+                    LearningOverlayApprovalSource::None => {
+                        "APPROVED_BUT_WAITING_ON_LIVE_CONDITIONS"
+                    }
+                },
+                None,
+                None,
+            ),
+        };
+
+    let mut rationale_codes = vec![];
+    if policy.learning_selection_selected == Some(true) {
+        push_unique_code(&mut rationale_codes, "APPROVAL_SOURCE_LEARNING_SELECTION");
+        push_unique_code(&mut rationale_codes, "LEARNING_SELECTION_SELECTED");
+    }
+    if policy.approval_source == LearningOverlayApprovalSource::OperatorPromotedActiveChampion {
+        push_unique_code(&mut rationale_codes, "APPROVAL_SOURCE_OPERATOR_PROMOTED");
+        push_unique_code(&mut rationale_codes, "OPERATOR_PROMOTION_ACTIVE");
+    }
+    if policy.learning_trade_eligible == Some(true) {
+        push_unique_code(&mut rationale_codes, "LEARNING_TRADE_ELIGIBLE");
+    }
+    if policy.learning_recommendation == Some(LearningRecommendation::Hold) {
+        push_unique_code(&mut rationale_codes, "LEARNING_HOLD");
+    }
+    if policy.learning_trade_eligible == Some(false) {
+        push_unique_code(&mut rationale_codes, "LEARNING_NOT_TRADE_ELIGIBLE");
+    }
+    if overlay_snapshot.generated_at.is_some() {
+        push_unique_code(
+            &mut rationale_codes,
+            if overlay_snapshot.fresh {
+                "LEARNING_OVERLAY_FRESH"
+            } else {
+                "LEARNING_OVERLAY_STALE"
+            },
+        );
+    }
+    if policy.requires_fresh_overlay {
+        push_unique_code(&mut rationale_codes, "REQUIRES_FRESH_OVERLAY");
+    }
+    push_unique_code(
+        &mut rationale_codes,
+        if setup_gate_pass {
+            "LIVE_SETUP_GATE_PASS"
+        } else {
+            "LIVE_SETUP_GATE_FAIL"
+        },
+    );
+    push_unique_code(
+        &mut rationale_codes,
+        if cost_gate_pass {
+            "LIVE_COST_GATE_PASS"
+        } else {
+            "LIVE_COST_GATE_FAIL"
+        },
+    );
+    push_unique_code(
+        &mut rationale_codes,
+        if trade_gate_pass {
+            "LIVE_TRADE_GATE_PASS"
+        } else {
+            "LIVE_TRADE_GATE_FAIL"
+        },
+    );
+    if watch_reason_code == Some("LIVE_TRIGGER_NOT_READY") {
+        push_unique_code(&mut rationale_codes, "LIVE_TRIGGER_NOT_READY");
+    }
+    if open_live_trade {
+        push_unique_code(&mut rationale_codes, "OPEN_POSITION_CONFLICT");
+    }
+    if legacy_fallback_active {
+        push_unique_code(&mut rationale_codes, "LEGACY_FALLBACK_ACTIVE");
+    } else {
+        push_unique_code(&mut rationale_codes, "NON_LEGACY_CHAMPION");
+    }
+    if policy.blocked_reason
+        == Some(LearningOverlayBlockedReason::PendingChallengerRequiresPromotion)
+    {
+        push_unique_code(&mut rationale_codes, "PENDING_CHALLENGER_REVIEW");
+    }
+    if matches!(policy.bucket, LearningOverlayUniverseBucket::Excluded)
+        && policy.blocked_reason != Some(LearningOverlayBlockedReason::LegacyFallbackActive)
+        && policy.blocked_reason
+            != Some(LearningOverlayBlockedReason::PendingChallengerRequiresPromotion)
+    {
+        push_unique_code(&mut rationale_codes, "OUTSIDE_APPROVED_UNIVERSE");
+    }
+
+    TradeNowRow {
+        pair_id: cue.pair_id.clone(),
+        left_instrument: cue.left_instrument.clone(),
+        right_instrument: cue.right_instrument.clone(),
+        timeframe: cue.timeframe.clone(),
+        selected_variant: cue.selected_variant.clone(),
+        direction_hint: cue.direction_hint.clone(),
+        spread_z: cue.spread_z,
+        opportunity_score: cue.opportunity_score,
+        confidence_band: cue.confidence_band.clone(),
+        expected_hold_bars: cue.expected_hold_bars,
+        net_edge_bps: cue.cost_gate.net_edge_bps,
+        setup_gate_pass,
+        cost_gate_pass,
+        trade_gate_pass,
+        open_live_trade,
+        portfolio_target_weight,
+        portfolio_risk_contribution,
+        approval_source: match policy.approval_source {
+            LearningOverlayApprovalSource::LearningSelection => "LEARNING_SELECTION",
+            LearningOverlayApprovalSource::OperatorPromotedActiveChampion => {
+                "OPERATOR_PROMOTED_ACTIVE_CHAMPION"
+            }
+            LearningOverlayApprovalSource::None => "NONE",
+        }
+        .to_string(),
+        requires_fresh_overlay: policy.requires_fresh_overlay,
+        learning_recommendation: policy
+            .learning_recommendation
+            .map(LearningRecommendation::as_str)
+            .map(str::to_string),
+        learning_trade_eligible: policy.learning_trade_eligible,
+        learning_selection_selected: policy.learning_selection_selected,
+        learning_reason_codes: policy.learning_reason_codes.clone(),
+        learning_cycle_generated_at: overlay_snapshot.generated_at,
+        selected_config_source,
+        legacy_fallback_active,
+        decision_bucket: decision_bucket.to_string(),
+        decision_reason_code: decision_reason_code.to_string(),
+        blocked_reason_code: blocked_reason_code.map(str::to_string),
+        watch_reason_code: watch_reason_code.map(str::to_string),
+        rationale_codes,
+    }
+}
+
+async fn pairs_trade_now(
+    State(state): State<AppState>,
+    Query(query): Query<TradeNowQuery>,
+) -> Result<Json<TradeNowResponse>, ApiError> {
+    let (timeframe_filter, include_advisory, taker_fee_bps) = parse_trade_now_query(
+        &query,
+        state.settings.advisory_enabled,
+        state.settings.trading_fee_bps,
+    )?;
+    let generated_at = Utc::now();
+    let overlay_root = resolve_workspace_path(LEARNING_OVERLAY_RUNS_ROOT);
+    let overlay_snapshot =
+        load_latest_learning_overlay(&overlay_root, generated_at, LEARNING_OVERLAY_TTL_SECS)
+            .map_err(|error| {
+                ApiError::Upstream(format!("learning overlay load failed: {error}"))
+            })?;
+
+    let timeframes = timeframe_filter
+        .as_ref()
+        .copied()
+        .map(|value| vec![value])
+        .unwrap_or_else(|| state.settings.timeframes.clone());
+    let open_live_trade_pairs =
+        fetch_open_live_trade_pairs(&state.http_client, &state.settings).await?;
+    let mut rows = vec![];
+
+    for timeframe in timeframes {
+        let (outputs, _skipped, _portfolio_plan) =
+            evaluate_timeframe_outputs(&state, timeframe, include_advisory, taker_fee_bps).await;
+        let mut cues = Vec::with_capacity(outputs.len());
+        for output in outputs {
+            cues.push(cue_with_champion_drift_applied(&state, timeframe, &output).await?);
+        }
+        let pair_ids = cues
+            .iter()
+            .map(|cue| cue.pair_id.clone())
+            .collect::<Vec<_>>();
+        let active_candidate_probation_by_pair = state
+            .repository
+            .fetch_active_candidate_probation_map(&pair_ids, timeframe)
+            .await
+            .map_err(|error| ApiError::Upstream(error.to_string()))?;
+
+        for cue in cues {
+            let overlay = overlay_snapshot.get(&cue.pair_id, timeframe);
+            let policy = resolve_learning_overlay_policy(
+                overlay,
+                &overlay_snapshot,
+                &cue.selected_signal_config.source,
+                active_candidate_probation_by_pair.get(&cue.pair_id),
+            );
+            if policy.blocked_reason
+                == Some(LearningOverlayBlockedReason::PendingChallengerRequiresPromotion)
+            {
+                tracing::info!(
+                    pair_id = %cue.pair_id,
+                    timeframe = timeframe.as_str(),
+                    "trade-now suppressed learning-selected row pending challenger promotion"
+                );
+                state
+                    .trade_now_observability
+                    .record_learning_challenger_bypass_suppressed(&cue.pair_id, timeframe)
+                    .await;
+            }
+            let row = build_trade_now_row(
+                &cue,
+                &overlay_snapshot,
+                &policy,
+                open_live_trade_pairs.contains(&cue.pair_id),
+            );
+            rows.push(row);
+        }
+    }
+
+    Ok(Json(group_trade_now_rows(
+        generated_at,
+        timeframe_filter,
+        &overlay_snapshot,
+        rows,
+    )))
+}
+
+async fn strategy_trade_now_observability(
+    State(state): State<AppState>,
+) -> Json<TradeNowObservabilityResponse> {
+    Json(state.trade_now_observability.snapshot(Utc::now()).await)
+}
+
 async fn pairs_cues(
     State(state): State<AppState>,
     Query(query): Query<CuesQuery>,
@@ -4566,8 +6009,6 @@ async fn pairs_cues(
                     "CHALLENGER_SELECTED:{}",
                     output.cue.selected_variant
                 ));
-                cue.selected_variant = preferred.signal_variant;
-                cue.opportunity_score = preferred.opportunity_score;
                 if state.settings.block_on_champion_drift {
                     cue.setup_actionable = false;
                     cue.actionable = false;
@@ -4750,6 +6191,25 @@ fn parse_candidate_inbox_query(
         .transpose()?;
     let limit = query.limit.unwrap_or(default_limit).clamp(1, 100);
     Ok((timeframe, limit))
+}
+
+fn parse_trade_now_query(
+    query: &TradeNowQuery,
+    default_include_advisory: bool,
+    default_taker_fee_bps: f64,
+) -> Result<(Option<Timeframe>, bool, f64), ApiError> {
+    let timeframe = query
+        .timeframe
+        .as_ref()
+        .map(|value| {
+            Timeframe::parse(value).ok_or_else(|| {
+                ApiError::BadRequest("invalid timeframe; expected 1m, 15m, 1h".to_string())
+            })
+        })
+        .transpose()?;
+    let include_advisory = query.include_advisory.unwrap_or(default_include_advisory);
+    let taker_fee_bps = resolve_taker_fee_bps(query.taker_fee_bps, default_taker_fee_bps)?;
+    Ok((timeframe, include_advisory, taker_fee_bps))
 }
 
 fn parse_z_method(raw: Option<&str>) -> Result<String, ApiError> {
@@ -5773,6 +7233,7 @@ async fn pairs_expectancy(
         timeframe,
         false,
         state.settings.trading_fee_bps,
+        None,
     )
     .await
     .map_err(|error| ApiError::Upstream(error.to_string()))?;
@@ -5920,6 +7381,7 @@ async fn pairs_replay_trades(
         timeframe,
         false,
         state.settings.trading_fee_bps,
+        None,
     )
     .await
     .map_err(|error| ApiError::Upstream(error.to_string()))?;
@@ -5947,7 +7409,7 @@ async fn pairs_replay_trades(
         .filter(|row| row.entry_ts >= validation_start)
         .filter(|row| row.exit_ts >= cutoff)
         .collect::<Vec<_>>();
-    rows.sort_by(|left, right| right.exit_ts.cmp(&left.exit_ts));
+    rows.sort_by_key(|row| std::cmp::Reverse(row.exit_ts));
     rows.truncate(limit as usize);
     info!(
         timeframe = %timeframe.as_str(),
@@ -6425,6 +7887,7 @@ async fn pairs_research_sweep(
                     tf,
                     false,
                     state.settings.trading_fee_bps,
+                    None,
                 )
                 .await
                 .map_err(|error| ApiError::Upstream(error.to_string()))?;
@@ -6726,6 +8189,13 @@ async fn pairs_candidate_action(
                     "candidate is not promotion-ready; use HOLD or REJECT".to_string(),
                 ));
             }
+            let selected_config = selected_signal_config_from_expectancy(
+                &probation.candidate_config,
+                &state.settings,
+                timeframe,
+                SELECTED_CONFIG_SOURCE_OPERATOR_PROMOTION,
+                Utc::now(),
+            );
             state
                 .repository
                 .upsert_selected_signal(
@@ -6733,6 +8203,7 @@ async fn pairs_candidate_action(
                     timeframe,
                     &probation.candidate_variant,
                     probation.objective_score,
+                    &selected_config,
                     Utc::now(),
                 )
                 .await
@@ -6860,6 +8331,7 @@ async fn pairs_backtest(
         timeframe,
         state.settings.advisory_enabled,
         taker_fee_bps,
+        None,
     )
     .await
     .map_err(|error| ApiError::Upstream(error.to_string()))?;
@@ -6955,7 +8427,18 @@ async fn pairs_live_z(
         )));
     };
 
-    let lookback = std::cmp::max(state.settings.lookback_bars(timeframe), window_bars + 32) as i64;
+    let selected_signal = state
+        .repository
+        .fetch_selected_signal(&pair.pair_id(), timeframe)
+        .await
+        .map_err(|error| ApiError::Upstream(error.to_string()))?;
+    let selected_signal_config =
+        resolve_selected_signal_config(selected_signal.as_ref(), &state.settings, timeframe);
+    let configured_lookback = selected_signal_config
+        .as_ref()
+        .map(|config| config.lookback_bars)
+        .unwrap_or_else(|| state.settings.lookback_bars(timeframe));
+    let lookback = std::cmp::max(configured_lookback, window_bars + 32) as i64;
     let left = state
         .repository
         .fetch_recent_closes(&pair.left, timeframe, lookback)
@@ -6976,41 +8459,30 @@ async fn pairs_live_z(
             timestamps.len()
         )));
     }
-
-    match fetch_pair_live_marks(&state, &pair.left, &pair.right).await {
-        Ok(Some((left_live, right_live))) => {
-            if !timestamps.is_empty() && !left_closes.is_empty() && !right_closes.is_empty() {
-                let last_idx = timestamps.len() - 1;
-                if left_live.mark.is_finite() && left_live.mark > 0.0 {
-                    left_closes[last_idx] = left_live.mark;
-                }
-                if right_live.mark.is_finite() && right_live.mark > 0.0 {
-                    right_closes[last_idx] = right_live.mark;
-                }
-                let latest_ts = std::cmp::max(left_live.server_time, right_live.server_time);
-                if latest_ts > timestamps[last_idx] {
-                    timestamps[last_idx] = latest_ts;
-                }
-            }
-        }
-        Ok(None) => {}
-        Err(error) => {
-            tracing::warn!(
-                pair_id = %query.pair_id,
-                timeframe = %timeframe.as_str(),
-                error = %error,
-                "live-z mark override unavailable; falling back to aligned closes"
-            );
-        }
-    }
+    let _ = maybe_apply_live_mark_override(
+        &state,
+        pair,
+        timeframe,
+        &mut timestamps,
+        &mut left_closes,
+        &mut right_closes,
+        None,
+        "live_z",
+    )
+    .await;
 
     let taker_fee_bps = resolve_taker_fee_bps(query.taker_fee_bps, state.settings.trading_fee_bps)?;
-    let output = evaluate_pair_for_timeframe(
+    let output = evaluate_pair_from_snapshot(
         &state,
         pair,
         timeframe,
         state.settings.advisory_enabled,
         taker_fee_bps,
+        timestamps.clone(),
+        left_closes.clone(),
+        right_closes.clone(),
+        lookback as usize,
+        selected_signal_config,
     )
     .await
     .map_err(|error| ApiError::Upstream(error.to_string()))?;
@@ -7050,7 +8522,7 @@ async fn pairs_live_z(
     );
 
     let points_start_index = series.points.len().saturating_sub(points);
-    let response_points = series
+    let mut response_points = series
         .points
         .iter()
         .skip(points_start_index)
@@ -7059,6 +8531,10 @@ async fn pairs_live_z(
             z: point.z,
         })
         .collect::<Vec<_>>();
+    if let Some(last_point) = response_points.last_mut() {
+        // Keep live-z right-edge numerically aligned with cue z from the same snapshot.
+        last_point.z = output.cue.spread_z;
+    }
     let response_markers = series
         .markers
         .iter()
@@ -7110,6 +8586,68 @@ async fn pairs_portfolio_plan(
     }))
 }
 
+#[derive(Debug, Default, Clone, Copy)]
+struct ReoptErrorCounts {
+    critical: usize,
+    non_critical: usize,
+}
+
+fn classify_reopt_error_severity(code: &str) -> ReoptErrorSeverity {
+    match code {
+        "CUE_EVAL_FAILED"
+        | "RECORD_EVALUATION_FAILED"
+        | "CANDIDATE_PROBATION_UPDATE_FAILED"
+        | "TIMEFRAME_ABORTED_CRITICAL" => ReoptErrorSeverity::Critical,
+        _ => ReoptErrorSeverity::NonCritical,
+    }
+}
+
+fn push_reopt_error(
+    errors: &mut Vec<ReoptError>,
+    pair_id: String,
+    timeframe: String,
+    code: &str,
+    error: String,
+    counts: &mut ReoptErrorCounts,
+) {
+    let severity = classify_reopt_error_severity(code);
+    match severity {
+        ReoptErrorSeverity::Critical => counts.critical = counts.critical.saturating_add(1),
+        ReoptErrorSeverity::NonCritical => {
+            counts.non_critical = counts.non_critical.saturating_add(1)
+        }
+    }
+    errors.push(ReoptError {
+        pair_id,
+        timeframe,
+        code: code.to_string(),
+        severity: severity.as_str().to_string(),
+        error,
+    });
+}
+
+fn increment_flatline_summary(summary: &mut ReoptFlatlineSummary, status: &str) {
+    match status {
+        "FLATLINE" => summary.flatline_pairs = summary.flatline_pairs.saturating_add(1),
+        "WARN" => summary.warn_pairs = summary.warn_pairs.saturating_add(1),
+        _ => summary.healthy_pairs = summary.healthy_pairs.saturating_add(1),
+    }
+}
+
+fn resolve_reoptimize_status(
+    critical_error_count: usize,
+    non_critical_error_count: usize,
+    flatline_pairs: usize,
+) -> ReoptimizeRunStatus {
+    if critical_error_count > 0 {
+        ReoptimizeRunStatus::Failed
+    } else if non_critical_error_count > 0 || flatline_pairs > 0 {
+        ReoptimizeRunStatus::Degraded
+    } else {
+        ReoptimizeRunStatus::Ok
+    }
+}
+
 async fn reoptimize(
     State(state): State<AppState>,
     Json(payload): Json<ReoptimizeRequest>,
@@ -7150,11 +8688,18 @@ async fn reoptimize(
     let mut portfolio_advice_available = 0usize;
     let mut portfolio_advice_unavailable = 0usize;
     let mut errors = vec![];
+    let mut error_counts = ReoptErrorCounts::default();
+    let mut timeframe_statuses = vec![];
+    let mut flatline_summary = ReoptFlatlineSummary::default();
 
     for timeframe in &requested_timeframes {
         let mut candidate_probation_pass_total = 0usize;
         let mut candidate_probation_fail_total = 0usize;
         let mut candidate_probation_fail_reasons: HashMap<String, usize> = HashMap::new();
+        let mut timeframe_error_counts = ReoptErrorCounts::default();
+        let mut timeframe_flatline_summary = ReoptFlatlineSummary::default();
+        let mut timeframe_aborted = false;
+        let mut abort_notice_emitted = false;
         let (outputs, skipped, plan) = evaluate_timeframe_outputs(
             &state,
             *timeframe,
@@ -7170,14 +8715,22 @@ async fn reoptimize(
         }
 
         for skipped_pair in skipped {
-            errors.push(ReoptError {
-                pair_id: skipped_pair.pair_id,
-                timeframe: timeframe.as_str().to_string(),
-                error: skipped_pair.reason,
-            });
+            push_reopt_error(
+                &mut errors,
+                skipped_pair.pair_id,
+                timeframe.as_str().to_string(),
+                "CUE_EVAL_FAILED",
+                skipped_pair.reason,
+                &mut timeframe_error_counts,
+            );
+            timeframe_aborted = true;
         }
 
         for output in outputs {
+            increment_flatline_summary(
+                &mut timeframe_flatline_summary,
+                &output.flatline_diagnostics.status,
+            );
             cues_generated += usize::from(output.cue.actionable);
             match output.cue.shadow_ml.status.as_str() {
                 "AVAILABLE" => shadow_model_available += 1,
@@ -7190,13 +8743,24 @@ async fn reoptimize(
                     cost_gate_fail += 1;
                 }
             }
+            if timeframe_aborted {
+                if !abort_notice_emitted {
+                    push_reopt_error(
+                        &mut errors,
+                        output.cue.pair_id.clone(),
+                        timeframe.as_str().to_string(),
+                        "TIMEFRAME_ABORTED_CRITICAL",
+                        "timeframe mutation path skipped after critical optimizer failure"
+                            .to_string(),
+                        &mut timeframe_error_counts,
+                    );
+                    abort_notice_emitted = true;
+                }
+                continue;
+            }
             match state
                 .repository
-                .record_evaluation(
-                    *timeframe,
-                    &output,
-                    state.settings.champion_switch_min_delta,
-                )
+                .record_evaluation(*timeframe, &output, &state.settings)
                 .await
             {
                 Ok(summary) => {
@@ -7206,11 +8770,18 @@ async fn reoptimize(
                     champion_promotions += summary.champion_promotions;
                     champion_locks += summary.champion_locks;
                 }
-                Err(error) => errors.push(ReoptError {
-                    pair_id: output.cue.pair_id.clone(),
-                    timeframe: timeframe.as_str().to_string(),
-                    error: error.to_string(),
-                }),
+                Err(error) => {
+                    push_reopt_error(
+                        &mut errors,
+                        output.cue.pair_id.clone(),
+                        timeframe.as_str().to_string(),
+                        "RECORD_EVALUATION_FAILED",
+                        error.to_string(),
+                        &mut timeframe_error_counts,
+                    );
+                    timeframe_aborted = true;
+                    continue;
+                }
             }
             if let Err(error) = state
                 .repository
@@ -7218,11 +8789,14 @@ async fn reoptimize(
                 .await
                 .map(|written| shadow_model_runs_written += written)
             {
-                errors.push(ReoptError {
-                    pair_id: output.cue.pair_id,
-                    timeframe: timeframe.as_str().to_string(),
-                    error: format!("shadow model run persist failed: {error}"),
-                });
+                push_reopt_error(
+                    &mut errors,
+                    output.cue.pair_id.clone(),
+                    timeframe.as_str().to_string(),
+                    "SHADOW_MODEL_RUN_PERSIST_FAILED",
+                    format!("shadow model run persist failed: {error}"),
+                    &mut timeframe_error_counts,
+                );
                 continue;
             }
             if let Err(error) = state
@@ -7230,11 +8804,14 @@ async fn reoptimize(
                 .record_opportunity_history(*timeframe, &output)
                 .await
             {
-                errors.push(ReoptError {
-                    pair_id: output.cue.pair_id.clone(),
-                    timeframe: timeframe.as_str().to_string(),
-                    error: format!("opportunity history persist failed: {error}"),
-                });
+                push_reopt_error(
+                    &mut errors,
+                    output.cue.pair_id.clone(),
+                    timeframe.as_str().to_string(),
+                    "OPPORTUNITY_HISTORY_PERSIST_FAILED",
+                    format!("opportunity history persist failed: {error}"),
+                    &mut timeframe_error_counts,
+                );
             }
             let pair_spec = PairSpec {
                 left: output.cue.left_instrument.clone(),
@@ -7244,11 +8821,14 @@ async fn reoptimize(
                 compute_and_record_paper_trades_for_output(&state, &pair_spec, *timeframe, &output)
                     .await
             {
-                errors.push(ReoptError {
-                    pair_id: output.cue.pair_id.clone(),
-                    timeframe: timeframe.as_str().to_string(),
-                    error: format!("paper trade history persist failed: {error}"),
-                });
+                push_reopt_error(
+                    &mut errors,
+                    output.cue.pair_id.clone(),
+                    timeframe.as_str().to_string(),
+                    "PAPER_TRADE_HISTORY_PERSIST_FAILED",
+                    format!("paper trade history persist failed: {error}"),
+                    &mut timeframe_error_counts,
+                );
             }
             match advance_candidate_probation_for_output(&state, *timeframe, &output).await {
                 Ok(result) => {
@@ -7264,23 +8844,78 @@ async fn reoptimize(
                         }
                     }
                 }
-                Err(error) => errors.push(ReoptError {
-                    pair_id: output.cue.pair_id.clone(),
-                    timeframe: timeframe.as_str().to_string(),
-                    error: format!("candidate probation update failed: {error}"),
-                }),
+                Err(error) => {
+                    push_reopt_error(
+                        &mut errors,
+                        output.cue.pair_id.clone(),
+                        timeframe.as_str().to_string(),
+                        "CANDIDATE_PROBATION_UPDATE_FAILED",
+                        format!("candidate probation update failed: {error}"),
+                        &mut timeframe_error_counts,
+                    );
+                    timeframe_aborted = true;
+                }
             }
         }
-        let promotable_total = state
+        let promotable_total = match state
             .repository
             .count_promotable_candidates(*timeframe)
             .await
-            .unwrap_or(0);
+        {
+            Ok(value) => value,
+            Err(error) => {
+                push_reopt_error(
+                    &mut errors,
+                    "SYSTEM".to_string(),
+                    timeframe.as_str().to_string(),
+                    "PROMOTABLE_COUNT_FAILED",
+                    format!("promotable candidate count failed: {error}"),
+                    &mut timeframe_error_counts,
+                );
+                0
+            }
+        };
+        flatline_summary.healthy_pairs = flatline_summary
+            .healthy_pairs
+            .saturating_add(timeframe_flatline_summary.healthy_pairs);
+        flatline_summary.warn_pairs = flatline_summary
+            .warn_pairs
+            .saturating_add(timeframe_flatline_summary.warn_pairs);
+        flatline_summary.flatline_pairs = flatline_summary
+            .flatline_pairs
+            .saturating_add(timeframe_flatline_summary.flatline_pairs);
+        error_counts.critical = error_counts
+            .critical
+            .saturating_add(timeframe_error_counts.critical);
+        error_counts.non_critical = error_counts
+            .non_critical
+            .saturating_add(timeframe_error_counts.non_critical);
         let rejected_total: usize = candidate_probation_fail_reasons.values().sum();
+        let timeframe_status = resolve_reoptimize_status(
+            timeframe_error_counts.critical,
+            timeframe_error_counts.non_critical,
+            timeframe_flatline_summary.flatline_pairs,
+        );
+        timeframe_statuses.push(ReoptimizeTimeframeStatus {
+            timeframe: timeframe.as_str().to_string(),
+            status: timeframe_status.as_str().to_string(),
+            pairs_evaluated: timeframe_flatline_summary
+                .healthy_pairs
+                .saturating_add(timeframe_flatline_summary.warn_pairs)
+                .saturating_add(timeframe_flatline_summary.flatline_pairs),
+            critical_error_count: timeframe_error_counts.critical,
+            non_critical_error_count: timeframe_error_counts.non_critical,
+            flatline_summary: timeframe_flatline_summary.clone(),
+        });
         info!(
             timeframe = %timeframe.as_str(),
+            optimizer_cycle_status = %timeframe_status.as_str(),
             optimizer_cycle_total = 1usize,
-            optimizer_cycle_status = "manual_reoptimize",
+            optimizer_critical_error_count = timeframe_error_counts.critical,
+            optimizer_non_critical_error_count = timeframe_error_counts.non_critical,
+            signal_flatline_pairs = timeframe_flatline_summary.flatline_pairs,
+            signal_warn_pairs = timeframe_flatline_summary.warn_pairs,
+            signal_healthy_pairs = timeframe_flatline_summary.healthy_pairs,
             optimizer_candidate_promotable_total = promotable_total,
             optimizer_candidate_rejected_total = rejected_total,
             candidate_probation_pass_total,
@@ -7290,8 +8925,15 @@ async fn reoptimize(
         );
     }
 
+    let status = resolve_reoptimize_status(
+        error_counts.critical,
+        error_counts.non_critical,
+        flatline_summary.flatline_pairs,
+    );
+
     Ok(Json(ReoptimizeResponse {
         generated_at: Utc::now(),
+        status: status.as_str().to_string(),
         timeframes: requested_timeframes
             .iter()
             .map(|timeframe| timeframe.as_str().to_string())
@@ -7310,6 +8952,10 @@ async fn reoptimize(
         cost_gate_fail,
         portfolio_advice_available,
         portfolio_advice_unavailable,
+        critical_error_count: error_counts.critical,
+        non_critical_error_count: error_counts.non_critical,
+        timeframe_statuses,
+        flatline_summary,
         errors,
     }))
 }
@@ -7320,8 +8966,18 @@ async fn evaluate_pair_for_timeframe(
     timeframe: Timeframe,
     advisory_enabled: bool,
     taker_fee_bps: f64,
+    live_marks: Option<&HashMap<String, StrategyMarketMetricsResponse>>,
 ) -> anyhow::Result<PairEvaluationOutput> {
-    let lookback = state.settings.lookback_bars(timeframe) as i64;
+    let selected_signal = state
+        .repository
+        .fetch_selected_signal(&pair.pair_id(), timeframe)
+        .await?;
+    let selected_signal_config =
+        resolve_selected_signal_config(selected_signal.as_ref(), &state.settings, timeframe);
+    let lookback = selected_signal_config
+        .as_ref()
+        .map(|config| config.lookback_bars)
+        .unwrap_or_else(|| state.settings.lookback_bars(timeframe)) as i64;
     let left = state
         .repository
         .fetch_recent_closes(&pair.left, timeframe, lookback)
@@ -7331,7 +8987,47 @@ async fn evaluate_pair_for_timeframe(
         .fetch_recent_closes(&pair.right, timeframe, lookback)
         .await?;
 
-    let (timestamps, left_closes, right_closes) = align_closes(left, right);
+    let (mut timestamps, mut left_closes, mut right_closes) = align_closes(left, right);
+    let _ = maybe_apply_live_mark_override(
+        state,
+        pair,
+        timeframe,
+        &mut timestamps,
+        &mut left_closes,
+        &mut right_closes,
+        live_marks,
+        "scanner",
+    )
+    .await;
+
+    evaluate_pair_from_snapshot(
+        state,
+        pair,
+        timeframe,
+        advisory_enabled,
+        taker_fee_bps,
+        timestamps,
+        left_closes,
+        right_closes,
+        lookback as usize,
+        selected_signal_config,
+    )
+    .await
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn evaluate_pair_from_snapshot(
+    state: &AppState,
+    pair: &PairSpec,
+    timeframe: Timeframe,
+    advisory_enabled: bool,
+    taker_fee_bps: f64,
+    timestamps: Vec<DateTime<Utc>>,
+    left_closes: Vec<f64>,
+    right_closes: Vec<f64>,
+    lookback_bars: usize,
+    selected_signal_config: Option<SelectedSignalConfig>,
+) -> anyhow::Result<PairEvaluationOutput> {
     if timestamps.len() < 120 {
         return Err(anyhow::anyhow!(
             "insufficient aligned candles for pair={} timeframe={} bars={}",
@@ -7340,6 +9036,40 @@ async fn evaluate_pair_for_timeframe(
             timestamps.len()
         ));
     }
+    let latest_aligned_ts = *timestamps
+        .last()
+        .ok_or_else(|| anyhow::anyhow!("aligned timestamps unexpectedly empty"))?;
+    let data_age_seconds = compute_candle_age_seconds(Utc::now(), latest_aligned_ts);
+    let max_data_staleness_seconds = state.settings.max_data_staleness_seconds(timeframe);
+
+    let entry_band = selected_signal_config
+        .as_ref()
+        .map(|config| config.entry_band)
+        .unwrap_or(state.settings.entry_band);
+    let exit_band = selected_signal_config
+        .as_ref()
+        .map(|config| config.exit_band)
+        .unwrap_or(state.settings.exit_band);
+    let stop_band = selected_signal_config
+        .as_ref()
+        .map(|config| config.stop_band)
+        .unwrap_or(state.settings.stop_band);
+    let hold_bars = selected_signal_config
+        .as_ref()
+        .map(|config| config.hold_bars)
+        .unwrap_or_else(|| state.settings.hold_bars(timeframe));
+    let max_half_life_bars = selected_signal_config
+        .as_ref()
+        .map(|config| config.max_half_life_bars)
+        .unwrap_or_else(|| state.settings.max_half_life_bars(timeframe));
+    let train_bars = selected_signal_config
+        .as_ref()
+        .map(|config| config.train_bars)
+        .unwrap_or_else(|| state.settings.optimizer_train_bars(timeframe));
+    let validation_bars = selected_signal_config
+        .as_ref()
+        .map(|config| config.validation_bars)
+        .unwrap_or_else(|| state.settings.optimizer_validation_bars(timeframe));
 
     let mut output = evaluate_pair(PairEvaluationInput {
         pair_id: pair.pair_id(),
@@ -7349,14 +9079,18 @@ async fn evaluate_pair_for_timeframe(
         timestamps,
         left_closes,
         right_closes,
-        entry_band: state.settings.entry_band,
-        exit_band: state.settings.exit_band,
-        stop_band: state.settings.stop_band,
-        hold_bars: state.settings.hold_bars(timeframe),
-        max_half_life_bars: state.settings.max_half_life_bars(timeframe),
+        lookback_bars,
+        entry_band,
+        exit_band,
+        stop_band,
+        hold_bars,
+        max_half_life_bars,
+        train_bars,
+        validation_bars,
         funding_drag_bps: state.settings.funding_drag_bps,
         taker_fee_bps,
         min_samples_target: state.settings.min_samples_target,
+        selected_signal_config,
     })?;
 
     let training_rows = match state
@@ -7508,7 +9242,21 @@ async fn evaluate_pair_for_timeframe(
         ]);
     }
     refresh_setup_gate(&mut output.cue);
+    apply_data_freshness_gate(
+        &mut output.cue,
+        data_age_seconds,
+        max_data_staleness_seconds,
+    );
     finalize_trade_gate(&mut output.cue);
+    if data_age_seconds > max_data_staleness_seconds {
+        tracing::warn!(
+            pair_id = %output.cue.pair_id,
+            timeframe = %timeframe.as_str(),
+            data_age_seconds,
+            max_data_staleness_seconds,
+            "strategy cue forced to WAIT due stale candles"
+        );
+    }
 
     Ok(output)
 }
@@ -7670,6 +9418,37 @@ fn is_cost_reason(code: &str) -> bool {
     )
 }
 
+fn compute_candle_age_seconds(now: DateTime<Utc>, latest_ts: DateTime<Utc>) -> i64 {
+    now.signed_duration_since(latest_ts).num_seconds().max(0)
+}
+
+fn apply_data_freshness_gate(
+    cue: &mut PairCue,
+    data_age_seconds: i64,
+    max_data_staleness_seconds: i64,
+) {
+    if data_age_seconds <= max_data_staleness_seconds {
+        return;
+    }
+    cue.setup_actionable = false;
+    cue.actionable = false;
+    if !cue.rationale_codes.iter().any(|code| code == "DATA_STALE") {
+        cue.rationale_codes.push("DATA_STALE".to_string());
+    }
+    if !cue
+        .setup_gate
+        .rationale_codes
+        .iter()
+        .any(|code| code == "DATA_STALE")
+    {
+        cue.setup_gate
+            .rationale_codes
+            .push("DATA_STALE".to_string());
+    }
+    cue.setup_gate.status = "WAIT".to_string();
+    cue.setup_gate.pass = false;
+}
+
 fn refresh_setup_gate(cue: &mut PairCue) {
     let mut setup_reasons = cue
         .rationale_codes
@@ -7732,15 +9511,34 @@ async fn evaluate_timeframe_outputs(
 ) -> (Vec<PairEvaluationOutput>, Vec<SkippedPair>, PortfolioPlan) {
     let mut outputs = vec![];
     let mut skipped = vec![];
+    let mut handles = Vec::with_capacity(state.settings.pairs.len());
+    for pair in state.settings.pairs.clone() {
+        let app_state = state.clone();
+        handles.push(tokio::spawn(async move {
+            let pair_id = pair.pair_id();
+            let result = evaluate_pair_for_timeframe(
+                &app_state,
+                &pair,
+                timeframe,
+                advisory_enabled,
+                taker_fee_bps,
+                None,
+            )
+            .await;
+            (pair_id, result)
+        }));
+    }
 
-    for pair in &state.settings.pairs {
-        match evaluate_pair_for_timeframe(state, pair, timeframe, advisory_enabled, taker_fee_bps)
-            .await
-        {
-            Ok(output) => outputs.push(output),
-            Err(error) => skipped.push(SkippedPair {
-                pair_id: pair.pair_id(),
+    for handle in handles {
+        match handle.await {
+            Ok((_, Ok(output))) => outputs.push(output),
+            Ok((pair_id, Err(error))) => skipped.push(SkippedPair {
+                pair_id,
                 reason: error.to_string(),
+            }),
+            Err(error) => skipped.push(SkippedPair {
+                pair_id: "SYSTEM".to_string(),
+                reason: format!("pair evaluation task join failed: {error}"),
             }),
         }
     }
@@ -7756,7 +9554,7 @@ async fn evaluate_timeframe_outputs(
             state.settings.advisory_per_pair_cap,
         );
         apply_portfolio_plan_to_cues(&mut cue_snapshot, &plan);
-        for (output, cue) in outputs.iter_mut().zip(cue_snapshot.into_iter()) {
+        for (output, cue) in outputs.iter_mut().zip(cue_snapshot) {
             output.cue = cue;
         }
         plan
@@ -7888,35 +9686,83 @@ fn parse_env_bool(key: &str, default: bool) -> bool {
 #[cfg(test)]
 mod tests {
     use super::{
-        artifact_download_path, bootstrap_deviation_exceeds_threshold, bootstrap_snapshot_is_fresh,
-        canonical_metric_instrument, classify_expectancy_result, compute_expectancy_metrics,
-        compute_pair_funding_bps_per_event, compute_pair_slippage_sample_bps,
-        compute_walk_forward_summary, days_covered, decide_candidate_probation_transition,
-        decide_champion_transition, derive_paper_trades_from_series,
-        derive_replay_trades_from_series, estimate_research_combinations,
-        evaluate_recent_performance_gate, expectancy_objective_score,
-        expected_funding_events_crossed, finalize_trade_gate, normalize_funding_rate,
-        parse_backtest_exit_mode, parse_candidate_inbox_query, parse_expectancy_query,
-        parse_opportunity_history_stats_timeframe, parse_opportunity_history_window,
-        parse_paper_trades_window, parse_replay_trades_query, percentile,
-        project_continuous_funding_bps, refresh_setup_gate, resolve_artifact_path,
-        resolve_taker_fee_bps, summarize_recent_performance, CandidateInboxQuery,
+        apply_data_freshness_gate, apply_live_mark_override_to_snapshot, artifact_download_path,
+        bootstrap_deviation_exceeds_threshold, bootstrap_snapshot_is_fresh, build_trade_now_row,
+        canonical_metric_instrument, classify_expectancy_result, classify_reopt_error_severity,
+        compute_candle_age_seconds, compute_expectancy_metrics, compute_pair_funding_bps_per_event,
+        compute_pair_slippage_sample_bps, compute_walk_forward_summary, days_covered,
+        decide_candidate_probation_transition, decide_champion_transition,
+        derive_paper_trades_from_series, derive_replay_trades_from_series,
+        estimate_research_combinations, evaluate_recent_performance_gate,
+        expectancy_objective_score, expected_funding_events_crossed, fetch_open_live_trade_pairs,
+        finalize_trade_gate, group_trade_now_rows, load_latest_learning_overlay,
+        normalize_funding_rate, parse_backtest_exit_mode, parse_candidate_inbox_query,
+        parse_expectancy_query, parse_opportunity_history_stats_timeframe,
+        parse_opportunity_history_window, parse_paper_trades_window, parse_replay_trades_query,
+        parse_trade_now_query, percentile, project_continuous_funding_bps, refresh_setup_gate,
+        resolve_artifact_path, resolve_learning_overlay_policy, resolve_reoptimize_status,
+        resolve_selected_signal_config, resolve_taker_fee_bps,
+        selected_signal_config_from_expectancy, summarize_recent_performance, CandidateInboxQuery,
         CandidateLifecycleState, CandidateOperatorAction, CandidateProbationInputs,
-        ChampionDecision, ExpectancyMetrics, ExpectancyQuery, FundingCostEstimate,
-        FundingRateInputMode, MaintenanceAction, OpportunityHistoryQuery,
-        OpportunityHistoryStatsQuery, PaperTradesQuery, ReplayTradeEntry, ReplayTradePathSummary,
+        CandidateProbationRow, ChampionDecision, ExpectancyConfig, ExpectancyMetrics,
+        ExpectancyQuery, FundingCostEstimate, FundingRateInputMode, LearningOverlayApprovalSource,
+        LearningOverlayBlockedReason, LearningOverlayEntry, LearningOverlaySnapshot,
+        LearningOverlayUniverseBucket, LearningOverlayWatchReason, LearningRecommendation,
+        MaintenanceAction, OpportunityHistoryQuery, OpportunityHistoryStatsQuery, PaperTradesQuery,
+        ReoptErrorSeverity, ReoptimizeRunStatus, ReplayTradeEntry, ReplayTradePathSummary,
         ReplayTradesQuery, ResearchSweepRequest, SampledSlippageStatus, SelectedSignalRow,
-        StrategyMarketMetricsResponse, StrategySettings,
+        StrategyMarketMetricsResponse, StrategySettings, TradeNowObservabilityStore, TradeNowQuery,
+        LEARNING_OVERLAY_TTL_SECS, SELECTED_CONFIG_SOURCE_LEGACY_FALLBACK,
+        SELECTED_CONFIG_SOURCE_OPERATOR_PROMOTION,
     };
-    use chrono::Utc;
+    use axum::{routing::get, Json, Router};
+    use chrono::{Duration, Utc};
     use common_types::Timeframe;
+    use jsonschema::{Draft, JSONSchema};
+    use std::collections::HashMap;
     use std::fs;
     use std::path::PathBuf;
     use strategy_service::{
         BacktestExitMode, BacktestMarker, BacktestPoint, BacktestSeries, CostGateDiagnostics,
-        FundingModel, PairCue, PairEvaluationOutput, PortfolioHint, SetupGateDiagnostics,
-        ShadowMlDiagnostics, TradeGateDiagnostics, VariantEvaluation,
+        FundingModel, PairCue, PairEvaluationOutput, PortfolioHint, SelectedSignalConfig,
+        SetupGateDiagnostics, ShadowMlDiagnostics, SignalFlatlineDiagnostics, TradeGateDiagnostics,
+        VariantEvaluation,
     };
+    use tokio::net::TcpListener;
+
+    fn selected_signal_config(variant: &str) -> SelectedSignalConfig {
+        SelectedSignalConfig {
+            variant: variant.to_string(),
+            entry_band: 1.8,
+            exit_band: 0.6,
+            stop_band: 3.2,
+            lookback_bars: 520,
+            hold_bars: 20,
+            max_half_life_bars: 120.0,
+            train_bars: 64_800,
+            validation_bars: 30_240,
+            source: "TEST".to_string(),
+            updated_at: Utc::now(),
+        }
+    }
+
+    fn market_metric(
+        instrument: &str,
+        mark: f64,
+        server_time: chrono::DateTime<Utc>,
+    ) -> StrategyMarketMetricsResponse {
+        StrategyMarketMetricsResponse {
+            instrument: instrument.to_string(),
+            server_time,
+            bid: mark,
+            ask: mark,
+            mark,
+            index: mark,
+            change_24h_pct: 0.0,
+            funding_rate: 0.0,
+            open_interest: 0.0,
+        }
+    }
 
     fn output(
         selected_variant: &str,
@@ -7949,6 +9795,7 @@ mod tests {
                 trade_gate: TradeGateDiagnostics::unavailable(vec![]),
                 portfolio_hint: PortfolioHint::unavailable(vec![]),
                 shadow_ml: ShadowMlDiagnostics::unavailable(vec![]),
+                selected_signal_config: selected_signal_config(selected_variant),
                 evaluated_at: Utc::now(),
             },
             variants: vec![
@@ -7983,13 +9830,129 @@ mod tests {
             hedge_ratio: 1.0,
             hedge_ratio_stability: 0.1,
             spread_vol_bps: 2.0,
+            flatline_diagnostics: SignalFlatlineDiagnostics {
+                status: "HEALTHY".to_string(),
+                window_bars: 720,
+                z_stddev: 1.0,
+                z_p95_minus_p5: 2.0,
+                zero_crossings: 3,
+                entry_band_crossings: 1,
+                max_abs_z: 2.1,
+                rationale_codes: vec![],
+            },
         }
+    }
+
+    fn candidate_config(variant: &str) -> ExpectancyConfig {
+        ExpectancyConfig {
+            entry_z: 2.0,
+            exit_z: 0.5,
+            stop_z: 3.2,
+            z_method: variant.to_string(),
+            hedge_method: "HEDGE_RATIO_OLS".to_string(),
+            lookback_bars: 440,
+            train_bars: 2_200,
+            validation_bars: 880,
+        }
+    }
+
+    fn candidate_probation_row(state: CandidateLifecycleState) -> CandidateProbationRow {
+        CandidateProbationRow {
+            pair_id: "PF_DOGEUSD__PF_PEPEUSD".to_string(),
+            timeframe: Timeframe::FifteenMinutes,
+            candidate_id: "cand-1".to_string(),
+            candidate_variant: "ROBUST_Z".to_string(),
+            candidate_config: candidate_config("ROBUST_Z"),
+            objective_score: 1.8,
+            state,
+            eligible_after: Utc::now(),
+            probation_samples: 10,
+            promotable: state == CandidateLifecycleState::PromotionReady,
+            last_candidate_score: 1.8,
+            last_champion_score: 1.2,
+            last_objective_delta: 0.6,
+        }
+    }
+
+    fn overlay_snapshot(fresh: bool) -> LearningOverlaySnapshot {
+        LearningOverlaySnapshot {
+            generated_at: Some(Utc::now()),
+            age_seconds: Some(if fresh { 60.0 } else { 90_000.0 }),
+            fresh,
+            ttl_seconds: LEARNING_OVERLAY_TTL_SECS,
+            entries: HashMap::new(),
+        }
+    }
+
+    fn overlay_entry(
+        pair_id: &str,
+        timeframe: Timeframe,
+        recommendation: LearningRecommendation,
+        trade_eligible: bool,
+        selection_selected: bool,
+    ) -> LearningOverlayEntry {
+        LearningOverlayEntry {
+            pair_id: pair_id.to_string(),
+            timeframe,
+            recommendation,
+            trade_eligible,
+            selection_selected,
+            learning_reason_codes: vec!["TEST_REASON".to_string()],
+        }
+    }
+
+    fn trade_now_ready_cue(pair_id: &str, timeframe: Timeframe, source: &str) -> PairCue {
+        let mut cue = output("ROBUST_Z", 8.5, 8.5, 7.1).cue;
+        cue.pair_id = pair_id.to_string();
+        cue.timeframe = timeframe.as_str().to_string();
+        cue.direction_hint = "LONG_SPREAD".to_string();
+        cue.spread_z = -2.2;
+        cue.setup_actionable = true;
+        cue.actionable = true;
+        cue.setup_gate = SetupGateDiagnostics {
+            status: "AVAILABLE".to_string(),
+            pass: true,
+            rationale_codes: vec![],
+        };
+        cue.cost_gate = CostGateDiagnostics {
+            status: "AVAILABLE".to_string(),
+            expected_edge_bps: 15.0,
+            fee_bps: 1.2,
+            funding_model: FundingModel::Static.as_str().to_string(),
+            funding_events: 0,
+            funding_bps_per_event: 0.0,
+            funding_bps: 0.0,
+            slippage_bps: 0.5,
+            net_edge_bps: 13.3,
+            pass: true,
+            rationale_codes: vec![],
+        };
+        cue.trade_gate = TradeGateDiagnostics {
+            status: "AVAILABLE".to_string(),
+            pass: true,
+            blocked_by: "NONE".to_string(),
+            rationale_codes: vec![],
+        };
+        cue.portfolio_hint = PortfolioHint {
+            status: "AVAILABLE".to_string(),
+            target_weight: 0.33,
+            risk_contribution: 0.27,
+            cap_applied: false,
+            rationale_codes: vec![],
+        };
+        cue.selected_signal_config.source = source.to_string();
+        cue
+    }
+
+    fn trade_now_schema_path() -> PathBuf {
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../specs/contracts/strategy_pairs_trade_now_response.schema.json")
     }
 
     #[test]
     fn champion_transition_initializes_when_no_previous_selection() {
         let evaluation = output("VOL_NORMALIZED", 2.0, 1.0, 2.0);
-        let transition = decide_champion_transition(None, &evaluation, 0.25);
+        let transition = decide_champion_transition(None, None, &evaluation, 0.25, 0.15, 900);
         assert_eq!(transition.decision, ChampionDecision::Initialize);
         assert_eq!(transition.selected_variant, "VOL_NORMALIZED");
     }
@@ -7999,9 +9962,18 @@ mod tests {
         let existing = SelectedSignalRow {
             signal_variant: "ROBUST_Z".to_string(),
             opportunity_score: 1.0,
+            updated_at: Utc::now(),
+            config_json: None,
         };
         let evaluation = output("VOL_NORMALIZED", 2.0, 1.0, 2.0);
-        let transition = decide_champion_transition(Some(&existing), &evaluation, 0.25);
+        let transition = decide_champion_transition(
+            Some(&existing),
+            Some(&selected_signal_config("ROBUST_Z")),
+            &evaluation,
+            0.25,
+            0.15,
+            900,
+        );
         assert_eq!(transition.decision, ChampionDecision::PromoteChallenger);
         assert_eq!(transition.selected_variant, "VOL_NORMALIZED");
         assert!((transition.score_delta - 1.0).abs() < 1e-9);
@@ -8012,12 +9984,1041 @@ mod tests {
         let existing = SelectedSignalRow {
             signal_variant: "ROBUST_Z".to_string(),
             opportunity_score: 1.0,
+            updated_at: Utc::now(),
+            config_json: None,
         };
         let evaluation = output("VOL_NORMALIZED", 1.1, 1.0, 1.1);
-        let transition = decide_champion_transition(Some(&existing), &evaluation, 0.25);
+        let transition = decide_champion_transition(
+            Some(&existing),
+            Some(&selected_signal_config("ROBUST_Z")),
+            &evaluation,
+            0.25,
+            0.15,
+            900,
+        );
         assert_eq!(transition.decision, ChampionDecision::KeepChampion);
         assert_eq!(transition.selected_variant, "ROBUST_Z");
         assert!(transition.score_delta < 0.25);
+    }
+
+    #[test]
+    fn champion_transition_hysteresis_locks_during_cooldown() {
+        let existing = SelectedSignalRow {
+            signal_variant: "ROBUST_Z".to_string(),
+            opportunity_score: 1.0,
+            updated_at: Utc::now(),
+            config_json: None,
+        };
+        let evaluation = output("VOL_NORMALIZED", 1.30, 1.0, 1.30);
+        let transition = decide_champion_transition(
+            Some(&existing),
+            Some(&selected_signal_config("ROBUST_Z")),
+            &evaluation,
+            0.25,
+            0.20,
+            3_600,
+        );
+        assert_eq!(transition.decision, ChampionDecision::KeepChampion);
+        assert_eq!(transition.selected_variant, "ROBUST_Z");
+        assert!((transition.score_delta - 0.30).abs() < 1e-9);
+    }
+
+    #[test]
+    fn champion_transition_promotes_after_cooldown_when_delta_exceeds_base() {
+        let existing = SelectedSignalRow {
+            signal_variant: "ROBUST_Z".to_string(),
+            opportunity_score: 1.0,
+            updated_at: Utc::now() - Duration::hours(2),
+            config_json: None,
+        };
+        let evaluation = output("VOL_NORMALIZED", 1.30, 1.0, 1.30);
+        let transition = decide_champion_transition(
+            Some(&existing),
+            Some(&selected_signal_config("ROBUST_Z")),
+            &evaluation,
+            0.25,
+            0.20,
+            3_600,
+        );
+        assert_eq!(transition.decision, ChampionDecision::PromoteChallenger);
+        assert_eq!(transition.selected_variant, "VOL_NORMALIZED");
+        assert!((transition.score_delta - 0.30).abs() < 1e-9);
+    }
+
+    #[test]
+    fn champion_transition_keeps_persisted_config_on_lock() {
+        let settings = StrategySettings::from_env();
+        let updated_at = Utc::now();
+        let mut persisted = selected_signal_config("ROBUST_Z");
+        persisted.entry_band = 2.35;
+        persisted.exit_band = 0.55;
+        persisted.stop_band = 3.9;
+        persisted.lookback_bars = 880;
+        persisted.source = "AUTO_CHAMPION".to_string();
+        persisted.updated_at = updated_at;
+        let existing = SelectedSignalRow {
+            signal_variant: "ROBUST_Z".to_string(),
+            opportunity_score: 1.0,
+            updated_at,
+            config_json: Some(serde_json::to_string(&persisted).expect("persisted config")),
+        };
+        let existing_config =
+            resolve_selected_signal_config(Some(&existing), &settings, Timeframe::OneMinute)
+                .expect("resolved selected config");
+        let evaluation = output("VOL_NORMALIZED", 1.1, 1.0, 1.1);
+        let transition = decide_champion_transition(
+            Some(&existing),
+            Some(&existing_config),
+            &evaluation,
+            0.25,
+            0.15,
+            900,
+        );
+        assert_eq!(transition.decision, ChampionDecision::KeepChampion);
+        assert_eq!(transition.selected_variant, "ROBUST_Z");
+        assert!((transition.selected_config.entry_band - 2.35).abs() < 1e-9);
+        assert_eq!(transition.selected_config.lookback_bars, 880);
+        assert_eq!(transition.selected_config.source, "AUTO_CHAMPION");
+    }
+
+    #[test]
+    fn selected_signal_config_from_expectancy_uses_candidate_windows() {
+        let settings = StrategySettings::from_env();
+        let config = ExpectancyConfig {
+            entry_z: 2.1,
+            exit_z: 0.4,
+            stop_z: 3.6,
+            z_method: "VOL_NORMALIZED".to_string(),
+            hedge_method: "HEDGE_RATIO_OLS".to_string(),
+            lookback_bars: 440,
+            train_bars: 2_200,
+            validation_bars: 880,
+        };
+        let updated_at = Utc::now();
+        let selected = selected_signal_config_from_expectancy(
+            &config,
+            &settings,
+            Timeframe::OneMinute,
+            SELECTED_CONFIG_SOURCE_OPERATOR_PROMOTION,
+            updated_at,
+        );
+        assert_eq!(selected.variant, "VOL_NORMALIZED");
+        assert_eq!(selected.entry_band, 2.1);
+        assert_eq!(selected.lookback_bars, 440);
+        assert_eq!(selected.train_bars, 2_200);
+        assert_eq!(selected.validation_bars, 880);
+        assert_eq!(selected.hold_bars, settings.hold_bars(Timeframe::OneMinute));
+        assert_eq!(selected.source, SELECTED_CONFIG_SOURCE_OPERATOR_PROMOTION);
+    }
+
+    #[test]
+    fn resolve_selected_signal_config_falls_back_for_legacy_rows() {
+        let settings = StrategySettings::from_env();
+        let updated_at = Utc::now();
+        let row = SelectedSignalRow {
+            signal_variant: "ROBUST_Z".to_string(),
+            opportunity_score: 1.5,
+            updated_at,
+            config_json: None,
+        };
+        let selected = resolve_selected_signal_config(Some(&row), &settings, Timeframe::OneHour)
+            .expect("legacy fallback config");
+        assert_eq!(selected.variant, "ROBUST_Z");
+        assert_eq!(selected.entry_band, settings.entry_band);
+        assert_eq!(
+            selected.lookback_bars,
+            settings.lookback_bars(Timeframe::OneHour)
+        );
+        assert_eq!(selected.source, SELECTED_CONFIG_SOURCE_LEGACY_FALLBACK);
+        assert_eq!(selected.updated_at, updated_at);
+    }
+
+    #[test]
+    fn resolve_selected_signal_config_prefers_serialized_config() {
+        let settings = StrategySettings::from_env();
+        let updated_at = Utc::now();
+        let config = SelectedSignalConfig {
+            variant: "COINTEGRATION_Z".to_string(),
+            entry_band: 2.2,
+            exit_band: 0.5,
+            stop_band: 3.8,
+            lookback_bars: 660,
+            hold_bars: 14,
+            max_half_life_bars: 80.0,
+            train_bars: 2_640,
+            validation_bars: 960,
+            source: "AUTO_CHAMPION".to_string(),
+            updated_at,
+        };
+        let row = SelectedSignalRow {
+            signal_variant: "ROBUST_Z".to_string(),
+            opportunity_score: 2.5,
+            updated_at,
+            config_json: Some(serde_json::to_string(&config).expect("config json")),
+        };
+        let selected =
+            resolve_selected_signal_config(Some(&row), &settings, Timeframe::FifteenMinutes)
+                .expect("selected config");
+        assert_eq!(selected.variant, "COINTEGRATION_Z");
+        assert_eq!(selected.entry_band, 2.2);
+        assert_eq!(selected.lookback_bars, 660);
+        assert_eq!(selected.hold_bars, 14);
+        assert_eq!(selected.source, "AUTO_CHAMPION");
+    }
+
+    #[test]
+    fn learning_overlay_loader_reads_latest_artifact_rows() {
+        let root = temp_dir("learning-overlay-loader");
+        let artifact = serde_json::json!({
+            "generated_at": "2026-04-17T02:06:50Z",
+            "timeframe_reports": [
+                {
+                    "timeframe": "15m",
+                    "pairs": [
+                        {
+                            "pair_id": "PF_XBTUSD__PF_AVAXUSD",
+                            "timeframe": "15m",
+                            "recommendation": "PROMOTE",
+                            "trade_eligible": true,
+                            "selection_selected": true,
+                            "reason_codes": ["POSITIVE_STABILITY_CONFIRMED"],
+                            "arbitration_reason_codes": ["PAIR_CROSS_TF_CONSENSUS_NOT_MET"],
+                            "hard_veto_active": false,
+                            "hard_veto_reason": null
+                        }
+                    ]
+                }
+            ]
+        });
+        let path = root.join("2026-04-17T02-06-50Z-signal-learning-cycle.json");
+        fs::write(
+            &path,
+            serde_json::to_vec(&artifact).expect("serialize overlay artifact"),
+        )
+        .expect("write overlay artifact");
+
+        let snapshot = load_latest_learning_overlay(
+            &root,
+            chrono::DateTime::parse_from_rfc3339("2026-04-17T03:06:50Z")
+                .expect("parse now")
+                .with_timezone(&Utc),
+            LEARNING_OVERLAY_TTL_SECS,
+        )
+        .expect("load overlay snapshot");
+
+        assert!(snapshot.fresh);
+        assert_eq!(snapshot.ttl_seconds, LEARNING_OVERLAY_TTL_SECS);
+        let entry = snapshot
+            .get("PF_XBTUSD__PF_AVAXUSD", Timeframe::FifteenMinutes)
+            .expect("overlay entry");
+        assert_eq!(entry.recommendation, LearningRecommendation::Promote);
+        assert!(entry.trade_eligible);
+        assert!(entry.selection_selected);
+        assert_eq!(
+            entry.learning_reason_codes,
+            vec![
+                "POSITIVE_STABILITY_CONFIRMED".to_string(),
+                "PAIR_CROSS_TF_CONSENSUS_NOT_MET".to_string()
+            ]
+        );
+
+        fs::remove_dir_all(&root).expect("cleanup root");
+    }
+
+    #[test]
+    fn learning_overlay_loader_prefers_generated_at_over_mtime() {
+        let root = temp_dir("learning-overlay-ordering");
+        let newer_generated = serde_json::json!({
+            "generated_at": "2026-04-17T03:06:50Z",
+            "timeframe_reports": [
+                {
+                    "timeframe": "15m",
+                    "pairs": [
+                        {
+                            "pair_id": "PF_SOLUSD__PF_AVAXUSD",
+                            "timeframe": "15m",
+                            "recommendation": "PROMOTE",
+                            "trade_eligible": true,
+                            "selection_selected": true,
+                            "reason_codes": ["NEWER_GENERATED_AT"],
+                            "arbitration_reason_codes": [],
+                            "hard_veto_active": false,
+                            "hard_veto_reason": null
+                        }
+                    ]
+                }
+            ]
+        });
+        let older_generated = serde_json::json!({
+            "generated_at": "2026-04-17T02:06:50Z",
+            "timeframe_reports": [
+                {
+                    "timeframe": "15m",
+                    "pairs": [
+                        {
+                            "pair_id": "PF_XBTUSD__PF_ETHUSD",
+                            "timeframe": "15m",
+                            "recommendation": "HOLD",
+                            "trade_eligible": false,
+                            "selection_selected": false,
+                            "reason_codes": ["OLDER_GENERATED_AT"],
+                            "arbitration_reason_codes": [],
+                            "hard_veto_active": false,
+                            "hard_veto_reason": null
+                        }
+                    ]
+                }
+            ]
+        });
+        fs::write(
+            root.join("newer-generated-signal-learning-cycle.json"),
+            serde_json::to_vec(&newer_generated).expect("serialize newer artifact"),
+        )
+        .expect("write newer artifact");
+        std::thread::sleep(std::time::Duration::from_secs(1));
+        fs::write(
+            root.join("older-generated-signal-learning-cycle.json"),
+            serde_json::to_vec(&older_generated).expect("serialize older artifact"),
+        )
+        .expect("write older artifact");
+
+        let snapshot = load_latest_learning_overlay(
+            &root,
+            chrono::DateTime::parse_from_rfc3339("2026-04-17T04:06:50Z")
+                .expect("parse now")
+                .with_timezone(&Utc),
+            LEARNING_OVERLAY_TTL_SECS,
+        )
+        .expect("load overlay snapshot");
+
+        let entry = snapshot
+            .get("PF_SOLUSD__PF_AVAXUSD", Timeframe::FifteenMinutes)
+            .expect("entry from newer generated_at artifact");
+        assert_eq!(
+            entry.learning_reason_codes,
+            vec!["NEWER_GENERATED_AT".to_string()]
+        );
+        assert!(snapshot
+            .get("PF_XBTUSD__PF_ETHUSD", Timeframe::FifteenMinutes)
+            .is_none());
+
+        fs::remove_dir_all(&root).expect("cleanup root");
+    }
+
+    #[test]
+    fn learning_overlay_policy_keeps_selected_rows_in_trade_now_when_fresh() {
+        let entry = overlay_entry(
+            "PF_XBTUSD__PF_AVAXUSD",
+            Timeframe::FifteenMinutes,
+            LearningRecommendation::Promote,
+            true,
+            true,
+        );
+        let decision = resolve_learning_overlay_policy(
+            Some(&entry),
+            &overlay_snapshot(true),
+            "AUTO_CHAMPION",
+            None,
+        );
+
+        assert_eq!(
+            decision.approval_source,
+            LearningOverlayApprovalSource::LearningSelection
+        );
+        assert_eq!(decision.bucket, LearningOverlayUniverseBucket::TradeNow);
+        assert!(decision.requires_fresh_overlay);
+        assert_eq!(decision.blocked_reason, None);
+        assert_eq!(decision.watch_reason, None);
+        assert_eq!(decision.learning_selection_selected, Some(true));
+    }
+
+    #[test]
+    fn learning_overlay_policy_splits_trade_eligible_non_selected_rows_into_watchlist() {
+        let entry = overlay_entry(
+            "PF_SOLUSD__PF_AVAXUSD",
+            Timeframe::OneHour,
+            LearningRecommendation::Promote,
+            true,
+            false,
+        );
+        let decision = resolve_learning_overlay_policy(
+            Some(&entry),
+            &overlay_snapshot(true),
+            "AUTO_CHAMPION",
+            None,
+        );
+
+        assert_eq!(
+            decision.approval_source,
+            LearningOverlayApprovalSource::None
+        );
+        assert_eq!(decision.bucket, LearningOverlayUniverseBucket::Watchlist);
+        assert!(!decision.requires_fresh_overlay);
+        assert_eq!(
+            decision.watch_reason,
+            Some(LearningOverlayWatchReason::LearningEligibleNotSelected)
+        );
+    }
+
+    #[test]
+    fn learning_overlay_policy_downgrades_selected_rows_when_overlay_is_stale() {
+        let entry = overlay_entry(
+            "PF_XBTUSD__PF_AVAXUSD",
+            Timeframe::FifteenMinutes,
+            LearningRecommendation::Promote,
+            true,
+            true,
+        );
+        let decision = resolve_learning_overlay_policy(
+            Some(&entry),
+            &overlay_snapshot(false),
+            "AUTO_CHAMPION",
+            None,
+        );
+
+        assert_eq!(
+            decision.approval_source,
+            LearningOverlayApprovalSource::LearningSelection
+        );
+        assert_eq!(decision.bucket, LearningOverlayUniverseBucket::Watchlist);
+        assert!(decision.requires_fresh_overlay);
+        assert_eq!(
+            decision.watch_reason,
+            Some(LearningOverlayWatchReason::LearningOverlayStale)
+        );
+    }
+
+    #[test]
+    fn learning_overlay_policy_allows_operator_promoted_rows_when_overlay_is_stale() {
+        let entry = overlay_entry(
+            "PF_SOLUSD__PF_AVAXUSD",
+            Timeframe::FifteenMinutes,
+            LearningRecommendation::Hold,
+            false,
+            false,
+        );
+        let decision = resolve_learning_overlay_policy(
+            Some(&entry),
+            &overlay_snapshot(false),
+            SELECTED_CONFIG_SOURCE_OPERATOR_PROMOTION,
+            None,
+        );
+
+        assert_eq!(
+            decision.approval_source,
+            LearningOverlayApprovalSource::OperatorPromotedActiveChampion
+        );
+        assert_eq!(decision.bucket, LearningOverlayUniverseBucket::TradeNow);
+        assert!(!decision.requires_fresh_overlay);
+        assert_eq!(decision.blocked_reason, None);
+        assert_eq!(decision.watch_reason, None);
+    }
+
+    #[test]
+    fn learning_overlay_policy_allows_operator_promoted_rows_against_fresh_learning_hold() {
+        let entry = overlay_entry(
+            "PF_SOLUSD__PF_AVAXUSD",
+            Timeframe::FifteenMinutes,
+            LearningRecommendation::Hold,
+            false,
+            false,
+        );
+        let decision = resolve_learning_overlay_policy(
+            Some(&entry),
+            &overlay_snapshot(true),
+            SELECTED_CONFIG_SOURCE_OPERATOR_PROMOTION,
+            None,
+        );
+
+        assert_eq!(
+            decision.approval_source,
+            LearningOverlayApprovalSource::OperatorPromotedActiveChampion
+        );
+        assert_eq!(decision.bucket, LearningOverlayUniverseBucket::TradeNow);
+        assert!(!decision.requires_fresh_overlay);
+        assert_eq!(
+            decision.learning_recommendation,
+            Some(LearningRecommendation::Hold)
+        );
+    }
+
+    #[test]
+    fn learning_overlay_policy_blocks_pending_challengers_from_bypassing_governance() {
+        let entry = overlay_entry(
+            "PF_DOGEUSD__PF_PEPEUSD",
+            Timeframe::FifteenMinutes,
+            LearningRecommendation::Promote,
+            true,
+            true,
+        );
+        let decision = resolve_learning_overlay_policy(
+            Some(&entry),
+            &overlay_snapshot(true),
+            "AUTO_CHAMPION",
+            Some(&candidate_probation_row(
+                CandidateLifecycleState::PromotionReady,
+            )),
+        );
+
+        assert_eq!(
+            decision.approval_source,
+            LearningOverlayApprovalSource::None
+        );
+        assert_eq!(decision.bucket, LearningOverlayUniverseBucket::Excluded);
+        assert!(!decision.requires_fresh_overlay);
+        assert_eq!(
+            decision.blocked_reason,
+            Some(LearningOverlayBlockedReason::PendingChallengerRequiresPromotion)
+        );
+        assert_eq!(decision.learning_selection_selected, Some(true));
+    }
+
+    #[test]
+    fn learning_overlay_policy_excludes_legacy_fallback_rows() {
+        let entry = overlay_entry(
+            "PF_XBTUSD__PF_ETHUSD",
+            Timeframe::OneMinute,
+            LearningRecommendation::Hold,
+            false,
+            false,
+        );
+        let decision = resolve_learning_overlay_policy(
+            Some(&entry),
+            &overlay_snapshot(true),
+            SELECTED_CONFIG_SOURCE_LEGACY_FALLBACK,
+            None,
+        );
+
+        assert_eq!(
+            decision.approval_source,
+            LearningOverlayApprovalSource::None
+        );
+        assert_eq!(decision.bucket, LearningOverlayUniverseBucket::Excluded);
+        assert_eq!(
+            decision.blocked_reason,
+            Some(LearningOverlayBlockedReason::LegacyFallbackActive)
+        );
+    }
+
+    #[test]
+    fn trade_now_query_uses_defaults() {
+        let settings = StrategySettings::from_env();
+        let query = TradeNowQuery {
+            timeframe: None,
+            include_advisory: None,
+            taker_fee_bps: None,
+        };
+
+        let (timeframe, include_advisory, taker_fee_bps) =
+            parse_trade_now_query(&query, settings.advisory_enabled, settings.trading_fee_bps)
+                .expect("parse trade-now query");
+
+        assert!(timeframe.is_none());
+        assert_eq!(include_advisory, settings.advisory_enabled);
+        assert!((taker_fee_bps - settings.trading_fee_bps).abs() < 1e-9);
+    }
+
+    #[test]
+    fn trade_now_row_marks_fresh_learning_selection_as_tradable_when_live_ready() {
+        let cue = trade_now_ready_cue(
+            "PF_XBTUSD__PF_AVAXUSD",
+            Timeframe::FifteenMinutes,
+            "AUTO_CHAMPION",
+        );
+        let snapshot = overlay_snapshot(true);
+        let entry = overlay_entry(
+            "PF_XBTUSD__PF_AVAXUSD",
+            Timeframe::FifteenMinutes,
+            LearningRecommendation::Promote,
+            true,
+            true,
+        );
+        let policy =
+            resolve_learning_overlay_policy(Some(&entry), &snapshot, "AUTO_CHAMPION", None);
+        let row = build_trade_now_row(&cue, &snapshot, &policy, false);
+
+        assert_eq!(row.decision_bucket, "TRADE_NOW");
+        assert_eq!(
+            row.decision_reason_code,
+            "LEARNING_SELECTED_AND_LIVE_GATES_PASS"
+        );
+        assert_eq!(row.approval_source, "LEARNING_SELECTION");
+        assert!(row.trade_gate_pass);
+    }
+
+    #[test]
+    fn trade_now_row_downgrades_learning_selection_when_live_gate_waits() {
+        let mut cue = trade_now_ready_cue(
+            "PF_XBTUSD__PF_AVAXUSD",
+            Timeframe::FifteenMinutes,
+            "AUTO_CHAMPION",
+        );
+        cue.trade_gate.status = "WAIT".to_string();
+        cue.trade_gate.pass = false;
+        let snapshot = overlay_snapshot(true);
+        let entry = overlay_entry(
+            "PF_XBTUSD__PF_AVAXUSD",
+            Timeframe::FifteenMinutes,
+            LearningRecommendation::Promote,
+            true,
+            true,
+        );
+        let policy =
+            resolve_learning_overlay_policy(Some(&entry), &snapshot, "AUTO_CHAMPION", None);
+        let row = build_trade_now_row(&cue, &snapshot, &policy, false);
+
+        assert_eq!(row.decision_bucket, "WATCHLIST");
+        assert_eq!(
+            row.decision_reason_code,
+            "APPROVED_BUT_WAITING_ON_LIVE_CONDITIONS"
+        );
+        assert_eq!(
+            row.watch_reason_code.as_deref(),
+            Some("LIVE_TRIGGER_NOT_READY")
+        );
+    }
+
+    #[test]
+    fn trade_now_row_downgrades_learning_selection_when_open_live_trade_exists() {
+        let cue = trade_now_ready_cue(
+            "PF_XBTUSD__PF_AVAXUSD",
+            Timeframe::FifteenMinutes,
+            "AUTO_CHAMPION",
+        );
+        let snapshot = overlay_snapshot(true);
+        let entry = overlay_entry(
+            "PF_XBTUSD__PF_AVAXUSD",
+            Timeframe::FifteenMinutes,
+            LearningRecommendation::Promote,
+            true,
+            true,
+        );
+        let policy =
+            resolve_learning_overlay_policy(Some(&entry), &snapshot, "AUTO_CHAMPION", None);
+        let row = build_trade_now_row(&cue, &snapshot, &policy, true);
+
+        assert_eq!(row.decision_bucket, "WATCHLIST");
+        assert_eq!(
+            row.watch_reason_code.as_deref(),
+            Some("OPEN_POSITION_CONFLICT")
+        );
+        assert!(row.open_live_trade);
+    }
+
+    #[test]
+    fn trade_now_row_keeps_operator_promoted_rows_tradable_when_overlay_is_stale() {
+        let cue = trade_now_ready_cue(
+            "PF_SOLUSD__PF_AVAXUSD",
+            Timeframe::FifteenMinutes,
+            SELECTED_CONFIG_SOURCE_OPERATOR_PROMOTION,
+        );
+        let snapshot = overlay_snapshot(false);
+        let entry = overlay_entry(
+            "PF_SOLUSD__PF_AVAXUSD",
+            Timeframe::FifteenMinutes,
+            LearningRecommendation::Hold,
+            false,
+            false,
+        );
+        let policy = resolve_learning_overlay_policy(
+            Some(&entry),
+            &snapshot,
+            SELECTED_CONFIG_SOURCE_OPERATOR_PROMOTION,
+            None,
+        );
+        let row = build_trade_now_row(&cue, &snapshot, &policy, false);
+
+        assert_eq!(row.decision_bucket, "TRADE_NOW");
+        assert_eq!(
+            row.decision_reason_code,
+            "OPERATOR_PROMOTED_AND_LIVE_GATES_PASS"
+        );
+        assert_eq!(row.approval_source, "OPERATOR_PROMOTED_ACTIVE_CHAMPION");
+        assert_eq!(row.learning_recommendation.as_deref(), Some("HOLD"));
+    }
+
+    #[test]
+    fn trade_now_row_excludes_pending_challengers_even_when_learning_selected() {
+        let cue = trade_now_ready_cue(
+            "PF_DOGEUSD__PF_PEPEUSD",
+            Timeframe::FifteenMinutes,
+            "AUTO_CHAMPION",
+        );
+        let snapshot = overlay_snapshot(true);
+        let entry = overlay_entry(
+            "PF_DOGEUSD__PF_PEPEUSD",
+            Timeframe::FifteenMinutes,
+            LearningRecommendation::Promote,
+            true,
+            true,
+        );
+        let policy = resolve_learning_overlay_policy(
+            Some(&entry),
+            &snapshot,
+            "AUTO_CHAMPION",
+            Some(&candidate_probation_row(CandidateLifecycleState::Hold)),
+        );
+        let row = build_trade_now_row(&cue, &snapshot, &policy, false);
+
+        assert_eq!(row.decision_bucket, "EXCLUDED");
+        assert_eq!(row.decision_reason_code, "GOVERNANCE_POLICY_BLOCKED");
+        assert_eq!(
+            row.blocked_reason_code.as_deref(),
+            Some("PENDING_CHALLENGER_REQUIRES_PROMOTION")
+        );
+    }
+
+    #[test]
+    fn trade_now_response_groups_and_sorts_rows_by_bucket() {
+        let fresh_snapshot = overlay_snapshot(true);
+        let stale_snapshot = overlay_snapshot(false);
+
+        let mut lower_score_cue = trade_now_ready_cue(
+            "PF_SOLUSD__PF_AVAXUSD",
+            Timeframe::FifteenMinutes,
+            "AUTO_CHAMPION",
+        );
+        lower_score_cue.opportunity_score = 6.4;
+        let lower_score_policy = resolve_learning_overlay_policy(
+            Some(&overlay_entry(
+                "PF_SOLUSD__PF_AVAXUSD",
+                Timeframe::FifteenMinutes,
+                LearningRecommendation::Promote,
+                true,
+                true,
+            )),
+            &fresh_snapshot,
+            "AUTO_CHAMPION",
+            None,
+        );
+        let lower_score_row = build_trade_now_row(
+            &lower_score_cue,
+            &fresh_snapshot,
+            &lower_score_policy,
+            false,
+        );
+
+        let mut higher_score_cue = trade_now_ready_cue(
+            "PF_XBTUSD__PF_AVAXUSD",
+            Timeframe::FifteenMinutes,
+            "AUTO_CHAMPION",
+        );
+        higher_score_cue.opportunity_score = 9.2;
+        let higher_score_policy = resolve_learning_overlay_policy(
+            Some(&overlay_entry(
+                "PF_XBTUSD__PF_AVAXUSD",
+                Timeframe::FifteenMinutes,
+                LearningRecommendation::Promote,
+                true,
+                true,
+            )),
+            &fresh_snapshot,
+            "AUTO_CHAMPION",
+            None,
+        );
+        let higher_score_row = build_trade_now_row(
+            &higher_score_cue,
+            &fresh_snapshot,
+            &higher_score_policy,
+            false,
+        );
+
+        let watchlist_policy = resolve_learning_overlay_policy(
+            Some(&overlay_entry(
+                "PF_TAOUSD__PF_HYPEUSD",
+                Timeframe::FifteenMinutes,
+                LearningRecommendation::Promote,
+                true,
+                true,
+            )),
+            &stale_snapshot,
+            "AUTO_CHAMPION",
+            None,
+        );
+        let watchlist_row = build_trade_now_row(
+            &trade_now_ready_cue(
+                "PF_TAOUSD__PF_HYPEUSD",
+                Timeframe::FifteenMinutes,
+                "AUTO_CHAMPION",
+            ),
+            &stale_snapshot,
+            &watchlist_policy,
+            false,
+        );
+
+        let excluded_policy = resolve_learning_overlay_policy(
+            Some(&overlay_entry(
+                "PF_DOGEUSD__PF_PEPEUSD",
+                Timeframe::FifteenMinutes,
+                LearningRecommendation::Promote,
+                true,
+                true,
+            )),
+            &fresh_snapshot,
+            "AUTO_CHAMPION",
+            Some(&candidate_probation_row(
+                CandidateLifecycleState::PromotionReady,
+            )),
+        );
+        let excluded_row = build_trade_now_row(
+            &trade_now_ready_cue(
+                "PF_DOGEUSD__PF_PEPEUSD",
+                Timeframe::FifteenMinutes,
+                "AUTO_CHAMPION",
+            ),
+            &fresh_snapshot,
+            &excluded_policy,
+            false,
+        );
+
+        let response = group_trade_now_rows(
+            Utc::now(),
+            Some(Timeframe::FifteenMinutes),
+            &fresh_snapshot,
+            vec![
+                lower_score_row,
+                watchlist_row,
+                excluded_row,
+                higher_score_row,
+            ],
+        );
+
+        assert_eq!(response.timeframe_filter.as_deref(), Some("15m"));
+        assert_eq!(response.tradable_now.len(), 2);
+        assert_eq!(response.watchlist.len(), 1);
+        assert_eq!(response.excluded.len(), 1);
+        assert_eq!(response.tradable_now[0].pair_id, "PF_XBTUSD__PF_AVAXUSD");
+        assert_eq!(response.tradable_now[1].pair_id, "PF_SOLUSD__PF_AVAXUSD");
+        assert_eq!(
+            response.watchlist[0].watch_reason_code.as_deref(),
+            Some("LEARNING_OVERLAY_STALE")
+        );
+        assert_eq!(
+            response.excluded[0].blocked_reason_code.as_deref(),
+            Some("PENDING_CHALLENGER_REQUIRES_PROMOTION")
+        );
+    }
+
+    #[test]
+    fn trade_now_response_roundtrip_validates_against_contract_schema() {
+        let fresh_snapshot = overlay_snapshot(true);
+        let stale_snapshot = overlay_snapshot(false);
+
+        let tradable_policy = resolve_learning_overlay_policy(
+            Some(&overlay_entry(
+                "PF_XBTUSD__PF_AVAXUSD",
+                Timeframe::FifteenMinutes,
+                LearningRecommendation::Promote,
+                true,
+                true,
+            )),
+            &fresh_snapshot,
+            "AUTO_CHAMPION",
+            None,
+        );
+        let tradable_row = build_trade_now_row(
+            &trade_now_ready_cue(
+                "PF_XBTUSD__PF_AVAXUSD",
+                Timeframe::FifteenMinutes,
+                "AUTO_CHAMPION",
+            ),
+            &fresh_snapshot,
+            &tradable_policy,
+            false,
+        );
+
+        let watchlist_policy = resolve_learning_overlay_policy(
+            Some(&overlay_entry(
+                "PF_SOLUSD__PF_AVAXUSD",
+                Timeframe::FifteenMinutes,
+                LearningRecommendation::Promote,
+                true,
+                true,
+            )),
+            &stale_snapshot,
+            "AUTO_CHAMPION",
+            None,
+        );
+        let watchlist_row = build_trade_now_row(
+            &trade_now_ready_cue(
+                "PF_SOLUSD__PF_AVAXUSD",
+                Timeframe::FifteenMinutes,
+                "AUTO_CHAMPION",
+            ),
+            &stale_snapshot,
+            &watchlist_policy,
+            false,
+        );
+
+        let excluded_policy = resolve_learning_overlay_policy(
+            Some(&overlay_entry(
+                "PF_XBTUSD__PF_ETHUSD",
+                Timeframe::OneMinute,
+                LearningRecommendation::Hold,
+                false,
+                false,
+            )),
+            &fresh_snapshot,
+            SELECTED_CONFIG_SOURCE_LEGACY_FALLBACK,
+            None,
+        );
+        let excluded_row = build_trade_now_row(
+            &trade_now_ready_cue(
+                "PF_XBTUSD__PF_ETHUSD",
+                Timeframe::OneMinute,
+                SELECTED_CONFIG_SOURCE_LEGACY_FALLBACK,
+            ),
+            &fresh_snapshot,
+            &excluded_policy,
+            false,
+        );
+
+        let response = group_trade_now_rows(
+            Utc::now(),
+            None,
+            &fresh_snapshot,
+            vec![tradable_row, watchlist_row, excluded_row],
+        );
+        let instance = serde_json::to_value(&response).expect("serialize trade-now response");
+        let schema_path = trade_now_schema_path();
+        let schema_json: serde_json::Value = serde_json::from_slice(
+            &fs::read(&schema_path).expect("read trade-now response schema"),
+        )
+        .expect("parse trade-now response schema");
+        let compiled = JSONSchema::options()
+            .with_draft(Draft::Draft202012)
+            .compile(&schema_json)
+            .expect("compile trade-now schema");
+
+        let validation = compiled.validate(&instance);
+        let errors = match validation {
+            Ok(()) => vec![],
+            Err(errors) => errors.map(|error| error.to_string()).collect::<Vec<_>>(),
+        };
+        assert!(
+            errors.is_empty(),
+            "trade-now response must validate against schema at {}: {:?}",
+            schema_path.display(),
+            errors
+        );
+    }
+
+    #[tokio::test]
+    async fn trade_now_observability_tracks_challenger_bypass_suppression() {
+        let store = TradeNowObservabilityStore::default();
+        store
+            .record_learning_challenger_bypass_suppressed(
+                "PF_DOGEUSD__PF_PEPEUSD",
+                Timeframe::FifteenMinutes,
+            )
+            .await;
+        store
+            .record_learning_challenger_bypass_suppressed(
+                "PF_DOGEUSD__PF_PEPEUSD",
+                Timeframe::FifteenMinutes,
+            )
+            .await;
+        store
+            .record_learning_challenger_bypass_suppressed(
+                "PF_SOLUSD__PF_AVAXUSD",
+                Timeframe::OneHour,
+            )
+            .await;
+
+        let snapshot = store.snapshot(Utc::now()).await;
+        assert_eq!(snapshot.learning_challenger_bypass_suppressed_total, 3);
+        assert_eq!(snapshot.learning_challenger_bypass_suppressed.len(), 2);
+        assert_eq!(
+            snapshot.learning_challenger_bypass_suppressed[0].pair_id,
+            "PF_DOGEUSD__PF_PEPEUSD"
+        );
+        assert_eq!(
+            snapshot.learning_challenger_bypass_suppressed[0].timeframe,
+            "15m"
+        );
+        assert_eq!(
+            snapshot.learning_challenger_bypass_suppressed[0].suppressed_total,
+            2
+        );
+    }
+
+    #[tokio::test]
+    async fn trade_now_open_trade_fetch_reads_pair_ids_from_execution_service() {
+        let app = Router::new().route(
+            "/v1/execution/portfolio/open-trades",
+            get(|| async {
+                Json(serde_json::json!({
+                    "exchange": "kraken_futures",
+                    "account_id": "primary",
+                    "generated_at": Utc::now(),
+                    "warnings": [],
+                    "trades": [
+                        { "pair_id": "PF_XBTUSD__PF_ETHUSD" },
+                        { "pair_id": "PF_SOLUSD__PF_AVAXUSD" }
+                    ]
+                }))
+            }),
+        );
+        let listener = TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind execution test listener");
+        let addr = listener.local_addr().expect("execution test listener addr");
+        let server = tokio::spawn(async move {
+            axum::serve(listener, app)
+                .await
+                .expect("serve execution test app")
+        });
+
+        let mut settings = StrategySettings::from_env();
+        settings.execution_service_url = format!("http://{}", addr);
+        settings.execution_exchange = "kraken_futures".to_string();
+        settings.execution_account_id = "primary".to_string();
+        let pairs = fetch_open_live_trade_pairs(&reqwest::Client::new(), &settings)
+            .await
+            .expect("fetch open live trade pairs");
+
+        assert!(pairs.contains("PF_XBTUSD__PF_ETHUSD"));
+        assert!(pairs.contains("PF_SOLUSD__PF_AVAXUSD"));
+        assert_eq!(pairs.len(), 2);
+
+        server.abort();
+    }
+
+    #[test]
+    fn reopt_error_severity_classifies_critical_codes() {
+        assert_eq!(
+            classify_reopt_error_severity("CUE_EVAL_FAILED"),
+            ReoptErrorSeverity::Critical
+        );
+        assert_eq!(
+            classify_reopt_error_severity("RECORD_EVALUATION_FAILED"),
+            ReoptErrorSeverity::Critical
+        );
+        assert_eq!(
+            classify_reopt_error_severity("CANDIDATE_PROBATION_UPDATE_FAILED"),
+            ReoptErrorSeverity::Critical
+        );
+        assert_eq!(
+            classify_reopt_error_severity("SHADOW_MODEL_RUN_PERSIST_FAILED"),
+            ReoptErrorSeverity::NonCritical
+        );
+    }
+
+    #[test]
+    fn reoptimize_status_follows_decision_table() {
+        assert_eq!(
+            resolve_reoptimize_status(1, 0, 0),
+            ReoptimizeRunStatus::Failed
+        );
+        assert_eq!(
+            resolve_reoptimize_status(0, 1, 0),
+            ReoptimizeRunStatus::Degraded
+        );
+        assert_eq!(
+            resolve_reoptimize_status(0, 0, 2),
+            ReoptimizeRunStatus::Degraded
+        );
+        assert_eq!(resolve_reoptimize_status(0, 0, 0), ReoptimizeRunStatus::Ok);
     }
 
     fn temp_dir(name: &str) -> PathBuf {
@@ -9149,6 +12150,7 @@ mod tests {
             trade_gate: TradeGateDiagnostics::unavailable(vec![]),
             portfolio_hint: PortfolioHint::unavailable(vec![]),
             shadow_ml: ShadowMlDiagnostics::unavailable(vec![]),
+            selected_signal_config: selected_signal_config("COINTEGRATION_Z"),
             evaluated_at: Utc::now(),
         };
 
@@ -9271,6 +12273,7 @@ mod tests {
             trade_gate: TradeGateDiagnostics::unavailable(vec![]),
             portfolio_hint: PortfolioHint::unavailable(vec![]),
             shadow_ml: ShadowMlDiagnostics::unavailable(vec![]),
+            selected_signal_config: selected_signal_config("COINTEGRATION_Z"),
             evaluated_at: Utc::now(),
         };
 
@@ -9279,5 +12282,109 @@ mod tests {
         assert_eq!(cue.trade_gate.status, "WAIT");
         assert_eq!(cue.trade_gate.blocked_by, "WAIT");
         assert!(!cue.trade_gate.pass);
+    }
+
+    #[test]
+    fn apply_data_freshness_gate_forces_setup_wait_when_stale() {
+        let mut cue = PairCue {
+            pair_id: "PF_XBTUSD__PF_ETHUSD".to_string(),
+            left_instrument: "PF_XBTUSD".to_string(),
+            right_instrument: "PF_ETHUSD".to_string(),
+            timeframe: "1m".to_string(),
+            regime: "CALM".to_string(),
+            selected_variant: "COINTEGRATION_Z".to_string(),
+            direction_hint: "LONG_SPREAD".to_string(),
+            spread_z: -2.1,
+            opportunity_score: 1.0,
+            confidence_band: "HIGH".to_string(),
+            entry_band: 1.8,
+            exit_band: 0.6,
+            stop_band: 3.2,
+            expected_hold_bars: 12,
+            cost_estimate_bps: 0.0,
+            setup_actionable: true,
+            actionable: true,
+            rationale_codes: vec!["BELOW_ENTRY_BAND".to_string()],
+            setup_gate: SetupGateDiagnostics {
+                status: "AVAILABLE".to_string(),
+                pass: true,
+                rationale_codes: vec![],
+            },
+            cost_gate: CostGateDiagnostics::unavailable(vec![]),
+            trade_gate: TradeGateDiagnostics::unavailable(vec![]),
+            portfolio_hint: PortfolioHint::unavailable(vec![]),
+            shadow_ml: ShadowMlDiagnostics::unavailable(vec![]),
+            selected_signal_config: selected_signal_config("COINTEGRATION_Z"),
+            evaluated_at: Utc::now(),
+        };
+
+        apply_data_freshness_gate(&mut cue, 240, 180);
+
+        assert!(!cue.setup_actionable);
+        assert!(!cue.actionable);
+        assert_eq!(cue.setup_gate.status, "WAIT");
+        assert!(!cue.setup_gate.pass);
+        assert!(cue.rationale_codes.iter().any(|code| code == "DATA_STALE"));
+        assert!(cue
+            .setup_gate
+            .rationale_codes
+            .iter()
+            .any(|code| code == "DATA_STALE"));
+    }
+
+    #[test]
+    fn compute_candle_age_seconds_clamps_future_timestamps_to_zero() {
+        let now = Utc::now();
+        let future = now + Duration::seconds(60);
+        assert_eq!(compute_candle_age_seconds(now, future), 0);
+
+        let past = now - Duration::seconds(42);
+        assert_eq!(compute_candle_age_seconds(now, past), 42);
+    }
+
+    #[test]
+    fn apply_live_mark_override_to_snapshot_replaces_tail_and_time() {
+        let now = Utc::now();
+        let mut timestamps = vec![now - Duration::seconds(120), now - Duration::seconds(60)];
+        let mut left = vec![100.0, 101.0];
+        let mut right = vec![10.0, 11.0];
+        let left_live = market_metric("PF_XBTUSD", 102.5, now - Duration::seconds(1));
+        let right_live = market_metric("PF_ETHUSD", 12.5, now);
+
+        let applied = apply_live_mark_override_to_snapshot(
+            &mut timestamps,
+            &mut left,
+            &mut right,
+            &left_live,
+            &right_live,
+        );
+
+        assert!(applied);
+        assert_eq!(left[1], 102.5);
+        assert_eq!(right[1], 12.5);
+        assert_eq!(timestamps[1], now);
+    }
+
+    #[test]
+    fn apply_live_mark_override_to_snapshot_ignores_invalid_marks() {
+        let now = Utc::now();
+        let mut timestamps = vec![now - Duration::seconds(120), now - Duration::seconds(60)];
+        let mut left = vec![100.0, 101.0];
+        let mut right = vec![10.0, 11.0];
+        let left_live = market_metric("PF_XBTUSD", f64::NAN, now);
+        let right_live = market_metric("PF_ETHUSD", -1.0, now);
+
+        let applied = apply_live_mark_override_to_snapshot(
+            &mut timestamps,
+            &mut left,
+            &mut right,
+            &left_live,
+            &right_live,
+        );
+
+        assert!(!applied);
+        assert_eq!(left[1], 101.0);
+        assert_eq!(right[1], 11.0);
+        assert_eq!(timestamps[1], now - Duration::seconds(60));
     }
 }

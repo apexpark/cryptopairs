@@ -5,6 +5,57 @@ This project follows SemVer as defined in `docs/02-versioning-and-releases.md`.
 
 ## Unreleased
 ### Added
+- Experimental signal-learning cycle tooling (recommendation-only):
+  - New policy file for confidence-gated recursive signal logic updates:
+    - `infra/config/signal_learning_policy.json`
+  - New script:
+    - `tools/scripts/signal_learning_cycle.py`
+    - Periodically samples cues/expectancy/paper-trades by pair/timeframe.
+    - Persists immutable cycle reports + rolling state artifacts.
+    - Recursively updates `artifacts/signal_learning/signal_logic.json` with confidence-gated `PROMOTE|DEMOTE|HOLD` recommendations.
+    - Ranks `trade_eligible` rows into deterministic universe-selection outputs (`selection.top_1` and `selection.top_k`) using configurable utility weights and per-base-asset concentration caps.
+    - Supports configurable reason-aware utility penalties (for example `PAPER_LOW_SAMPLE`) when ranking selected candidates.
+    - Emits selection observability diagnostics:
+      - `selected_with_paper_low_sample_count`
+      - `top1_dwell_cycles_by_pair_tf`
+      - `selection_turnover_rate`
+    - Enforces non-invasive behavior (no runtime config mutation/deploy writes).
+  - New runbook:
+    - `docs/playbooks/signal-learning-runbook.md`
+  - New artifact contract/example:
+    - `specs/contracts/signal_learning_cycle_report.schema.json`
+    - `specs/examples/signal_learning_cycle_report.example.json`
+  - New unit coverage:
+    - `tools/scripts/tests/test_signal_learning_cycle.py`
+- Strategy live selected-signal config scaffolding:
+  - `strategy_selected_signal` now persists additive `config_json` metadata for the active live signal configuration.
+  - Strategy cues now expose `selected_signal_config` so operators can inspect the live bands/lookback/holding parameters driving evaluation.
+  - Live evaluation now hydrates its bands/lookback/hold settings from persisted selected-signal config with legacy fallback to settings defaults.
+- Strategy reoptimize control-plane hardening (Slice C):
+  - `POST /v1/strategy/pairs/reoptimize` now returns explicit run status fields:
+    - `status` (`OK|DEGRADED|FAILED`)
+    - `critical_error_count`
+    - `non_critical_error_count`
+    - `timeframe_statuses[]`
+    - `flatline_summary`
+  - Reoptimize errors are now tagged with additive `code` and `severity` (`CRITICAL|NON_CRITICAL`).
+  - Reoptimize mutation path now aborts remaining writes for a timeframe after first critical optimizer failure (fail-closed continuation guard).
+  - Canonical selected-variant flatline diagnostics are computed during evaluation and aggregated in reoptimize observability.
+- Strategy backtest leakage hardening (Slice D):
+  - `compute_backtest_series` now uses causal prior-window z-score normalization instead of full-sample mean/stddev normalization.
+  - Added regression coverage proving backtest points before the final bar are invariant to future-only tail spikes.
+  - Updated deterministic backtest scenarios to include warm-up history under prior-window normalization.
+- Strategy champion selection stability and full-config lock semantics (Slice E):
+  - Champion transition now applies configurable hysteresis during post-switch cooldown:
+    - `STRATEGY_CHAMPION_SWITCH_HYSTERESIS_DELTA`
+    - `STRATEGY_CHAMPION_SWITCH_COOLDOWN_SECS`
+  - On `KEEP_CHAMPION`, persisted champion config (bands/windows) is retained instead of inheriting challenger config fields.
+  - Added unit coverage for cooldown hysteresis behavior and champion-config retention on lock.
+- Strategy signal-math refinement and unit consistency (Slice F):
+  - `FUNDING_ADJUSTED` now converts funding drag from bps into a dimensionless z-penalty using spread volatility, then shrinks score magnitude symmetrically (`long`/`short`) instead of applying a raw bps subtraction.
+  - Variant edge estimation now runs in executable leg-return space (`left_return - hedge_ratio * right_return`) and reports outcome in bps, removing prior log-spread/spot-price unit mismatch.
+  - Vol-normalized scores now use robust volatility pressure from absolute spread-diff robust z-scores, reducing outlier sensitivity.
+  - Added unit coverage for funding penalty scaling/symmetry, return-domain edge estimation, and robust vol-normalized suppression behavior.
 - Execution open-trades API and Trade tab live position view for SIM/manual operations:
   - New endpoint: `GET /v1/execution/portfolio/open-trades` (pair-level spread + per-leg live unrealized PnL using data-service marks).
   - New contracts/examples:
@@ -22,6 +73,44 @@ This project follows SemVer as defined in `docs/02-versioning-and-releases.md`.
     - `sizing_tolerance_hedge_ratio_drift_pct`
   - Execution service validates submitted sizing payload against pair/instrument, planned leg qty, and drift tolerances; rejects out-of-tolerance or inconsistent sizing fail-closed.
   - Trade UI now sizes entries/exits from target USD notional using live bid/ask, per-leg lot-step quantization, and pre-submit drift/tolerance preview.
+- Analytics chart provenance visibility:
+  - Analytics now shows the active chart pair, selected variant, exit mode, and effective fee basis above the equity curve.
+  - Persisted pair selections that are no longer present in the live cue set now surface an explicit warning instead of silently rewriting local storage to the first live cue.
+- Slice A `Trade Now` proposal scaffolding:
+  - Added proposal doc `docs/24-trade-now-opportunity-proposal.md` with locked bucket semantics, overlay TTL, governance precedence, and baseline cadence numbers.
+  - Added machine-readable contract/example for the proposed read model:
+    - `specs/contracts/strategy_pairs_trade_now_response.schema.json`
+    - `specs/examples/strategy_pairs_trade_now_response.example.json`
+  - Tightened the draft `trade-now` contract to version `0.2.1` with stable reason-code enums, explicit overlay freshness invariants, a stale-overlay guard that forbids learning-selected rows in `tradable_now`, and per-row `requires_fresh_overlay` semantics.
+- Slice B1 `Trade Now` learning overlay loader:
+  - `strategy-service` now includes an internal latest-artifact loader for signal-learning cycle reports, selecting the newest report by logical `generated_at` (with filesystem time only as tiebreak), plus pure overlay-policy resolution for stale TTL, governance precedence, operator-promoted champion survival, and legacy-fallback suppression.
+  - Selected-signal provenance policy now uses shared source constants so legacy-fallback and operator-promotion handling cannot drift silently from their producers.
+  - Added unit coverage for selected-vs-eligible splitting, stale downgrade, operator-promoted-vs-learning-HOLD precedence, pending-challenger suppression, and legacy fallback behavior.
+- Slice B2 `Trade Now` strategy endpoint:
+  - Added `GET /v1/strategy/pairs/trade-now`, which builds grouped `tradable_now`, `watchlist`, and `excluded` rows by combining live cue gates with the Slice B1 learning overlay policy.
+  - The endpoint carries learning-overlay freshness metadata, selected-config provenance, and stable decision/watch/block reason codes that match the Slice A schema.
+  - Added Rust-side contract drift protection: grouped-response orchestration tests plus a schema roundtrip validation against `specs/contracts/strategy_pairs_trade_now_response.schema.json`.
+  - Current B2 scope remains strategy-service-local: `open_live_trade` is reported as `false` until a bounded execution-service position source is wired in a later slice.
+- Slice C `Trade Now` UI split:
+  - Trade page now consumes `GET /v1/strategy/pairs/trade-now` separately from live cues and presents four distinct operator buckets:
+    - `Trade Now`
+    - `Watchlist`
+    - `Excluded`
+    - `Research Bench`
+  - Research/analytics routing is now labeled `Research Bench`, while cue-backed charts and pair analytics remain on the existing research page.
+  - Empty approved-universe timeframes now surface an explicit explanation instead of silently showing a blank operator surface.
+- Slice D approved-universe cadence reporting:
+  - Trade page now computes a bounded cadence snapshot from the current `trade-now` approved set plus `GET /v1/strategy/pairs/opportunity-history` over the last `168h`.
+  - Cadence snapshot shows approved-ready rows/day, median ready duration, stored history coverage, top wait/block reasons, and top recurring approved setups for the current timeframe.
+  - Cadence remains fail-closed: if no approved universe exists or history fetch fails, the UI shows an explicit unavailable explanation instead of implying frequency confidence.
+- Slice E `Trade Now` hardening and observability:
+  - `strategy-service` now resolves `open_live_trade` from `execution-service` open-trade state and fails the `trade-now` endpoint closed if that upstream execution state is unavailable.
+  - Active candidate probation lookups for `trade-now` now batch by timeframe and pair set instead of issuing one repository query per cue.
+  - Added `GET /v1/strategy/observability/trade-now` plus contract/example for `learning_challenger_bypass_suppressed_total` and pair/timeframe suppression breakdowns.
+  - Added strategy env controls for the execution-state lookup:
+    - `STRATEGY_EXECUTION_SERVICE_URL`
+    - `STRATEGY_EXECUTION_EXCHANGE`
+    - `STRATEGY_EXECUTION_ACCOUNT_ID`
 - Data horizon and retention controls for `data-service` candles:
   - Configurable backfill windows by timeframe (`1m/15m/1h`) with defaults aligned to long-horizon research (`120d/540d/1095d`).
   - Configurable candle retention pruning by timeframe plus periodic prune interval.

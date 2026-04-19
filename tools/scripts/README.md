@@ -177,6 +177,31 @@ bash scripts/install_strategy_maintenance_action_worker_systemd.sh \
   --interval-seconds 60
 ```
 
+## Signal Learning Cycle (Experimental, Recommendation-Only)
+
+Run periodic monitoring of cues/expectancy/paper-trades and recursively update a confidence-gated signal-logic artifact:
+
+```bash
+python3 tools/scripts/signal_learning_cycle.py \
+  --strategy-service-url http://127.0.0.1:18083 \
+  --policy-json infra/config/signal_learning_policy.json \
+  --cycles 48 \
+  --sleep-seconds 900 \
+  --output-root artifacts/signal_learning/runs \
+  --state-json artifacts/signal_learning/state.json \
+  --logic-json artifacts/signal_learning/signal_logic.json
+```
+
+Outputs:
+- per-cycle reports under `artifacts/signal_learning/runs/`
+- rolling state in `artifacts/signal_learning/state.json`
+- recursive logic recommendations in `artifacts/signal_learning/signal_logic.json`
+- deterministic universe selection output (`selection.top_1` and `selection.top_k`) in each cycle report
+- selector observability diagnostics (`selected_with_paper_low_sample_count`, `top1_dwell_cycles_by_pair_tf`, `selection_turnover_rate`)
+- optional selector concentration controls via policy (`selection.dwell_penalty_start_cycles`, `selection.dwell_penalty_per_cycle`, `selection.dwell_penalty_cap`)
+
+This script does not apply runtime config changes automatically.
+
 ## Hosted Deployment Tracking
 
 Use the same tracker utility with the hosted deployment plan:
