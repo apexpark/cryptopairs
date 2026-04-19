@@ -11,6 +11,8 @@ import {
   fetchStrategyReplayTrades,
   fetchStrategyUiAuthStatus,
   verifyStrategyUiAccess,
+  fetchStrategyOpportunityHistory,
+  fetchStrategyOpportunityHistoryStats,
   fetchStrategyPaperTrades,
   fetchStrategyCandidateInbox,
   runStrategyResearchSweep,
@@ -28,6 +30,7 @@ import {
   fetchStrategyBacktest,
   fetchStrategyCues,
   fetchStrategyLiveZ,
+  fetchStrategyTradeNow,
   submitOrderIntent,
 } from "./lib/api";
 import {
@@ -55,9 +58,13 @@ import type {
   StrategyPairsCuesResponse,
   StrategyPairsCandidateInboxResponse,
   StrategyPairsExpectancyResponse,
+  StrategyPairsOpportunityHistoryResponse,
+  StrategyPairsOpportunityHistoryStatsResponse,
   StrategyPairsPaperTradesResponse,
   StrategyPairsReplayTradesResponse,
   StrategyPairsResearchSweepResponse,
+  StrategyPairsTradeNowResponse,
+  StrategyPairsTradeNowRow,
   StrategyZMethod,
   Timeframe,
   TimelineEvent,
@@ -97,7 +104,7 @@ interface LegExecutionOutcome {
 
 const NAV_ITEMS: Array<{ id: PageId; label: string }> = [
   { id: "trade", label: "Trade" },
-  { id: "analytics", label: "Analytics" },
+  { id: "analytics", label: "Research Bench" },
   { id: "settings", label: "Settings" },
 ];
 
@@ -109,6 +116,8 @@ const RESEARCH_Z_METHODS: StrategyZMethod[] = [
   "FUNDING_ADJUSTED",
 ];
 const WEB_BUILD_STAMP = "2026-02-23-02";
+const CADENCE_WINDOW_HOURS = 168;
+const CADENCE_HISTORY_LIMIT = 20_000;
 
 function analyticsRefreshMs(timeframe: Timeframe): number {
   if (timeframe === "1m") {
@@ -837,6 +846,321 @@ function deriveOpportunityStatus(
   return { label: "WAIT", toneClass: "tone-warn" };
 }
 
+function formatDirectionHintLabel(direction: DirectionHint): string {
+  if (direction === "LONG_SPREAD") {
+    return "Long spread";
+  }
+  if (direction === "SHORT_SPREAD") {
+    return "Short spread";
+  }
+  return "Neutral";
+}
+
+function formatReasonCodeLabel(code: string | null | undefined): string {
+  if (!code) {
+    return "No reason provided";
+  }
+  return code
+    .split("_")
+    .map((segment) =>
+      segment.length ? segment.charAt(0) + segment.slice(1).toLowerCase() : segment
+    )
+    .join(" ");
+}
+
+function formatApprovalSourceLabel(source: StrategyPairsTradeNowRow["approval_source"]): string {
+  switch (source) {
+    case "LEARNING_SELECTION":
+      return "Learning selected";
+    case "OPERATOR_PROMOTED_ACTIVE_CHAMPION":
+      return "Operator champion";
+    case "NONE":
+      return "No approval path";
+  }
+}
+
+function formatOverlayAgeLabel(seconds: number | null): string {
+  if (seconds == null || !Number.isFinite(seconds) || seconds < 0) {
+    return "age unknown";
+  }
+  if (seconds < 3600) {
+    return `${Math.max(1, Math.round(seconds / 60))}m`;
+  }
+  const hours = seconds / 3600;
+  if (hours < 48) {
+    return `${hours >= 10 ? Math.round(hours) : hours.toFixed(1)}h`;
+  }
+  return `${(hours / 24).toFixed(1)}d`;
+}
+
+function formatDurationLabel(minutes: number | null): string {
+  if (minutes == null || !Number.isFinite(minutes) || minutes <= 0) {
+    return "--";
+  }
+  if (minutes < 60) {
+    return `${Math.round(minutes)}m`;
+  }
+  const hours = minutes / 60;
+  if (hours < 24) {
+    return `${hours >= 10 ? Math.round(hours) : hours.toFixed(1)}h`;
+  }
+  return `${(hours / 24).toFixed(1)}d`;
+}
+
+function formatPerDayLabel(value: number | null): string {
+  if (value == null || !Number.isFinite(value)) {
+    return "--";
+  }
+  return `${value.toFixed(1)}/day`;
+}
+
+function tradeNowHeadlineCode(row: StrategyPairsTradeNowRow): string {
+  return row.blocked_reason_code ?? row.watch_reason_code ?? row.decision_reason_code;
+}
+
+function tradeNowDetailLabel(row: StrategyPairsTradeNowRow): string {
+  const detailParts = [formatApprovalSourceLabel(row.approval_source)];
+  if (row.requires_fresh_overlay) {
+    detailParts.push("requires fresh overlay");
+  }
+  if (row.open_live_trade) {
+    detailParts.push("open live trade");
+  }
+  return detailParts.join(" | ");
+}
+
+function tradeNowToneClass(
+  row: StrategyPairsTradeNowRow
+): "status-pill ok" | "status-pill warn" | "status-pill bad" {
+  if (row.decision_bucket === "TRADE_NOW") {
+    return "status-pill ok";
+  }
+  if (row.decision_bucket === "WATCHLIST") {
+    return "status-pill warn";
+  }
+  return "status-pill bad";
+}
+
+interface CadenceReasonSummary {
+  code: string;
+  count: number;
+  rate: number;
+}
+
+interface CadenceSetupSummary {
+  pairId: string;
+  readyRuns: number;
+  readyRows: number;
+}
+
+interface CadenceSnapshot {
+  windowHours: number;
+  windowDays: number;
+  approvedPairCount: number;
+  readyRows: number;
+  readyRowsPerDay: number;
+  medianReadyMinutes: number | null;
+  historyDaysCovered: number | null;
+  topBlockedReasons: CadenceReasonSummary[];
+  topRecurringSetups: CadenceSetupSummary[];
+}
+
+function median(values: number[]): number | null {
+  if (!values.length) {
+    return null;
+  }
+  const sorted = [...values].sort((a, b) => a - b);
+  const mid = Math.floor(sorted.length / 2);
+  if (sorted.length % 2 === 0) {
+    return (sorted[mid - 1] + sorted[mid]) / 2;
+  }
+  return sorted[mid];
+}
+
+function isApprovedReadyHistoryRow(
+  row: StrategyPairsOpportunityHistoryResponse["rows"][number]
+): boolean {
+  return row.actionable && row.cost_gate_pass;
+}
+
+function pickPrimaryHistoryBlockReason(
+  row: StrategyPairsOpportunityHistoryResponse["rows"][number]
+): string | null {
+  if (isApprovedReadyHistoryRow(row)) {
+    return null;
+  }
+  if (!row.cost_gate_pass && row.cost_gate_rationale_codes.length) {
+    return row.cost_gate_rationale_codes[0];
+  }
+  if (row.rationale_codes.length) {
+    return row.rationale_codes[0];
+  }
+  return "UNSPECIFIED_BLOCK";
+}
+
+function computeReadyRuns(
+  rows: StrategyPairsOpportunityHistoryResponse["rows"]
+): Array<{ pairId: string; durationMinutes: number | null; readyRows: number }> {
+  const rowsByPair = new Map<string, StrategyPairsOpportunityHistoryResponse["rows"]>();
+  for (const row of rows) {
+    const existing = rowsByPair.get(row.pair_id);
+    if (existing) {
+      existing.push(row);
+    } else {
+      rowsByPair.set(row.pair_id, [row]);
+    }
+  }
+
+  const runs: Array<{ pairId: string; durationMinutes: number | null; readyRows: number }> = [];
+  for (const [pairId, pairRows] of rowsByPair) {
+    const sortedRows = [...pairRows].sort(
+      (left, right) => Date.parse(left.evaluated_at) - Date.parse(right.evaluated_at)
+    );
+    const intervalsMs: number[] = [];
+    for (let index = 1; index < sortedRows.length; index += 1) {
+      const delta = Date.parse(sortedRows[index].evaluated_at) - Date.parse(sortedRows[index - 1].evaluated_at);
+      if (Number.isFinite(delta) && delta > 0) {
+        intervalsMs.push(delta);
+      }
+    }
+    const medianIntervalMs = median(intervalsMs) ?? 0;
+    const gapThresholdMs = medianIntervalMs > 0 ? medianIntervalMs * 2.5 : 0;
+    let runStartMs: number | null = null;
+    let runLastMs: number | null = null;
+    let runRows = 0;
+
+    const flushRun = () => {
+      if (runStartMs == null || runLastMs == null || runRows <= 0) {
+        runStartMs = null;
+        runLastMs = null;
+        runRows = 0;
+        return;
+      }
+      const durationMs =
+        runRows === 1
+          ? medianIntervalMs
+          : runLastMs - runStartMs + medianIntervalMs;
+      runs.push({
+        pairId,
+        durationMinutes:
+          durationMs > 0 && Number.isFinite(durationMs) ? durationMs / 60_000 : null,
+        readyRows: runRows,
+      });
+      runStartMs = null;
+      runLastMs = null;
+      runRows = 0;
+    };
+
+    for (const row of sortedRows) {
+      const evaluatedAtMs = Date.parse(row.evaluated_at);
+      if (!Number.isFinite(evaluatedAtMs) || !isApprovedReadyHistoryRow(row)) {
+        flushRun();
+        continue;
+      }
+      const gapMs = runLastMs == null ? 0 : evaluatedAtMs - runLastMs;
+      const continueRun =
+        runLastMs != null &&
+        gapMs >= 0 &&
+        (gapThresholdMs === 0 || gapMs <= gapThresholdMs);
+      if (!continueRun) {
+        flushRun();
+        runStartMs = evaluatedAtMs;
+        runLastMs = evaluatedAtMs;
+        runRows = 1;
+        continue;
+      }
+      runLastMs = evaluatedAtMs;
+      runRows += 1;
+    }
+    flushRun();
+  }
+
+  return runs;
+}
+
+function computeCadenceSnapshot(
+  approvedRows: StrategyPairsTradeNowRow[],
+  history: StrategyPairsOpportunityHistoryResponse | null,
+  stats: StrategyPairsOpportunityHistoryStatsResponse | null
+): CadenceSnapshot | null {
+  if (!history || !approvedRows.length) {
+    return null;
+  }
+  const approvedPairIds = new Set(
+    approvedRows
+      .filter((row) => row.approval_source !== "NONE")
+      .map((row) => row.pair_id)
+  );
+  if (!approvedPairIds.size) {
+    return null;
+  }
+  const approvedHistoryRows = history.rows.filter((row) => approvedPairIds.has(row.pair_id));
+  const readyRows = approvedHistoryRows.filter(isApprovedReadyHistoryRow);
+  const blockedRows = approvedHistoryRows.filter((row) => !isApprovedReadyHistoryRow(row));
+  const windowDays = history.hours / 24;
+  const readyRuns = computeReadyRuns(approvedHistoryRows);
+  const medianReadyMinutes = median(
+    readyRuns
+      .map((run) => run.durationMinutes)
+      .filter((value): value is number => value != null && Number.isFinite(value))
+  );
+
+  const blockedReasonCounts = new Map<string, number>();
+  for (const row of blockedRows) {
+    const reason = pickPrimaryHistoryBlockReason(row);
+    if (!reason) {
+      continue;
+    }
+    blockedReasonCounts.set(reason, (blockedReasonCounts.get(reason) ?? 0) + 1);
+  }
+  const topBlockedReasons = [...blockedReasonCounts.entries()]
+    .sort((left, right) => right[1] - left[1] || left[0].localeCompare(right[0]))
+    .slice(0, 3)
+    .map(([code, count]) => ({
+      code,
+      count,
+      rate: blockedRows.length ? count / blockedRows.length : 0,
+    }));
+
+  const recurringSetupMap = new Map<string, { readyRuns: number; readyRows: number }>();
+  for (const run of readyRuns) {
+    const existing = recurringSetupMap.get(run.pairId) ?? { readyRuns: 0, readyRows: 0 };
+    existing.readyRuns += 1;
+    existing.readyRows += run.readyRows;
+    recurringSetupMap.set(run.pairId, existing);
+  }
+  const topRecurringSetups = [...recurringSetupMap.entries()]
+    .sort((left, right) => {
+      const leftValue = left[1];
+      const rightValue = right[1];
+      return (
+        rightValue.readyRuns - leftValue.readyRuns ||
+        rightValue.readyRows - leftValue.readyRows ||
+        left[0].localeCompare(right[0])
+      );
+    })
+    .slice(0, 3)
+    .map(([pairId, value]) => ({
+      pairId,
+      readyRuns: value.readyRuns,
+      readyRows: value.readyRows,
+    }));
+
+  const timeframeStats = stats?.by_timeframe.find((entry) => entry.timeframe === history.timeframe);
+
+  return {
+    windowHours: history.hours,
+    windowDays,
+    approvedPairCount: approvedPairIds.size,
+    readyRows: readyRows.length,
+    readyRowsPerDay: windowDays > 0 ? readyRows.length / windowDays : 0,
+    medianReadyMinutes,
+    historyDaysCovered: timeframeStats?.days_covered ?? stats?.days_covered ?? null,
+    topBlockedReasons,
+    topRecurringSetups,
+  };
+}
+
 function marketMetricInstrumentCandidates(instrument: string): string[] {
   const trimmed = instrument.trim();
   if (!trimmed.length) {
@@ -932,8 +1256,17 @@ function App(): JSX.Element {
   const [uiAuthError, setUiAuthError] = useState<string | null>(null);
 
   const [cuesResponse, setCuesResponse] = useState<StrategyPairsCuesResponse | null>(null);
+  const [tradeNowResponse, setTradeNowResponse] = useState<StrategyPairsTradeNowResponse | null>(null);
   const [coreError, setCoreError] = useState<string | null>(null);
   const [coreLoading, setCoreLoading] = useState(false);
+  const [tradeNowError, setTradeNowError] = useState<string | null>(null);
+  const [tradeNowLoading, setTradeNowLoading] = useState(false);
+  const [opportunityHistory, setOpportunityHistory] =
+    useState<StrategyPairsOpportunityHistoryResponse | null>(null);
+  const [opportunityHistoryStats, setOpportunityHistoryStats] =
+    useState<StrategyPairsOpportunityHistoryStatsResponse | null>(null);
+  const [cadenceError, setCadenceError] = useState<string | null>(null);
+  const [cadenceLoading, setCadenceLoading] = useState(false);
 
   const [selectedPairId, setSelectedPairId] = usePersistentState<string>("cp.pair", "");
 
@@ -1078,7 +1411,7 @@ function App(): JSX.Element {
     }
     return `Saved pair ${formatPairLabel(
       selectedPairId
-    )} is no longer in the live cue set. Analytics are currently showing ${formatPairLabel(
+    )} is no longer in the live cue set. Research Bench is currently showing ${formatPairLabel(
       selectedCueRow.cue.pair_id
     )} until you select another live pair.`;
   }, [cuesResponse, selectedCueRow, selectedPairId]);
@@ -1105,6 +1438,27 @@ function App(): JSX.Element {
   }, [cuesResponse]);
 
   const currentPairId = selectedCueRow?.cue.pair_id ?? "";
+  const approvedCadenceRows = useMemo(
+    () =>
+      tradeNowResponse
+        ? [...tradeNowResponse.tradable_now, ...tradeNowResponse.watchlist].filter(
+            (row) => row.approval_source !== "NONE"
+          )
+        : [],
+    [tradeNowResponse]
+  );
+  const approvedCadenceKey = useMemo(
+    () =>
+      approvedCadenceRows
+        .map((row) => `${row.timeframe}:${row.pair_id}:${row.approval_source}`)
+        .sort()
+        .join("|"),
+    [approvedCadenceRows]
+  );
+  const cadenceSnapshot = useMemo(
+    () => computeCadenceSnapshot(approvedCadenceRows, opportunityHistory, opportunityHistoryStats),
+    [approvedCadenceRows, opportunityHistory, opportunityHistoryStats]
+  );
   const currentPosition =
     (currentPairId ? positions[currentPairId] : undefined) ?? emptyPosition(nowIso());
   const currentOpenTrade = useMemo(
@@ -1367,31 +1721,54 @@ function App(): JSX.Element {
       inFlight = true;
       if (firstLoad) {
         setCoreLoading(true);
+        setTradeNowLoading(true);
       }
       setCoreError(null);
+      setTradeNowError(null);
 
       try {
-        const cues =
+        const cuesRequest =
           takerFeeBpsOverride == null
             ? fetchStrategyCues(timeframe, 20)
             : fetchStrategyCues(timeframe, 20, takerFeeBpsOverride);
-        const response = await cues;
+        const tradeNowRequest =
+          takerFeeBpsOverride == null
+            ? fetchStrategyTradeNow(timeframe)
+            : fetchStrategyTradeNow(timeframe, takerFeeBpsOverride);
+        const [cuesResult, tradeNowResult] = await Promise.allSettled([
+          cuesRequest,
+          tradeNowRequest,
+        ]);
         if (cancelled) {
           return;
         }
-        setCuesResponse(response);
-      } catch (error) {
-        if (cancelled) {
-          return;
+        if (cuesResult.status === "fulfilled") {
+          setCuesResponse(cuesResult.value);
+        } else {
+          setCoreError(
+            `Unable to load strategy data from live services: ${
+              cuesResult.reason instanceof Error
+                ? cuesResult.reason.message
+                : String(cuesResult.reason)
+            }`
+          );
         }
-        setCoreError(
-          `Unable to load strategy data from live services: ${
-            error instanceof Error ? error.message : String(error)
-          }`
-        );
+        if (tradeNowResult.status === "fulfilled") {
+          setTradeNowResponse(tradeNowResult.value);
+        } else {
+          setTradeNowResponse(null);
+          setTradeNowError(
+            `Trade Now filter is unavailable: ${
+              tradeNowResult.reason instanceof Error
+                ? tradeNowResult.reason.message
+                : String(tradeNowResult.reason)
+            }`
+          );
+        }
       } finally {
         if (!cancelled && firstLoad) {
           setCoreLoading(false);
+          setTradeNowLoading(false);
         }
         inFlight = false;
       }
@@ -1408,6 +1785,55 @@ function App(): JSX.Element {
       window.clearInterval(intervalId);
     };
   }, [timeframe, uiAccessGranted, takerFeeBpsOverride, page]);
+
+  useEffect(() => {
+    if (!uiAccessGranted || page !== "trade") {
+      return;
+    }
+    if (!approvedCadenceRows.length) {
+      setOpportunityHistory(null);
+      setOpportunityHistoryStats(null);
+      setCadenceError(null);
+      setCadenceLoading(false);
+      return;
+    }
+    let cancelled = false;
+    setCadenceLoading(true);
+    setCadenceError(null);
+
+    void Promise.all([
+      fetchStrategyOpportunityHistory(timeframe, CADENCE_WINDOW_HOURS, false, CADENCE_HISTORY_LIMIT),
+      fetchStrategyOpportunityHistoryStats(timeframe),
+    ])
+      .then(([history, stats]) => {
+        if (cancelled) {
+          return;
+        }
+        setOpportunityHistory(history);
+        setOpportunityHistoryStats(stats);
+      })
+      .catch((error) => {
+        if (cancelled) {
+          return;
+        }
+        setOpportunityHistory(null);
+        setOpportunityHistoryStats(null);
+        setCadenceError(
+          `Cadence reporting is unavailable: ${
+            error instanceof Error ? error.message : String(error)
+          }`
+        );
+      })
+      .finally(() => {
+        if (!cancelled) {
+          setCadenceLoading(false);
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [approvedCadenceKey, approvedCadenceRows.length, page, timeframe, uiAccessGranted]);
 
   useEffect(() => {
     if (!uiAccessGranted) {
@@ -2691,6 +3117,14 @@ function App(): JSX.Element {
       return (
         <TradePage
           cues={cuesResponse}
+          tradeNow={tradeNowResponse}
+          tradeNowLoading={tradeNowLoading}
+          tradeNowError={tradeNowError}
+          cadenceSnapshot={cadenceSnapshot}
+          cadenceLoading={cadenceLoading}
+          cadenceError={cadenceError}
+          approvedPairCount={approvedCadenceRows.length}
+          timeframe={timeframe}
           selectedPairId={currentPairId}
           onSelectPair={setSelectedPairId}
           zSeries={tradeZSeries}
@@ -2970,8 +3404,282 @@ function SectionCard({
   );
 }
 
+function TradeNowBucketSection(props: {
+  title: string;
+  subtitle: string;
+  rows: StrategyPairsTradeNowRow[];
+  selectedPairId: string;
+  onSelectPair: (pairId: string) => void;
+  emptyText: string;
+}): JSX.Element {
+  return (
+    <section className="opportunity-bucket">
+      <div className="opportunity-bucket-header">
+        <div>
+          <h3>{props.title}</h3>
+          <p className="opportunity-bucket-subtitle">{props.subtitle}</p>
+        </div>
+        <span className="status-pill">{props.rows.length}</span>
+      </div>
+      {props.rows.length ? (
+        <div className="table-wrap opportunity-bucket-table-wrap">
+          <table className="opportunity-bucket-table">
+            <thead>
+              <tr>
+                <th>Pair</th>
+                <th>Z</th>
+                <th>Edge</th>
+                <th>Why</th>
+              </tr>
+            </thead>
+            <tbody>
+              {props.rows.map((row) => (
+                <tr
+                  key={`${row.pair_id}-${row.timeframe}`}
+                  className={row.pair_id === props.selectedPairId ? "selected-row" : ""}
+                  onClick={() => props.onSelectPair(row.pair_id)}
+                >
+                  <td>
+                    <div className="opportunity-pair-stack">
+                      <strong>{formatPairLabel(row.pair_id)}</strong>
+                      <span className="small-text">
+                        {row.timeframe} | {row.selected_variant} |{" "}
+                        {formatDirectionHintLabel(row.direction_hint)}
+                      </span>
+                    </div>
+                  </td>
+                  <td>{formatSigned(row.spread_z)}</td>
+                  <td>{formatSigned(row.net_edge_bps)}bp</td>
+                  <td>
+                    <div className="opportunity-status-stack">
+                      <span className={tradeNowToneClass(row)}>
+                        {formatReasonCodeLabel(tradeNowHeadlineCode(row))}
+                      </span>
+                      <span className="small-text">{tradeNowDetailLabel(row)}</span>
+                    </div>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      ) : (
+        <p className="empty-text">{props.emptyText}</p>
+      )}
+    </section>
+  );
+}
+
+function ResearchBenchSection(props: {
+  cues: StrategyPairsCuesResponse | null;
+  selectedPairId: string;
+  onSelectPair: (pairId: string) => void;
+  dataDegraded: boolean;
+  openTradePairIds: Set<string>;
+  liveZByPair: Record<string, { z: number; ts: string }>;
+}): JSX.Element {
+  const rows = props.cues?.cues ?? [];
+
+  return (
+    <section className="opportunity-bucket">
+      <div className="opportunity-bucket-header">
+        <div>
+          <h3>Research Bench</h3>
+          <p className="opportunity-bucket-subtitle">
+            Full live cue inventory for manual analysis and pair selection.
+          </p>
+        </div>
+        <span className="status-pill">{rows.length}</span>
+      </div>
+      {rows.length ? (
+        <div className="table-wrap opportunity-bucket-table-wrap">
+          <table className="opportunity-bucket-table">
+            <thead>
+              <tr>
+                <th>Pair</th>
+                <th>Z</th>
+                <th>Edge</th>
+                <th>Status</th>
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((entry) => {
+                const status = deriveOpportunityStatus(
+                  entry.cue,
+                  props.dataDegraded,
+                  props.openTradePairIds.has(entry.cue.pair_id)
+                );
+                const displayZ = props.liveZByPair[entry.cue.pair_id]?.z ?? entry.cue.spread_z;
+                return (
+                  <tr
+                    key={entry.cue.pair_id}
+                    className={entry.cue.pair_id === props.selectedPairId ? "selected-row" : ""}
+                    onClick={() => props.onSelectPair(entry.cue.pair_id)}
+                  >
+                    <td>
+                      <div className="opportunity-pair-stack">
+                        <strong>{formatPairLabel(entry.cue.pair_id)}</strong>
+                        <span className="small-text">
+                          {entry.cue.timeframe} | {entry.cue.selected_variant} |{" "}
+                          {formatDirectionHintLabel(entry.cue.direction_hint)}
+                        </span>
+                      </div>
+                    </td>
+                    <td>{displayZ.toFixed(2)}</td>
+                    <td>{formatSigned(entry.cue.cost_gate.net_edge_bps)}bp</td>
+                    <td>
+                      <div className="opportunity-status-stack">
+                        <span className={status.label === "READY" || status.label === "LIVE" ? "status-pill ok" : status.label === "WAIT" ? "status-pill warn" : "status-pill bad"}>
+                          {status.label}
+                        </span>
+                        <span className="small-text">
+                          {entry.cue.trade_gate?.pass ?? entry.cue.actionable
+                            ? "Live cue inventory"
+                            : "Advisory only"}
+                        </span>
+                      </div>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      ) : (
+        <p className="empty-text">No live cues are available for research.</p>
+      )}
+    </section>
+  );
+}
+
+function CadenceSnapshotCard(props: {
+  cadence: CadenceSnapshot | null;
+  loading: boolean;
+  error: string | null;
+  timeframe: Timeframe;
+  approvedPairCount: number;
+}): JSX.Element {
+  if (props.loading) {
+    return (
+      <div className="mini-card cadence-card">
+        <h3>Cadence Snapshot</h3>
+        <p>Loading approved-universe cadence...</p>
+      </div>
+    );
+  }
+
+  if (props.error) {
+    return (
+      <div className="mini-card cadence-card">
+        <h3>Cadence Snapshot</h3>
+        <p className="tone-warn">{props.error}</p>
+      </div>
+    );
+  }
+
+  if (!props.approvedPairCount) {
+    return (
+      <div className="mini-card cadence-card">
+        <h3>Cadence Snapshot</h3>
+        <p>
+          No current approved universe rows exist for {props.timeframe}, so cadence reporting stays
+          unavailable until learning selection or operator promotion approves a live set.
+        </p>
+      </div>
+    );
+  }
+
+  if (!props.cadence) {
+    return (
+      <div className="mini-card cadence-card">
+        <h3>Cadence Snapshot</h3>
+        <p>No approved-universe cadence data is available yet.</p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="mini-card cadence-card">
+      <div className="cadence-header">
+        <div>
+          <h3>Cadence Snapshot</h3>
+          <p className="small-text">
+            Approved universe over the last {props.cadence.windowHours}h for {props.timeframe}.
+          </p>
+        </div>
+        <span className="status-pill">{props.cadence.approvedPairCount} pairs</span>
+      </div>
+      <div className="cadence-grid">
+        <div className="stat-row">
+          <div className="stat-label">Approved-ready rows/day</div>
+          <div className="stat-value">{formatPerDayLabel(props.cadence.readyRowsPerDay)}</div>
+          <div className="small-text">{props.cadence.readyRows} ready rows in window</div>
+        </div>
+        <div className="stat-row">
+          <div className="stat-label">Median ready duration</div>
+          <div className="stat-value">{formatDurationLabel(props.cadence.medianReadyMinutes)}</div>
+          <div className="small-text">{props.cadence.windowDays.toFixed(1)} sampled days</div>
+        </div>
+        <div className="stat-row">
+          <div className="stat-label">Stored history coverage</div>
+          <div className="stat-value">
+            {props.cadence.historyDaysCovered == null
+              ? "--"
+              : `${props.cadence.historyDaysCovered.toFixed(1)}d`}
+          </div>
+          <div className="small-text">Opportunity-history stats</div>
+        </div>
+      </div>
+      <div className="cadence-split">
+        <div>
+          <h4>Top wait/block reasons</h4>
+          {props.cadence.topBlockedReasons.length ? (
+            <ul className="cadence-list">
+              {props.cadence.topBlockedReasons.map((reason) => (
+                <li key={reason.code}>
+                  <span>{formatReasonCodeLabel(reason.code)}</span>
+                  <span className="small-text">
+                    {reason.count} rows | {(reason.rate * 100).toFixed(1)}%
+                  </span>
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <p className="small-text">No blocked rows observed in the current window.</p>
+          )}
+        </div>
+        <div>
+          <h4>Top recurring approved setups</h4>
+          {props.cadence.topRecurringSetups.length ? (
+            <ul className="cadence-list">
+              {props.cadence.topRecurringSetups.map((setup) => (
+                <li key={setup.pairId}>
+                  <span>{formatPairLabel(setup.pairId)}</span>
+                  <span className="small-text">
+                    {setup.readyRuns} ready windows | {setup.readyRows} ready rows
+                  </span>
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <p className="small-text">No recurring approved setups were found in the current window.</p>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function TradePage(props: {
   cues: StrategyPairsCuesResponse | null;
+  tradeNow: StrategyPairsTradeNowResponse | null;
+  tradeNowLoading: boolean;
+  tradeNowError: string | null;
+  cadenceSnapshot: CadenceSnapshot | null;
+  cadenceLoading: boolean;
+  cadenceError: string | null;
+  approvedPairCount: number;
+  timeframe: Timeframe;
   selectedPairId: string;
   onSelectPair: (pairId: string) => void;
   zSeries: number[];
@@ -3321,47 +4029,112 @@ function TradePage(props: {
     addExposureSizing?.reason ??
     reduceSizing?.reason ??
     null;
+  const tradeNowCounts = {
+    tradableNow: props.tradeNow?.tradable_now.length ?? 0,
+    watchlist: props.tradeNow?.watchlist.length ?? 0,
+    excluded: props.tradeNow?.excluded.length ?? 0,
+  };
+  const approvedUniverseEmpty =
+    !!props.tradeNow &&
+    tradeNowCounts.tradableNow === 0 &&
+    tradeNowCounts.watchlist === 0 &&
+    tradeNowCounts.excluded === 0;
+  const noTradableNow = !!props.tradeNow && tradeNowCounts.tradableNow === 0;
+  const overlayStatusLabel = props.tradeNow?.learning_overlay_generated_at
+    ? props.tradeNow.learning_overlay_fresh
+      ? `Overlay fresh (${formatOverlayAgeLabel(props.tradeNow.learning_overlay_age_seconds)})`
+      : `Overlay stale (${formatOverlayAgeLabel(props.tradeNow.learning_overlay_age_seconds)})`
+    : "No learning overlay loaded";
 
   return (
     <div className="trade-grid">
       <SectionCard
-        title="Opportunities"
-        subtitle="Pairs scanner: z-score | edge | gate"
+        title="Trade Now"
+        subtitle="Approved operator surface: Trade Now, Watchlist, Excluded, and Research Bench."
         className="opportunities-panel"
       >
-        <div className="table-wrap">
-          <table>
-            <thead>
-              <tr>
-                <th>Pair</th>
-                <th>Z</th>
-                <th>Edge</th>
-                <th>Status</th>
-              </tr>
-            </thead>
-            <tbody>
-              {props.cues?.cues.map((entry) => {
-                const status = deriveOpportunityStatus(
-                  entry.cue,
-                  props.dataDegraded,
-                  props.openTradePairIds.has(entry.cue.pair_id)
-                );
-                const displayZ = props.liveZByPair[entry.cue.pair_id]?.z ?? entry.cue.spread_z;
-                return (
-                  <tr
-                    key={entry.cue.pair_id}
-                    className={entry.cue.pair_id === props.selectedPairId ? "selected-row" : ""}
-                    onClick={() => props.onSelectPair(entry.cue.pair_id)}
-                  >
-                    <td>{formatPairLabel(entry.cue.pair_id)}</td>
-                    <td>{displayZ.toFixed(2)}</td>
-                    <td>{formatSigned(entry.cue.cost_gate.net_edge_bps)}bp</td>
-                    <td className={status.toneClass}>{status.label}</td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
+        <div className="chip-row opportunities-summary">
+          <span className="chip tone-info">Timeframe {props.timeframe}</span>
+          <span className={`chip ${props.tradeNow?.learning_overlay_fresh ? "tone-ok" : "tone-warn"}`}>
+            {overlayStatusLabel}
+          </span>
+          <span className="chip tone-ok">Trade Now {tradeNowCounts.tradableNow}</span>
+          <span className="chip tone-warn">Watchlist {tradeNowCounts.watchlist}</span>
+          <span className="chip tone-bad">Excluded {tradeNowCounts.excluded}</span>
+        </div>
+
+        {props.tradeNowLoading ? (
+          <div className="message-box">
+            <p>Loading trade-now filter...</p>
+          </div>
+        ) : null}
+        {props.tradeNowError ? (
+          <div className="message-box">
+            <p className="tone-warn">{props.tradeNowError}</p>
+            <p className="small-text">
+              Research Bench remains available, but live operator filtering is fail-closed until this
+              endpoint recovers.
+            </p>
+          </div>
+        ) : null}
+        {approvedUniverseEmpty ? (
+          <div className="message-box">
+            <p>
+              No approved universe rows exist for {props.timeframe}. This timeframe currently has no
+              learning-selected or operator-promoted active rows, so Trade Now stays empty and the
+              Research Bench below remains advisory only.
+            </p>
+          </div>
+        ) : null}
+        {!approvedUniverseEmpty && noTradableNow && !props.tradeNowError ? (
+          <div className="message-box">
+            <p>
+              No currently tradable approved opportunities for {props.timeframe}. Review Watchlist for
+              near-ready rows or use Research Bench for what-if analysis.
+            </p>
+          </div>
+        ) : null}
+        <CadenceSnapshotCard
+          cadence={props.cadenceSnapshot}
+          loading={props.cadenceLoading}
+          error={props.cadenceError}
+          timeframe={props.timeframe}
+          approvedPairCount={props.approvedPairCount}
+        />
+
+        <div className="opportunity-bucket-stack">
+          <TradeNowBucketSection
+            title="Trade Now"
+            subtitle="Approved rows passing live gates right now."
+            rows={props.tradeNow?.tradable_now ?? []}
+            selectedPairId={props.selectedPairId}
+            onSelectPair={props.onSelectPair}
+            emptyText="No approved rows currently pass live gates."
+          />
+          <TradeNowBucketSection
+            title="Watchlist"
+            subtitle="Approved rows that need fresher overlay or live setup improvement."
+            rows={props.tradeNow?.watchlist ?? []}
+            selectedPairId={props.selectedPairId}
+            onSelectPair={props.onSelectPair}
+            emptyText="No approved rows are waiting nearby."
+          />
+          <TradeNowBucketSection
+            title="Excluded"
+            subtitle="Rows blocked by governance, provenance, or approval policy."
+            rows={props.tradeNow?.excluded ?? []}
+            selectedPairId={props.selectedPairId}
+            onSelectPair={props.onSelectPair}
+            emptyText="No rows are currently excluded by policy."
+          />
+          <ResearchBenchSection
+            cues={props.cues}
+            selectedPairId={props.selectedPairId}
+            onSelectPair={props.onSelectPair}
+            dataDegraded={props.dataDegraded}
+            openTradePairIds={props.openTradePairIds}
+            liveZByPair={props.liveZByPair}
+          />
         </div>
       </SectionCard>
 

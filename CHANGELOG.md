@@ -90,6 +90,41 @@ This project follows SemVer as defined in `docs/02-versioning-and-releases.md`.
 - Analytics chart provenance visibility:
   - Analytics now shows the active chart pair, selected variant, exit mode, and effective fee basis above the equity curve.
   - Persisted pair selections that are no longer present in the live cue set now surface an explicit warning instead of silently rewriting local storage to the first live cue.
+- Slice A `Trade Now` proposal scaffolding:
+  - Added proposal doc `docs/24-trade-now-opportunity-proposal.md` with locked bucket semantics, overlay TTL, governance precedence, and baseline cadence numbers.
+  - Added machine-readable contract/example for the proposed read model:
+    - `specs/contracts/strategy_pairs_trade_now_response.schema.json`
+    - `specs/examples/strategy_pairs_trade_now_response.example.json`
+  - Tightened the draft `trade-now` contract to version `0.2.1` with stable reason-code enums, explicit overlay freshness invariants, a stale-overlay guard that forbids learning-selected rows in `tradable_now`, and per-row `requires_fresh_overlay` semantics.
+- Slice B1 `Trade Now` learning overlay loader:
+  - `strategy-service` now includes an internal latest-artifact loader for signal-learning cycle reports, selecting the newest report by logical `generated_at` (with filesystem time only as tiebreak), plus pure overlay-policy resolution for stale TTL, governance precedence, operator-promoted champion survival, and legacy-fallback suppression.
+  - Selected-signal provenance policy now uses shared source constants so legacy-fallback and operator-promotion handling cannot drift silently from their producers.
+  - Added unit coverage for selected-vs-eligible splitting, stale downgrade, operator-promoted-vs-learning-HOLD precedence, pending-challenger suppression, and legacy fallback behavior.
+- Slice B2 `Trade Now` strategy endpoint:
+  - Added `GET /v1/strategy/pairs/trade-now`, which builds grouped `tradable_now`, `watchlist`, and `excluded` rows by combining live cue gates with the Slice B1 learning overlay policy.
+  - The endpoint carries learning-overlay freshness metadata, selected-config provenance, and stable decision/watch/block reason codes that match the Slice A schema.
+  - Added Rust-side contract drift protection: grouped-response orchestration tests plus a schema roundtrip validation against `specs/contracts/strategy_pairs_trade_now_response.schema.json`.
+  - Current B2 scope remains strategy-service-local: `open_live_trade` is reported as `false` until a bounded execution-service position source is wired in a later slice.
+- Slice C `Trade Now` UI split:
+  - Trade page now consumes `GET /v1/strategy/pairs/trade-now` separately from live cues and presents four distinct operator buckets:
+    - `Trade Now`
+    - `Watchlist`
+    - `Excluded`
+    - `Research Bench`
+  - Research/analytics routing is now labeled `Research Bench`, while cue-backed charts and pair analytics remain on the existing research page.
+  - Empty approved-universe timeframes now surface an explicit explanation instead of silently showing a blank operator surface.
+- Slice D approved-universe cadence reporting:
+  - Trade page now computes a bounded cadence snapshot from the current `trade-now` approved set plus `GET /v1/strategy/pairs/opportunity-history` over the last `168h`.
+  - Cadence snapshot shows approved-ready rows/day, median ready duration, stored history coverage, top wait/block reasons, and top recurring approved setups for the current timeframe.
+  - Cadence remains fail-closed: if no approved universe exists or history fetch fails, the UI shows an explicit unavailable explanation instead of implying frequency confidence.
+- Slice E `Trade Now` hardening and observability:
+  - `strategy-service` now resolves `open_live_trade` from `execution-service` open-trade state and fails the `trade-now` endpoint closed if that upstream execution state is unavailable.
+  - Active candidate probation lookups for `trade-now` now batch by timeframe and pair set instead of issuing one repository query per cue.
+  - Added `GET /v1/strategy/observability/trade-now` plus contract/example for `learning_challenger_bypass_suppressed_total` and pair/timeframe suppression breakdowns.
+  - Added strategy env controls for the execution-state lookup:
+    - `STRATEGY_EXECUTION_SERVICE_URL`
+    - `STRATEGY_EXECUTION_EXCHANGE`
+    - `STRATEGY_EXECUTION_ACCOUNT_ID`
 - Data horizon and retention controls for `data-service` candles:
   - Configurable backfill windows by timeframe (`1m/15m/1h`) with defaults aligned to long-horizon research (`120d/540d/1095d`).
   - Configurable candle retention pruning by timeframe plus periodic prune interval.

@@ -151,6 +151,58 @@ export interface StrategyPairsCuesResponse {
   skipped: Array<{ pair_id: string; reason: string }>;
 }
 
+export type TradeNowDecisionBucket = "TRADE_NOW" | "WATCHLIST" | "EXCLUDED";
+export type TradeNowApprovalSource =
+  | "LEARNING_SELECTION"
+  | "OPERATOR_PROMOTED_ACTIVE_CHAMPION"
+  | "NONE";
+
+export interface StrategyPairsTradeNowRow {
+  pair_id: string;
+  left_instrument: string;
+  right_instrument: string;
+  timeframe: Timeframe;
+  selected_variant: string;
+  direction_hint: DirectionHint;
+  spread_z: number;
+  opportunity_score: number;
+  confidence_band: "LOW" | "MEDIUM" | "HIGH";
+  expected_hold_bars: number;
+  net_edge_bps: number;
+  setup_gate_pass: boolean;
+  cost_gate_pass: boolean;
+  trade_gate_pass: boolean;
+  open_live_trade: boolean;
+  portfolio_target_weight: number | null;
+  portfolio_risk_contribution: number | null;
+  approval_source: TradeNowApprovalSource;
+  requires_fresh_overlay: boolean;
+  learning_recommendation: string | null;
+  learning_trade_eligible: boolean | null;
+  learning_selection_selected: boolean | null;
+  learning_reason_codes: string[];
+  learning_cycle_generated_at: string | null;
+  selected_config_source: string;
+  legacy_fallback_active: boolean;
+  decision_bucket: TradeNowDecisionBucket;
+  decision_reason_code: string;
+  blocked_reason_code: string | null;
+  watch_reason_code: string | null;
+  rationale_codes: string[];
+}
+
+export interface StrategyPairsTradeNowResponse {
+  generated_at: string;
+  timeframe_filter: Timeframe | null;
+  learning_overlay_generated_at: string | null;
+  learning_overlay_age_seconds: number | null;
+  learning_overlay_fresh: boolean;
+  learning_overlay_ttl_seconds: number;
+  tradable_now: StrategyPairsTradeNowRow[];
+  watchlist: StrategyPairsTradeNowRow[];
+  excluded: StrategyPairsTradeNowRow[];
+}
+
 export interface StrategyPairsOpportunityHistoryResponse {
   timeframe: Timeframe;
   generated_at: string;
@@ -172,6 +224,22 @@ export interface StrategyPairsOpportunityHistoryResponse {
     rationale_codes: string[];
     cost_gate_rationale_codes: string[];
     evaluated_at: string;
+  }>;
+}
+
+export interface StrategyPairsOpportunityHistoryStatsResponse {
+  generated_at: string;
+  timeframe_filter: Timeframe | null;
+  total_rows: number;
+  first_evaluated_at: string | null;
+  last_evaluated_at: string | null;
+  days_covered: number;
+  by_timeframe: Array<{
+    timeframe: Timeframe;
+    rows: number;
+    first_evaluated_at: string | null;
+    last_evaluated_at: string | null;
+    days_covered: number;
   }>;
 }
 

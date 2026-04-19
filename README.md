@@ -318,6 +318,27 @@ and per-variant `shadow_success_probability`/`shadow_rank_score` fields for deci
 Each cue also includes a fail-closed `cost_gate` block and a `portfolio_hint` advisory block.
 Response-level `candidate_set` and `portfolio_plan` objects summarize scan quality and suggested sizing.
 
+## Strategy Trade Now Endpoint
+
+```bash
+GET /v1/strategy/pairs/trade-now?timeframe=15m
+```
+
+Returns the operator-oriented `Trade Now` read model grouped into `tradable_now`, `watchlist`,
+and `excluded` buckets. Each row includes learning-overlay provenance, selected-config source,
+and stable decision/watch/block reason codes so the UI can answer "what can I trade now?"
+without inferring policy from the generic scanner response.
+
+## Strategy Trade Now Observability Endpoint
+
+```bash
+GET /v1/strategy/observability/trade-now
+```
+
+Returns the current in-service suppression counters for governance-blocked trade-now rows,
+including `learning_challenger_bypass_suppressed_total` and a pair/timeframe breakdown for
+learning-selected rows held out of `Trade Now` until challenger promotion is approved.
+
 ## Strategy Backtest Endpoint
 
 ```bash
