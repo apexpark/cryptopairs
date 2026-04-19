@@ -7409,7 +7409,7 @@ async fn pairs_replay_trades(
         .filter(|row| row.entry_ts >= validation_start)
         .filter(|row| row.exit_ts >= cutoff)
         .collect::<Vec<_>>();
-    rows.sort_by(|left, right| right.exit_ts.cmp(&left.exit_ts));
+    rows.sort_by_key(|row| std::cmp::Reverse(row.exit_ts));
     rows.truncate(limit as usize);
     info!(
         timeframe = %timeframe.as_str(),
@@ -9554,7 +9554,7 @@ async fn evaluate_timeframe_outputs(
             state.settings.advisory_per_pair_cap,
         );
         apply_portfolio_plan_to_cues(&mut cue_snapshot, &plan);
-        for (output, cue) in outputs.iter_mut().zip(cue_snapshot.into_iter()) {
+        for (output, cue) in outputs.iter_mut().zip(cue_snapshot) {
             output.cue = cue;
         }
         plan
