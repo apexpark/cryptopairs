@@ -872,6 +872,8 @@ function formatApprovalSourceLabel(source: StrategyPairsTradeNowRow["approval_so
   switch (source) {
     case "LEARNING_SELECTION":
       return "Learning selected";
+    case "LEARNING_ELIGIBLE_OVERRIDE":
+      return "Learning eligible override";
     case "OPERATOR_PROMOTED_ACTIVE_CHAMPION":
       return "Operator champion";
     case "NONE":

@@ -115,6 +115,7 @@
       "type": "string",
       "enum": [
         "LEARNING_SELECTION",
+        "LEARNING_ELIGIBLE_OVERRIDE",
         "OPERATOR_PROMOTED_ACTIVE_CHAMPION",
         "NONE"
       ]
@@ -127,6 +128,7 @@
       "type": "string",
       "enum": [
         "LEARNING_SELECTED_AND_LIVE_GATES_PASS",
+        "LEARNING_ELIGIBLE_OVERRIDE_AND_LIVE_GATES_PASS",
         "OPERATOR_PROMOTED_AND_LIVE_GATES_PASS",
         "APPROVED_BUT_WAITING_ON_LIVE_CONDITIONS",
         "LEARNING_POSITIVE_BUT_NOT_SELECTED",
@@ -163,8 +165,11 @@
       "type": "string",
       "enum": [
         "APPROVAL_SOURCE_LEARNING_SELECTION",
+        "APPROVAL_SOURCE_LEARNING_ELIGIBLE_OVERRIDE",
         "APPROVAL_SOURCE_OPERATOR_PROMOTED",
         "LEARNING_SELECTION_SELECTED",
+        "LEARNING_ELIGIBLE_OVERRIDE_QUALIFIED",
+        "LEARNING_SELECTION_COST_OVERRIDE_APPLIED",
         "LEARNING_TRADE_ELIGIBLE",
         "LEARNING_HOLD",
         "LEARNING_NOT_TRADE_ELIGIBLE",
@@ -336,6 +341,7 @@
             "approval_source": {
               "enum": [
                 "LEARNING_SELECTION",
+                "LEARNING_ELIGIBLE_OVERRIDE",
                 "OPERATOR_PROMOTED_ACTIVE_CHAMPION"
               ]
             },
@@ -346,7 +352,9 @@
         {
           "if": {
             "properties": {
-              "approval_source": { "const": "LEARNING_SELECTION" }
+              "approval_source": {
+                "enum": ["LEARNING_SELECTION", "LEARNING_ELIGIBLE_OVERRIDE"]
+              }
             },
             "required": ["approval_source"]
           },
@@ -400,5 +408,5 @@
       ]
     }
   },
-  "version": "0.2.1"
+  "version": "0.3.1"
 }
