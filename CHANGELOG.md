@@ -674,3 +674,16 @@ This project follows SemVer as defined in `docs/02-versioning-and-releases.md`.
   instrument-price-scaled funding distortions in strategy cost-gate calculations.
 - Strategy cues now force cost-gate `pass=false` when `actionable=false`, preventing
   Gate/Edge PASS presentation on non-actionable rows (including champion-drift blocked cues).
+- Strategy selected-signal persistence now preserves non-legacy provenance against same-variant
+  legacy-source regression without freezing retuned parameters, preventing `trade-now` rows from
+  regressing into `LEGACY_ROW_FALLBACK` during normal evaluation cycles.
+- Trade-now now attaches an internal 168h paper-trade quality snapshot per pair/timeframe for
+  later frequency-gating slices without changing the public response contract.
+- Trade-now can now surface a bounded `LEARNING_ELIGIBLE_OVERRIDE` approval path for fresh
+  learning-positive, non-selected rows when recent 168h paper-trade quality clears timeframe-aware
+  thresholds.
+- Trade-now now lets fresh `LEARNING_SELECTION` rows bypass a short rolling cost-gate false
+  negative when the same 168h completed-trade quality checks remain strong, marks that path via
+  explicit rationale provenance, and preserves the raw live `net_edge_bps` display.
+- Trade-now observability now tracks surfaced `LEARNING_ELIGIBLE_OVERRIDE` rows and applied
+  `LEARNING_SELECTION_COST_OVERRIDE_APPLIED` rows alongside challenger-bypass suppressions.

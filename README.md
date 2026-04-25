@@ -335,9 +335,11 @@ without inferring policy from the generic scanner response.
 GET /v1/strategy/observability/trade-now
 ```
 
-Returns the current in-service suppression counters for governance-blocked trade-now rows,
-including `learning_challenger_bypass_suppressed_total` and a pair/timeframe breakdown for
-learning-selected rows held out of `Trade Now` until challenger promotion is approved.
+Returns the current in-service trade-now counters for governance-blocked rows and surfaced override
+paths,
+including `learning_challenger_bypass_suppressed_total`, `learning_eligible_override_tradable_total`,
+and `learning_selection_cost_override_applied_total` with pair/timeframe breakdowns. These are
+in-service counters and reset on process restart.
 
 ## Strategy Backtest Endpoint
 

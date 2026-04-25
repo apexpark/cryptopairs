@@ -132,6 +132,7 @@ export interface StrategyPairsCuesResponse {
 export type TradeNowDecisionBucket = "TRADE_NOW" | "WATCHLIST" | "EXCLUDED";
 export type TradeNowApprovalSource =
   | "LEARNING_SELECTION"
+  | "LEARNING_ELIGIBLE_OVERRIDE"
   | "OPERATOR_PROMOTED_ACTIVE_CHAMPION"
   | "NONE";
 
