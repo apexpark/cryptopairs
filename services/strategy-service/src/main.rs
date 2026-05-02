@@ -4698,10 +4698,7 @@ fn build_cue_selection_state(
     }
 }
 
-fn cue_for_pairs_response(
-    output: &PairEvaluationOutput,
-    block_on_champion_drift: bool,
-) -> PairCue {
+fn cue_for_pairs_response(output: &PairEvaluationOutput, block_on_champion_drift: bool) -> PairCue {
     let drift_active = output
         .stored_champion_variant
         .as_deref()
@@ -4722,8 +4719,10 @@ fn cue_for_pairs_response(
             cue.rationale_codes.push("CHAMPION_DRIFT".to_string());
             cue.rationale_codes
                 .push(format!("CHAMPION_SELECTED:{champion_variant}"));
-            cue.rationale_codes
-                .push(format!("CHALLENGER_SELECTED:{}", output.cue.selected_variant));
+            cue.rationale_codes.push(format!(
+                "CHALLENGER_SELECTED:{}",
+                output.cue.selected_variant
+            ));
         }
         if projection_failed {
             cue.rationale_codes
@@ -8160,16 +8159,15 @@ mod tests {
         artifact_download_path, bootstrap_deviation_exceeds_threshold, bootstrap_snapshot_is_fresh,
         canonical_metric_instrument, classify_expectancy_result, compute_expectancy_metrics,
         compute_pair_funding_bps_per_event, compute_pair_slippage_sample_bps,
-        compute_walk_forward_summary, days_covered, decide_candidate_probation_transition,
-        decide_champion_transition, derive_paper_trades_from_series,
-        derive_replay_trades_from_series, estimate_research_combinations,
-        evaluate_recent_performance_gate, expectancy_objective_score,
-        expected_funding_events_crossed, finalize_trade_gate, cue_for_pairs_response,
-        normalize_funding_rate,
-        parse_backtest_exit_mode, parse_candidate_inbox_query, parse_expectancy_query,
-        parse_opportunity_history_stats_timeframe, parse_opportunity_history_window,
-        parse_paper_trades_window, parse_replay_trades_query, percentile,
-        project_continuous_funding_bps, refresh_setup_gate, resolve_artifact_path,
+        compute_walk_forward_summary, cue_for_pairs_response, days_covered,
+        decide_candidate_probation_transition, decide_champion_transition,
+        derive_paper_trades_from_series, derive_replay_trades_from_series,
+        estimate_research_combinations, evaluate_recent_performance_gate,
+        expectancy_objective_score, expected_funding_events_crossed, finalize_trade_gate,
+        normalize_funding_rate, parse_backtest_exit_mode, parse_candidate_inbox_query,
+        parse_expectancy_query, parse_opportunity_history_stats_timeframe,
+        parse_opportunity_history_window, parse_paper_trades_window, parse_replay_trades_query,
+        percentile, project_continuous_funding_bps, refresh_setup_gate, resolve_artifact_path,
         resolve_taker_fee_bps, retention_cutoff_ts, summarize_recent_performance,
         CandidateInboxQuery, CandidateLifecycleState, CandidateOperatorAction,
         CandidateProbationInputs, ChampionDecision, ExpectancyMetrics, ExpectancyQuery,
@@ -8359,7 +8357,10 @@ mod tests {
             .iter()
             .any(|code| code == "CHAMPION_PROJECTION_FAILED"));
         let selection_state = cue.selection_state.expect("selection state");
-        assert_eq!(selection_state.validation_state, "CHAMPION_PROJECTION_FAILED");
+        assert_eq!(
+            selection_state.validation_state,
+            "CHAMPION_PROJECTION_FAILED"
+        );
     }
 
     #[test]
