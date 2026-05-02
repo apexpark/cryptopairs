@@ -193,6 +193,79 @@
                   }
                 }
               },
+              "selection_state": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "best_variant",
+                  "best_opportunity_score",
+                  "best_direction_hint",
+                  "best_confidence_band",
+                  "stored_champion_variant",
+                  "stored_champion_score",
+                  "stored_champion_direction_hint",
+                  "stored_champion_confidence_band",
+                  "transition_decision",
+                  "score_delta_to_champion",
+                  "drift_active",
+                  "source",
+                  "validation_state"
+                ],
+                "properties": {
+                  "best_variant": {
+                    "type": "string",
+                    "enum": ["COINTEGRATION_Z", "ROBUST_Z", "VOL_NORMALIZED", "FUNDING_ADJUSTED"]
+                  },
+                  "best_opportunity_score": { "type": "number" },
+                  "best_direction_hint": {
+                    "type": "string",
+                    "enum": ["LONG_SPREAD", "SHORT_SPREAD", "NONE"]
+                  },
+                  "best_confidence_band": {
+                    "type": "string",
+                    "enum": ["LOW", "MEDIUM", "HIGH"]
+                  },
+                  "stored_champion_variant": {
+                    "type": ["string", "null"],
+                    "enum": [
+                      "COINTEGRATION_Z",
+                      "ROBUST_Z",
+                      "VOL_NORMALIZED",
+                      "FUNDING_ADJUSTED",
+                      null
+                    ]
+                  },
+                  "stored_champion_score": { "type": ["number", "null"] },
+                  "stored_champion_direction_hint": {
+                    "type": ["string", "null"],
+                    "enum": ["LONG_SPREAD", "SHORT_SPREAD", "NONE", null]
+                  },
+                  "stored_champion_confidence_band": {
+                    "type": ["string", "null"],
+                    "enum": ["LOW", "MEDIUM", "HIGH", null]
+                  },
+                  "transition_decision": {
+                    "type": "string",
+                    "enum": ["INITIALIZE", "UNCHANGED", "KEEP_CHAMPION", "PROMOTE_CHALLENGER"]
+                  },
+                  "score_delta_to_champion": { "type": ["number", "null"] },
+                  "drift_active": { "type": "boolean" },
+                  "source": {
+                    "type": "string",
+                    "enum": ["EVALUATED_BEST", "STORED_CHAMPION_PROJECTION"]
+                  },
+                  "validation_state": {
+                    "type": "string",
+                    "enum": [
+                      "NO_STORED_CHAMPION",
+                      "BEST_IS_CHAMPION",
+                      "CHAMPION_PROJECTED",
+                      "CHAMPION_PROJECTED_BLOCKED",
+                      "CHAMPION_PROJECTION_FAILED"
+                    ]
+                  }
+                }
+              },
               "evaluated_at": { "type": "string", "format": "date-time" }
             }
           },

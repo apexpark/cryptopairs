@@ -51,6 +51,27 @@ export interface ShadowMl {
   rationale_codes: string[];
 }
 
+export interface CueSelectionState {
+  best_variant: string;
+  best_opportunity_score: number;
+  best_direction_hint: DirectionHint;
+  best_confidence_band: "LOW" | "MEDIUM" | "HIGH";
+  stored_champion_variant: string | null;
+  stored_champion_score: number | null;
+  stored_champion_direction_hint: DirectionHint | null;
+  stored_champion_confidence_band: "LOW" | "MEDIUM" | "HIGH" | null;
+  transition_decision: "INITIALIZE" | "UNCHANGED" | "KEEP_CHAMPION" | "PROMOTE_CHALLENGER";
+  score_delta_to_champion: number | null;
+  drift_active: boolean;
+  source: "EVALUATED_BEST" | "STORED_CHAMPION_PROJECTION";
+  validation_state:
+    | "NO_STORED_CHAMPION"
+    | "BEST_IS_CHAMPION"
+    | "CHAMPION_PROJECTED"
+    | "CHAMPION_PROJECTED_BLOCKED"
+    | "CHAMPION_PROJECTION_FAILED";
+}
+
 export interface Cue {
   pair_id: string;
   left_instrument: string;
@@ -75,6 +96,7 @@ export interface Cue {
   trade_gate?: TradeGate;
   portfolio_hint: PortfolioHint;
   shadow_ml: ShadowMl;
+  selection_state?: CueSelectionState;
   evaluated_at: string;
 }
 
