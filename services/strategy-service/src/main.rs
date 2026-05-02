@@ -7494,18 +7494,22 @@ async fn reoptimize(
     }))
 }
 
+struct ShadowModelContext<'a> {
+    rows_len: usize,
+    query_failed: bool,
+    model: Option<&'a ShadowModel>,
+}
+
 async fn finalize_pair_evaluation_output(
     state: &AppState,
     timeframe: Timeframe,
     advisory_enabled: bool,
     taker_fee_bps: f64,
-    training_rows_len: usize,
-    training_query_failed: bool,
-    model: Option<&ShadowModel>,
+    shadow: ShadowModelContext<'_>,
     output: &mut PairEvaluationOutput,
 ) -> anyhow::Result<()> {
-    let diagnostics = annotate_with_shadow_model(output, model);
-    if training_query_failed {
+    let diagnostics = annotate_with_shadow_model(output, shadow.model);
+    if shadow.query_failed {
         output
             .cue
             .shadow_ml
@@ -7518,7 +7522,7 @@ async fn finalize_pair_evaluation_output(
         tracing::info!(
             pair_id = %output.cue.pair_id,
             timeframe = %timeframe.as_str(),
-            rows = training_rows_len,
+            rows = shadow.rows_len,
             "shadow model unavailable for current evaluation"
         );
     }
@@ -7719,9 +7723,11 @@ async fn evaluate_pair_for_timeframe(
         timeframe,
         advisory_enabled,
         taker_fee_bps,
-        training_rows_len,
-        training_query_failed,
-        model.as_ref(),
+        ShadowModelContext {
+            rows_len: training_rows_len,
+            query_failed: training_query_failed,
+            model: model.as_ref(),
+        },
         &mut output,
     )
     .await?;
@@ -7759,9 +7765,11 @@ async fn evaluate_pair_for_timeframe(
                 timeframe,
                 advisory_enabled,
                 taker_fee_bps,
-                training_rows_len,
-                training_query_failed,
-                model.as_ref(),
+                ShadowModelContext {
+                    rows_len: training_rows_len,
+                    query_failed: training_query_failed,
+                    model: model.as_ref(),
+                },
                 &mut champion_projection,
             )
             .await?;
