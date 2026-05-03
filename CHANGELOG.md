@@ -5,6 +5,9 @@ This project follows SemVer as defined in `docs/02-versioning-and-releases.md`.
 
 ## Unreleased
 ### Added
+- Multi-agent operating model:
+  - `AGENTS.md` §8 defines Local vs Remote agent roles, the canonical-source rule, work allocation defaults, branch/PR conventions, and a mandatory hydration sequence (`AGENTS.md` → `docs/AGENT_STATE.md` → task brief → code).
+  - New `docs/AGENT_STATE.md` is a living state file: sprint pin, in-flight work, blocked items, open follow-ups (S4/S6-S8 from Slice A review, B1-B5 from Slice B review, X1-X2 cross-cutting), and update protocol. Curated by the local agent; deltas proposed by remote agents in their PRs.
 - Execution open-trades API and Trade tab live position view for SIM/manual operations:
   - New endpoint: `GET /v1/execution/portfolio/open-trades` (pair-level spread + per-leg live unrealized PnL using data-service marks).
   - New contracts/examples:
