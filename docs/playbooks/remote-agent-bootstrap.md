@@ -34,10 +34,23 @@ The same prompt works for both remote Codex and remote Claude.
 Run before any work. Stop and report if any check fails.
 
 ```bash
-# Pin match: HEAD must equal docs/AGENT_STATE.md §Pin "Repo HEAD pin (committed)"
-HEAD_SHA=$(git rev-parse HEAD)
+# Pin reachability: pin SHA in AGENT_STATE.md §Pin records the "as of" anchor for state.
+# Hard requirement: pin must be reachable from HEAD via fast-forward.
+# Not a hard requirement: pin == HEAD. The pin lags HEAD by any trivial commits that
+# didn't change state. See docs/AGENT_STATE.md §"Pin Convention" for the rationale.
 PIN_SHA=$(grep -m1 'Repo HEAD pin' docs/AGENT_STATE.md | grep -oE '`[a-f0-9]{7,40}`' | tr -d '`')
-[[ "$HEAD_SHA" == "$PIN_SHA"* || "$PIN_SHA" == "$HEAD_SHA"* ]] || { echo "PIN MISMATCH: HEAD=$HEAD_SHA pin=$PIN_SHA"; exit 1; }
+git merge-base --is-ancestor "$PIN_SHA" HEAD \
+  || { echo "PIN UNREACHABLE: $PIN_SHA is not an ancestor of HEAD ($(git rev-parse HEAD))"; exit 1; }
+
+# Notice: HEAD has advanced past the AGENT_STATE.md last-touch commit
+LAST_TOUCHED=$(git log -1 --format=%H -- docs/AGENT_STATE.md)
+HEAD_SHA=$(git rev-parse HEAD)
+if [[ "$HEAD_SHA" != "$LAST_TOUCHED" ]]; then
+  COMMITS_SINCE=$(git rev-list --count "$LAST_TOUCHED..HEAD")
+  echo "NOTICE: HEAD ($HEAD_SHA) is $COMMITS_SINCE commits past AGENT_STATE.md last-touch ($LAST_TOUCHED)."
+  echo "Skim commit subjects in $LAST_TOUCHED..HEAD; if anything changed slice scope without an AGENT_STATE.md update, stop and ask operator."
+  git log --oneline "$LAST_TOUCHED..HEAD"
+fi
 
 # Clean tree (untracked .claude/ etc. is fine; modified files are not)
 [[ -z "$(git status --porcelain | grep '^.M\|^M ')" ]] || { echo "WORKTREE DIRTY — refuse to start"; git status --short; exit 1; }

@@ -187,7 +187,7 @@ Before doing any work — including review — read in this order:
 4. Any task-specific brief or spec named in `AGENT_STATE.md`’s “Currently In Flight” section
 5. Code paths and contracts referenced by the brief
 
-If `docs/AGENT_STATE.md` is missing, stale (last-updated more than 7 days old without a current sprint), or its commit pin does not match `git rev-parse HEAD`, stop and request operator refresh per §7.
+If `docs/AGENT_STATE.md` is missing, stale (last-updated more than 7 days old without a current sprint), or its commit pin is not reachable from `HEAD` via fast-forward (`git merge-base --is-ancestor <pin> HEAD`), stop and request operator refresh per §7. The pin records the "as of" anchor for state; it is not required to equal literal `HEAD`. See `docs/AGENT_STATE.md` §"Pin Convention" for the why and the playbook §1 self-preflight for the canonical check.
 
 ### 8.5 Branching and PR Convention
 

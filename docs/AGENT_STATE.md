@@ -11,7 +11,7 @@
 |---|---|
 | Last updated (UTC) | 2026-05-03 |
 | Updated by | local agent |
-| Repo HEAD pin (committed) | `039c82c` on branch `codex/fix-clippy-run-24549051096` (this file + AGENTS.md §8 + docs/26 + docs/27 are now committed and pushed; pre-push hook ran `cargo fmt --check`, `cargo clippy --workspace --all-targets -- -D warnings`, `cargo test --workspace` — all green against the dirty working tree) |
+| Repo HEAD pin (committed) | `a87b8ae` on branch `codex/fix-clippy-run-24549051096` (this file + AGENTS.md §8.4 pointer + docs/playbooks/remote-agent-bootstrap.md + CHANGELOG entry are committed and pushed on top of `039c82c`; pre-push hook ran `scripts/check-rust-ci.sh` — all green against the dirty working tree, fast incremental this time) |
 | Origin | `https://github.com/apexpark/cryptopairs.git` |
 | Working-tree state | **DIRTY** — Slice A and Slice B code (cue + selection_state + transition accounting + reoptimize 0.2.0) is in the operator’s working tree but **not yet committed**. The retention/data-horizon sprint and a 4k z-chart UI sprint are also dirty in the same worktree. See §"Currently In Flight" and §"Next Recommended Move". |
 
@@ -48,7 +48,7 @@ Do not relax these until Slice C is verified.
 Source of truth for shipped behavior is `CHANGELOG.md` `## Unreleased` section. Highlights for this sprint:
 
 - **Committed (`039c82c`)**: Multi-agent operating model — `AGENTS.md` §8, `docs/AGENT_STATE.md` (this file), `docs/26-...`, `docs/27-...`, and the corresponding `CHANGELOG.md` entry.
-- **Working-tree only (not yet committed)** — Bootstrap playbook: `docs/playbooks/remote-agent-bootstrap.md` (new, 187 lines) — operational procedure for AGENTS.md §8.4 covering bootstrap prompt, self-preflight, claim protocol, verification sequence (calls `scripts/check-rust-ci.sh` so it stays in sync with the pre-push hook), branch/commit/PR templates, design-proposal-first PR variant, blocking protocol, local review checklist. `AGENTS.md` §8.4 updated with a one-line pointer to it (now five-step hydration sequence instead of four).
+- **Committed (`a87b8ae`)**: Bootstrap playbook — `docs/playbooks/remote-agent-bootstrap.md` (new, 187 lines) is the operational procedure for AGENTS.md §8.4: bootstrap prompt, self-preflight, claim protocol via the open-follow-ups table, verification sequence (calls `scripts/check-rust-ci.sh` so it stays in sync with the pre-push hook), branch/commit/PR templates, design-proposal-first PR variant, blocking protocol, local review checklist. `AGENTS.md` §8.4 updated with a one-line pointer (now five-step hydration sequence). The multi-agent operating model is **fully active** as of this commit — any remote Codex/Claude session hydrating against this HEAD has everything needed to pick up work autonomously.
 - **Working-tree only (not yet committed)** — Slice A: `cue.selection_state` contract added with strict enums for `source` and `validation_state`; cue endpoint now projects champion-consistent cues or fails closed; UI surfaces consume `selection_state`. `specs/contracts/strategy_pairs_cues_response.schema.json`, `specs/examples/strategy_pairs_cues_response.example.json`, `apps/web/src/types.ts`, `apps/web/src/App.tsx`, `services/strategy-service/src/lib.rs`, `services/strategy-service/src/main.rs`. Tests: `cue_for_pairs_response_*` + `evaluate_pair_honors_preferred_variant_override`.
 - **Working-tree only (not yet committed)** — Slice B: `SelectionTransitionCounts` struct now records all four `ChampionDecision` outcomes; reoptimize observability emits all four counts and warns on `selected_rows_written > 0` with zero accounted decisions; reoptimize response schema bumped to 0.2.0 with additive `initialize_decisions` / `unchanged_decisions`. Drift table remains scoped to `KEEP_CHAMPION` / `PROMOTE_CHALLENGER` only. Tests: `selection_transition_counts_*` (×3 incl. accumulate), `reoptimize_response_serializes_transition_counts_at_top_level`, `update_persist_summary_for_transition_records_all_summary_counts`.
 
@@ -131,3 +131,23 @@ Update this file whenever any of the following happens:
 Curation owner: **local agent** (per `AGENTS.md` §8.3). Remote agents propose deltas in their PRs; the local agent commits the merged state.
 
 When updating, preserve the section order above and bump the “Last updated” date in §Pin.
+
+### Pin Convention
+
+The pin SHA in §Pin is the "as of" anchor for the state this file describes. It records the commit at which the operator (or curating agent) last reviewed and updated this file. It is **not** required to equal literal `HEAD`.
+
+Why not literal HEAD: every commit advances HEAD. If the rule were "pin must equal HEAD," then:
+
+1. Every trivial commit (test fix, comment, schema note) would force a re-pin commit.
+2. The re-pin commit itself advances HEAD past its own pin → chicken-and-egg.
+3. The first remote agent to pull after any commit would fail the strict-equality preflight check.
+
+Instead:
+
+- **When a commit changes state** described in this file (slice flip, follow-up resolved, new blocker, new commit on the active sprint), the operator updates §Pin in the same commit. Conventionally the pin records the commit *immediately preceding* this commit (since you can't reference your own SHA). After the commit lands, the pin lags by exactly 1.
+- **When a commit does not change state**, the pin is left alone. Lag grows by 1.
+- The pin is intentionally informational + an integrity anchor, not a literal HEAD mirror.
+
+**Hard requirement enforced by playbook §1 preflight**: the pin SHA must be **reachable from HEAD** via fast-forward (`git merge-base --is-ancestor <pin> HEAD`). Anything else (rewritten history, orphan branch, pin from a different lineage) is a hard failure.
+
+**Soft check**: if HEAD has advanced past the pin, the playbook prints a `NOTICE` listing the intervening commits and asks the agent to skim them for unreflected scope changes before proceeding. This is the practical "is AGENT_STATE.md still accurate?" gate.
