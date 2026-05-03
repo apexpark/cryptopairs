@@ -6,8 +6,9 @@ This project follows SemVer as defined in `docs/02-versioning-and-releases.md`.
 ## Unreleased
 ### Added
 - Multi-agent operating model:
-  - `AGENTS.md` §8 defines Local vs Remote agent roles, the canonical-source rule, work allocation defaults, branch/PR conventions, and a mandatory hydration sequence (`AGENTS.md` → `docs/AGENT_STATE.md` → task brief → code).
-  - New `docs/AGENT_STATE.md` is a living state file: sprint pin, in-flight work, blocked items, open follow-ups (S4/S6-S8 from Slice A review, B1-B5 from Slice B review, X1-X2 cross-cutting), and update protocol. Curated by the local agent; deltas proposed by remote agents in their PRs.
+  - `AGENTS.md` §8 defines Local vs Remote agent roles, the canonical-source rule, work allocation defaults, branch/PR conventions, and a mandatory hydration sequence (`AGENTS.md` → `docs/AGENT_STATE.md` → `docs/playbooks/remote-agent-bootstrap.md` → task brief → code).
+  - `docs/AGENT_STATE.md` is a living state file: sprint pin, in-flight work, blocked items, open follow-ups (S4/S6-S8 from Slice A review, B1-B6 from Slice B review including the new B6 Postgres-backed test harness item, X1-X2 cross-cutting), and update protocol. Curated by the local agent; deltas proposed by remote agents in their PRs.
+  - New `docs/playbooks/remote-agent-bootstrap.md` is the operational procedure for §8.4: bootstrap prompt, self-preflight (pin match / clean tree / fresh feature branch / base up to date), claim protocol via the open-follow-ups table, verification sequence (calls `scripts/check-rust-ci.sh` so it stays in sync with the pre-push hook, plus tsc and JSON-schema validation), branch/commit/PR templates, design-proposal-first PR variant, blocking protocol, local review checklist.
 - Execution open-trades API and Trade tab live position view for SIM/manual operations:
   - New endpoint: `GET /v1/execution/portfolio/open-trades` (pair-level spread + per-leg live unrealized PnL using data-service marks).
   - New contracts/examples:

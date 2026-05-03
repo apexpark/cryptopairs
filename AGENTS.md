@@ -183,8 +183,9 @@ Before doing any work — including review — read in this order:
 
 1. `AGENTS.md` (this file)
 2. `docs/AGENT_STATE.md` (current sprint, in-flight work, blocked items, open follow-ups, last commit pin)
-3. Any task-specific brief or spec named in `AGENT_STATE.md`’s “Currently In Flight” section
-4. Code paths and contracts referenced by the brief
+3. `docs/playbooks/remote-agent-bootstrap.md` (operational procedure for §8.4 — bootstrap prompt, self-preflight, claim protocol, verification sequence, branch/commit/PR templates, blocking protocol, local review checklist)
+4. Any task-specific brief or spec named in `AGENT_STATE.md`’s “Currently In Flight” section
+5. Code paths and contracts referenced by the brief
 
 If `docs/AGENT_STATE.md` is missing, stale (last-updated more than 7 days old without a current sprint), or its commit pin does not match `git rev-parse HEAD`, stop and request operator refresh per §7.
 
