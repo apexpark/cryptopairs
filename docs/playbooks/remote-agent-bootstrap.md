@@ -82,15 +82,11 @@ The claim commit is intentionally tiny so concurrent claims surface as a git con
 
 ## 3. Verification sequence
 
-Run before opening the PR. The Rust portion is the same script the pre-push hook runs (`scripts/check-rust-ci.sh`) — call it by its canonical name so this stays in sync.
+Verification splits into two tiers because the remote agent's environment cannot install `cargo`. Run every check you *can* run locally; explicitly delegate the rest to the local agent (primary) and CI (backstop).
+
+### 3a. Agent-runnable locally (must pass before pushing)
 
 ```bash
-# Rust workspace (canonical script — also enforced by .githooks/pre-push)
-./scripts/check-rust-ci.sh
-# = cargo fmt --all -- --check
-# + cargo clippy --workspace --all-targets -- -D warnings
-# + cargo test --workspace
-
 # Web app (only if any apps/web file changed)
 npm --prefix apps/web exec -- tsc --noEmit --pretty false
 
@@ -105,19 +101,37 @@ errs = list(Draft202012Validator(schema).iter_errors(example))
 assert not errs, errs
 print('OK')
 PY
+
+# JSON syntax (cheap; same check ci.yml's `contracts` job runs)
+for f in specs/contracts/*.json specs/examples/*.json; do
+  python3 -m json.tool "$f" > /dev/null
+done
 ```
 
-### What is NOT covered by this sequence
+### 3b. Cargo-dependent (delegated to local agent + CI backstop)
+
+Remote agents **cannot** run `cargo` and **must not** attempt to install a Rust toolchain. The Rust checks are enforced two ways, both running the same canonical script `scripts/check-rust-ci.sh`:
+
+1. **Primary — local agent runs on demand.** After the remote agent pushes a Rust-touching feature branch and opens the draft PR, the local agent pulls that branch and runs `./scripts/check-rust-ci.sh` (cargo fmt + clippy + test, fast with incremental cache). Result is posted in the PR thread.
+2. **Backstop — GitHub Actions.** `.github/workflows/ci.yml` runs the same checks on every push to `codex/**` / `claude/**` and on every PR. Slower but automated.
+
+The remote agent's job is to:
+
+- **State explicitly in the PR description** that cargo-dependent checks are delegated (use the §4 template's "Rust check status" field).
+- **Wait for at least one of the two paths** to confirm green before flipping the PR from draft to ready-for-review. CI status is observable at `https://github.com/apexpark/cryptopairs/actions`. If the agent has no GitHub access, it waits for the local agent's PR comment.
+- **If CI / local-agent reports red**, the remote agent fixes and repushes. It does **not** ask for a manual cargo waiver — there is no agent-side override.
+
+### What is NOT covered by either tier
 
 State this in the PR description rather than implying it passed:
 
-- **Persistence-boundary tests** on `StrategyRepository` — no Postgres-backed harness in `strategy-service` (see open follow-up B6 in `AGENT_STATE.md`).
+- **Persistence-boundary tests** on `StrategyRepository` — no Postgres-backed harness in `strategy-service` (see open follow-up B6 in `AGENT_STATE.md`). Even `cargo test --workspace` does not exercise the real `record_evaluation` write path.
 - **Host-runtime verification** — neither remote agents nor local agents have SSH to `cryptopairs`. Anything host-only is operator-only per `AGENTS.md` §8.3.
 - **Live execution paths** — fail-closed by policy per `docs/12-risk-and-execution-policy.md`. Tests use SIM/manual modes only.
 
 If your change implies coverage in any of these categories, either drop the claim or convert to a design-proposal-first PR (see §5).
 
-The escape hatch `SKIP_RUST_CHECKS=1` exists in `.githooks/pre-push` but **must not be used** by remote agents. If checks are failing, fix them; if you cannot, raise a §6 Blocked entry.
+The escape hatch `SKIP_RUST_CHECKS=1` exists in `.githooks/pre-push` for the local agent's use only and **must not be invoked by remote agents** in any form. If cargo checks are failing on the local agent or CI, fix them; if you cannot, raise a §6 Blocked entry.
 
 ---
 
@@ -141,11 +155,18 @@ The escape hatch `SKIP_RUST_CHECKS=1` exists in `.githooks/pre-push` but **must 
 <bullet list with one-line per-file rationale>
 
 ## Verification run
-- [ ] ./scripts/check-rust-ci.sh — <pass/fail/N-A>
 - [ ] tsc — <pass/fail/N-A — N/A if no apps/web change>
 - [ ] schema validation — <command + result, or N/A>
+- [ ] JSON syntax — <pass/fail/N-A>
 - [ ] persistence-boundary tests — N/A (see B6)
 - [ ] host-runtime verification — N/A (operator-only)
+
+## Rust check status (delegated — see playbook §3b)
+- [ ] N/A — no Rust files changed
+- [ ] Pending local agent — `scripts/check-rust-ci.sh` not yet run on this branch
+- [ ] Local agent: PASS at <SHA> — <link to PR comment>
+- [ ] CI (GitHub Actions): PASS at <SHA> — <link>
+- [ ] Either path RED — see comment thread, fix in progress
 
 ## In-scope items deliberately left for follow-up
 <list, or "none">
@@ -190,11 +211,12 @@ When the local agent reviews an inbound PR:
 
 - [ ] Diff stays in the claimed scope. No "broader-worktree" files snuck in (env/* configs, retention/data-horizon files, 4k z-chart UI, etc. unless explicitly part of the claimed item).
 - [ ] Verification commands in the PR description correspond to the changed files (don't approve a tsc-claimed PR with no TS diff).
+- [ ] **Cargo-dependent verification done by the local agent**: if any Rust file changed, the local agent runs `git fetch origin && git checkout <branch> && ./scripts/check-rust-ci.sh` and posts the result in the PR thread before approving. Do not approve a Rust-touching PR on CI-only signal — verify locally too. CI is the backstop, not the only gate.
 - [ ] `AGENT_STATE.md` delta accurately reflects what landed; status flips match.
 - [ ] No new dependency without justification per `docs/07-dependency-and-supply-chain-policy.md`.
 - [ ] If the change touches `specs/contracts/*` or `specs/examples/*`: schema example validates, version bumped per `docs/02-versioning-and-releases.md`, `CHANGELOG.md` entry present.
 - [ ] If the change touches risk/execution/integrity surfaces: fail-closed posture preserved per `docs/12-risk-and-execution-policy.md`.
 - [ ] Operator-only steps named in the PR are queued or scheduled — do not merge implying they're done.
-- [ ] Pre-push hook output (or equivalent CI) was clean. Do not merge over a `SKIP_RUST_CHECKS=1` push.
+- [ ] Both verification paths green for the head SHA: local-agent `scripts/check-rust-ci.sh` AND GitHub Actions CI. Do not merge over a `SKIP_RUST_CHECKS=1` push or a red CI run.
 
 If everything passes, merge to `main` (or the slice's named base branch per `AGENT_STATE.md`) and push. The local agent then bumps the `AGENT_STATE.md` pin if the merge changed `HEAD`.
