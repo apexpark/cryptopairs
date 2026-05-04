@@ -9,16 +9,16 @@
 
 | Field | Value |
 |---|---|
-| Last updated (UTC) | 2026-05-03 |
+| Last updated (UTC) | 2026-05-04 |
 | Updated by | local agent |
-| Repo HEAD pin (committed) | `2148693` |
+| Repo HEAD pin (committed) | `c70b6a0` |
 | Pin branch | `codex/fix-clippy-run-24549051096` |
 | Sprint base branch | `codex/fix-clippy-run-24549051096` |
-| Pin notes | Pin convention + cargo-blocked remote-agent workaround landed on top of a87b8ae. Pin lags HEAD by trivial commits per the new convention. The pin row above is the canonical machine-readable pin — no other backticked SHA appears in the §Pin table so the playbook §1 regex extracts unambiguously. The Sprint base branch row is the canonical PR target and the base the playbook §1 base-branch gate checks against (NOT main, until the agent docs land on main). The sprint base equals the pin branch only by coincidence in this sprint; in general the pin branch records where the pin SHA is currently visible, while the sprint base records where remote-agent feature branches fork from and merge back to. |
+| Pin notes | Pin convention, cargo-blocked remote-agent workaround, pin-extraction hardening, configurable sprint-base preflight, and legacy-PR protocol landed on top of a87b8ae. The pin lags literal HEAD by this curation commit per the convention. The pin row above is the canonical machine-readable pin — no other backticked SHA appears in the §Pin table so the playbook §1 regex extracts unambiguously. The Sprint base branch row is the canonical PR target and the base the playbook §1 base-branch gate checks against (NOT main, until the agent docs land on main). The sprint base equals the pin branch only by coincidence in this sprint; in general the pin branch records where the pin SHA is currently visible, while the sprint base records where remote-agent feature branches fork from and merge back to. |
 | Origin | `https://github.com/apexpark/cryptopairs.git` |
 | Working-tree state | **DIRTY** — Slice A and Slice B code (cue + selection_state + transition accounting + reoptimize 0.2.0) is in the operator’s working tree but **not yet committed**. The retention/data-horizon sprint and a 4k z-chart UI sprint are also dirty in the same worktree. See §"Currently In Flight" and §"Next Recommended Move". |
 
-If `git rev-parse HEAD` does not match the pin above, this file is stale; stop and request operator refresh per `AGENTS.md` §7.
+If the pin above is not reachable from `HEAD` via fast-forward, this file is stale; if `HEAD` is ahead of the pin, see §"Pin Convention".
 
 ---
 
@@ -136,6 +136,19 @@ Update this file whenever any of the following happens:
 Curation owner: **local agent** (per `AGENTS.md` §8.3). Remote agents propose deltas in their PRs; the local agent commits the merged state.
 
 When updating, preserve the section order above and bump the “Last updated” date in §Pin.
+
+### Legacy PR Protocol
+
+PRs opened before committed state `039c82c` (when the multi-agent operating model landed) may pass the Rust gate but still fail playbook §7 because they target the wrong base, carry overly broad scope, or omit an `AGENT_STATE.md` delta.
+
+When that happens, the local agent posts a review comment summarizing the §7 violations and waits for operator direction per PR. Acceptable resolutions:
+
+1. Close — legacy work that is stale or superseded.
+2. Mark as draft + comment — work to revisit after the current sprint completes. Branch is treated as legacy; new feature branches must not fork from it.
+3. Rebase + retarget + scope-split — rescue active legacy work into focused PRs targeting the current sprint base.
+4. Explicit grandfather — rare; for time-sensitive ops or security fixes that genuinely cannot wait. Operator approval required.
+
+The local agent does NOT auto-merge a legacy PR even if it passes the Rust gate.
 
 ### Pin Convention
 
