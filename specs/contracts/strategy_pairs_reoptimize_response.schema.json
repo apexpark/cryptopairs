@@ -4,6 +4,7 @@
   "title": "StrategyPairsReoptimizeResponse",
   "type": "object",
   "additionalProperties": false,
+  "$comment": "initialize_decisions and unchanged_decisions are kept optional in required for backward compatibility with pre-0.2.0 clients, but strategy-service always populates them.",
   "required": [
     "generated_at",
     "timeframes",

@@ -4793,12 +4793,14 @@ fn build_cue_selection_state(
                 "CHAMPION_PROJECTION_FAILED".to_string(),
                 None,
             ),
-            (Some(_), false, None) => (
-                "UNCHANGED".to_string(),
-                "EVALUATED_BEST".to_string(),
-                "BEST_IS_CHAMPION".to_string(),
-                Some(0.0),
-            ),
+            (Some(_), false, None) => {
+                // stored_cue is Some when not drifted because the stored champion
+                // matches best_cue, so this branch cannot occur in practice.
+                unreachable!(
+                    "stored_cue is Some when stored champion is not drifted; \
+                     (Some(_), false, None) cannot occur"
+                )
+            }
         };
 
     CueSelectionState {
