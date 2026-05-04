@@ -13,7 +13,8 @@
 | Updated by | local agent |
 | Repo HEAD pin (committed) | `2148693` |
 | Pin branch | `codex/fix-clippy-run-24549051096` |
-| Pin notes | Pin convention + cargo-blocked remote-agent workaround landed on top of a87b8ae. Pin lags HEAD by 1 after the cargo-workaround commit (per the new convention). The pin row above is the canonical machine-readable pin — no other backticked SHA appears in the §Pin table so the playbook §1 regex extracts unambiguously. |
+| Sprint base branch | `codex/fix-clippy-run-24549051096` |
+| Pin notes | Pin convention + cargo-blocked remote-agent workaround landed on top of a87b8ae. Pin lags HEAD by trivial commits per the new convention. The pin row above is the canonical machine-readable pin — no other backticked SHA appears in the §Pin table so the playbook §1 regex extracts unambiguously. The Sprint base branch row is the canonical PR target and the base the playbook §1 base-branch gate checks against (NOT main, until the agent docs land on main). The sprint base equals the pin branch only by coincidence in this sprint; in general the pin branch records where the pin SHA is currently visible, while the sprint base records where remote-agent feature branches fork from and merge back to. |
 | Origin | `https://github.com/apexpark/cryptopairs.git` |
 | Working-tree state | **DIRTY** — Slice A and Slice B code (cue + selection_state + transition accounting + reoptimize 0.2.0) is in the operator’s working tree but **not yet committed**. The retention/data-horizon sprint and a 4k z-chart UI sprint are also dirty in the same worktree. See §"Currently In Flight" and §"Next Recommended Move". |
 

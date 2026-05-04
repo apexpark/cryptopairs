@@ -58,13 +58,26 @@ fi
 # Clean tree (untracked .claude/ etc. is fine; modified files are not)
 [[ -z "$(git status --porcelain | grep '^.M\|^M ')" ]] || { echo "WORKTREE DIRTY — refuse to start"; git status --short; exit 1; }
 
-# Base branch up to date
-git fetch origin
-[[ -z "$(git log HEAD..origin/main --oneline)" ]] || { echo "main has moved; rebase before starting"; exit 1; }
+# Sprint base branch (read from AGENT_STATE.md §Pin "Sprint base branch" row)
+SPRINT_BASE=$(grep -m1 'Sprint base branch' docs/AGENT_STATE.md | grep -oE '`[^`]+`' | head -1 | tr -d '`')
+[[ -n "$SPRINT_BASE" ]] || SPRINT_BASE=main  # fallback if AGENT_STATE.md is missing the row
+echo "Sprint base branch: $SPRINT_BASE"
 
-# Confirm fresh feature branch
+# Sprint base up to date
+git fetch origin
+[[ -z "$(git log HEAD..origin/$SPRINT_BASE --oneline)" ]] \
+  || { echo "$SPRINT_BASE has moved; rebase before starting"; git log HEAD..origin/$SPRINT_BASE --oneline; exit 1; }
+
+# Branch advisory (not a hard fail — §2 enforces the actual feature-branch creation).
+# Being on the sprint base or main at preflight time is OK; §2 checks out the feature branch.
 BRANCH=$(git branch --show-current)
-[[ "$BRANCH" != "main" && "$BRANCH" != rc/* ]] || { echo "must work on a feature branch, not $BRANCH"; exit 1; }
+if [[ "$BRANCH" == "main" || "$BRANCH" == rc/* ]]; then
+  echo "ADVISORY: currently on protected branch '$BRANCH'. §2 will checkout a fresh feature branch from origin/$SPRINT_BASE before any work."
+elif [[ "$BRANCH" == "$SPRINT_BASE" ]]; then
+  echo "ADVISORY: currently on the sprint base '$BRANCH'. §2 will create a feature branch from here. OK to proceed."
+else
+  echo "ADVISORY: currently on '$BRANCH'. If this is already your feature branch for this claim, OK; otherwise §2 will create one."
+fi
 ```
 
 ---
@@ -73,7 +86,8 @@ BRANCH=$(git branch --show-current)
 
 1. Read `docs/AGENT_STATE.md` §"Next Recommended Move" top-to-bottom.
 2. Pick the highest-priority item that is **not** marked operator-only and **not** already claimed (look for `Claimed by:` in the open-follow-ups table).
-3. On a fresh feature branch named `<agent-id>/<short-slug>` (e.g. `claude/b3-schema-comment`, `codex/b6-pg-test-harness-design`):
+3. On a fresh feature branch named `<agent-id>/<short-slug>` (e.g. `claude/b3-schema-comment`, `codex/b6-pg-test-harness-design`), forked from the **sprint base branch** named in `AGENT_STATE.md` §Pin (currently `codex/fix-clippy-run-24549051096`, NOT `main`):
+   - `git fetch origin && git checkout -b <agent-id>/<slug> origin/<sprint-base-branch>`
    1. Edit the open-follow-ups row in `docs/AGENT_STATE.md` to add `Claimed by: <agent-id> <ISO-date>`.
    2. Commit that single edit as the **first commit** on the branch.
    3. Push immediately.
