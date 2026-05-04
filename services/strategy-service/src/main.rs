@@ -8329,7 +8329,7 @@ mod tests {
         parse_expectancy_query, parse_opportunity_history_stats_timeframe,
         parse_opportunity_history_window, parse_paper_trades_window, parse_replay_trades_query,
         percentile, project_continuous_funding_bps, refresh_setup_gate, resolve_artifact_path,
-        resolve_taker_fee_bps, summarize_recent_performance,
+        resolve_taker_fee_bps, retention_cutoff_ts, summarize_recent_performance,
         update_persist_summary_for_transition, CandidateInboxQuery, CandidateLifecycleState,
         CandidateOperatorAction, CandidateProbationInputs, ChampionDecision, ExpectancyMetrics,
         ExpectancyQuery, FundingCostEstimate, FundingRateInputMode, MaintenanceAction,
