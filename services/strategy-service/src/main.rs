@@ -6247,7 +6247,7 @@ async fn pairs_replay_trades(
         .filter(|row| row.entry_ts >= validation_start)
         .filter(|row| row.exit_ts >= cutoff)
         .collect::<Vec<_>>();
-    rows.sort_by(|left, right| right.exit_ts.cmp(&left.exit_ts));
+    rows.sort_by_key(|right| std::cmp::Reverse(right.exit_ts));
     rows.truncate(limit as usize);
     info!(
         timeframe = %timeframe.as_str(),
