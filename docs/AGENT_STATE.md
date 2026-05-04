@@ -11,7 +11,9 @@
 |---|---|
 | Last updated (UTC) | 2026-05-03 |
 | Updated by | local agent |
-| Repo HEAD pin (committed) | `2148693` on branch `codex/fix-clippy-run-24549051096` (pin convention + cargo-blocked remote-agent workaround landed on top of `a87b8ae`. Pin will lag HEAD by 1 after the cargo-workaround commit lands — that's the new convention.) |
+| Repo HEAD pin (committed) | `2148693` |
+| Pin branch | `codex/fix-clippy-run-24549051096` |
+| Pin notes | Pin convention + cargo-blocked remote-agent workaround landed on top of a87b8ae. Pin lags HEAD by 1 after the cargo-workaround commit (per the new convention). The pin row above is the canonical machine-readable pin — no other backticked SHA appears in the §Pin table so the playbook §1 regex extracts unambiguously. |
 | Origin | `https://github.com/apexpark/cryptopairs.git` |
 | Working-tree state | **DIRTY** — Slice A and Slice B code (cue + selection_state + transition accounting + reoptimize 0.2.0) is in the operator’s working tree but **not yet committed**. The retention/data-horizon sprint and a 4k z-chart UI sprint are also dirty in the same worktree. See §"Currently In Flight" and §"Next Recommended Move". |
 
@@ -153,3 +155,5 @@ Instead:
 **Hard requirement enforced by playbook §1 preflight**: the pin SHA must be **reachable from HEAD** via fast-forward (`git merge-base --is-ancestor <pin> HEAD`). Anything else (rewritten history, orphan branch, pin from a different lineage) is a hard failure.
 
 **Soft check**: if HEAD has advanced past the pin, the playbook prints a `NOTICE` listing the intervening commits and asks the agent to skim them for unreflected scope changes before proceeding. This is the practical "is AGENT_STATE.md still accurate?" gate.
+
+**Formatting rule (machine-readable)**: the §Pin table's `Repo HEAD pin (committed)` row contains **exactly one** backticked SHA — the canonical pin. Any reference to other SHAs (previous pins, parent commits, etc.) goes in a separate `Pin notes` row in plain text without backticks. The playbook §1 regex extracts the first backticked SHA on the pin row defensively (`head -1`), but keeping the row to a single SHA avoids surprise.

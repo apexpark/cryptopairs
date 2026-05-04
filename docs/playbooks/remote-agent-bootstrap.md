@@ -38,7 +38,10 @@ Run before any work. Stop and report if any check fails.
 # Hard requirement: pin must be reachable from HEAD via fast-forward.
 # Not a hard requirement: pin == HEAD. The pin lags HEAD by any trivial commits that
 # didn't change state. See docs/AGENT_STATE.md §"Pin Convention" for the rationale.
-PIN_SHA=$(grep -m1 'Repo HEAD pin' docs/AGENT_STATE.md | grep -oE '`[a-f0-9]{7,40}`' | tr -d '`')
+# Note the `head -1`: defensive against future formatting that puts multiple backticked
+# SHAs in the pin row. The first backticked SHA on the "Repo HEAD pin" line is canonical.
+PIN_SHA=$(grep -m1 'Repo HEAD pin' docs/AGENT_STATE.md | grep -oE '`[a-f0-9]{7,40}`' | head -1 | tr -d '`')
+[[ -n "$PIN_SHA" ]] || { echo "PIN UNREADABLE: could not extract a SHA from AGENT_STATE.md §Pin row"; exit 1; }
 git merge-base --is-ancestor "$PIN_SHA" HEAD \
   || { echo "PIN UNREACHABLE: $PIN_SHA is not an ancestor of HEAD ($(git rev-parse HEAD))"; exit 1; }
 
