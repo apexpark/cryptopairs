@@ -6,6 +6,8 @@
   "performance_rows_written": 12,
   "selected_rows_written": 3,
   "drift_rows_written": 2,
+  "initialize_decisions": 1,
+  "unchanged_decisions": 0,
   "champion_promotions": 1,
   "champion_locks": 1,
   "shadow_model_runs_written": 3,

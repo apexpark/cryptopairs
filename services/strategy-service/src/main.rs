@@ -463,6 +463,43 @@ impl ChampionDecision {
     }
 }
 
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize)]
+struct SelectionTransitionCounts {
+    initialize_decisions: usize,
+    unchanged_decisions: usize,
+    champion_promotions: usize,
+    champion_locks: usize,
+}
+
+impl SelectionTransitionCounts {
+    fn record(&mut self, decision: ChampionDecision) {
+        match decision {
+            ChampionDecision::Initialize => self.initialize_decisions += 1,
+            ChampionDecision::Unchanged => self.unchanged_decisions += 1,
+            ChampionDecision::PromoteChallenger => self.champion_promotions += 1,
+            ChampionDecision::KeepChampion => self.champion_locks += 1,
+        }
+    }
+
+    fn accumulate(&mut self, other: Self) {
+        self.initialize_decisions += other.initialize_decisions;
+        self.unchanged_decisions += other.unchanged_decisions;
+        self.champion_promotions += other.champion_promotions;
+        self.champion_locks += other.champion_locks;
+    }
+
+    fn total(self) -> usize {
+        self.initialize_decisions
+            + self.unchanged_decisions
+            + self.champion_promotions
+            + self.champion_locks
+    }
+
+    fn has_accounting_gap(self, selected_rows_written: usize) -> bool {
+        selected_rows_written > 0 && self.total() == 0
+    }
+}
+
 #[derive(Debug, Clone)]
 struct ChampionTransition {
     selected_variant: String,
@@ -600,8 +637,7 @@ struct PersistSummary {
     performance_rows_written: usize,
     selected_rows_written: usize,
     drift_rows_written: usize,
-    champion_promotions: usize,
-    champion_locks: usize,
+    transition_counts: SelectionTransitionCounts,
 }
 
 impl StrategyRepository {
@@ -858,8 +894,7 @@ impl StrategyRepository {
             performance_rows_written: 0,
             selected_rows_written: 0,
             drift_rows_written: 0,
-            champion_promotions: 0,
-            champion_locks: 0,
+            transition_counts: SelectionTransitionCounts::default(),
         };
 
         for variant in &evaluation.variants {
@@ -917,13 +952,6 @@ impl StrategyRepository {
                 evaluation.cue.evaluated_at,
             )
             .await?;
-        summary.selected_rows_written += selected_written as usize;
-        if transition.decision == ChampionDecision::PromoteChallenger {
-            summary.champion_promotions += 1;
-        }
-        if transition.decision == ChampionDecision::KeepChampion {
-            summary.champion_locks += 1;
-        }
         if matches!(
             transition.decision,
             ChampionDecision::PromoteChallenger | ChampionDecision::KeepChampion
@@ -936,9 +964,21 @@ impl StrategyRepository {
                     evaluation.cue.evaluated_at,
                 )
                 .await?;
-            summary.drift_rows_written += drift_written as usize;
+            update_persist_summary_for_transition(
+                &mut summary,
+                transition.decision,
+                selected_written as usize,
+                drift_written as usize,
+            );
+            return Ok(summary);
         }
 
+        update_persist_summary_for_transition(
+            &mut summary,
+            transition.decision,
+            selected_written as usize,
+            0,
+        );
         Ok(summary)
     }
 
@@ -1996,6 +2036,22 @@ impl StrategyRepository {
             signal_variant: row.get(0),
             opportunity_score: row.get(1),
         }))
+    }
+}
+
+fn update_persist_summary_for_transition(
+    summary: &mut PersistSummary,
+    decision: ChampionDecision,
+    selected_rows_written: usize,
+    drift_rows_written: usize,
+) {
+    summary.selected_rows_written += selected_rows_written;
+    summary.transition_counts.record(decision);
+    if matches!(
+        decision,
+        ChampionDecision::PromoteChallenger | ChampionDecision::KeepChampion
+    ) {
+        summary.drift_rows_written += drift_rows_written;
     }
 }
 
@@ -3538,8 +3594,8 @@ struct ReoptimizeResponse {
     performance_rows_written: usize,
     selected_rows_written: usize,
     drift_rows_written: usize,
-    champion_promotions: usize,
-    champion_locks: usize,
+    #[serde(flatten)]
+    transition_counts: SelectionTransitionCounts,
     shadow_model_runs_written: usize,
     shadow_model_available: usize,
     shadow_model_unavailable: usize,
@@ -3586,6 +3642,54 @@ struct MaintenanceActionQueueItem {
     output_json_path: String,
     skip_pull: bool,
     timeout_secs: u64,
+}
+
+fn emit_selection_transition_observability(
+    scope: &str,
+    timeframe: Option<Timeframe>,
+    selected_rows_written: usize,
+    transition_counts: SelectionTransitionCounts,
+) {
+    let transition_total = transition_counts.total();
+    match timeframe {
+        Some(timeframe) => info!(
+            scope,
+            timeframe = %timeframe.as_str(),
+            selected_rows_written,
+            strategy_selection_transition_total = transition_total,
+            strategy_selection_initialize_total = transition_counts.initialize_decisions,
+            strategy_selection_unchanged_total = transition_counts.unchanged_decisions,
+            strategy_selection_keep_champion_total = transition_counts.champion_locks,
+            strategy_selection_promote_challenger_total = transition_counts.champion_promotions,
+            "strategy selection transition observability"
+        ),
+        None => info!(
+            scope,
+            selected_rows_written,
+            strategy_selection_transition_total = transition_total,
+            strategy_selection_initialize_total = transition_counts.initialize_decisions,
+            strategy_selection_unchanged_total = transition_counts.unchanged_decisions,
+            strategy_selection_keep_champion_total = transition_counts.champion_locks,
+            strategy_selection_promote_challenger_total = transition_counts.champion_promotions,
+            "strategy selection transition observability"
+        ),
+    }
+
+    if transition_counts.has_accounting_gap(selected_rows_written) {
+        match timeframe {
+            Some(timeframe) => tracing::warn!(
+                scope,
+                timeframe = %timeframe.as_str(),
+                selected_rows_written,
+                "selection transition accounting gap detected"
+            ),
+            None => tracing::warn!(
+                scope,
+                selected_rows_written,
+                "selection transition accounting gap detected"
+            ),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -4003,8 +4107,7 @@ fn spawn_reoptimize_worker(state: AppState) -> tokio::task::JoinHandle<()> {
             let mut performance_rows_written = 0usize;
             let mut selected_rows_written = 0usize;
             let mut drift_rows_written = 0usize;
-            let mut champion_promotions = 0usize;
-            let mut champion_locks = 0usize;
+            let mut transition_counts = SelectionTransitionCounts::default();
             let mut shadow_model_runs_written = 0usize;
             let mut shadow_model_available = 0usize;
             let mut shadow_model_unavailable = 0usize;
@@ -4014,6 +4117,8 @@ fn spawn_reoptimize_worker(state: AppState) -> tokio::task::JoinHandle<()> {
             let mut portfolio_advice_unavailable = 0usize;
 
             for timeframe in &state.settings.timeframes {
+                let mut timeframe_selected_rows_written = 0usize;
+                let mut timeframe_transition_counts = SelectionTransitionCounts::default();
                 let mut candidate_probation_pass_total = 0usize;
                 let mut candidate_probation_fail_total = 0usize;
                 let mut candidate_probation_fail_reasons: HashMap<String, usize> = HashMap::new();
@@ -4065,9 +4170,9 @@ fn spawn_reoptimize_worker(state: AppState) -> tokio::task::JoinHandle<()> {
                         Ok(summary) => {
                             performance_rows_written += summary.performance_rows_written;
                             selected_rows_written += summary.selected_rows_written;
+                            timeframe_selected_rows_written += summary.selected_rows_written;
                             drift_rows_written += summary.drift_rows_written;
-                            champion_promotions += summary.champion_promotions;
-                            champion_locks += summary.champion_locks;
+                            timeframe_transition_counts.accumulate(summary.transition_counts);
                         }
                         Err(error) => {
                             tracing::warn!(
@@ -4174,7 +4279,20 @@ fn spawn_reoptimize_worker(state: AppState) -> tokio::task::JoinHandle<()> {
                     candidate_probation_fail_reasons = ?candidate_probation_fail_reasons,
                     "optimizer timeframe cycle observability"
                 );
+                emit_selection_transition_observability(
+                    "reoptimize_worker_timeframe",
+                    Some(*timeframe),
+                    timeframe_selected_rows_written,
+                    timeframe_transition_counts,
+                );
+                transition_counts.accumulate(timeframe_transition_counts);
             }
+            emit_selection_transition_observability(
+                "reoptimize_worker_total",
+                None,
+                selected_rows_written,
+                transition_counts,
+            );
 
             info!(
                 pairs_processed,
@@ -4182,8 +4300,10 @@ fn spawn_reoptimize_worker(state: AppState) -> tokio::task::JoinHandle<()> {
                 performance_rows_written,
                 selected_rows_written,
                 drift_rows_written,
-                champion_promotions,
-                champion_locks,
+                initialize_decisions = transition_counts.initialize_decisions,
+                unchanged_decisions = transition_counts.unchanged_decisions,
+                champion_promotions = transition_counts.champion_promotions,
+                champion_locks = transition_counts.champion_locks,
                 shadow_model_runs_written,
                 shadow_model_available,
                 shadow_model_unavailable,
@@ -7320,8 +7440,7 @@ async fn reoptimize(
     let mut performance_rows_written = 0usize;
     let mut selected_rows_written = 0usize;
     let mut drift_rows_written = 0usize;
-    let mut champion_promotions = 0usize;
-    let mut champion_locks = 0usize;
+    let mut transition_counts = SelectionTransitionCounts::default();
     let mut shadow_model_runs_written = 0usize;
     let mut shadow_model_available = 0usize;
     let mut shadow_model_unavailable = 0usize;
@@ -7332,6 +7451,8 @@ async fn reoptimize(
     let mut errors = vec![];
 
     for timeframe in &requested_timeframes {
+        let mut timeframe_selected_rows_written = 0usize;
+        let mut timeframe_transition_counts = SelectionTransitionCounts::default();
         let mut candidate_probation_pass_total = 0usize;
         let mut candidate_probation_fail_total = 0usize;
         let mut candidate_probation_fail_reasons: HashMap<String, usize> = HashMap::new();
@@ -7382,9 +7503,9 @@ async fn reoptimize(
                 Ok(summary) => {
                     performance_rows_written += summary.performance_rows_written;
                     selected_rows_written += summary.selected_rows_written;
+                    timeframe_selected_rows_written += summary.selected_rows_written;
                     drift_rows_written += summary.drift_rows_written;
-                    champion_promotions += summary.champion_promotions;
-                    champion_locks += summary.champion_locks;
+                    timeframe_transition_counts.accumulate(summary.transition_counts);
                 }
                 Err(error) => errors.push(ReoptError {
                     pair_id: output.cue.pair_id.clone(),
@@ -7468,7 +7589,40 @@ async fn reoptimize(
             candidate_probation_fail_reasons = ?candidate_probation_fail_reasons,
             "manual reoptimize timeframe observability"
         );
+        emit_selection_transition_observability(
+            "manual_reoptimize_timeframe",
+            Some(*timeframe),
+            timeframe_selected_rows_written,
+            timeframe_transition_counts,
+        );
+        transition_counts.accumulate(timeframe_transition_counts);
     }
+    emit_selection_transition_observability(
+        "manual_reoptimize_total",
+        None,
+        selected_rows_written,
+        transition_counts,
+    );
+    info!(
+        pairs_processed,
+        cues_generated,
+        performance_rows_written,
+        selected_rows_written,
+        drift_rows_written,
+        initialize_decisions = transition_counts.initialize_decisions,
+        unchanged_decisions = transition_counts.unchanged_decisions,
+        champion_promotions = transition_counts.champion_promotions,
+        champion_locks = transition_counts.champion_locks,
+        shadow_model_runs_written,
+        shadow_model_available,
+        shadow_model_unavailable,
+        cost_gate_pass,
+        cost_gate_fail,
+        portfolio_advice_available,
+        portfolio_advice_unavailable,
+        error_count = errors.len(),
+        "manual reoptimize complete"
+    );
 
     Ok(Json(ReoptimizeResponse {
         generated_at: Utc::now(),
@@ -7481,8 +7635,7 @@ async fn reoptimize(
         performance_rows_written,
         selected_rows_written,
         drift_rows_written,
-        champion_promotions,
-        champion_locks,
+        transition_counts,
         shadow_model_runs_written,
         shadow_model_available,
         shadow_model_unavailable,
@@ -8176,13 +8329,14 @@ mod tests {
         parse_expectancy_query, parse_opportunity_history_stats_timeframe,
         parse_opportunity_history_window, parse_paper_trades_window, parse_replay_trades_query,
         percentile, project_continuous_funding_bps, refresh_setup_gate, resolve_artifact_path,
-        resolve_taker_fee_bps, summarize_recent_performance, CandidateInboxQuery,
-        CandidateLifecycleState, CandidateOperatorAction, CandidateProbationInputs,
-        ChampionDecision, ExpectancyMetrics, ExpectancyQuery, FundingCostEstimate,
-        FundingRateInputMode, MaintenanceAction, OpportunityHistoryQuery,
-        OpportunityHistoryStatsQuery, PaperTradesQuery, ReplayTradeEntry, ReplayTradePathSummary,
+        resolve_taker_fee_bps, summarize_recent_performance,
+        update_persist_summary_for_transition, CandidateInboxQuery, CandidateLifecycleState,
+        CandidateOperatorAction, CandidateProbationInputs, ChampionDecision, ExpectancyMetrics,
+        ExpectancyQuery, FundingCostEstimate, FundingRateInputMode, MaintenanceAction,
+        OpportunityHistoryQuery, OpportunityHistoryStatsQuery, PaperTradesQuery, PersistSummary,
+        ReoptError, ReoptimizeResponse, ReplayTradeEntry, ReplayTradePathSummary,
         ReplayTradesQuery, ResearchSweepRequest, SampledSlippageStatus, SelectedSignalRow,
-        StrategyMarketMetricsResponse, StrategySettings,
+        SelectionTransitionCounts, StrategyMarketMetricsResponse, StrategySettings,
     };
     use chrono::Utc;
     use common_types::Timeframe;
@@ -8297,6 +8451,126 @@ mod tests {
         assert_eq!(transition.decision, ChampionDecision::KeepChampion);
         assert_eq!(transition.selected_variant, "ROBUST_Z");
         assert!(transition.score_delta < 0.25);
+    }
+
+    #[test]
+    fn selection_transition_counts_cover_all_decisions() {
+        let mut counts = SelectionTransitionCounts::default();
+        counts.record(ChampionDecision::Initialize);
+        counts.record(ChampionDecision::Unchanged);
+        counts.record(ChampionDecision::PromoteChallenger);
+        counts.record(ChampionDecision::KeepChampion);
+
+        assert_eq!(counts.initialize_decisions, 1);
+        assert_eq!(counts.unchanged_decisions, 1);
+        assert_eq!(counts.champion_promotions, 1);
+        assert_eq!(counts.champion_locks, 1);
+        assert_eq!(counts.total(), 4);
+    }
+
+    #[test]
+    fn selection_transition_counts_accumulate_sums_each_field() {
+        let mut left = SelectionTransitionCounts::default();
+        left.record(ChampionDecision::Initialize);
+        let mut right = SelectionTransitionCounts::default();
+        right.record(ChampionDecision::Unchanged);
+        right.record(ChampionDecision::KeepChampion);
+        right.record(ChampionDecision::PromoteChallenger);
+
+        left.accumulate(right);
+
+        assert_eq!(left.initialize_decisions, 1);
+        assert_eq!(left.unchanged_decisions, 1);
+        assert_eq!(left.champion_promotions, 1);
+        assert_eq!(left.champion_locks, 1);
+        assert_eq!(left.total(), 4);
+    }
+
+    #[test]
+    fn selection_transition_counts_detect_unaccounted_selected_rows() {
+        let empty = SelectionTransitionCounts::default();
+        assert!(!empty.has_accounting_gap(0));
+        assert!(empty.has_accounting_gap(1));
+
+        let mut recorded = SelectionTransitionCounts::default();
+        recorded.record(ChampionDecision::Unchanged);
+        assert!(!recorded.has_accounting_gap(1));
+    }
+
+    #[test]
+    fn update_persist_summary_for_transition_records_all_summary_counts() {
+        let mut summary = PersistSummary {
+            performance_rows_written: 7,
+            selected_rows_written: 0,
+            drift_rows_written: 0,
+            transition_counts: SelectionTransitionCounts::default(),
+        };
+
+        update_persist_summary_for_transition(&mut summary, ChampionDecision::Initialize, 1, 99);
+        update_persist_summary_for_transition(&mut summary, ChampionDecision::Unchanged, 1, 99);
+        update_persist_summary_for_transition(&mut summary, ChampionDecision::KeepChampion, 1, 2);
+        update_persist_summary_for_transition(
+            &mut summary,
+            ChampionDecision::PromoteChallenger,
+            1,
+            3,
+        );
+
+        assert_eq!(summary.performance_rows_written, 7);
+        assert_eq!(summary.selected_rows_written, 4);
+        assert_eq!(summary.drift_rows_written, 5);
+        assert_eq!(summary.transition_counts.initialize_decisions, 1);
+        assert_eq!(summary.transition_counts.unchanged_decisions, 1);
+        assert_eq!(summary.transition_counts.champion_locks, 1);
+        assert_eq!(summary.transition_counts.champion_promotions, 1);
+    }
+
+    #[test]
+    fn reoptimize_response_serializes_transition_counts_at_top_level() {
+        let payload = ReoptimizeResponse {
+            generated_at: Utc::now(),
+            timeframes: vec!["1m".to_string()],
+            pairs_processed: 1,
+            cues_generated: 1,
+            performance_rows_written: 4,
+            selected_rows_written: 1,
+            drift_rows_written: 1,
+            transition_counts: SelectionTransitionCounts {
+                initialize_decisions: 1,
+                unchanged_decisions: 2,
+                champion_promotions: 3,
+                champion_locks: 4,
+            },
+            shadow_model_runs_written: 1,
+            shadow_model_available: 1,
+            shadow_model_unavailable: 0,
+            cost_gate_pass: 1,
+            cost_gate_fail: 0,
+            portfolio_advice_available: 1,
+            portfolio_advice_unavailable: 0,
+            errors: vec![ReoptError {
+                pair_id: "PF_XBTUSD__PF_ETHUSD".to_string(),
+                timeframe: "1m".to_string(),
+                error: "example".to_string(),
+            }],
+        };
+
+        let value = serde_json::to_value(payload).expect("serialize reoptimize response");
+        let object = value.as_object().expect("top-level object");
+        assert_eq!(
+            object.get("initialize_decisions"),
+            Some(&serde_json::json!(1))
+        );
+        assert_eq!(
+            object.get("unchanged_decisions"),
+            Some(&serde_json::json!(2))
+        );
+        assert_eq!(
+            object.get("champion_promotions"),
+            Some(&serde_json::json!(3))
+        );
+        assert_eq!(object.get("champion_locks"), Some(&serde_json::json!(4)));
+        assert!(!object.contains_key("transition_counts"));
     }
 
     #[test]

@@ -55,6 +55,16 @@
       "type": "integer",
       "minimum": 0
     },
+    "initialize_decisions": {
+      "description": "Always populated by current servers; kept optional in required for backward compatibility with pre-0.2.0 clients.",
+      "type": "integer",
+      "minimum": 0
+    },
+    "unchanged_decisions": {
+      "description": "Always populated by current servers; kept optional in required for backward compatibility with pre-0.2.0 clients.",
+      "type": "integer",
+      "minimum": 0
+    },
     "champion_promotions": {
       "type": "integer",
       "minimum": 0
@@ -105,5 +115,5 @@
       }
     }
   },
-  "version": "0.1.0"
+  "version": "0.2.0"
 }
