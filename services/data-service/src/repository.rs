@@ -31,6 +31,7 @@ pub trait MarketDataRepository: Send + Sync {
         timeframe: Timeframe,
         cutoff_ts: DateTime<Utc>,
     ) -> Result<u64>;
+    async fn delete_trades_older_than(&self, cutoff_ts: DateTime<Utc>) -> Result<u64>;
 }
 
 #[derive(Debug, Clone)]
@@ -107,6 +108,13 @@ impl MarketDataRepository for UnconfiguredRepository {
         let _ = (timeframe, cutoff_ts);
         Err(anyhow!(
             "market data repository is not configured; candle retention prune unavailable"
+        ))
+    }
+
+    async fn delete_trades_older_than(&self, cutoff_ts: DateTime<Utc>) -> Result<u64> {
+        let _ = cutoff_ts;
+        Err(anyhow!(
+            "market data repository is not configured; trade retention prune unavailable"
         ))
     }
 }
@@ -303,6 +311,18 @@ impl MarketDataRepository for PostgresMarketDataRepository {
                  WHERE timeframe = $1
                    AND ts < $2",
                 &[&timeframe_string(timeframe), &cutoff_ts],
+            )
+            .await?;
+        Ok(deleted)
+    }
+
+    async fn delete_trades_older_than(&self, cutoff_ts: DateTime<Utc>) -> Result<u64> {
+        let deleted = self
+            .client
+            .execute(
+                "DELETE FROM trades
+                 WHERE ts < $1",
+                &[&cutoff_ts],
             )
             .await?;
         Ok(deleted)

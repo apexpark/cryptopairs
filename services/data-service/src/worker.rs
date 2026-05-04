@@ -12,6 +12,7 @@ pub fn spawn_backfill_worker(
     interval_seconds: u64,
     backfill_window_days: TimeframeDays,
     candles_retention_days: TimeframeDays,
+    trades_retention_days: u64,
     prune_interval_seconds: u64,
 ) -> tokio::task::JoinHandle<()> {
     tokio::spawn(async move {
@@ -45,7 +46,9 @@ pub fn spawn_backfill_worker(
 
             let now = Utc::now();
             if should_run_retention_prune(last_prune_at, now, prune_interval_seconds) {
-                match prune_expired_candles(&state, now, candles_retention_days).await {
+                match prune_expired_data(&state, now, candles_retention_days, trades_retention_days)
+                    .await
+                {
                     Ok(_) => {
                         last_prune_at = Some(now);
                     }
@@ -187,6 +190,32 @@ async fn prune_expired_candles(
     Ok(())
 }
 
+fn retention_cutoff_ts(now: DateTime<Utc>, retention_days: u64) -> DateTime<Utc> {
+    now - Duration::days(retention_days.max(1) as i64)
+}
+
+async fn prune_expired_data(
+    state: &AppState,
+    now: DateTime<Utc>,
+    candle_retention_days: TimeframeDays,
+    trades_retention_days: u64,
+) -> anyhow::Result<()> {
+    prune_expired_candles(state, now, candle_retention_days).await?;
+
+    let trades_cutoff_ts = retention_cutoff_ts(now, trades_retention_days);
+    let deleted = state
+        .repository
+        .delete_trades_older_than(trades_cutoff_ts)
+        .await?;
+    info!(
+        retention_days = trades_retention_days.max(1),
+        cutoff_ts = %trades_cutoff_ts,
+        rows_deleted = deleted,
+        "trade retention prune completed"
+    );
+    Ok(())
+}
+
 fn split_range_into_segments(
     start_ts: DateTime<Utc>,
     end_ts: DateTime<Utc>,
@@ -210,7 +239,10 @@ fn split_range_into_segments(
 
 #[cfg(test)]
 mod tests {
-    use super::{backfill_window_start, should_run_retention_prune, split_range_into_segments};
+    use super::{
+        backfill_window_start, retention_cutoff_ts, should_run_retention_prune,
+        split_range_into_segments,
+    };
     use crate::config::TimeframeDays;
     use chrono::{TimeZone, Utc};
     use common_types::Timeframe;
@@ -284,5 +316,15 @@ mod tests {
         assert!(should_run_retention_prune(None, now, 3_600));
         assert!(!should_run_retention_prune(Some(last), now, 3_600));
         assert!(should_run_retention_prune(Some(last), now, 900));
+    }
+
+    #[test]
+    fn retention_cutoff_clamps_to_minimum_day() {
+        let now = Utc
+            .timestamp_opt(1_700_000_000, 0)
+            .single()
+            .expect("valid timestamp");
+        let cutoff = retention_cutoff_ts(now, 0);
+        assert_eq!(now.signed_duration_since(cutoff).num_days(), 1);
     }
 }

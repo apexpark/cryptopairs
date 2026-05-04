@@ -42,6 +42,7 @@ async fn main() -> anyhow::Result<()> {
         settings.backfill_interval_seconds,
         settings.backfill_window_days,
         settings.candles_retention_days,
+        settings.trades_retention_days,
         settings.candles_prune_interval_seconds,
     );
     let _trade_ingest_worker = spawn_trade_ingest_worker(state.clone(), settings.symbols.clone());
@@ -62,6 +63,7 @@ async fn main() -> anyhow::Result<()> {
         candles_retention_days_1m = settings.candles_retention_days.one_minute,
         candles_retention_days_15m = settings.candles_retention_days.fifteen_minutes,
         candles_retention_days_1h = settings.candles_retention_days.one_hour,
+        trades_retention_days = settings.trades_retention_days,
         candles_prune_interval_seconds = settings.candles_prune_interval_seconds,
         integrity_threshold_pct = settings.integrity_threshold_pct,
         "data-service started"

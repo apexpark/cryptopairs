@@ -123,6 +123,9 @@ struct StrategySettings {
     maintenance_action_queue_root: String,
     maintenance_action_timeout_secs: u64,
     maintenance_action_skip_pull: bool,
+    opportunity_history_retention_days: u64,
+    paper_trades_history_retention_days: u64,
+    history_prune_interval_seconds: u64,
     ui_access_password: String,
 }
 
@@ -275,6 +278,12 @@ impl StrategySettings {
             parse_env_u64("STRATEGY_MAINTENANCE_ACTION_TIMEOUT_SECS", 300);
         let maintenance_action_skip_pull =
             parse_env_bool("STRATEGY_MAINTENANCE_ACTION_SKIP_PULL", true);
+        let opportunity_history_retention_days =
+            parse_env_u64("STRATEGY_OPPORTUNITY_HISTORY_RETENTION_DAYS", 3_650).max(1);
+        let paper_trades_history_retention_days =
+            parse_env_u64("STRATEGY_PAPER_TRADES_HISTORY_RETENTION_DAYS", 3_650).max(1);
+        let history_prune_interval_seconds =
+            parse_env_u64("STRATEGY_HISTORY_PRUNE_INTERVAL_SECONDS", 3_600).max(60);
         let ui_access_password =
             std::env::var("STRATEGY_UI_ACCESS_PASSWORD").unwrap_or_else(|_| "".to_string());
 
@@ -354,6 +363,9 @@ impl StrategySettings {
             maintenance_action_queue_root,
             maintenance_action_timeout_secs,
             maintenance_action_skip_pull,
+            opportunity_history_retention_days,
+            paper_trades_history_retention_days,
+            history_prune_interval_seconds,
             ui_access_password,
         }
     }
@@ -1057,6 +1069,36 @@ impl StrategyRepository {
                 }
             })
             .collect())
+    }
+
+    async fn delete_opportunity_history_older_than(
+        &self,
+        cutoff_ts: DateTime<Utc>,
+    ) -> anyhow::Result<u64> {
+        let deleted = self
+            .client
+            .execute(
+                "DELETE FROM strategy_opportunity_history
+                 WHERE evaluated_at < $1",
+                &[&cutoff_ts],
+            )
+            .await?;
+        Ok(deleted)
+    }
+
+    async fn delete_paper_trades_history_older_than(
+        &self,
+        cutoff_ts: DateTime<Utc>,
+    ) -> anyhow::Result<u64> {
+        let deleted = self
+            .client
+            .execute(
+                "DELETE FROM strategy_paper_trades_history
+                 WHERE created_at < $1",
+                &[&cutoff_ts],
+            )
+            .await?;
+        Ok(deleted)
     }
 
     async fn replace_paper_trades(
@@ -3646,6 +3688,7 @@ async fn main() -> anyhow::Result<()> {
     };
 
     let _slippage_worker = spawn_sampled_slippage_worker(state.clone());
+    let _history_retention_worker = spawn_history_retention_worker(state.clone());
     let _worker = spawn_reoptimize_worker(state.clone());
     let cors = CorsLayer::new()
         .allow_origin(Any)
@@ -3771,6 +3814,9 @@ async fn main() -> anyhow::Result<()> {
         maintenance_action_queue_root = %settings.maintenance_action_queue_root,
         maintenance_action_timeout_secs = settings.maintenance_action_timeout_secs,
         maintenance_action_skip_pull = settings.maintenance_action_skip_pull,
+        opportunity_history_retention_days = settings.opportunity_history_retention_days,
+        paper_trades_history_retention_days = settings.paper_trades_history_retention_days,
+        history_prune_interval_seconds = settings.history_prune_interval_seconds,
         ui_access_enabled = settings.ui_access_enabled(),
         "strategy-service started"
     );
@@ -3852,6 +3898,53 @@ async fn refresh_sampled_slippage(state: &AppState) -> anyhow::Result<usize> {
         }
     }
     Ok(updated)
+}
+
+fn spawn_history_retention_worker(state: AppState) -> tokio::task::JoinHandle<()> {
+    tokio::spawn(async move {
+        let interval_secs = state.settings.history_prune_interval_seconds.max(60);
+        let mut interval = tokio::time::interval(std::time::Duration::from_secs(interval_secs));
+        loop {
+            interval.tick().await;
+            if let Err(error) = prune_strategy_history(&state).await {
+                tracing::warn!(error = %error, "strategy history retention prune failed");
+            }
+        }
+    })
+}
+
+async fn prune_strategy_history(state: &AppState) -> anyhow::Result<()> {
+    let now = Utc::now();
+    let opportunity_retention_days = state.settings.opportunity_history_retention_days.max(1);
+    let opportunity_cutoff = retention_cutoff_ts(now, opportunity_retention_days);
+    let deleted_opportunities = state
+        .repository
+        .delete_opportunity_history_older_than(opportunity_cutoff)
+        .await?;
+    tracing::info!(
+        retention_days = opportunity_retention_days,
+        cutoff_ts = %opportunity_cutoff,
+        rows_deleted = deleted_opportunities,
+        "opportunity history retention prune completed"
+    );
+
+    let paper_trade_retention_days = state.settings.paper_trades_history_retention_days.max(1);
+    let paper_trade_cutoff = retention_cutoff_ts(now, paper_trade_retention_days);
+    let deleted_paper_trades = state
+        .repository
+        .delete_paper_trades_history_older_than(paper_trade_cutoff)
+        .await?;
+    tracing::info!(
+        retention_days = paper_trade_retention_days,
+        cutoff_ts = %paper_trade_cutoff,
+        rows_deleted = deleted_paper_trades,
+        "paper trades history retention prune completed"
+    );
+    Ok(())
+}
+
+fn retention_cutoff_ts(now: DateTime<Utc>, retention_days: u64) -> DateTime<Utc> {
+    now - chrono::Duration::days(retention_days.max(1) as i64)
 }
 
 async fn fetch_pair_live_marks(
@@ -8182,6 +8275,15 @@ mod tests {
         assert_eq!(canonical_metric_instrument("PF_XBTUSD"), "XBTUSD");
         assert_eq!(canonical_metric_instrument("PI_XBTUSD"), "XBTUSD");
         assert_eq!(canonical_metric_instrument("xbtusd"), "XBTUSD");
+    }
+
+    #[test]
+    fn retention_cutoff_clamps_to_minimum_day() {
+        let now = chrono::TimeZone::timestamp_opt(&Utc, 1_700_000_000, 0)
+            .single()
+            .expect("valid timestamp");
+        let cutoff = retention_cutoff_ts(now, 0);
+        assert_eq!(now.signed_duration_since(cutoff).num_days(), 1);
     }
 
     #[test]

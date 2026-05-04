@@ -28,6 +28,7 @@ pub struct Settings {
     pub backfill_interval_seconds: u64,
     pub backfill_window_days: TimeframeDays,
     pub candles_retention_days: TimeframeDays,
+    pub trades_retention_days: u64,
     pub candles_prune_interval_seconds: u64,
 }
 
@@ -68,6 +69,7 @@ impl Settings {
             fifteen_minutes: parse_env_u64("CANDLES_RETENTION_DAYS_15M", 540).max(1),
             one_hour: parse_env_u64("CANDLES_RETENTION_DAYS_1H", 1_095).max(1),
         };
+        let trades_retention_days = parse_env_u64("TRADES_RETENTION_DAYS", 3_650).max(1);
         let candles_prune_interval_seconds =
             parse_env_u64("CANDLES_PRUNE_INTERVAL_SECONDS", 3_600).max(60);
 
@@ -81,6 +83,7 @@ impl Settings {
             backfill_interval_seconds,
             backfill_window_days,
             candles_retention_days,
+            trades_retention_days,
             candles_prune_interval_seconds,
         }
     }

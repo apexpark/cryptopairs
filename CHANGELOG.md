@@ -30,6 +30,11 @@ This project follows SemVer as defined in `docs/02-versioning-and-releases.md`.
   - Configurable backfill windows by timeframe (`1m/15m/1h`) with defaults aligned to long-horizon research (`120d/540d/1095d`).
   - Configurable candle retention pruning by timeframe plus periodic prune interval.
   - Structured prune logs and operator runbook updates for horizon/retention settings.
+- Hosted storage-growth controls for self-hosted Timescale:
+  - Added `TRADES_RETENTION_DAYS` prune support in `data-service` for high-volume `trades`.
+  - Added explicit `BACKFILL_*` and `CANDLES_RETENTION_DAYS_*` env wiring in `docker-compose.yml` so hosted operators can tune horizon/retention without code edits.
+  - Added `STRATEGY_OPPORTUNITY_HISTORY_RETENTION_DAYS`, `STRATEGY_PAPER_TRADES_HISTORY_RETENTION_DAYS`, and `STRATEGY_HISTORY_PRUNE_INTERVAL_SECONDS` in `strategy-service`.
+  - Added bounded-retention wiring in `docker-compose.yml` and hosted env/runbook documentation.
 - Strategy research IS/OOS window contracts (Slice B):
   - Added explicit `train_bars` and `validation_bars` metadata to expectancy/replay/sweep configs and schemas.
   - Added bounded query/request support for optional train/validation windows and timeframe-based defaults.
