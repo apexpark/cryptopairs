@@ -65,6 +65,21 @@
           "agrees_with_selected": true,
           "rationale_codes": []
         },
+        "selection_state": {
+          "best_variant": "ROBUST_Z",
+          "best_opportunity_score": 7.42,
+          "best_direction_hint": "LONG_SPREAD",
+          "best_confidence_band": "MEDIUM",
+          "stored_champion_variant": "ROBUST_Z",
+          "stored_champion_score": 7.42,
+          "stored_champion_direction_hint": "LONG_SPREAD",
+          "stored_champion_confidence_band": "MEDIUM",
+          "transition_decision": "UNCHANGED",
+          "score_delta_to_champion": 0.0,
+          "drift_active": false,
+          "source": "EVALUATED_BEST",
+          "validation_state": "BEST_IS_CHAMPION"
+        },
         "evaluated_at": "2026-02-18T20:09:00Z"
       },
       "variants": [
@@ -98,13 +113,129 @@
       "half_life_bars": 15.4,
       "hedge_ratio": 1.13,
       "hedge_ratio_stability": 0.12
+    },
+    {
+      "cue": {
+        "pair_id": "PI_SOLUSD__PI_ETHUSD",
+        "left_instrument": "PI_SOLUSD",
+        "right_instrument": "PI_ETHUSD",
+        "timeframe": "1m",
+        "regime": "TRENDING",
+        "selected_variant": "COINTEGRATION_Z",
+        "direction_hint": "SHORT_SPREAD",
+        "spread_z": 1.76,
+        "opportunity_score": 5.2,
+        "confidence_band": "LOW",
+        "entry_band": 1.8,
+        "exit_band": 0.6,
+        "stop_band": 3.2,
+        "expected_hold_bars": 24,
+        "cost_estimate_bps": 0.9,
+        "setup_actionable": true,
+        "actionable": true,
+        "rationale_codes": [
+          "CHAMPION_DRIFT",
+          "CHAMPION_SELECTED:COINTEGRATION_Z",
+          "CHALLENGER_SELECTED:FUNDING_ADJUSTED"
+        ],
+        "setup_gate": {
+          "status": "AVAILABLE",
+          "pass": true,
+          "rationale_codes": []
+        },
+        "cost_gate": {
+          "status": "AVAILABLE",
+          "expected_edge_bps": 6.3,
+          "fee_bps": 1.2,
+          "funding_model": "DYNAMIC",
+          "funding_events": 1,
+          "funding_bps_per_event": 0.4,
+          "funding_bps": 0.4,
+          "slippage_bps": 1.1,
+          "net_edge_bps": 4.8,
+          "pass": true,
+          "rationale_codes": ["PERFORMANCE_GATE_SOURCE_PAPER_TRADES", "SLIPPAGE_SOURCE_SAMPLED"]
+        },
+        "trade_gate": {
+          "status": "AVAILABLE",
+          "pass": true,
+          "blocked_by": "NONE",
+          "rationale_codes": []
+        },
+        "portfolio_hint": {
+          "status": "AVAILABLE",
+          "target_weight": -0.29,
+          "risk_contribution": 0.48,
+          "cap_applied": false,
+          "rationale_codes": []
+        },
+        "shadow_ml": {
+          "status": "AVAILABLE",
+          "model_name": "LOGISTIC_V1",
+          "training_rows": 512,
+          "positive_rate": 0.54,
+          "precision": 0.67,
+          "brier_score": 0.21,
+          "recommended_variant": "COINTEGRATION_Z",
+          "recommended_probability": 0.63,
+          "agrees_with_selected": true,
+          "rationale_codes": []
+        },
+        "selection_state": {
+          "best_variant": "FUNDING_ADJUSTED",
+          "best_opportunity_score": 6.1,
+          "best_direction_hint": "LONG_SPREAD",
+          "best_confidence_band": "HIGH",
+          "stored_champion_variant": "COINTEGRATION_Z",
+          "stored_champion_score": 5.2,
+          "stored_champion_direction_hint": "SHORT_SPREAD",
+          "stored_champion_confidence_band": "LOW",
+          "transition_decision": "KEEP_CHAMPION",
+          "score_delta_to_champion": 0.9,
+          "drift_active": true,
+          "source": "STORED_CHAMPION_PROJECTION",
+          "validation_state": "CHAMPION_PROJECTED"
+        },
+        "evaluated_at": "2026-02-18T20:09:00Z"
+      },
+      "variants": [
+        {
+          "variant": "COINTEGRATION_Z",
+          "score_last": 1.52,
+          "sample_count": 18,
+          "win_rate": 0.54,
+          "edge_bps": 5.2,
+          "reliability": 0.68,
+          "regime_fit": 0.85,
+          "opportunity_score": 5.2,
+          "shadow_success_probability": 0.63,
+          "shadow_rank_score": 5.92,
+          "rationale_codes": []
+        },
+        {
+          "variant": "FUNDING_ADJUSTED",
+          "score_last": -1.88,
+          "sample_count": 18,
+          "win_rate": 0.58,
+          "edge_bps": 6.1,
+          "reliability": 0.71,
+          "regime_fit": 0.9,
+          "opportunity_score": 6.1,
+          "shadow_success_probability": 0.61,
+          "shadow_rank_score": 6.77,
+          "rationale_codes": []
+        }
+      ],
+      "half_life_bars": 22.7,
+      "hedge_ratio": 0.91,
+      "hedge_ratio_stability": 0.18
     }
   ],
   "candidate_set": {
     "total_pairs": 3,
-    "evaluated_pairs": 3,
-    "actionable_pairs": 1,
-    "cost_gate_pass_pairs": 1,
+    "evaluated_pairs": 2,
+    "actionable_pairs": 2,
+    "cost_gate_pass_pairs": 2,
     "shadow_disagreement_pairs": 0
   },
   "portfolio_plan": {

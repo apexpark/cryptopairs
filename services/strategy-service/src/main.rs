@@ -17,8 +17,9 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use strategy_service::{
     annotate_with_shadow_model, apply_portfolio_plan_to_cues, build_portfolio_plan,
     compute_backtest_series, evaluate_pair, train_shadow_model, BacktestConfig, BacktestExitMode,
-    CandidateSetDiagnostics, FundingModel, PairCue, PairEvaluationInput, PairEvaluationOutput,
-    PortfolioPlan, Regime, ShadowModelTrainingRow, SignalVariant,
+    CandidateSetDiagnostics, CueSelectionState, FundingModel, PairCue, PairEvaluationInput,
+    PairEvaluationOutput, PortfolioPlan, Regime, ShadowModel, ShadowModelTrainingRow,
+    SignalVariant,
 };
 use tokio::net::TcpListener;
 use tokio::sync::RwLock;
@@ -4626,6 +4627,122 @@ async fn maintenance_action(
     }))
 }
 
+fn build_cue_selection_state(
+    output: &PairEvaluationOutput,
+    block_on_champion_drift: bool,
+) -> CueSelectionState {
+    let best_cue = &output.cue;
+    let stored_variant = output.stored_champion_variant.clone();
+    let drift_active = stored_variant
+        .as_deref()
+        .map(|variant| variant != best_cue.selected_variant)
+        .unwrap_or(false);
+    let stored_cue = match stored_variant.as_deref() {
+        Some(variant) if variant == best_cue.selected_variant => Some(best_cue),
+        Some(_) => output.stored_champion_projection.as_ref(),
+        None => None,
+    };
+
+    let (transition_decision, source, validation_state, score_delta_to_champion) =
+        match (stored_variant.as_deref(), drift_active, stored_cue) {
+            (None, _, _) => (
+                "INITIALIZE".to_string(),
+                "EVALUATED_BEST".to_string(),
+                "NO_STORED_CHAMPION".to_string(),
+                None,
+            ),
+            (Some(_), false, Some(_)) => (
+                "UNCHANGED".to_string(),
+                "EVALUATED_BEST".to_string(),
+                "BEST_IS_CHAMPION".to_string(),
+                Some(0.0),
+            ),
+            (Some(_), true, Some(champion_cue)) => (
+                "KEEP_CHAMPION".to_string(),
+                "STORED_CHAMPION_PROJECTION".to_string(),
+                if block_on_champion_drift {
+                    "CHAMPION_PROJECTED_BLOCKED".to_string()
+                } else {
+                    "CHAMPION_PROJECTED".to_string()
+                },
+                Some(best_cue.opportunity_score - champion_cue.opportunity_score),
+            ),
+            (Some(_), true, None) => (
+                "KEEP_CHAMPION".to_string(),
+                "EVALUATED_BEST".to_string(),
+                "CHAMPION_PROJECTION_FAILED".to_string(),
+                None,
+            ),
+            (Some(_), false, None) => (
+                "UNCHANGED".to_string(),
+                "EVALUATED_BEST".to_string(),
+                "BEST_IS_CHAMPION".to_string(),
+                Some(0.0),
+            ),
+        };
+
+    CueSelectionState {
+        best_variant: best_cue.selected_variant.clone(),
+        best_opportunity_score: best_cue.opportunity_score,
+        best_direction_hint: best_cue.direction_hint.clone(),
+        best_confidence_band: best_cue.confidence_band.clone(),
+        stored_champion_variant: stored_variant,
+        stored_champion_score: stored_cue.map(|cue| cue.opportunity_score),
+        stored_champion_direction_hint: stored_cue.map(|cue| cue.direction_hint.clone()),
+        stored_champion_confidence_band: stored_cue.map(|cue| cue.confidence_band.clone()),
+        transition_decision,
+        score_delta_to_champion,
+        drift_active,
+        source,
+        validation_state,
+    }
+}
+
+fn cue_for_pairs_response(output: &PairEvaluationOutput, block_on_champion_drift: bool) -> PairCue {
+    let drift_active = output
+        .stored_champion_variant
+        .as_deref()
+        .map(|variant| variant != output.cue.selected_variant)
+        .unwrap_or(false);
+    let mut cue = if drift_active {
+        output
+            .stored_champion_projection
+            .clone()
+            .unwrap_or_else(|| output.cue.clone())
+    } else {
+        output.cue.clone()
+    };
+    let projection_failed = drift_active && output.stored_champion_projection.is_none();
+
+    if drift_active {
+        if let Some(champion_variant) = output.stored_champion_variant.as_deref() {
+            cue.rationale_codes.push("CHAMPION_DRIFT".to_string());
+            cue.rationale_codes
+                .push(format!("CHAMPION_SELECTED:{champion_variant}"));
+            cue.rationale_codes.push(format!(
+                "CHALLENGER_SELECTED:{}",
+                output.cue.selected_variant
+            ));
+        }
+        if projection_failed {
+            cue.rationale_codes
+                .push("CHAMPION_PROJECTION_FAILED".to_string());
+        }
+        if block_on_champion_drift || projection_failed {
+            cue.setup_actionable = false;
+            cue.actionable = false;
+            cue.direction_hint = "NONE".to_string();
+            cue.rationale_codes
+                .push("CHAMPION_DRIFT_BLOCKED".to_string());
+        }
+    }
+
+    cue.selection_state = Some(build_cue_selection_state(output, block_on_champion_drift));
+    refresh_setup_gate(&mut cue);
+    finalize_trade_gate(&mut cue);
+    cue
+}
+
 async fn pairs_cues(
     State(state): State<AppState>,
     Query(query): Query<CuesQuery>,
@@ -4643,38 +4760,8 @@ async fn pairs_cues(
 
     let mut cues = vec![];
     for output in outputs.drain(..) {
-        let preferred_signal = state
-            .repository
-            .fetch_selected_signal(&output.cue.pair_id, timeframe)
-            .await
-            .map_err(|error| ApiError::Upstream(error.to_string()))?;
-
-        let mut cue = output.cue.clone();
-        if let Some(preferred) = preferred_signal {
-            if preferred.signal_variant != output.cue.selected_variant {
-                cue.rationale_codes.push("CHAMPION_DRIFT".to_string());
-                cue.rationale_codes
-                    .push(format!("CHAMPION_SELECTED:{}", preferred.signal_variant));
-                cue.rationale_codes.push(format!(
-                    "CHALLENGER_SELECTED:{}",
-                    output.cue.selected_variant
-                ));
-                cue.selected_variant = preferred.signal_variant;
-                cue.opportunity_score = preferred.opportunity_score;
-                if state.settings.block_on_champion_drift {
-                    cue.setup_actionable = false;
-                    cue.actionable = false;
-                    cue.direction_hint = "NONE".to_string();
-                    cue.rationale_codes
-                        .push("CHAMPION_DRIFT_BLOCKED".to_string());
-                }
-            }
-        }
-        refresh_setup_gate(&mut cue);
-        finalize_trade_gate(&mut cue);
-
         cues.push(CueWithDiagnostics {
-            cue,
+            cue: cue_for_pairs_response(&output, state.settings.block_on_champion_drift),
             variants: output.variants,
             half_life_bars: output.half_life_bars,
             hedge_ratio: output.hedge_ratio,
@@ -7407,85 +7494,35 @@ async fn reoptimize(
     }))
 }
 
-async fn evaluate_pair_for_timeframe(
+struct ShadowModelContext<'a> {
+    rows_len: usize,
+    query_failed: bool,
+    model: Option<&'a ShadowModel>,
+}
+
+async fn finalize_pair_evaluation_output(
     state: &AppState,
-    pair: &PairSpec,
     timeframe: Timeframe,
     advisory_enabled: bool,
     taker_fee_bps: f64,
-) -> anyhow::Result<PairEvaluationOutput> {
-    let lookback = state.settings.lookback_bars(timeframe) as i64;
-    let left = state
-        .repository
-        .fetch_recent_closes(&pair.left, timeframe, lookback)
-        .await?;
-    let right = state
-        .repository
-        .fetch_recent_closes(&pair.right, timeframe, lookback)
-        .await?;
-
-    let (timestamps, left_closes, right_closes) = align_closes(left, right);
-    if timestamps.len() < 120 {
-        return Err(anyhow::anyhow!(
-            "insufficient aligned candles for pair={} timeframe={} bars={}",
-            pair.pair_id(),
-            timeframe.as_str(),
-            timestamps.len()
-        ));
+    shadow: ShadowModelContext<'_>,
+    output: &mut PairEvaluationOutput,
+) -> anyhow::Result<()> {
+    let diagnostics = annotate_with_shadow_model(output, shadow.model);
+    if shadow.query_failed {
+        output
+            .cue
+            .shadow_ml
+            .rationale_codes
+            .push("TRAINING_QUERY_FAILED".to_string());
+        return Ok(());
     }
 
-    let mut output = evaluate_pair(PairEvaluationInput {
-        pair_id: pair.pair_id(),
-        left_instrument: pair.left.clone(),
-        right_instrument: pair.right.clone(),
-        timeframe,
-        timestamps,
-        left_closes,
-        right_closes,
-        entry_band: state.settings.entry_band,
-        exit_band: state.settings.exit_band,
-        stop_band: state.settings.stop_band,
-        hold_bars: state.settings.hold_bars(timeframe),
-        max_half_life_bars: state.settings.max_half_life_bars(timeframe),
-        funding_drag_bps: state.settings.funding_drag_bps,
-        taker_fee_bps,
-        min_samples_target: state.settings.min_samples_target,
-    })?;
-
-    let training_rows = match state
-        .repository
-        .fetch_shadow_training_rows(
-            &pair.pair_id(),
-            timeframe,
-            state.settings.shadow_ml_training_limit as i64,
-        )
-        .await
-    {
-        Ok(rows) => rows,
-        Err(error) => {
-            tracing::warn!(
-                pair_id = %pair.pair_id(),
-                timeframe = %timeframe.as_str(),
-                error = %error,
-                "shadow training history unavailable"
-            );
-            annotate_with_shadow_model(&mut output, None);
-            output
-                .cue
-                .shadow_ml
-                .rationale_codes
-                .push("TRAINING_QUERY_FAILED".to_string());
-            return Ok(output);
-        }
-    };
-
-    let model = train_shadow_model(&training_rows, state.settings.shadow_ml_min_rows);
-    let diagnostics = annotate_with_shadow_model(&mut output, model.as_ref());
     if diagnostics.status == "UNAVAILABLE" {
         tracing::info!(
-            pair_id = %pair.pair_id(),
+            pair_id = %output.cue.pair_id,
             timeframe = %timeframe.as_str(),
-            rows = training_rows.len(),
+            rows = shadow.rows_len,
             "shadow model unavailable for current evaluation"
         );
     }
@@ -7502,7 +7539,7 @@ async fn evaluate_pair_for_timeframe(
             .await;
         if sampled.status == SampledSlippageStatus::Healthy {
             let funding_estimate =
-                resolve_funding_cost_estimate(&state.settings, &output, timeframe, &sampled);
+                resolve_funding_cost_estimate(&state.settings, output, timeframe, &sampled);
             let recent_net_bps = match state
                 .repository
                 .fetch_recent_paper_trade_net_bps(
@@ -7600,8 +7637,145 @@ async fn evaluate_pair_for_timeframe(
             "ADVISORY_DISABLED".to_string(),
         ]);
     }
+
     refresh_setup_gate(&mut output.cue);
     finalize_trade_gate(&mut output.cue);
+    Ok(())
+}
+
+async fn evaluate_pair_for_timeframe(
+    state: &AppState,
+    pair: &PairSpec,
+    timeframe: Timeframe,
+    advisory_enabled: bool,
+    taker_fee_bps: f64,
+) -> anyhow::Result<PairEvaluationOutput> {
+    let pair_id = pair.pair_id();
+    let lookback = state.settings.lookback_bars(timeframe) as i64;
+    let left = state
+        .repository
+        .fetch_recent_closes(&pair.left, timeframe, lookback)
+        .await?;
+    let right = state
+        .repository
+        .fetch_recent_closes(&pair.right, timeframe, lookback)
+        .await?;
+
+    let (timestamps, left_closes, right_closes) = align_closes(left, right);
+    if timestamps.len() < 120 {
+        return Err(anyhow::anyhow!(
+            "insufficient aligned candles for pair={} timeframe={} bars={}",
+            pair_id,
+            timeframe.as_str(),
+            timestamps.len()
+        ));
+    }
+
+    let selected_signal = state
+        .repository
+        .fetch_selected_signal(&pair_id, timeframe)
+        .await?;
+    let (training_rows_len, training_query_failed, model) = match state
+        .repository
+        .fetch_shadow_training_rows(
+            &pair_id,
+            timeframe,
+            state.settings.shadow_ml_training_limit as i64,
+        )
+        .await
+    {
+        Ok(rows) => {
+            let row_count = rows.len();
+            let model = train_shadow_model(&rows, state.settings.shadow_ml_min_rows);
+            (row_count, false, model)
+        }
+        Err(error) => {
+            tracing::warn!(
+                pair_id = %pair_id,
+                timeframe = %timeframe.as_str(),
+                error = %error,
+                "shadow training history unavailable"
+            );
+            (0, true, None)
+        }
+    };
+
+    let mut output = evaluate_pair(PairEvaluationInput {
+        pair_id: pair_id.clone(),
+        left_instrument: pair.left.clone(),
+        right_instrument: pair.right.clone(),
+        timeframe,
+        timestamps: timestamps.clone(),
+        left_closes: left_closes.clone(),
+        right_closes: right_closes.clone(),
+        entry_band: state.settings.entry_band,
+        exit_band: state.settings.exit_band,
+        stop_band: state.settings.stop_band,
+        hold_bars: state.settings.hold_bars(timeframe),
+        max_half_life_bars: state.settings.max_half_life_bars(timeframe),
+        funding_drag_bps: state.settings.funding_drag_bps,
+        taker_fee_bps,
+        min_samples_target: state.settings.min_samples_target,
+        preferred_variant: None,
+    })?;
+    finalize_pair_evaluation_output(
+        state,
+        timeframe,
+        advisory_enabled,
+        taker_fee_bps,
+        ShadowModelContext {
+            rows_len: training_rows_len,
+            query_failed: training_query_failed,
+            model: model.as_ref(),
+        },
+        &mut output,
+    )
+    .await?;
+
+    output.stored_champion_variant = selected_signal
+        .as_ref()
+        .map(|row| row.signal_variant.clone());
+    if let Some(preferred) = selected_signal.as_ref() {
+        if preferred.signal_variant != output.cue.selected_variant
+            && output
+                .variants
+                .iter()
+                .any(|variant| variant.variant == preferred.signal_variant)
+        {
+            let mut champion_projection = evaluate_pair(PairEvaluationInput {
+                pair_id,
+                left_instrument: pair.left.clone(),
+                right_instrument: pair.right.clone(),
+                timeframe,
+                timestamps,
+                left_closes,
+                right_closes,
+                entry_band: state.settings.entry_band,
+                exit_band: state.settings.exit_band,
+                stop_band: state.settings.stop_band,
+                hold_bars: state.settings.hold_bars(timeframe),
+                max_half_life_bars: state.settings.max_half_life_bars(timeframe),
+                funding_drag_bps: state.settings.funding_drag_bps,
+                taker_fee_bps,
+                min_samples_target: state.settings.min_samples_target,
+                preferred_variant: Some(preferred.signal_variant.clone()),
+            })?;
+            finalize_pair_evaluation_output(
+                state,
+                timeframe,
+                advisory_enabled,
+                taker_fee_bps,
+                ShadowModelContext {
+                    rows_len: training_rows_len,
+                    query_failed: training_query_failed,
+                    model: model.as_ref(),
+                },
+                &mut champion_projection,
+            )
+            .await?;
+            output.stored_champion_projection = Some(champion_projection.cue);
+        }
+    }
 
     Ok(output)
 }
@@ -7849,8 +8023,13 @@ async fn evaluate_timeframe_outputs(
             state.settings.advisory_per_pair_cap,
         );
         apply_portfolio_plan_to_cues(&mut cue_snapshot, &plan);
-        for (output, cue) in outputs.iter_mut().zip(cue_snapshot.into_iter()) {
+        for (output, cue) in outputs.iter_mut().zip(cue_snapshot) {
             output.cue = cue;
+            if let Some(stored_champion_projection) = output.stored_champion_projection.as_mut() {
+                // Portfolio sizing is timeframe-level, not variant-level, so the projected
+                // champion inherits the same portfolio plan as the neutral evaluation.
+                stored_champion_projection.portfolio_hint = output.cue.portfolio_hint.clone();
+            }
         }
         plan
     } else {
@@ -7867,6 +8046,10 @@ async fn evaluate_timeframe_outputs(
         for output in &mut outputs {
             output.cue.portfolio_hint =
                 strategy_service::PortfolioHint::unavailable(vec!["ADVISORY_DISABLED".to_string()]);
+            if let Some(stored_champion_projection) = output.stored_champion_projection.as_mut() {
+                // Keep the projected champion aligned with the same advisory-disabled surface.
+                stored_champion_projection.portfolio_hint = output.cue.portfolio_hint.clone();
+            }
         }
         plan
     };
@@ -7984,15 +8167,15 @@ mod tests {
         artifact_download_path, bootstrap_deviation_exceeds_threshold, bootstrap_snapshot_is_fresh,
         canonical_metric_instrument, classify_expectancy_result, compute_expectancy_metrics,
         compute_pair_funding_bps_per_event, compute_pair_slippage_sample_bps,
-        compute_walk_forward_summary, days_covered, decide_candidate_probation_transition,
-        decide_champion_transition, derive_paper_trades_from_series,
-        derive_replay_trades_from_series, estimate_research_combinations,
-        evaluate_recent_performance_gate, expectancy_objective_score,
-        expected_funding_events_crossed, finalize_trade_gate, normalize_funding_rate,
-        parse_backtest_exit_mode, parse_candidate_inbox_query, parse_expectancy_query,
-        parse_opportunity_history_stats_timeframe, parse_opportunity_history_window,
-        parse_paper_trades_window, parse_replay_trades_query, percentile,
-        project_continuous_funding_bps, refresh_setup_gate, resolve_artifact_path,
+        compute_walk_forward_summary, cue_for_pairs_response, days_covered,
+        decide_candidate_probation_transition, decide_champion_transition,
+        derive_paper_trades_from_series, derive_replay_trades_from_series,
+        estimate_research_combinations, evaluate_recent_performance_gate,
+        expectancy_objective_score, expected_funding_events_crossed, finalize_trade_gate,
+        normalize_funding_rate, parse_backtest_exit_mode, parse_candidate_inbox_query,
+        parse_expectancy_query, parse_opportunity_history_stats_timeframe,
+        parse_opportunity_history_window, parse_paper_trades_window, parse_replay_trades_query,
+        percentile, project_continuous_funding_bps, refresh_setup_gate, resolve_artifact_path,
         resolve_taker_fee_bps, summarize_recent_performance, CandidateInboxQuery,
         CandidateLifecycleState, CandidateOperatorAction, CandidateProbationInputs,
         ChampionDecision, ExpectancyMetrics, ExpectancyQuery, FundingCostEstimate,
@@ -8042,6 +8225,7 @@ mod tests {
                 trade_gate: TradeGateDiagnostics::unavailable(vec![]),
                 portfolio_hint: PortfolioHint::unavailable(vec![]),
                 shadow_ml: ShadowMlDiagnostics::unavailable(vec![]),
+                selection_state: None,
                 evaluated_at: Utc::now(),
             },
             variants: vec![
@@ -8076,6 +8260,8 @@ mod tests {
             hedge_ratio: 1.0,
             hedge_ratio_stability: 0.1,
             spread_vol_bps: 2.0,
+            stored_champion_variant: None,
+            stored_champion_projection: None,
         }
     }
 
@@ -8111,6 +8297,111 @@ mod tests {
         assert_eq!(transition.decision, ChampionDecision::KeepChampion);
         assert_eq!(transition.selected_variant, "ROBUST_Z");
         assert!(transition.score_delta < 0.25);
+    }
+
+    #[test]
+    fn cue_for_pairs_response_projects_champion_consistently() {
+        let mut evaluation = output("VOL_NORMALIZED", 2.0, 1.0, 2.0);
+        let mut champion_cue = evaluation.cue.clone();
+        champion_cue.selected_variant = "ROBUST_Z".to_string();
+        champion_cue.direction_hint = "SHORT_SPREAD".to_string();
+        champion_cue.opportunity_score = 1.0;
+        champion_cue.confidence_band = "LOW".to_string();
+        evaluation.stored_champion_variant = Some("ROBUST_Z".to_string());
+        evaluation.stored_champion_projection = Some(champion_cue);
+
+        let cue = cue_for_pairs_response(&evaluation, false);
+
+        assert_eq!(cue.selected_variant, "ROBUST_Z");
+        assert_eq!(cue.direction_hint, "SHORT_SPREAD");
+        assert!((cue.opportunity_score - 1.0).abs() < 1e-9);
+        let selection_state = cue.selection_state.expect("selection state");
+        assert_eq!(selection_state.best_variant, "VOL_NORMALIZED");
+        assert_eq!(
+            selection_state.stored_champion_variant.as_deref(),
+            Some("ROBUST_Z")
+        );
+        assert_eq!(selection_state.validation_state, "CHAMPION_PROJECTED");
+    }
+
+    #[test]
+    fn cue_for_pairs_response_blocks_projected_champion_when_flag_enabled() {
+        let mut evaluation = output("VOL_NORMALIZED", 2.0, 1.0, 2.0);
+        let mut champion_cue = evaluation.cue.clone();
+        champion_cue.selected_variant = "ROBUST_Z".to_string();
+        champion_cue.direction_hint = "SHORT_SPREAD".to_string();
+        champion_cue.opportunity_score = 1.0;
+        evaluation.stored_champion_variant = Some("ROBUST_Z".to_string());
+        evaluation.stored_champion_projection = Some(champion_cue);
+
+        let cue = cue_for_pairs_response(&evaluation, true);
+
+        assert_eq!(cue.selected_variant, "ROBUST_Z");
+        assert_eq!(cue.direction_hint, "NONE");
+        assert!(!cue.actionable);
+        assert!(cue
+            .rationale_codes
+            .iter()
+            .any(|code| code == "CHAMPION_DRIFT_BLOCKED"));
+        let selection_state = cue.selection_state.expect("selection state");
+        assert_eq!(
+            selection_state.validation_state,
+            "CHAMPION_PROJECTED_BLOCKED"
+        );
+    }
+
+    #[test]
+    fn cue_for_pairs_response_blocks_when_projection_is_unavailable() {
+        let mut evaluation = output("VOL_NORMALIZED", 2.0, 1.0, 2.0);
+        evaluation.stored_champion_variant = Some("ROBUST_Z".to_string());
+
+        let cue = cue_for_pairs_response(&evaluation, false);
+
+        assert_eq!(cue.selected_variant, "VOL_NORMALIZED");
+        assert_eq!(cue.direction_hint, "NONE");
+        assert!(!cue.actionable);
+        assert!(cue
+            .rationale_codes
+            .iter()
+            .any(|code| code == "CHAMPION_PROJECTION_FAILED"));
+        let selection_state = cue.selection_state.expect("selection state");
+        assert_eq!(
+            selection_state.validation_state,
+            "CHAMPION_PROJECTION_FAILED"
+        );
+    }
+
+    #[test]
+    fn cue_for_pairs_response_marks_initialize_when_no_stored_champion_exists() {
+        let evaluation = output("VOL_NORMALIZED", 2.0, 1.0, 2.0);
+
+        let cue = cue_for_pairs_response(&evaluation, false);
+
+        let selection_state = cue.selection_state.expect("selection state");
+        assert_eq!(selection_state.transition_decision, "INITIALIZE");
+        assert_eq!(selection_state.validation_state, "NO_STORED_CHAMPION");
+        assert_eq!(selection_state.source, "EVALUATED_BEST");
+        assert_eq!(selection_state.score_delta_to_champion, None);
+        assert!(!selection_state.drift_active);
+    }
+
+    #[test]
+    fn cue_for_pairs_response_marks_unchanged_when_best_matches_stored_champion() {
+        let mut evaluation = output("ROBUST_Z", 1.0, 1.0, 2.0);
+        evaluation.stored_champion_variant = Some("ROBUST_Z".to_string());
+
+        let cue = cue_for_pairs_response(&evaluation, false);
+
+        let selection_state = cue.selection_state.expect("selection state");
+        assert_eq!(selection_state.transition_decision, "UNCHANGED");
+        assert_eq!(selection_state.validation_state, "BEST_IS_CHAMPION");
+        assert_eq!(selection_state.source, "EVALUATED_BEST");
+        assert_eq!(selection_state.score_delta_to_champion, Some(0.0));
+        assert_eq!(
+            selection_state.stored_champion_variant.as_deref(),
+            Some("ROBUST_Z")
+        );
+        assert!(!selection_state.drift_active);
     }
 
     fn temp_dir(name: &str) -> PathBuf {
@@ -9251,6 +9542,7 @@ mod tests {
             trade_gate: TradeGateDiagnostics::unavailable(vec![]),
             portfolio_hint: PortfolioHint::unavailable(vec![]),
             shadow_ml: ShadowMlDiagnostics::unavailable(vec![]),
+            selection_state: None,
             evaluated_at: Utc::now(),
         };
 
@@ -9373,6 +9665,7 @@ mod tests {
             trade_gate: TradeGateDiagnostics::unavailable(vec![]),
             portfolio_hint: PortfolioHint::unavailable(vec![]),
             shadow_ml: ShadowMlDiagnostics::unavailable(vec![]),
+            selection_state: None,
             evaluated_at: Utc::now(),
         };
 

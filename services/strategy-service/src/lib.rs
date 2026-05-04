@@ -286,6 +286,23 @@ impl ShadowMlDiagnostics {
 }
 
 #[derive(Debug, Clone, Serialize)]
+pub struct CueSelectionState {
+    pub best_variant: String,
+    pub best_opportunity_score: f64,
+    pub best_direction_hint: String,
+    pub best_confidence_band: String,
+    pub stored_champion_variant: Option<String>,
+    pub stored_champion_score: Option<f64>,
+    pub stored_champion_direction_hint: Option<String>,
+    pub stored_champion_confidence_band: Option<String>,
+    pub transition_decision: String,
+    pub score_delta_to_champion: Option<f64>,
+    pub drift_active: bool,
+    pub source: String,
+    pub validation_state: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
 pub struct PairCue {
     pub pair_id: String,
     pub left_instrument: String,
@@ -310,6 +327,8 @@ pub struct PairCue {
     pub trade_gate: TradeGateDiagnostics,
     pub portfolio_hint: PortfolioHint,
     pub shadow_ml: ShadowMlDiagnostics,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub selection_state: Option<CueSelectionState>,
     pub evaluated_at: DateTime<Utc>,
 }
 
@@ -330,6 +349,7 @@ pub struct PairEvaluationInput {
     pub funding_drag_bps: f64,
     pub taker_fee_bps: f64,
     pub min_samples_target: usize,
+    pub preferred_variant: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -340,6 +360,8 @@ pub struct PairEvaluationOutput {
     pub hedge_ratio: f64,
     pub hedge_ratio_stability: f64,
     pub spread_vol_bps: f64,
+    pub stored_champion_variant: Option<String>,
+    pub stored_champion_projection: Option<PairCue>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -928,7 +950,7 @@ pub fn evaluate_pair(input: PairEvaluationInput) -> anyhow::Result<PairEvaluatio
         });
     }
 
-    let mut selected = variants
+    let fallback_selected = variants
         .iter()
         .max_by(|left, right| {
             left.opportunity_score
@@ -937,6 +959,16 @@ pub fn evaluate_pair(input: PairEvaluationInput) -> anyhow::Result<PairEvaluatio
         })
         .cloned()
         .ok_or_else(|| anyhow::anyhow!("no signal variants evaluated"))?;
+    let mut selected = input
+        .preferred_variant
+        .as_deref()
+        .and_then(|preferred_variant| {
+            variants
+                .iter()
+                .find(|candidate| candidate.variant == preferred_variant)
+                .cloned()
+        })
+        .unwrap_or_else(|| fallback_selected.clone());
 
     let mut cue_rationale = selected.rationale_codes.clone();
     let selected_variant = SignalVariant::parse(&selected.variant);
@@ -1010,6 +1042,7 @@ pub fn evaluate_pair(input: PairEvaluationInput) -> anyhow::Result<PairEvaluatio
         trade_gate: TradeGateDiagnostics::unavailable(vec!["NOT_EVALUATED".to_string()]),
         portfolio_hint: PortfolioHint::unavailable(vec!["NOT_EVALUATED".to_string()]),
         shadow_ml: ShadowMlDiagnostics::unavailable(vec!["NOT_EVALUATED".to_string()]),
+        selection_state: None,
         evaluated_at,
     };
 
@@ -1020,6 +1053,8 @@ pub fn evaluate_pair(input: PairEvaluationInput) -> anyhow::Result<PairEvaluatio
         hedge_ratio,
         hedge_ratio_stability,
         spread_vol_bps,
+        stored_champion_variant: None,
+        stored_champion_projection: None,
     })
 }
 
@@ -1610,12 +1645,65 @@ mod tests {
             funding_drag_bps: 0.6,
             taker_fee_bps: 1.2,
             min_samples_target: 8,
+            preferred_variant: None,
         })
         .expect("pair evaluation should succeed");
 
         assert_eq!(result.variants.len(), 4);
         assert!(!result.cue.selected_variant.is_empty());
         assert!(result.cue.entry_band > result.cue.exit_band);
+    }
+
+    #[test]
+    fn evaluate_pair_honors_preferred_variant_override() {
+        let (timestamps, left, right) = synthetic_pair_series(260);
+        let baseline = evaluate_pair(PairEvaluationInput {
+            pair_id: "PI_XBTUSD__PI_ETHUSD".to_string(),
+            left_instrument: "PI_XBTUSD".to_string(),
+            right_instrument: "PI_ETHUSD".to_string(),
+            timeframe: Timeframe::OneMinute,
+            timestamps: timestamps.clone(),
+            left_closes: left.clone(),
+            right_closes: right.clone(),
+            entry_band: 1.6,
+            exit_band: 0.5,
+            stop_band: 3.2,
+            hold_bars: 12,
+            max_half_life_bars: 120.0,
+            funding_drag_bps: 0.6,
+            taker_fee_bps: 1.2,
+            min_samples_target: 8,
+            preferred_variant: None,
+        })
+        .expect("baseline evaluation should succeed");
+        let alternate_variant = baseline
+            .variants
+            .iter()
+            .find(|variant| variant.variant != baseline.cue.selected_variant)
+            .map(|variant| variant.variant.clone())
+            .expect("alternate variant");
+
+        let preferred = evaluate_pair(PairEvaluationInput {
+            pair_id: "PI_XBTUSD__PI_ETHUSD".to_string(),
+            left_instrument: "PI_XBTUSD".to_string(),
+            right_instrument: "PI_ETHUSD".to_string(),
+            timeframe: Timeframe::OneMinute,
+            timestamps,
+            left_closes: left,
+            right_closes: right,
+            entry_band: 1.6,
+            exit_band: 0.5,
+            stop_band: 3.2,
+            hold_bars: 12,
+            max_half_life_bars: 120.0,
+            funding_drag_bps: 0.6,
+            taker_fee_bps: 1.2,
+            min_samples_target: 8,
+            preferred_variant: Some(alternate_variant.clone()),
+        })
+        .expect("preferred evaluation should succeed");
+
+        assert_eq!(preferred.cue.selected_variant, alternate_variant);
     }
 
     #[test]
@@ -1637,6 +1725,7 @@ mod tests {
             funding_drag_bps: 0.6,
             taker_fee_bps: 1.2,
             min_samples_target: 8,
+            preferred_variant: None,
         })
         .expect("pair evaluation should succeed");
 
@@ -1665,6 +1754,7 @@ mod tests {
             funding_drag_bps: 0.5,
             taker_fee_bps: 1.2,
             min_samples_target: 6,
+            preferred_variant: None,
         })
         .expect("pair evaluation should succeed");
 
@@ -1701,6 +1791,7 @@ mod tests {
             funding_drag_bps: 0.6,
             taker_fee_bps: 1.2,
             min_samples_target: 8,
+            preferred_variant: None,
         })
         .expect("pair evaluation should succeed");
 
@@ -2256,6 +2347,7 @@ mod tests {
             },
             portfolio_hint: PortfolioHint::unavailable(vec!["NOT_EVALUATED".to_string()]),
             shadow_ml: ShadowMlDiagnostics::unavailable(vec!["NOT_EVALUATED".to_string()]),
+            selection_state: None,
             evaluated_at: Utc::now(),
         }
     }

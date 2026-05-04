@@ -594,3 +594,7 @@ This project follows SemVer as defined in `docs/02-versioning-and-releases.md`.
   instrument-price-scaled funding distortions in strategy cost-gate calculations.
 - Strategy cues now force cost-gate `pass=false` when `actionable=false`, preventing
   Gate/Edge PASS presentation on non-actionable rows (including champion-drift blocked cues).
+- Strategy cue selection-state diagnostics and champion-consistent drift projection:
+  - `GET /v1/strategy/pairs/cues` now includes optional `cue.selection_state` metadata so consumers can compare the evaluated-best variant against the stored champion explicitly.
+  - Drift-state cue responses no longer rewrite only `selected_variant` and `opportunity_score`; they now project a champion-consistent cue or fail closed with explicit rationale.
+  - Trade and Analytics UI surfaces now read selection-state diagnostics instead of treating `cue.selected_variant` as sole ground truth.

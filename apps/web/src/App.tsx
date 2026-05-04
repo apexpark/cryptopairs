@@ -41,6 +41,7 @@ import {
 import type {
   ChartMarker,
   BacktestExitMode,
+  Cue,
   DispatchIntentResponse,
   DirectionHint,
   ExecutionDispatchModeResponse,
@@ -196,6 +197,31 @@ function preferredTheme(): ThemeMode {
 function formatSigned(value: number, digits = 2): string {
   const abs = Math.abs(value).toFixed(digits);
   return `${value >= 0 ? "+" : "-"}${abs}`;
+}
+
+function cueSelectionState(cue: Cue | null | undefined) {
+  return cue?.selection_state ?? null;
+}
+
+function cueDisplayedVariant(cue: Cue | null | undefined): string {
+  if (!cue) {
+    return "--";
+  }
+  return cue.selection_state?.stored_champion_variant ?? cue.selected_variant;
+}
+
+function cueBestVariant(cue: Cue | null | undefined): string {
+  if (!cue) {
+    return "--";
+  }
+  return cue.selection_state?.best_variant ?? cue.selected_variant;
+}
+
+function formatSelectionStateLabel(value: string | null | undefined): string {
+  if (!value) {
+    return "--";
+  }
+  return value.split("_").join(" ");
 }
 
 function parseCommissionPercentToBps(raw: string): number | null {
@@ -2965,6 +2991,7 @@ function TradePage(props: {
     props.cues?.cues.find((entry) => entry.cue.pair_id === props.selectedPairId) ??
     props.cues?.cues[0] ??
     null;
+  const selectedSelectionState = cueSelectionState(selectedCue?.cue);
   const spreadSizeNumber = Number.parseFloat(props.spreadSize);
   const spreadLots = Number.isFinite(spreadSizeNumber) && spreadSizeNumber > 0 ? spreadSizeNumber : 0;
   const leftInstrument = selectedCue?.cue.left_instrument ?? "LEFT";
@@ -3365,6 +3392,24 @@ function TradePage(props: {
           )}
         </div>
 
+        {selectedCue && selectedSelectionState ? (
+          <div className="mini-card">
+            <p className="small-text">
+              Selected for trade: {cueDisplayedVariant(selectedCue.cue)}
+              {selectedSelectionState.drift_active
+                ? ` | Best live variant: ${cueBestVariant(selectedCue.cue)}`
+                : ""}
+            </p>
+            <p
+              className={`small-text ${
+                selectedSelectionState.drift_active ? "tone-warn" : "tone-info"
+              }`}
+            >
+              Selection state: {formatSelectionStateLabel(selectedSelectionState.validation_state)}
+            </p>
+          </div>
+        ) : null}
+
         <div className="timeline-card open-trades-card">
           <h3>Open Trades</h3>
           {props.openTradesError ? <p className="small-text tone-warn">{props.openTradesError}</p> : null}
@@ -3741,6 +3786,7 @@ function AnalyticsPage({
   chartHeight: number;
 }): JSX.Element {
   const selected = cues?.cues.find((entry) => entry.cue.pair_id === selectedPairId) ?? cues?.cues[0];
+  const selectedSelectionState = cueSelectionState(selected?.cue);
   const pairCount = cues?.cues.length ?? 0;
   const pairDrivenChartHeight = useMemo(
     () => Math.round(clampNumber(pairCount * 33, 350, 980)),
@@ -3810,6 +3856,21 @@ function AnalyticsPage({
                 <StatRow label="Expected Hold Bars" value={selected.cue.expected_hold_bars.toString()} />
                 <StatRow label="Cost Estimate" value={`${selected.cue.cost_estimate_bps.toFixed(2)} bp`} />
                 <StatRow label="Confidence" value={selected.cue.confidence_band} />
+                <StatRow label="Selected Variant" value={cueDisplayedVariant(selected.cue)} />
+                {selectedSelectionState ? (
+                  <>
+                    <StatRow
+                      label="Best Live Variant"
+                      value={cueBestVariant(selected.cue)}
+                      tone={selectedSelectionState.drift_active ? "warn" : "ok"}
+                    />
+                    <StatRow
+                      label="Selection State"
+                      value={formatSelectionStateLabel(selectedSelectionState.validation_state)}
+                      tone={selectedSelectionState.drift_active ? "warn" : "neutral"}
+                    />
+                  </>
+                ) : null}
               </>
             ) : (
               <p className="empty-text">No live cues available.</p>
@@ -4361,7 +4422,14 @@ function AnalyticsPage({
                 <div className="research-controls-body">
                   {selected ? (
                     <>
-                      <StatRow label="Champion Variant" value={selected.cue.selected_variant} />
+                      <StatRow label="Champion Variant" value={cueDisplayedVariant(selected.cue)} />
+                      {selectedSelectionState ? (
+                        <StatRow
+                          label="Decision"
+                          value={formatSelectionStateLabel(selectedSelectionState.transition_decision)}
+                          tone={selectedSelectionState.drift_active ? "warn" : "neutral"}
+                        />
+                      ) : null}
                       <StatRow
                         label="Shadow Agreement"
                         value={selected.cue.shadow_ml.agrees_with_selected ? "YES" : "NO"}
