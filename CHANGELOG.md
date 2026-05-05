@@ -4,6 +4,9 @@ All notable changes to this project will be documented in this file.
 This project follows SemVer as defined in `docs/02-versioning-and-releases.md`.
 
 ## Unreleased
+### Operator Tooling
+- `.githooks/pre-push` now autostashes unstaged and untracked work before running the Rust preflight so pushes check the staged tree, with `scripts/test-pre-push.sh` covering the restore paths.
+
 ### Added
 - Multi-agent operating model:
   - `AGENTS.md` §8 defines Local vs Remote agent roles, the canonical-source rule, work allocation defaults, branch/PR conventions, and a mandatory hydration sequence (`AGENTS.md` → `docs/AGENT_STATE.md` → `docs/playbooks/remote-agent-bootstrap.md` → task brief → code).
