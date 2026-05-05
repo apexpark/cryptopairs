@@ -1,6 +1,7 @@
 # Proposal: Postgres-backed integration test harness for `strategy-service` (B6)
 
-> **Status**: design proposal, awaiting operator approval. No code in this PR.
+> **Status**: merged design proposal. Operator implementation decisions are
+> captured in `docs/AGENT_STATE.md` §B6 and summarized in §10 below.
 >
 > **Author**: claude (remote agent), 2026-05-04.
 >
@@ -117,8 +118,9 @@ who want to run the integration tests do
 typically against the `docker-compose up timescaledb` instance the repo
 already provides.
 
-Per-test isolation is via a unique schema name (e.g. `test_<uuid>`) created
-on connect, used as `search_path`, and dropped on teardown. The fixture calls
+Per-test isolation is via a unique schema name formatted as
+`strategy_test_{unix_seconds}_{process_id}_{atomic_counter:03}` created on
+connect, used as `search_path`, and dropped on teardown. The fixture calls
 `StrategyRepository::ensure_schema` against that schema so all test DDL goes
 through the same code path as production.
 
@@ -144,8 +146,8 @@ through the same code path as production.
   present (e.g. via `CI=true` heuristic that fails the test rather than
   skips when CI is detected without the URL).
 - Cleanup correctness depends on the fixture's `Drop` impl actually running.
-  Panicking tests must still drop the schema. Solved by a `tokio::test`
-  fixture that uses `scopeguard` or a manual `try_drop` block in `Drop`.
+  Panicking tests must still drop the schema. Solved by a hand-written `Drop`
+  implementation on the fixture struct; no `scopeguard` dependency is added.
 - Per-test schema-creation cost (~100ms locally) adds up. Acceptable for the
   single-digit number of tests this harness will plausibly carry in the
   near term.
@@ -217,11 +219,11 @@ real Postgres.
    unset`). When `CI=true` and the var is unset, the fixture **fails** rather
    than skips, so a CI mis-configuration is loud, not silent.
 3. **Isolation**: a fixture creates a per-test schema named
-   `strategy_test_<uuid_v4_hex>` via `CREATE SCHEMA`, sets `search_path` on
-   the connection to that schema, calls `StrategyRepository::ensure_schema`
-   so DDL always goes through production code, runs the test, and `DROP
-   SCHEMA … CASCADE`s on `Drop`. The drop runs from a synchronous closure
-   guarded by `scopeguard` so it executes on panic.
+   `strategy_test_{unix_seconds}_{process_id}_{atomic_counter:03}` via
+   `CREATE SCHEMA`, sets `search_path` on the connection to that schema, calls
+   `StrategyRepository::ensure_schema` so DDL always goes through production
+   code, runs the test, and `DROP SCHEMA … CASCADE`s from a hand-written
+   `Drop` implementation so cleanup executes on panic.
 4. **Reuse infra**: contributors run `docker compose up timescaledb` once
    from the existing `docker-compose.yml` and export
    `STRATEGY_TEST_DATABASE_URL=postgres://cryptopairs:cryptopairs@localhost:5432/cryptopairs`.
@@ -276,27 +278,30 @@ The implementation PR that follows this proposal **MUST**:
    - For `PromoteChallenger` and `KeepChampion`, a row landed in
      `strategy_champion_drift_events` with the correct `decision` value.
    - For `Initialize` and `Unchanged`, **no** drift row was written.
-3. Extend `.github/workflows/ci.yml`'s `rust` job with a `services:` block
+3. Add `upsert_selected_signal_on_conflict_keeps_latest_row`, asserting that
+   two upserts at the same (`pair_id`, `timeframe`) leave exactly one
+   `strategy_selected_signal` row with the latest variant, score, and
+   `updated_at`.
+4. Extend `.github/workflows/ci.yml`'s `rust` job with a `services:` block
    for `timescale/timescaledb:2.16.1-pg16` and set the two env vars on the
-   `cargo test` step. Pin the service image tag to the same digest as
+   `cargo test` step. Pin the service image tag to the same tag as
    `docker-compose.yml`.
-4. Update `docs/14-testing-standards.md` Rust section to document the
+5. Update `docs/14-testing-standards.md` Rust section to document the
    `STRATEGY_TEST_DATABASE_URL` env var, how to set it locally
    (`docker compose up timescaledb` + the connection string), and the
    skip-vs-fail behaviour under `CI=true`.
-5. **NOT** modify `StrategyRepository`'s public API or any of its existing
+6. **NOT** modify `StrategyRepository`'s public API or any of its existing
    methods. The harness drives the existing struct as-is.
-6. **NOT** add new `Cargo.toml` dependencies beyond ones already in the
-   workspace. (`uuid` is the most likely candidate for the schema-name
-   generator; if not already present, prefer a small in-test helper using
-   `std::time::SystemTime` plus a counter.)
-7. Run cleanly under `cargo test --workspace` on a machine without
+7. **NOT** add new `Cargo.toml` dependencies beyond ones already in the
+   workspace. The schema-name generator must use `std::time::SystemTime`,
+   `std::process::id()`, and an atomic counter; do not add `uuid`.
+8. Run cleanly under `cargo test --workspace` on a machine without
    `STRATEGY_TEST_DATABASE_URL` set (skipped tests, suite still green).
-8. Run cleanly under `cargo test --workspace` on a machine with the env var
+9. Run cleanly under `cargo test --workspace` on a machine with the env var
    set against an empty Postgres (fixture creates the schema, runs DDL,
    tests pass, fixture drops the schema; subsequent runs find no leftover
    schemas from the previous run).
-9. Update `docs/AGENT_STATE.md`:
+10. Update `docs/AGENT_STATE.md`:
    - Move B6 row to "**resolved by this PR**".
    - Move B4 row to "**resolved (boundary-verified)**" linking to the new
      `record_evaluation_writes_selected_and_drift_rows` test.
@@ -306,9 +311,6 @@ The implementation PR that follows this proposal **MUST**:
 The implementation PR **MAY** also (out of strict scope but reasonable to
 batch):
 
-- Add a minimal second test asserting `upsert_selected_signal`'s ON CONFLICT
-  primary key (e.g. two upserts at the same (`pair_id`, `timeframe`) leave a
-  single row with the latest values). This is a tiny B6-flavoured win.
 - Add a `cargo make` or `xtask` target that wraps "start docker-compose
   timescaledb, export the env var, run integration tests" if there is
   appetite for it. Not required for B6 itself.
@@ -324,9 +326,8 @@ helpers. ~30–60 LOC of YAML changes in `ci.yml`. ~20 LOC of doc changes in
 No production code change. No `Cargo.toml` dependency change.
 
 The slowest part is likely shaping the per-test schema fixture so that
-`scopeguard`-style cleanup actually runs through panic. If `scopeguard` is
-not already in `[dev-dependencies]`, prefer a hand-rolled `Drop` impl on a
-fixture struct — also no new dep.
+hand-written `Drop` cleanup actually runs through panic. The implementation
+uses no `scopeguard` or `uuid` dependency.
 
 ---
 
@@ -342,12 +343,9 @@ PR depends on:
   Docker locally (already required to run anything pointing at
   `docker-compose.yml`). Contributors who do not run integration tests are
   unaffected — `cargo test --workspace` continues to work without Docker.
-- **No `Cargo.toml` change** is anticipated. If `uuid` proves desirable for
-  schema-name generation and is not already in `[workspace.dependencies]`,
-  the implementation PR will either (a) justify the addition per
-  `docs/07-dependency-and-supply-chain-policy.md` or (b) replace it with a
-  hand-rolled hex helper. (a) and (b) are both small; the proposal does not
-  pre-commit to either.
+- **No `Cargo.toml` change** is anticipated. The operator decision recorded
+  in `docs/AGENT_STATE.md` §B6 forbids adding `uuid` for schema names; use
+  `SystemTime`, process id, and an atomic counter instead.
 
 The proposal does **not** depend on the host-lineage import (B-Host-Lineage)
 landing first; the B6 harness is useful for B4 alone.
@@ -370,22 +368,18 @@ landing first; the B6 harness is useful for B4 alone.
 
 ---
 
-## 10. Open questions for operator review
+## 10. Operator decisions captured
 
-1. Is `STRATEGY_TEST_DATABASE_URL` an acceptable name, or do you want a
-   broader `CRYPTOPAIRS_TEST_DATABASE_URL` to leave room for other services
-   to share the convention?
-2. Are you OK with the **fail-on-CI-without-the-var** behaviour, or do you
-   prefer a uniform skip everywhere with a separate `assert-tests-ran` job?
-3. Should the implementation PR include the optional `upsert_selected_signal`
-   ON CONFLICT regression test (§6 "MAY") or stay strictly scoped to
-   `record_evaluation`?
-4. Any preference on the test schema name format
-   (`strategy_test_<uuid_hex>` vs `test_<timestamp>_<counter>`)? UUID is
-   simpler but introduces a `uuid` crate decision.
+The operator decisions for the implementation PR are recorded in
+`docs/AGENT_STATE.md` §B6 and are binding:
 
-These are the only items I would block the implementation PR on. Everything
-else is encoded in §6 acceptance criteria.
+1. Env var name: `STRATEGY_TEST_DATABASE_URL`.
+2. Skip-vs-fail: skip locally, fail when `CI=true` and the env var is unset.
+3. Include `upsert_selected_signal_on_conflict_keeps_latest_row` in the same
+   implementation PR.
+4. Schema name format:
+   `strategy_test_{unix_seconds}_{process_id}_{atomic_counter:03}`. Do not add
+   `uuid`.
 
 ---
 
