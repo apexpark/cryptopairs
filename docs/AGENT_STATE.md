@@ -11,10 +11,10 @@
 |---|---|
 | Last updated (UTC) | 2026-05-05 |
 | Updated by | local agent |
-| Repo HEAD pin (committed) | `400a776` |
+| Repo HEAD pin (committed) | `c3933d7` |
 | Pin branch | `codex/fix-clippy-run-24549051096` |
 | Sprint base branch | `codex/fix-clippy-run-24549051096` |
-| Pin notes | Pin notes: state-affecting commits since a87b8ae (bootstrap playbook) are pin-convention (2148693), cargo-blocked workaround (a2fa027), pin extraction fix (0602178), sprint-base configurable (c70b6a0), legacy PR protocol (2369308), retention sprint (b195447), Slice A (2771479), Slice B (e60e634), retention import + fmt restore (05bca71), clippy sort-by fix (a82e8f0), B6 design proposal merge (ff38663), B3+S8 merge (79893c6), curation post-PRs (400a776), and this commit (capture B6 §10 answers). Pin lags HEAD by 1 per the convention. Sprint base branch row is the canonical PR target. Pin row contains exactly one backticked SHA so the §1 regex extracts unambiguously. |
+| Pin notes | Pin notes: state-affecting commits since a87b8ae (bootstrap playbook) are pin-convention (2148693), cargo-blocked workaround (a2fa027), pin extraction fix (0602178), sprint-base configurable (c70b6a0), legacy PR protocol (2369308), retention sprint (b195447), Slice A (2771479), Slice B (e60e634), retention import + fmt restore (05bca71), clippy sort-by fix (a82e8f0), B6 design proposal merge (ff38663), B3+S8 merge (79893c6), curation post-PRs (400a776), B6 §10 answers captured (c3933d7), and this commit (host verification capture). Pin lags HEAD by 1 per the convention. Sprint base branch row is the canonical PR target. Pin row contains exactly one backticked SHA so the §1 regex extracts unambiguously. |
 | Origin | `https://github.com/apexpark/cryptopairs.git` |
 | Working-tree state | **DIRTY** — Remaining uncommitted work is limited to the 4k z-chart UI sprint (`apps/web/src/components/LineChart.tsx`, `apps/web/src/styles.css`) and a docs-meta index cleanup (`docs/README.md`). The standalone `pairs_replay_trades` sort cleanup landed at `a82e8f0`. See §"Currently In Flight" and §"Next Recommended Move". |
 
@@ -32,7 +32,7 @@ Status snapshot of the four slices defined in `docs/26-champion-selection-integr
 |---|---|---|---|
 | Slice A — Separate evaluation from champion presentation | **Committed on sprint base** | local | Verified: schema validation passed; full `cargo test --workspace` passed in pre-push hook (covers `cue_for_pairs_response_*` × 5 + `evaluate_pair_honors_preferred_variant_override`); tsc passed. |
 | Slice B — Make transition accounting complete | **Committed on sprint base** | local | Verified: full `cargo test --workspace` passed in pre-push hook (covers `selection_transition_counts_*` × 3 + `reoptimize_response_serializes_transition_counts_at_top_level` + `update_persist_summary_for_transition_records_all_summary_counts`); clippy clean; reoptimize schema validation passed (0.2.0). |
-| Slice C — Remove incumbent bias in host runtime | **Blocked** | unassigned | Blocked on pulling the host `rc/live-trial` lineage into a reviewable local branch (see §"Blocked / Waiting On"). |
+| Slice C — Remove incumbent bias in host runtime | **Unblocked, planning pickable by remote agent** | unassigned | Host verification outputs were captured on 2026-05-05 against `rc/live-trial` at `4dd118242414d38ad33ae50bb433d4988d5276da`. Planning may proceed from those host facts; any host-specific implementation still requires a reviewable local lineage pullback (see §"Blocked / Waiting On"). |
 | Slice D — Recanonicalize legacy rows | Not started | unassigned | Should follow Slice C. |
 
 ### Immediate Safety Action (still active)
@@ -64,16 +64,359 @@ Source of truth for shipped behavior is `CHANGELOG.md` `## Unreleased` section. 
 
 ## Blocked / Waiting On
 
-### B-Host-Lineage (blocks Slice C)
+### B-Host-Lineage (planning unblocked; host lineage still divergent)
 
-The Hetzner host `cryptopairs` is running a divergent branch (`rc/live-trial`) with selection-config / provenance code that is **not** in this repo. Slice C cannot be designed against unaudited code.
+Operator captured the `docs/27` read-only host verification outputs on **2026-05-05 02:29:31Z**. Those outputs are enough to unblock **Slice C planning** against the live host facts. The host branch is still divergent and dirty, so **host-specific implementation work** remains contingent on pulling the lineage into a reviewable local branch.
 
-Required to unblock:
-1. Operator runs `ssh cryptopairs 'cd /opt/cryptopairs && git rev-parse HEAD && git branch --show-current && git status --short'` and posts the result.
-2. Operator imports the host runtime lineage into a local reviewable branch (or merges it back to `origin`).
-3. The brief (`docs/27` §"Host Verification Steps") provides the read-only verification commands; results should be posted into this file before Slice C work begins.
+Remaining operator-only step for implementation, if Slice C planning leads to code work:
+1. Pull the host runtime lineage into a local reviewable branch (or merge it back to `origin`) before any host-specific implementation PR is approved.
 
 Neither the local nor any remote agent has SSH access to `cryptopairs`. This is operator-only.
+
+Repository identity raw output:
+
+```text
+4dd118242414d38ad33ae50bb433d4988d5276da
+rc/live-trial
+ M CHANGELOG.md
+ M services/strategy-service/src/main.rs
+```
+
+Selection row state raw output:
+
+```text
+PF_DOGEUSD__PF_PEPEUSD|15m|VOL_NORMALIZED|AUTO_CHAMPION|2026-05-05 02:02:43.476+00
+PF_ETHUSD__PF_ADAUSD|15m|VOL_NORMALIZED|AUTO_CHAMPION|2026-05-05 02:02:43.187+00
+PF_ETHUSD__PF_SOLUSD|15m|COINTEGRATION_Z|AUTO_CHAMPION|2026-05-05 02:02:43.188+00
+PF_ETHUSD__PF_XRPUSD|15m|COINTEGRATION_Z|AUTO_CHAMPION|2026-05-05 02:02:43.185+00
+PF_SOLUSD__PF_AVAXUSD|15m|FUNDING_ADJUSTED|AUTO_CHAMPION|2026-05-05 02:02:43.208+00
+PF_SUIUSD__PF_ARBUSD|15m|COINTEGRATION_Z|AUTO_CHAMPION|2026-05-05 00:45:18.683+00
+PF_TAOUSD__PF_HYPEUSD|15m|ROBUST_Z|AUTO_CHAMPION|2026-05-05 00:45:18.336+00
+PF_XBTUSD__PF_ADAUSD|15m|ROBUST_Z|AUTO_CHAMPION|2026-05-05 02:02:42.896+00
+PF_XBTUSD__PF_AVAXUSD|15m|VOL_NORMALIZED|AUTO_CHAMPION|2026-05-05 02:02:43.206+00
+PF_XBTUSD__PF_BNBUSD|15m|COINTEGRATION_Z|AUTO_CHAMPION|2026-05-05 02:02:42.923+00
+PF_XBTUSD__PF_DOGEUSD|15m|ROBUST_Z|AUTO_CHAMPION|2026-05-05 02:02:43.316+00
+PF_XBTUSD__PF_ETHUSD|15m|COINTEGRATION_Z|AUTO_CHAMPION|2026-05-05 02:02:42.888+00
+PF_XBTUSD__PF_LINKUSD|15m|ROBUST_Z|AUTO_CHAMPION|2026-05-05 02:02:42.868+00
+PF_XBTUSD__PF_SOLUSD|15m|COINTEGRATION_Z|AUTO_CHAMPION|2026-05-05 02:02:42.917+00
+PF_XBTUSD__PF_XRPUSD|15m|COINTEGRATION_Z|AUTO_CHAMPION|2026-05-05 02:02:42.85+00
+PF_XRPUSD__PF_ADAUSD|15m|VOL_NORMALIZED|AUTO_CHAMPION|2026-05-05 02:02:43.452+00
+PF_DOGEUSD__PF_PEPEUSD|1h|COINTEGRATION_Z|AUTO_CHAMPION|2026-05-05 01:14:40.159+00
+PF_ETHUSD__PF_ADAUSD|1h|ROBUST_Z|AUTO_CHAMPION|2026-05-05 01:14:40.379+00
+PF_ETHUSD__PF_SOLUSD|1h|COINTEGRATION_Z|AUTO_CHAMPION|2026-05-05 01:14:40.543+00
+PF_ETHUSD__PF_XRPUSD|1h|ROBUST_Z|AUTO_CHAMPION|2026-05-05 01:14:40.562+00
+PF_SOLUSD__PF_AVAXUSD|1h|ROBUST_Z|AUTO_CHAMPION|2026-05-05 01:14:40.376+00
+PF_SUIUSD__PF_ARBUSD|1h|ROBUST_Z|AUTO_CHAMPION|2026-05-05 01:14:40.171+00
+PF_TAOUSD__PF_HYPEUSD|1h|ROBUST_Z|AUTO_CHAMPION|2026-05-05 01:14:40.124+00
+PF_XBTUSD__PF_ADAUSD|1h|VOL_NORMALIZED|AUTO_CHAMPION|2026-05-05 01:14:40.232+00
+PF_XBTUSD__PF_AVAXUSD|1h|COINTEGRATION_Z|AUTO_CHAMPION|2026-05-05 01:14:40.393+00
+PF_XBTUSD__PF_BNBUSD|1h|FUNDING_ADJUSTED|AUTO_CHAMPION|2026-05-05 01:14:40.366+00
+PF_XBTUSD__PF_DOGEUSD|1h|VOL_NORMALIZED|AUTO_CHAMPION|2026-05-05 01:14:40.727+00
+PF_XBTUSD__PF_ETHUSD|1h|ROBUST_Z|AUTO_CHAMPION|2026-05-05 01:14:40.193+00
+PF_XBTUSD__PF_LINKUSD|1h|COINTEGRATION_Z|AUTO_CHAMPION|2026-05-05 01:14:40.149+00
+PF_XBTUSD__PF_SOLUSD|1h|COINTEGRATION_Z|AUTO_CHAMPION|2026-05-05 01:14:40.383+00
+PF_XBTUSD__PF_XRPUSD|1h|FUNDING_ADJUSTED|AUTO_CHAMPION|2026-05-05 01:14:40.181+00
+PF_XRPUSD__PF_ADAUSD|1h|FUNDING_ADJUSTED|AUTO_CHAMPION|2026-05-05 01:14:40.136+00
+PF_DOGEUSD__PF_PEPEUSD|1m|ROBUST_Z|LEGACY_ROW_FALLBACK|2026-05-05 01:31:41.84+00
+PF_ETHUSD__PF_ADAUSD|1m|VOL_NORMALIZED|LEGACY_ROW_FALLBACK|2026-05-05 01:31:41.557+00
+PF_ETHUSD__PF_SOLUSD|1m|COINTEGRATION_Z|LEGACY_ROW_FALLBACK|2026-05-05 01:31:41.495+00
+PF_ETHUSD__PF_XRPUSD|1m|COINTEGRATION_Z|LEGACY_ROW_FALLBACK|2026-05-05 01:31:41.067+00
+PF_SOLUSD__PF_AVAXUSD|1m|COINTEGRATION_Z|LEGACY_ROW_FALLBACK|2026-05-05 01:31:41.903+00
+PF_SUIUSD__PF_ARBUSD|1m|ROBUST_Z|LEGACY_ROW_FALLBACK|2026-05-05 01:31:41.064+00
+PF_TAOUSD__PF_HYPEUSD|1m|COINTEGRATION_Z|LEGACY_ROW_FALLBACK|2026-05-05 01:31:41.578+00
+PF_XBTUSD__PF_ADAUSD|1m|COINTEGRATION_Z|AUTO_CHAMPION|2026-05-05 01:31:41.064+00
+PF_XBTUSD__PF_AVAXUSD|1m|ROBUST_Z|LEGACY_ROW_FALLBACK|2026-05-05 01:31:41.067+00
+PF_XBTUSD__PF_BNBUSD|1m|COINTEGRATION_Z|LEGACY_ROW_FALLBACK|2026-05-05 01:31:41.066+00
+PF_XBTUSD__PF_DOGEUSD|1m|COINTEGRATION_Z|LEGACY_ROW_FALLBACK|2026-05-05 01:31:41.057+00
+PF_XBTUSD__PF_ETHUSD|1m|COINTEGRATION_Z|AUTO_CHAMPION|2026-05-05 01:31:41.07+00
+PF_XBTUSD__PF_LINKUSD|1m|ROBUST_Z|LEGACY_ROW_FALLBACK|2026-05-05 01:31:41.069+00
+PF_XBTUSD__PF_SOLUSD|1m|COINTEGRATION_Z|AUTO_CHAMPION|2026-05-05 01:31:41.06+00
+PF_XBTUSD__PF_XRPUSD|1m|COINTEGRATION_Z|AUTO_CHAMPION|2026-05-05 01:31:41.059+00
+PF_XRPUSD__PF_ADAUSD|1m|ROBUST_Z|LEGACY_ROW_FALLBACK|2026-05-05 01:31:41.578+00
+```
+
+Drift / candidate activity raw output:
+
+```text
+15m|KEEP_CHAMPION|11322
+15m|PROMOTE_CHALLENGER|727
+1h|KEEP_CHAMPION|8622
+1h|PROMOTE_CHALLENGER|592
+1m|KEEP_CHAMPION|12524
+1m|PROMOTE_CHALLENGER|1852
+---
+0
+---
+candidate_runs|0
+candidate_probation|0
+candidate_actions|0
+```
+
+Live cue mismatch audit raw output:
+
+```text
+{
+  "timeframe": "1m",
+  "total": 16,
+  "mismatch_count": 11,
+  "mismatches": [
+    {
+      "pair_id": "PF_XBTUSD__PF_ETHUSD",
+      "source": "AUTO_CHAMPION",
+      "selected_variant": "COINTEGRATION_Z",
+      "selected_score": 2.9973810210473424,
+      "best_variant": "ROBUST_Z",
+      "best_score": 3.945275450280178
+    },
+    {
+      "pair_id": "PF_XBTUSD__PF_DOGEUSD",
+      "source": "LEGACY_ROW_FALLBACK",
+      "selected_variant": "COINTEGRATION_Z",
+      "selected_score": 2.8044498223546994,
+      "best_variant": "FUNDING_ADJUSTED",
+      "best_score": 2.8890585784432834
+    },
+    {
+      "pair_id": "PF_DOGEUSD__PF_PEPEUSD",
+      "source": "LEGACY_ROW_FALLBACK",
+      "selected_variant": "ROBUST_Z",
+      "selected_score": 2.692481070143141,
+      "best_variant": "COINTEGRATION_Z",
+      "best_score": 5.966961521264695
+    },
+    {
+      "pair_id": "PF_XBTUSD__PF_SOLUSD",
+      "source": "AUTO_CHAMPION",
+      "selected_variant": "COINTEGRATION_Z",
+      "selected_score": 1.2310755929938346,
+      "best_variant": "ROBUST_Z",
+      "best_score": 3.0656141198852156
+    },
+    {
+      "pair_id": "PF_XBTUSD__PF_ADAUSD",
+      "source": "AUTO_CHAMPION",
+      "selected_variant": "COINTEGRATION_Z",
+      "selected_score": 0.7887768695146198,
+      "best_variant": "ROBUST_Z",
+      "best_score": 1.3544562114973744
+    },
+    {
+      "pair_id": "PF_XBTUSD__PF_BNBUSD",
+      "source": "LEGACY_ROW_FALLBACK",
+      "selected_variant": "COINTEGRATION_Z",
+      "selected_score": 0.5841257517511478,
+      "best_variant": "FUNDING_ADJUSTED",
+      "best_score": 0.7938848447734203
+    },
+    {
+      "pair_id": "PF_ETHUSD__PF_ADAUSD",
+      "source": "LEGACY_ROW_FALLBACK",
+      "selected_variant": "VOL_NORMALIZED",
+      "selected_score": 0.556415516754834,
+      "best_variant": "FUNDING_ADJUSTED",
+      "best_score": 1.1137833466017824
+    },
+    {
+      "pair_id": "PF_XBTUSD__PF_AVAXUSD",
+      "source": "LEGACY_ROW_FALLBACK",
+      "selected_variant": "ROBUST_Z",
+      "selected_score": 0.46425762963464196,
+      "best_variant": "COINTEGRATION_Z",
+      "best_score": 1.741144257938258
+    },
+    {
+      "pair_id": "PF_ETHUSD__PF_XRPUSD",
+      "source": "LEGACY_ROW_FALLBACK",
+      "selected_variant": "COINTEGRATION_Z",
+      "selected_score": 0.3933515619575974,
+      "best_variant": "FUNDING_ADJUSTED",
+      "best_score": 0.6565611025695358
+    },
+    {
+      "pair_id": "PF_XBTUSD__PF_LINKUSD",
+      "source": "LEGACY_ROW_FALLBACK",
+      "selected_variant": "ROBUST_Z",
+      "selected_score": -0.1832169929260295,
+      "best_variant": "COINTEGRATION_Z",
+      "best_score": -0.049904650337419414
+    },
+    {
+      "pair_id": "PF_XBTUSD__PF_XRPUSD",
+      "source": "AUTO_CHAMPION",
+      "selected_variant": "COINTEGRATION_Z",
+      "selected_score": -0.19288838369027989,
+      "best_variant": "FUNDING_ADJUSTED",
+      "best_score": 0.583733013653348
+    }
+  ]
+}
+{
+  "timeframe": "15m",
+  "total": 16,
+  "mismatch_count": 12,
+  "mismatches": [
+    {
+      "pair_id": "PF_DOGEUSD__PF_PEPEUSD",
+      "source": "AUTO_CHAMPION",
+      "selected_variant": "VOL_NORMALIZED",
+      "selected_score": 39.240050869755414,
+      "best_variant": "COINTEGRATION_Z",
+      "best_score": 44.847284820344335
+    },
+    {
+      "pair_id": "PF_SUIUSD__PF_ARBUSD",
+      "source": "AUTO_CHAMPION",
+      "selected_variant": "COINTEGRATION_Z",
+      "selected_score": 24.72779549240902,
+      "best_variant": "ROBUST_Z",
+      "best_score": 27.657996560702742
+    },
+    {
+      "pair_id": "PF_TAOUSD__PF_HYPEUSD",
+      "source": "AUTO_CHAMPION",
+      "selected_variant": "ROBUST_Z",
+      "selected_score": 12.53513925784539,
+      "best_variant": "COINTEGRATION_Z",
+      "best_score": 27.756779613893663
+    },
+    {
+      "pair_id": "PF_XBTUSD__PF_SOLUSD",
+      "source": "AUTO_CHAMPION",
+      "selected_variant": "COINTEGRATION_Z",
+      "selected_score": 9.964609946448713,
+      "best_variant": "ROBUST_Z",
+      "best_score": 11.485567404206074
+    },
+    {
+      "pair_id": "PF_XBTUSD__PF_XRPUSD",
+      "source": "AUTO_CHAMPION",
+      "selected_variant": "COINTEGRATION_Z",
+      "selected_score": 8.07557132600605,
+      "best_variant": "ROBUST_Z",
+      "best_score": 9.094231373195827
+    },
+    {
+      "pair_id": "PF_SOLUSD__PF_AVAXUSD",
+      "source": "AUTO_CHAMPION",
+      "selected_variant": "FUNDING_ADJUSTED",
+      "selected_score": 7.72069353491928,
+      "best_variant": "VOL_NORMALIZED",
+      "best_score": 10.39955783623868
+    },
+    {
+      "pair_id": "PF_ETHUSD__PF_XRPUSD",
+      "source": "AUTO_CHAMPION",
+      "selected_variant": "COINTEGRATION_Z",
+      "selected_score": 7.62937133700745,
+      "best_variant": "ROBUST_Z",
+      "best_score": 12.984572873280346
+    },
+    {
+      "pair_id": "PF_ETHUSD__PF_ADAUSD",
+      "source": "AUTO_CHAMPION",
+      "selected_variant": "VOL_NORMALIZED",
+      "selected_score": 5.470465574407826,
+      "best_variant": "COINTEGRATION_Z",
+      "best_score": 11.722435346867863
+    },
+    {
+      "pair_id": "PF_XRPUSD__PF_ADAUSD",
+      "source": "AUTO_CHAMPION",
+      "selected_variant": "VOL_NORMALIZED",
+      "selected_score": 4.099002823153223,
+      "best_variant": "COINTEGRATION_Z",
+      "best_score": 4.613011003561543
+    },
+    {
+      "pair_id": "PF_XBTUSD__PF_DOGEUSD",
+      "source": "AUTO_CHAMPION",
+      "selected_variant": "ROBUST_Z",
+      "selected_score": -4.262370414445777,
+      "best_variant": "VOL_NORMALIZED",
+      "best_score": -0.8243151780851755
+    },
+    {
+      "pair_id": "PF_XBTUSD__PF_AVAXUSD",
+      "source": "AUTO_CHAMPION",
+      "selected_variant": "VOL_NORMALIZED",
+      "selected_score": -4.779639410685998,
+      "best_variant": "FUNDING_ADJUSTED",
+      "best_score": -3.2124035849748274
+    },
+    {
+      "pair_id": "PF_XBTUSD__PF_BNBUSD",
+      "source": "AUTO_CHAMPION",
+      "selected_variant": "COINTEGRATION_Z",
+      "selected_score": -4.951421730584576,
+      "best_variant": "FUNDING_ADJUSTED",
+      "best_score": -4.867002214919264
+    }
+  ]
+}
+{
+  "timeframe": "1h",
+  "total": 16,
+  "mismatch_count": 7,
+  "mismatches": [
+    {
+      "pair_id": "PF_XBTUSD__PF_SOLUSD",
+      "source": "AUTO_CHAMPION",
+      "selected_variant": "COINTEGRATION_Z",
+      "selected_score": 88.80013716909424,
+      "best_variant": "VOL_NORMALIZED",
+      "best_score": 98.40145523840727
+    },
+    {
+      "pair_id": "PF_TAOUSD__PF_HYPEUSD",
+      "source": "AUTO_CHAMPION",
+      "selected_variant": "ROBUST_Z",
+      "selected_score": 59.79615100284696,
+      "best_variant": "COINTEGRATION_Z",
+      "best_score": 110.76971302291517
+    },
+    {
+      "pair_id": "PF_ETHUSD__PF_SOLUSD",
+      "source": "AUTO_CHAMPION",
+      "selected_variant": "COINTEGRATION_Z",
+      "selected_score": 40.499901440284894,
+      "best_variant": "ROBUST_Z",
+      "best_score": 47.14577594706576
+    },
+    {
+      "pair_id": "PF_XBTUSD__PF_XRPUSD",
+      "source": "AUTO_CHAMPION",
+      "selected_variant": "FUNDING_ADJUSTED",
+      "selected_score": 17.200921773173985,
+      "best_variant": "COINTEGRATION_Z",
+      "best_score": 20.029628955125986
+    },
+    {
+      "pair_id": "PF_XBTUSD__PF_ETHUSD",
+      "source": "AUTO_CHAMPION",
+      "selected_variant": "ROBUST_Z",
+      "selected_score": 5.866493372248825,
+      "best_variant": "VOL_NORMALIZED",
+      "best_score": 14.457189846248943
+    },
+    {
+      "pair_id": "PF_DOGEUSD__PF_PEPEUSD",
+      "source": "AUTO_CHAMPION",
+      "selected_variant": "COINTEGRATION_Z",
+      "selected_score": 3.9180870383898254,
+      "best_variant": "ROBUST_Z",
+      "best_score": 6.648008101543441
+    },
+    {
+      "pair_id": "PF_ETHUSD__PF_ADAUSD",
+      "source": "AUTO_CHAMPION",
+      "selected_variant": "ROBUST_Z",
+      "selected_score": -29.5248541590155,
+      "best_variant": "FUNDING_ADJUSTED",
+      "best_score": -22.487867785718784
+    }
+  ]
+}
+```
 
 ---
 
@@ -116,15 +459,15 @@ Follow-ups carried forward from prior reviews. Ordered by source review then sev
 
 Pickable items, in priority order:
 
-1. **Operator action: produce the host verification output** (B-Host-Lineage above). This is now the top operator-only item. Once captured, post into this file under §"Blocked / Waiting On".
-2. **Remote agent: R2** — design-proposal-first fix for the pre-push hook testing the operator working tree instead of the staged/committed state. This is now the top claimable remote item; three broken-on-origin incidents in 24h is too many.
-3. **Remote agent: R1** — design-proposal-first toolchain pinning via `rust-toolchain.toml` so rustfmt and clippy converge across operator Mac, CI, and remote-agent environments.
-4. **Remote agent: B6 implementation PR** — after the four §10 operator decisions are captured in-repo, implement the merged design proposal in `docs/proposals/B6-pg-test-harness.md`.
+1. **Remote agent: R2** — design-proposal-first fix for the pre-push hook testing the operator working tree instead of the staged/committed state. This remains the top claimable remote item; three broken-on-origin incidents in 24h is too many.
+2. **Remote agent: R1** — design-proposal-first toolchain pinning via `rust-toolchain.toml` so rustfmt and clippy converge across operator Mac, CI, and remote-agent environments.
+3. **Remote agent: Slice C planning** — now unblocked by the captured host verification outputs above. Plan against host branch `rc/live-trial` at `4dd118242414d38ad33ae50bb433d4988d5276da`, but keep host-specific implementation gated on pulling the lineage into a reviewable local branch.
+4. **Remote agent: B6 implementation PR** — the §10 operator decisions are now captured in-repo, so the Postgres-backed test harness implementation is claimable.
 5. **Remote agent: B4 (real)** — once B6 lands, replace the helper-only test with one that constructs a real `StrategyRepository`, drives `record_evaluation` for each `ChampionDecision`, and asserts both the in-memory `summary.transition_counts` and the actual rows in `strategy_selected_signal` / `strategy_champion_drift_events`.
 6. **Remote agent: S4 + B5** — observability hardening. Best to do together since both add metrics: the projection-cost counter (S4) and the per-decision Prometheus metrics on `/metrics` (B5). Currently both are log-only; alert rules cannot key off them.
 7. **Remote agent: S6** — UI nit, render `--`/`BLOCKED` instead of champion name in `CHAMPION_PROJECTION_FAILED` state. Trade tab + Analytics tab.
 8. **Remote agent: X1** — update the host audit script in `docs/27` to read `cue.selection_state` once Slice A is on the host.
-9. **After host data: Slice C planning** — must start with reproducing host lineage in a reviewable local branch per `docs/26` §Slice C step 0.
+9. **Operator action, when planning turns into code work:** import the host `rc/live-trial` lineage into a local reviewable branch before any Slice C implementation PR is approved.
 
 ---
 
