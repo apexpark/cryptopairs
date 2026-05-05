@@ -169,12 +169,10 @@ mod strategy_service_bin {
             assert_transition_counts(&initialize_summary, 1, 0, 0, 0);
             assert_eq!(initialize_summary.selected_rows_written, 1);
             assert_eq!(initialize_summary.drift_rows_written, 0);
-            assert!(
-                fixture
-                    .drift_decisions_for(initialize_pair, timeframe)
-                    .await?
-                    .is_empty()
-            );
+            assert!(fixture
+                .drift_decisions_for(initialize_pair, timeframe)
+                .await?
+                .is_empty());
 
             let unchanged_pair = "B6_RECORD_UNCHANGED";
             fixture
@@ -205,12 +203,10 @@ mod strategy_service_bin {
             assert_transition_counts(&unchanged_summary, 0, 1, 0, 0);
             assert_eq!(unchanged_summary.selected_rows_written, 1);
             assert_eq!(unchanged_summary.drift_rows_written, 0);
-            assert!(
-                fixture
-                    .drift_decisions_for(unchanged_pair, timeframe)
-                    .await?
-                    .is_empty()
-            );
+            assert!(fixture
+                .drift_decisions_for(unchanged_pair, timeframe)
+                .await?
+                .is_empty());
 
             let promote_pair = "B6_RECORD_PROMOTE";
             fixture
@@ -340,10 +336,7 @@ mod strategy_service_bin {
             promotions: usize,
             locks: usize,
         ) {
-            assert_eq!(
-                summary.transition_counts.initialize_decisions,
-                initialize
-            );
+            assert_eq!(summary.transition_counts.initialize_decisions, initialize);
             assert_eq!(summary.transition_counts.unchanged_decisions, unchanged);
             assert_eq!(summary.transition_counts.champion_promotions, promotions);
             assert_eq!(summary.transition_counts.champion_locks, locks);
