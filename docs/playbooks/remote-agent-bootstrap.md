@@ -129,6 +129,8 @@ done
 
 Remote agents **cannot** run `cargo` and **must not** attempt to install a Rust toolchain. The Rust checks are enforced two ways, both running the same canonical script `scripts/check-rust-ci.sh`:
 
+Operator pre-push semantics are intentionally different from direct local-agent verification: `.githooks/pre-push` temporarily autostashes unstaged tracked changes and untracked files so the hook checks the staged/index tree being pushed, while `scripts/check-rust-ci.sh` invoked directly by the local agent on a PR branch still checks that branch's working tree. These two paths have different tree semantics by design, but they continue to share the same canonical Rust command sequence.
+
 1. **Primary — local agent runs on demand.** After the remote agent pushes a Rust-touching feature branch and opens the draft PR, the local agent pulls that branch and runs `./scripts/check-rust-ci.sh` (cargo fmt + clippy + test, fast with incremental cache). Result is posted in the PR thread.
 2. **Backstop — GitHub Actions.** `.github/workflows/ci.yml` runs the same checks on every push to `codex/**` / `claude/**` and on every PR. Slower but automated.
 
