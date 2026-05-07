@@ -81,6 +81,11 @@ Treat these as host-only findings unless independently reproduced in the local b
 
 Use read-only verification on host `cryptopairs`.
 
+Remote-agent guardrail: do not SSH into `cryptopairs`. Ask the operator or
+local agent to run host-only SSH commands and paste the output back into the
+review thread. The public API curl audit below is safe to run without host SSH,
+but host lineage verification remains operator-only.
+
 ### Repository Identity
 
 Run:
@@ -132,19 +137,48 @@ Run:
 ```bash
 for tf in 1m 15m 1h; do
   curl --max-time 30 -s "https://api.apexpark.io/strategy/v1/strategy/pairs/cues?timeframe=$tf&limit=100" |
-    jq '{timeframe, total: (.cues | length), mismatch_count: ([.cues[] | select(.cue.selected_variant != (.variants | max_by(.opportunity_score).variant))] | length), mismatches: [.cues[] | {pair_id: .cue.pair_id, source: (.cue.selected_signal_config.source // "UNKNOWN"), selected_variant: .cue.selected_variant, selected_score: .cue.opportunity_score, best_variant: (.variants | max_by(.opportunity_score).variant), best_score: (.variants | max_by(.opportunity_score).opportunity_score)} | select(.selected_variant != .best_variant)]}'
+    jq '{
+      timeframe,
+      total: (.cues | length),
+      missing_selection_state_count: ([.cues[] | select(.cue.selection_state == null)] | length),
+      mismatch_count: ([
+        .cues[]
+        | select(.cue.selection_state != null)
+        | select(.cue.selection_state.stored_champion_variant != .cue.selection_state.best_variant)
+      ] | length),
+      mismatches: [
+        .cues[]
+        | {
+            pair_id: .cue.pair_id,
+            source: (.cue.selection_state.source // "MISSING_SELECTION_STATE"),
+            validation_state: (.cue.selection_state.validation_state // "MISSING_SELECTION_STATE"),
+            stored_champion_variant: .cue.selection_state.stored_champion_variant,
+            stored_champion_score: .cue.selection_state.stored_champion_score,
+            best_variant: .cue.selection_state.best_variant,
+            best_score: .cue.selection_state.best_opportunity_score,
+            score_delta_to_champion: .cue.selection_state.score_delta_to_champion,
+            drift_active: .cue.selection_state.drift_active
+          }
+        | select(.stored_champion_variant != .best_variant)
+      ]
+    }'
 done
 ```
 
-TODO after Slice A:
+Notes after Slice A:
 
-- update this audit to compare `cue.selection_state.stored_champion_variant` and `cue.selection_state.best_variant`
-- update the source read to the new `selection_state` / validation-state fields once they are present
+- this audit compares `cue.selection_state.stored_champion_variant` with
+  `cue.selection_state.best_variant`
+- source and validation provenance come from `cue.selection_state.source` and
+  `cue.selection_state.validation_state`
+- `missing_selection_state_count > 0` means the target API is not serving the
+  Slice A cue contract yet; remote agents must not SSH into the host to
+  compensate
 
 Questions:
 
 1. How often is the displayed/stored selected variant not the highest-score current variant?
-2. Is that concentrated in legacy rows, or broader?
+2. Is that concentrated in a particular `source` / `validation_state`, or broader?
 3. Are the score gaps small enough to be explained by hysteresis, or large enough to be suspicious?
 4. When drift exists, does the cue become a hybrid of champion and challenger fields?
 
