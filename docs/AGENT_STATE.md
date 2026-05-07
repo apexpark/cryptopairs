@@ -9,7 +9,7 @@
 
 | Field | Value |
 |---|---|
-| Last updated (UTC) | 2026-05-06 |
+| Last updated (UTC) | 2026-05-07 |
 | Updated by | codex |
 | Repo HEAD pin (committed) | `86e014c` |
 | Pin branch | `codex/fix-clippy-run-24549051096` |
@@ -431,7 +431,7 @@ Follow-ups carried forward from prior reviews. Ordered by source review then sev
 
 | ID | Severity | Description | Status |
 |---|---|---|---|
-| S4 | medium | Add `pairs_cue_projection_total{outcome}` counter; double evaluation cost on drift pairs needs a metric and a runbook note. | open |
+| S4 | medium | Add `pairs_cue_projection_total{outcome}` counter; double evaluation cost on drift pairs needs a metric and a runbook note. | **resolved by this PR** — strategy-service `/metrics` now renders `pairs_cue_projection_total{outcome}` with bounded outcomes `NOT_REQUIRED`, `PROJECTED`, `PROJECTED_BLOCKED`, and `PROJECTION_FAILED`; operator docs/runbook describe projection-failure handling. |
 | S6 | low | UI’s `cueDisplayedVariant` shows champion name in `CHAMPION_PROJECTION_FAILED` state. Consider rendering `--` or `BLOCKED` instead. (`apps/web/src/App.tsx:206-211`) | open |
 | S7 | low | Reoptimize / write path does not yet emit `cue.selection_state`. Bridge in Slice B+ work or accept as deferred. | partially addressed by Slice B (counts now emitted in response, but `selection_state` shape itself still cue-only) |
 | S8 | low | Unreachable fifth match arm at `services/strategy-service/src/main.rs:4676-4681`. Replace with `unreachable!` or document. | **resolved by PR #160 (`79893c6`)** — the impossible fifth arm in `build_cue_selection_state(...)` is now `unreachable!`, making the invariant explicit and fail-closed. |
@@ -444,7 +444,7 @@ Follow-ups carried forward from prior reviews. Ordered by source review then sev
 | B2 | low | Add serde round-trip test asserting `initialize_decisions` / `unchanged_decisions` / `champion_promotions` / `champion_locks` appear at the top level of `ReoptimizeResponse` (locks the `serde(flatten)` wire shape). | **resolved by Slice B (`e60e634`)** — `reoptimize_response_serializes_transition_counts_at_top_level` landed with Slice B and passed in pre-push `cargo test --workspace`. |
 | B3 | low | One-line schema comment explaining `initialize_decisions` / `unchanged_decisions` are kept optional in `required` for backward compatibility but always populated by the server. | **resolved by PR #160 (`79893c6`)** — the response schema now carries the compatibility note as a `$comment`, matching the 0.2.0 wire contract. |
 | B4 | medium-low | Integration-shaped test that drives `record_evaluation` and asserts `summary.transition_counts` matches an expected `ChampionDecision` distribution. Was the highest-value Slice B follow-up. | **resolved (boundary-verified) by PR #163 (`7a572df`)** — `record_evaluation_writes_selected_and_drift_rows` drives the real `StrategyRepository::record_evaluation` persistence boundary for `INITIALIZE`, `UNCHANGED`, `PROMOTE_CHALLENGER`, and `KEEP_CHAMPION`, asserting both `summary.transition_counts` and the resulting `strategy_selected_signal` / `strategy_champion_drift_events` rows. |
-| B5 | low | Materialize the per-decision counts as actual Prometheus-style metrics (`strategy_selection_transition_total{decision,timeframe}` and `strategy_selection_rows_updated_without_transition_total{timeframe}`) rather than relying on log lines for alerting. Spec named these in `docs/26` §Observability. | **still deferred** — slice currently emits structured `info!` / `warn!` logs only; no scrapeable metric on the `/metrics` endpoint. Alert rules cannot key off these without a metric. |
+| B5 | low | Materialize the per-decision counts as actual Prometheus-style metrics (`strategy_selection_transition_total{decision,timeframe}` and `strategy_selection_rows_updated_without_transition_total{timeframe}`) rather than relying on log lines for alerting. Spec named these in `docs/26` §Observability. | **resolved by this PR** — strategy-service `/metrics` now renders bounded transition counters by `decision,timeframe` and selected-row accounting-gap counters by `timeframe` while preserving existing structured logs. |
 | B6 | medium | Stand up a Postgres-backed repository integration harness for `strategy-service`. Design proposal merged at `ff38663` (#161). | **resolved by PR #163 (`7a572df`)** — implementation follows the §10 binding decisions: `STRATEGY_TEST_DATABASE_URL`, skip locally but fail when `CI=true` and unset, schema names formatted as `strategy_test_{unix_seconds}_{process_id}_{atomic_counter:03}` without `uuid`, and both `record_evaluation_writes_selected_and_drift_rows` plus `upsert_selected_signal_on_conflict_keeps_latest_row` ship in `services/strategy-service/tests/repository_integration.rs`. |
 
 ### Cross-cutting
@@ -466,11 +466,10 @@ Pickable items, in priority order:
 
 1. **Remote agent: R1** — design-proposal-first toolchain pinning via `rust-toolchain.toml`. Independent of R2-impl; can run in parallel.
 2. **Remote agent: Slice C planning** — unblocked by host verification outputs at `76ca372` (`rc/live-trial` at `4dd118242414d38ad33ae50bb433d4988d5276da`). Plan against host facts; host-specific implementation still gated on operator pulling the lineage into a reviewable local branch.
-3. **Remote agent: S4 + B5** — observability hardening. Both add metrics: projection-cost counter (S4) + per-decision Prometheus metrics on `/metrics` (B5). Currently log-only; alert rules cannot key off them.
-4. **Remote agent: S6** — UI nit, render `--`/`BLOCKED` instead of champion name in `CHAMPION_PROJECTION_FAILED` state. Trade tab + Analytics tab.
-5. **Remote agent: X1** — update the host audit script in `docs/27` to read `cue.selection_state` once Slice A is on the host.
-6. **Operator action, when planning turns into code work**: import the host `rc/live-trial` lineage into a local reviewable branch before any Slice C implementation PR is approved.
-7. **Operator action (long-term cleanup)**: PR the full agent-docs chain from `codex/fix-clippy-run-24549051096` to `main` when ready, then flip Sprint base branch in §Pin to `main`.
+3. **Remote agent: S6** — UI nit, render `--`/`BLOCKED` instead of champion name in `CHAMPION_PROJECTION_FAILED` state. Trade tab + Analytics tab.
+4. **Remote agent: X1** — update the host audit script in `docs/27` to read `cue.selection_state` once Slice A is on the host.
+5. **Operator action, when planning turns into code work**: import the host `rc/live-trial` lineage into a local reviewable branch before any Slice C implementation PR is approved.
+6. **Operator action (long-term cleanup)**: PR the full agent-docs chain from `codex/fix-clippy-run-24549051096` to `main` when ready, then flip Sprint base branch in §Pin to `main`.
 
 ---
 

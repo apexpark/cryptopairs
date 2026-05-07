@@ -34,6 +34,9 @@ Define required telemetry, health signals, and alert policies.
 - Shadow model availability/unavailability counts by timeframe
 - Cost gate pass/fail counts by timeframe and reason
 - Portfolio advisory availability/unavailability by timeframe
+- Cue champion-projection outcomes (`pairs_cue_projection_total{outcome}` with bounded outcomes `NOT_REQUIRED`, `PROJECTED`, `PROJECTED_BLOCKED`, `PROJECTION_FAILED`)
+- Champion-selection transition counts by decision/timeframe (`strategy_selection_transition_total{decision,timeframe}` with bounded decisions `INITIALIZE`, `UNCHANGED`, `KEEP_CHAMPION`, `PROMOTE_CHALLENGER`)
+- Selected-row accounting gaps by timeframe (`strategy_selection_rows_updated_without_transition_total{timeframe}`)
 - Optimizer candidate generation count by timeframe (`optimizer_candidate_generated_total`)
 - Optimizer promotable-candidate count by timeframe (`optimizer_candidate_promotable_total`)
 - Optimizer rejected-candidate count by timeframe/reason (`optimizer_candidate_rejected_total`)

@@ -12,7 +12,10 @@ use common_types::{
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::sync::{
+    atomic::{AtomicU64, Ordering},
+    Arc,
+};
 use std::time::{SystemTime, UNIX_EPOCH};
 use strategy_service::{
     annotate_with_shadow_model, apply_portfolio_plan_to_cues, build_portfolio_plan,
@@ -33,6 +36,7 @@ struct AppState {
     settings: Arc<StrategySettings>,
     http_client: reqwest::Client,
     sampled_slippage: Arc<SampledSlippageStore>,
+    metrics: Arc<StrategyMetrics>,
 }
 
 #[derive(Debug, Clone)]
@@ -453,12 +457,29 @@ enum ChampionDecision {
 }
 
 impl ChampionDecision {
+    const ALL: [Self; 4] = [
+        Self::Initialize,
+        Self::Unchanged,
+        Self::KeepChampion,
+        Self::PromoteChallenger,
+    ];
+    const COUNT: usize = Self::ALL.len();
+
     fn as_str(self) -> &'static str {
         match self {
             Self::Initialize => "INITIALIZE",
             Self::Unchanged => "UNCHANGED",
             Self::PromoteChallenger => "PROMOTE_CHALLENGER",
             Self::KeepChampion => "KEEP_CHAMPION",
+        }
+    }
+
+    fn metric_index(self) -> usize {
+        match self {
+            Self::Initialize => 0,
+            Self::Unchanged => 1,
+            Self::KeepChampion => 2,
+            Self::PromoteChallenger => 3,
         }
     }
 }
@@ -497,6 +518,155 @@ impl SelectionTransitionCounts {
 
     fn has_accounting_gap(self, selected_rows_written: usize) -> bool {
         selected_rows_written > 0 && self.total() == 0
+    }
+
+    fn count_for(self, decision: ChampionDecision) -> usize {
+        match decision {
+            ChampionDecision::Initialize => self.initialize_decisions,
+            ChampionDecision::Unchanged => self.unchanged_decisions,
+            ChampionDecision::PromoteChallenger => self.champion_promotions,
+            ChampionDecision::KeepChampion => self.champion_locks,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CueProjectionOutcome {
+    NotRequired,
+    Projected,
+    ProjectedBlocked,
+    ProjectionFailed,
+}
+
+impl CueProjectionOutcome {
+    const ALL: [Self; 4] = [
+        Self::NotRequired,
+        Self::Projected,
+        Self::ProjectedBlocked,
+        Self::ProjectionFailed,
+    ];
+    const COUNT: usize = Self::ALL.len();
+
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::NotRequired => "NOT_REQUIRED",
+            Self::Projected => "PROJECTED",
+            Self::ProjectedBlocked => "PROJECTED_BLOCKED",
+            Self::ProjectionFailed => "PROJECTION_FAILED",
+        }
+    }
+
+    fn metric_index(self) -> usize {
+        match self {
+            Self::NotRequired => 0,
+            Self::Projected => 1,
+            Self::ProjectedBlocked => 2,
+            Self::ProjectionFailed => 3,
+        }
+    }
+}
+
+const METRIC_TIMEFRAMES: [Timeframe; 3] = [
+    Timeframe::OneMinute,
+    Timeframe::FifteenMinutes,
+    Timeframe::OneHour,
+];
+const METRIC_TIMEFRAME_COUNT: usize = METRIC_TIMEFRAMES.len();
+
+fn metric_timeframe_index(timeframe: Timeframe) -> usize {
+    match timeframe {
+        Timeframe::OneMinute => 0,
+        Timeframe::FifteenMinutes => 1,
+        Timeframe::OneHour => 2,
+    }
+}
+
+struct StrategyMetrics {
+    cue_projection: [AtomicU64; CueProjectionOutcome::COUNT],
+    selection_transition: [[AtomicU64; ChampionDecision::COUNT]; METRIC_TIMEFRAME_COUNT],
+    selection_rows_updated_without_transition: [AtomicU64; METRIC_TIMEFRAME_COUNT],
+}
+
+impl StrategyMetrics {
+    fn new() -> Self {
+        Self {
+            cue_projection: std::array::from_fn(|_| AtomicU64::new(0)),
+            selection_transition: std::array::from_fn(|_| {
+                std::array::from_fn(|_| AtomicU64::new(0))
+            }),
+            selection_rows_updated_without_transition: std::array::from_fn(|_| AtomicU64::new(0)),
+        }
+    }
+
+    fn record_cue_projection(&self, outcome: CueProjectionOutcome) {
+        self.cue_projection[outcome.metric_index()].fetch_add(1, Ordering::Relaxed);
+    }
+
+    fn record_selection_transitions(
+        &self,
+        timeframe: Timeframe,
+        counts: SelectionTransitionCounts,
+        selected_rows_written: usize,
+    ) {
+        let timeframe_index = metric_timeframe_index(timeframe);
+        for decision in ChampionDecision::ALL {
+            let count = counts.count_for(decision) as u64;
+            if count > 0 {
+                self.selection_transition[timeframe_index][decision.metric_index()]
+                    .fetch_add(count, Ordering::Relaxed);
+            }
+        }
+        if counts.has_accounting_gap(selected_rows_written) {
+            self.selection_rows_updated_without_transition[timeframe_index]
+                .fetch_add(selected_rows_written as u64, Ordering::Relaxed);
+        }
+    }
+
+    fn render_prometheus(&self) -> String {
+        let mut body = String::new();
+        body.push_str(
+            "# HELP pairs_cue_projection_total Cue champion-projection outcomes.\n\
+             # TYPE pairs_cue_projection_total counter\n",
+        );
+        for outcome in CueProjectionOutcome::ALL {
+            body.push_str(&format!(
+                "pairs_cue_projection_total{{outcome=\"{}\"}} {}\n",
+                outcome.as_str(),
+                self.cue_projection[outcome.metric_index()].load(Ordering::Relaxed)
+            ));
+        }
+
+        body.push_str(
+            "# HELP strategy_selection_transition_total Champion-selection transition decisions.\n\
+             # TYPE strategy_selection_transition_total counter\n",
+        );
+        for timeframe in METRIC_TIMEFRAMES {
+            let timeframe_index = metric_timeframe_index(timeframe);
+            for decision in ChampionDecision::ALL {
+                body.push_str(&format!(
+                    "strategy_selection_transition_total{{decision=\"{}\",timeframe=\"{}\"}} {}\n",
+                    decision.as_str(),
+                    timeframe.as_str(),
+                    self.selection_transition[timeframe_index][decision.metric_index()]
+                        .load(Ordering::Relaxed)
+                ));
+            }
+        }
+
+        body.push_str(
+            "# HELP strategy_selection_rows_updated_without_transition_total Selected rows written without a recorded champion-selection transition.\n\
+             # TYPE strategy_selection_rows_updated_without_transition_total counter\n",
+        );
+        for timeframe in METRIC_TIMEFRAMES {
+            let timeframe_index = metric_timeframe_index(timeframe);
+            body.push_str(&format!(
+                "strategy_selection_rows_updated_without_transition_total{{timeframe=\"{}\"}} {}\n",
+                timeframe.as_str(),
+                self.selection_rows_updated_without_transition[timeframe_index]
+                    .load(Ordering::Relaxed)
+            ));
+        }
+        body
     }
 }
 
@@ -3649,7 +3819,12 @@ fn emit_selection_transition_observability(
     timeframe: Option<Timeframe>,
     selected_rows_written: usize,
     transition_counts: SelectionTransitionCounts,
+    metrics: Option<&StrategyMetrics>,
 ) {
+    if let (Some(timeframe), Some(metrics)) = (timeframe, metrics) {
+        metrics.record_selection_transitions(timeframe, transition_counts, selected_rows_written);
+    }
+
     let transition_total = transition_counts.total();
     match timeframe {
         Some(timeframe) => info!(
@@ -3772,6 +3947,7 @@ async fn main() -> anyhow::Result<()> {
     let repository = Arc::new(StrategyRepository::connect(&settings.postgres_url).await?);
     let http_client = reqwest::Client::new();
     let sampled_slippage = Arc::new(SampledSlippageStore::new(&settings));
+    let metrics = Arc::new(StrategyMetrics::new());
     match sampled_slippage.hydrate_from_disk().await {
         Ok(hydrated) => info!(
             hydrated_pairs = hydrated,
@@ -3790,6 +3966,7 @@ async fn main() -> anyhow::Result<()> {
         settings: settings.clone(),
         http_client,
         sampled_slippage,
+        metrics,
     };
 
     let _slippage_worker = spawn_sampled_slippage_worker(state.clone());
@@ -3802,6 +3979,7 @@ async fn main() -> anyhow::Result<()> {
 
     let app = Router::new()
         .route("/health", get(health))
+        .route("/metrics", get(prometheus_metrics))
         .route("/v1/strategy/ui-auth/status", get(ui_auth_status))
         .route("/v1/strategy/ui-auth/verify", post(ui_auth_verify))
         .route("/v1/strategy/market/metrics", get(strategy_market_metrics))
@@ -4284,6 +4462,7 @@ fn spawn_reoptimize_worker(state: AppState) -> tokio::task::JoinHandle<()> {
                     Some(*timeframe),
                     timeframe_selected_rows_written,
                     timeframe_transition_counts,
+                    Some(state.metrics.as_ref()),
                 );
                 transition_counts.accumulate(timeframe_transition_counts);
             }
@@ -4292,6 +4471,7 @@ fn spawn_reoptimize_worker(state: AppState) -> tokio::task::JoinHandle<()> {
                 None,
                 selected_rows_written,
                 transition_counts,
+                None,
             );
 
             info!(
@@ -4319,6 +4499,15 @@ fn spawn_reoptimize_worker(state: AppState) -> tokio::task::JoinHandle<()> {
 
 async fn health() -> Json<HealthResponse> {
     Json(HealthResponse { status: "ok" })
+}
+
+async fn prometheus_metrics(State(state): State<AppState>) -> impl IntoResponse {
+    let mut headers = HeaderMap::new();
+    headers.insert(
+        header::CONTENT_TYPE,
+        HeaderValue::from_static("text/plain; version=0.0.4; charset=utf-8"),
+    );
+    (headers, state.metrics.render_prometheus())
 }
 
 async fn ui_auth_status(State(state): State<AppState>) -> Json<UiAuthStatusResponse> {
@@ -7596,6 +7785,7 @@ async fn reoptimize(
             Some(*timeframe),
             timeframe_selected_rows_written,
             timeframe_transition_counts,
+            Some(state.metrics.as_ref()),
         );
         transition_counts.accumulate(timeframe_transition_counts);
     }
@@ -7604,6 +7794,7 @@ async fn reoptimize(
         None,
         selected_rows_written,
         transition_counts,
+        None,
     );
     info!(
         pairs_processed,
@@ -7890,47 +8081,71 @@ async fn evaluate_pair_for_timeframe(
     output.stored_champion_variant = selected_signal
         .as_ref()
         .map(|row| row.signal_variant.clone());
+    let mut projection_outcome = CueProjectionOutcome::NotRequired;
     if let Some(preferred) = selected_signal.as_ref() {
-        if preferred.signal_variant != output.cue.selected_variant
-            && output
+        if preferred.signal_variant != output.cue.selected_variant {
+            if output
                 .variants
                 .iter()
                 .any(|variant| variant.variant == preferred.signal_variant)
-        {
-            let mut champion_projection = evaluate_pair(PairEvaluationInput {
-                pair_id,
-                left_instrument: pair.left.clone(),
-                right_instrument: pair.right.clone(),
-                timeframe,
-                timestamps,
-                left_closes,
-                right_closes,
-                entry_band: state.settings.entry_band,
-                exit_band: state.settings.exit_band,
-                stop_band: state.settings.stop_band,
-                hold_bars: state.settings.hold_bars(timeframe),
-                max_half_life_bars: state.settings.max_half_life_bars(timeframe),
-                funding_drag_bps: state.settings.funding_drag_bps,
-                taker_fee_bps,
-                min_samples_target: state.settings.min_samples_target,
-                preferred_variant: Some(preferred.signal_variant.clone()),
-            })?;
-            finalize_pair_evaluation_output(
-                state,
-                timeframe,
-                advisory_enabled,
-                taker_fee_bps,
-                ShadowModelContext {
-                    rows_len: training_rows_len,
-                    query_failed: training_query_failed,
-                    model: model.as_ref(),
-                },
-                &mut champion_projection,
-            )
-            .await?;
-            output.stored_champion_projection = Some(champion_projection.cue);
+            {
+                let mut champion_projection = match evaluate_pair(PairEvaluationInput {
+                    pair_id,
+                    left_instrument: pair.left.clone(),
+                    right_instrument: pair.right.clone(),
+                    timeframe,
+                    timestamps,
+                    left_closes,
+                    right_closes,
+                    entry_band: state.settings.entry_band,
+                    exit_band: state.settings.exit_band,
+                    stop_band: state.settings.stop_band,
+                    hold_bars: state.settings.hold_bars(timeframe),
+                    max_half_life_bars: state.settings.max_half_life_bars(timeframe),
+                    funding_drag_bps: state.settings.funding_drag_bps,
+                    taker_fee_bps,
+                    min_samples_target: state.settings.min_samples_target,
+                    preferred_variant: Some(preferred.signal_variant.clone()),
+                }) {
+                    Ok(projection) => projection,
+                    Err(error) => {
+                        state
+                            .metrics
+                            .record_cue_projection(CueProjectionOutcome::ProjectionFailed);
+                        return Err(error);
+                    }
+                };
+                if let Err(error) = finalize_pair_evaluation_output(
+                    state,
+                    timeframe,
+                    advisory_enabled,
+                    taker_fee_bps,
+                    ShadowModelContext {
+                        rows_len: training_rows_len,
+                        query_failed: training_query_failed,
+                        model: model.as_ref(),
+                    },
+                    &mut champion_projection,
+                )
+                .await
+                {
+                    state
+                        .metrics
+                        .record_cue_projection(CueProjectionOutcome::ProjectionFailed);
+                    return Err(error);
+                }
+                output.stored_champion_projection = Some(champion_projection.cue);
+                projection_outcome = if state.settings.block_on_champion_drift {
+                    CueProjectionOutcome::ProjectedBlocked
+                } else {
+                    CueProjectionOutcome::Projected
+                };
+            } else {
+                projection_outcome = CueProjectionOutcome::ProjectionFailed;
+            }
         }
     }
+    state.metrics.record_cue_projection(projection_outcome);
 
     Ok(output)
 }
@@ -8333,12 +8548,13 @@ mod tests {
         percentile, project_continuous_funding_bps, refresh_setup_gate, resolve_artifact_path,
         resolve_taker_fee_bps, retention_cutoff_ts, summarize_recent_performance,
         update_persist_summary_for_transition, CandidateInboxQuery, CandidateLifecycleState,
-        CandidateOperatorAction, CandidateProbationInputs, ChampionDecision, ExpectancyMetrics,
-        ExpectancyQuery, FundingCostEstimate, FundingRateInputMode, MaintenanceAction,
-        OpportunityHistoryQuery, OpportunityHistoryStatsQuery, PaperTradesQuery, PersistSummary,
-        ReoptError, ReoptimizeResponse, ReplayTradeEntry, ReplayTradePathSummary,
+        CandidateOperatorAction, CandidateProbationInputs, ChampionDecision, CueProjectionOutcome,
+        ExpectancyMetrics, ExpectancyQuery, FundingCostEstimate, FundingRateInputMode,
+        MaintenanceAction, OpportunityHistoryQuery, OpportunityHistoryStatsQuery, PaperTradesQuery,
+        PersistSummary, ReoptError, ReoptimizeResponse, ReplayTradeEntry, ReplayTradePathSummary,
         ReplayTradesQuery, ResearchSweepRequest, SampledSlippageStatus, SelectedSignalRow,
-        SelectionTransitionCounts, StrategyMarketMetricsResponse, StrategySettings,
+        SelectionTransitionCounts, StrategyMarketMetricsResponse, StrategyMetrics,
+        StrategySettings,
     };
     use chrono::Utc;
     use common_types::Timeframe;
@@ -8497,6 +8713,61 @@ mod tests {
         let mut recorded = SelectionTransitionCounts::default();
         recorded.record(ChampionDecision::Unchanged);
         assert!(!recorded.has_accounting_gap(1));
+    }
+
+    #[test]
+    fn strategy_metrics_render_projection_and_transition_counters() {
+        let metrics = StrategyMetrics::new();
+        metrics.record_cue_projection(CueProjectionOutcome::Projected);
+        metrics.record_cue_projection(CueProjectionOutcome::ProjectionFailed);
+        metrics.record_cue_projection(CueProjectionOutcome::ProjectionFailed);
+
+        let mut counts = SelectionTransitionCounts::default();
+        counts.record(ChampionDecision::Initialize);
+        counts.record(ChampionDecision::KeepChampion);
+        counts.record(ChampionDecision::PromoteChallenger);
+        metrics.record_selection_transitions(Timeframe::OneMinute, counts, 3);
+
+        let body = metrics.render_prometheus();
+
+        assert!(body.contains("# TYPE pairs_cue_projection_total counter"));
+        assert!(body.contains("pairs_cue_projection_total{outcome=\"PROJECTED\"} 1"));
+        assert!(body.contains("pairs_cue_projection_total{outcome=\"PROJECTION_FAILED\"} 2"));
+        assert!(body.contains(
+            "strategy_selection_transition_total{decision=\"INITIALIZE\",timeframe=\"1m\"} 1"
+        ));
+        assert!(body.contains(
+            "strategy_selection_transition_total{decision=\"UNCHANGED\",timeframe=\"1m\"} 0"
+        ));
+        assert!(body.contains(
+            "strategy_selection_transition_total{decision=\"KEEP_CHAMPION\",timeframe=\"1m\"} 1"
+        ));
+        assert!(body.contains(
+            "strategy_selection_transition_total{decision=\"PROMOTE_CHALLENGER\",timeframe=\"1m\"} 1"
+        ));
+    }
+
+    #[test]
+    fn strategy_metrics_record_rows_updated_without_transition_gap() {
+        let metrics = StrategyMetrics::new();
+
+        metrics.record_selection_transitions(
+            Timeframe::FifteenMinutes,
+            SelectionTransitionCounts::default(),
+            4,
+        );
+        let mut accounted = SelectionTransitionCounts::default();
+        accounted.record(ChampionDecision::Unchanged);
+        metrics.record_selection_transitions(Timeframe::FifteenMinutes, accounted, 1);
+
+        let body = metrics.render_prometheus();
+
+        assert!(body.contains(
+            "strategy_selection_rows_updated_without_transition_total{timeframe=\"15m\"} 4"
+        ));
+        assert!(body.contains(
+            "strategy_selection_transition_total{decision=\"UNCHANGED\",timeframe=\"15m\"} 1"
+        ));
     }
 
     #[test]
