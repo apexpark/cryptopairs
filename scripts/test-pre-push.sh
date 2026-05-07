@@ -21,6 +21,11 @@ write_fake_check_script() {
 #!/usr/bin/env bash
 set -euo pipefail
 
+if [[ -n "${FAKE_RUST_CHECK_MARKER:-}" ]]; then
+  mkdir -p "$(dirname "$FAKE_RUST_CHECK_MARKER")"
+  printf "ran\n" > "$FAKE_RUST_CHECK_MARKER"
+fi
+
 if [[ -f .check/expected-tracked ]]; then
   if ! cmp -s .check/expected-tracked tracked.txt; then
     echo "[fake-rust-check] tracked.txt did not match the expected staged tree" >&2
@@ -129,19 +134,31 @@ assert_stash_empty() {
 run_hook_and_assert() {
   local scenario="$1"
   local expected_status="$2"
+  local expected_check_ran="${3:-1}"
   local output_file="$SCENARIO_ROOT/hook-output.txt"
+  local check_marker="$SCENARIO_ROOT/check-ran"
   local status
 
   snapshot_state "$SNAPSHOT_DIR/before"
 
   set +e
-  bash .githooks/pre-push origin /tmp/pre-push-test.git > "$output_file" 2>&1
+  FAKE_RUST_CHECK_MARKER="$check_marker" bash .githooks/pre-push origin /tmp/pre-push-test.git > "$output_file" 2>&1
   status=$?
   set -e
 
   if [[ "$status" -ne "$expected_status" ]]; then
     cat "$output_file" >&2
     fail "$scenario expected exit $expected_status, got $status"
+  fi
+
+  if [[ "$expected_check_ran" == "1" && ! -f "$check_marker" ]]; then
+    cat "$output_file" >&2
+    fail "$scenario expected the fake Rust check to run"
+  fi
+
+  if [[ "$expected_check_ran" == "0" && -f "$check_marker" ]]; then
+    cat "$output_file" >&2
+    fail "$scenario expected the fake Rust check not to run"
   fi
 
   assert_state_restored
@@ -193,6 +210,44 @@ scenario_check_failure() {
   run_hook_and_assert "cargo failure" 42
 }
 
+assert_output_contains() {
+  local expected="$1"
+  local output_file="$SCENARIO_ROOT/hook-output.txt"
+  local label="$2"
+
+  if ! grep -Fq "$expected" "$output_file"; then
+    cat "$output_file" >&2
+    fail "$label output did not contain: $expected"
+  fi
+}
+
+scenario_rust_preflight_override_valid() {
+  setup_repo "rust-preflight-override-valid" "base"
+  RUST_PREFLIGHT_OVERRIDE="docs-only" run_hook_and_assert "RUST_PREFLIGHT_OVERRIDE valid reason" 0 0
+  assert_output_contains "[pre-push] RUST_PREFLIGHT_OVERRIDE set; skipping Rust CI preflight. Reason: docs-only" "RUST_PREFLIGHT_OVERRIDE valid reason"
+}
+
+scenario_skip_rust_checks_rejected() {
+  setup_repo "skip-rust-checks-rejected" "base"
+  SKIP_RUST_CHECKS=1 run_hook_and_assert "SKIP_RUST_CHECKS rejection" 1 0
+  assert_output_contains "[pre-push] SKIP_RUST_CHECKS=1 is no longer supported; use RUST_PREFLIGHT_OVERRIDE='<reason>'." "SKIP_RUST_CHECKS rejection"
+}
+
+scenario_rust_preflight_override_boolean_rejected() {
+  local boolean_value
+
+  for boolean_value in 1 true TRUE yes YES; do
+    setup_repo "rust-preflight-override-boolean-rejected-$boolean_value" "base"
+    RUST_PREFLIGHT_OVERRIDE="$boolean_value" run_hook_and_assert "RUST_PREFLIGHT_OVERRIDE boolean rejection ($boolean_value)" 1 0
+    assert_output_contains "[pre-push] RUST_PREFLIGHT_OVERRIDE must be a reason, not a boolean." "RUST_PREFLIGHT_OVERRIDE boolean rejection ($boolean_value)"
+  done
+}
+
+scenario_rust_preflight_override_empty_runs_check() {
+  setup_repo "rust-preflight-override-empty-runs-check" "base"
+  RUST_PREFLIGHT_OVERRIDE="" run_hook_and_assert "empty RUST_PREFLIGHT_OVERRIDE runs checks" 0 1
+}
+
 scenario_clean_tree
 scenario_staged_only
 scenario_unstaged_only
@@ -200,5 +255,9 @@ scenario_untracked_present
 scenario_staged_and_unstaged
 scenario_sigint_during_check
 scenario_check_failure
+scenario_rust_preflight_override_valid
+scenario_skip_rust_checks_rejected
+scenario_rust_preflight_override_boolean_rejected
+scenario_rust_preflight_override_empty_runs_check
 
-echo "[test-pre-push] All 7 scenarios passed."
+echo "[test-pre-push] All scenarios passed."
