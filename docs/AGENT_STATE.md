@@ -9,12 +9,12 @@
 
 | Field | Value |
 |---|---|
-| Last updated (UTC) | 2026-05-05 |
+| Last updated (UTC) | 2026-05-06 |
 | Updated by | codex |
-| Repo HEAD pin (committed) | `261f9cd` |
+| Repo HEAD pin (committed) | `86e014c` |
 | Pin branch | `codex/fix-clippy-run-24549051096` |
 | Sprint base branch | `codex/fix-clippy-run-24549051096` |
-| Pin notes | Pin notes: state-affecting commits since a87b8ae (bootstrap playbook) are pin-convention (2148693), cargo-blocked workaround (a2fa027), pin extraction fix (0602178), sprint-base configurable (c70b6a0), legacy PR protocol (2369308), retention sprint (b195447), Slice A (2771479), Slice B (e60e634), retention import + fmt restore (05bca71), clippy sort-by fix (a82e8f0), B6 design proposal merge (ff38663), B3+S8 merge (79893c6), curation post-PRs (400a776), B6 §10 answers captured (c3933d7), host verification capture (76ca372), B6 claim (aeb02ff), B6 implementation (1105117), operator-applied cargo-fmt fixup on B6 impl (d3b7b9b), B6 implementation merge (7a572df, PR #163), R2 claim rebased (2c4c7b3), R2 proposal rebased (dfbdb9c), R2 design proposal merge (f87e291, PR #162), R2-impl claim (b180a4a), R2-impl implementation (261f9cd), and this commit (R2-impl state curation). Pin lags HEAD by 1 per the convention. Sprint base branch row is the canonical PR target. Pin row contains exactly one backticked SHA so the §1 regex extracts unambiguously. |
+| Pin notes | Pin notes: state-affecting commits since a87b8ae (bootstrap playbook) are pin-convention (2148693), cargo-blocked workaround (a2fa027), pin extraction fix (0602178), sprint-base configurable (c70b6a0), legacy PR protocol (2369308), retention sprint (b195447), Slice A (2771479), Slice B (e60e634), retention import + fmt restore (05bca71), clippy sort-by fix (a82e8f0), B6 design proposal merge (ff38663), B3+S8 merge (79893c6), curation post-PRs (400a776), B6 §10 answers captured (c3933d7), host verification capture (76ca372), B6 implementation merge (7a572df, PR #163), R2 design proposal merge (f87e291, PR #162), curation post-R2 design (86e014c), R2 implementation merge (d17103, PR #164), and this commit (post-squash pin fix). Pin lags HEAD by 1 per the convention. Sprint base branch row is the canonical PR target. Pin row contains exactly one backticked SHA so the §1 regex extracts unambiguously. Note: feature-branch SHAs (claim/impl/fixup commits before squash-merge) are deliberately omitted because they are not reachable from sprint base after squash. |
 | Origin | `https://github.com/apexpark/cryptopairs.git` |
 | Working-tree state | **DIRTY** — Remaining uncommitted work is limited to the 4k z-chart UI sprint (`apps/web/src/components/LineChart.tsx`, `apps/web/src/styles.css`) and a docs-meta index cleanup (`docs/README.md`). The standalone `pairs_replay_trades` sort cleanup landed at `a82e8f0`. See §"Currently In Flight" and §"Next Recommended Move". |
 
