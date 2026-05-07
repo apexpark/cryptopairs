@@ -89,11 +89,12 @@ The fix must satisfy all of:
    operator's pre-push hook and CI's clippy step must agree
    bit-for-bit on whether a given staged tree is clippy-clean.
 
-2. **`dtolnay/rust-toolchain@stable` in `.github/workflows/ci.yml`
-   continues to work without modification.** The action honors
-   `rust-toolchain.toml` when present (it will install the channel
-   listed there rather than the action ref's `@stable` default), so
-   no workflow edit is required.
+2. **GitHub Actions installs the selected channel explicitly.**
+   `dtolnay/rust-toolchain@stable` selects the Rust channel from
+   its `toolchain` input, defaulting to `stable`. It does not parse
+   `rust-toolchain.toml` by itself. The implementation PR therefore
+   updates `.github/workflows/ci.yml` to pass the same channel string
+   selected in §10 via `with.toolchain`.
 
 3. **Contributor onboarding cost stays low.** Cloning the repo and
    running cargo "just works": rustup auto-installs missing
@@ -102,8 +103,9 @@ The fix must satisfy all of:
 
 4. **Updating Rust version is operator-driven, predictable, and does
    not require coordinating across multiple machines.** The bump is
-   a single-line edit to `rust-toolchain.toml`; once committed, every
-   environment picks it up on the next cargo invocation.
+   a coordinated repo edit to `rust-toolchain.toml` and the CI
+   action's `toolchain` input; once committed, local cargo and CI
+   install/use the same channel.
 
 5. **Remote-agent flow is unchanged.** Per playbook §3b
    (cargo-blocked workaround at `a2fa027`), Codex and Claude cannot
@@ -130,8 +132,8 @@ For each option, the rubric is:
 - **Clippy lint volatility** — what happens when a new lint lands?
 - **Contributor onboarding friction** — does fresh-clone + cargo "just
   work" or does the contributor have to `rustup install`?
-- **Compatibility with `dtolnay/rust-toolchain@stable`** — does CI keep
-  working unmodified?
+- **CI workflow integration** — what, if anything, must change in
+  `.github/workflows/ci.yml`?
 - **rustup autoinstall behavior on operator Mac** — what does the
   operator's macOS rustup do when `rust-toolchain.toml` channel
   changes?
@@ -164,13 +166,12 @@ missing locally. Cost: one extra ~150 MB toolchain download on first
 clone. Subsequent clones share the global `~/.rustup/toolchains/`
 cache.
 
-**Compatibility with `dtolnay/rust-toolchain@stable`.** Confirmed
-compatible. The action documents that it honors `rust-toolchain.toml`
-when present and installs the channel listed there. The `@stable`
-suffix on the action is the action's own git ref, not a Rust
-channel selector. CI behavior changes: the installed toolchain is
-1.95.0 instead of whatever-stable-is-this-week. No `ci.yml` edit is
-required.
+**CI workflow integration.** Requires a small `.github/workflows/ci.yml`
+edit: keep `uses: dtolnay/rust-toolchain@stable`, but add
+`toolchain: "1.95.0"` beside the existing `components` input. The
+`@stable` suffix is the action's own git ref; the Rust channel is the
+`toolchain` input. CI behavior changes: the action installs 1.95.0
+instead of whatever-stable-is-this-week.
 
 **rustup autoinstall behavior on operator Mac.** When the operator
 pulls a commit that changes `rust-toolchain.toml` channel from
@@ -215,15 +216,15 @@ practice, those are rare and usually appreciated.
 auto-installs the latest 1.95.x patch on first cargo invocation if
 no 1.95.x is present locally.
 
-**Compatibility with `dtolnay/rust-toolchain@stable`.** Confirmed
-compatible (same mechanism as Option A — action reads the file).
-Subtle behavior: CI runners typically refresh toolchain caches per
-job, so they pick up the latest 1.95.x patch. Operator Mac does
-the same when their local 1.95.x ages out (next `rustup update`
-inside the 1.95 channel). The two can drift by one patch in the
-window between an upstream patch release and the next `rustup
-update` on either side. In practice the drift window is days, not
-weeks, and patch-level clippy differences are exceedingly rare.
+**CI workflow integration.** Requires the same small workflow edit
+as Option A, using `toolchain: "1.95"`. CI runners typically refresh
+toolchain caches per job, so they pick up the latest 1.95.x patch.
+Operator Mac does the same when local cargo/rustup resolves the
+repo's `rust-toolchain.toml` channel and the local 1.95 toolchain is
+updated. The two can drift by one patch in the window between an
+upstream patch release and the next `rustup update` on either side.
+In practice the drift window is days, not weeks, and patch-level
+clippy differences are exceedingly rare.
 
 **rustup autoinstall behavior on operator Mac.** Same as Option A
 on a channel bump. No operator action on patch updates within the
@@ -255,9 +256,9 @@ documents intent ("we track latest stable") but does not lock.
 **Contributor onboarding friction.** Same as A/B. rustup ensures a
 stable toolchain is present.
 
-**Compatibility with `dtolnay/rust-toolchain@stable`.** Trivially
-compatible — both sides agree on "stable", which is what CI does
-today.
+**CI workflow integration.** No workflow edit is required for Option C
+because the current action default is already `stable`. That is also
+why this option does not solve the version-locking problem.
 
 **rustup autoinstall behavior on operator Mac.** Identical to
 today. `rustup update stable` is the only operator action, on
@@ -288,8 +289,7 @@ field is informational for downstream consumers (none today; this
 is not a published library workspace) and would surface a clearer
 error if a contributor tried to build with a too-old toolchain.
 
-**Compatibility with `dtolnay/rust-toolchain@stable`.** Same as
-Option A.
+**CI workflow integration.** Same as Option A.
 
 **rustup autoinstall behavior on operator Mac.** Same as Option A.
 
@@ -329,6 +329,12 @@ local clippy) because both environments are at 1.95.x going
 forward. It avoids Option A's per-patch maintenance churn, which
 adds bump commits without adding safety against the actual incident
 class.
+
+The implementation PR should set the same channel in both places:
+`rust-toolchain.toml` for local/rustup-aware cargo invocations, and
+`.github/workflows/ci.yml` `with.toolchain` for the
+`dtolnay/rust-toolchain@stable` action. Keeping those two literals in
+sync is part of the acceptance criteria.
 
 If, in practice, patch-level drift between operator Mac and CI
 within the same minor produces incidents — i.e. clippy patch-release
@@ -386,10 +392,31 @@ MUST:
   default minimal profile does not include them. The operator may
   iterate on the exact channel string in §10.
 
+- **`.github/workflows/ci.yml`** — add the same selected channel to
+  the Rust setup step's `with:` block, plus a short verification step
+  before the cargo commands. For Option B, the expected shape is:
+
+  ```yaml
+  - name: Setup Rust
+    uses: dtolnay/rust-toolchain@stable
+    with:
+      toolchain: "1.95"
+      components: rustfmt, clippy
+
+  - name: Verify Rust toolchain
+    run: |
+      rustup show active-toolchain
+      cargo --version
+  ```
+
+  The action's `@stable` suffix remains the action ref. The Rust
+  channel is selected by the `toolchain` input.
+
 - **`docs/playbooks/remote-agent-bootstrap.md`** §3b — one short
-  note that `rust-toolchain.toml` pins the rustfmt/clippy version
-  used by `scripts/check-rust-ci.sh`, so the operator's local
-  cargo and CI's cargo agree by construction.
+  note that `rust-toolchain.toml` pins local rustup-aware cargo
+  invocations and `.github/workflows/ci.yml` passes the same channel
+  to `dtolnay/rust-toolchain`, so the operator's local cargo and CI's
+  cargo agree by construction.
 
 - **`docs/14-testing-standards.md`** — one short note in the
   appropriate Rust subsection (the file currently has no
@@ -409,11 +436,6 @@ MUST:
 The implementation PR MUST verify (and state in its description)
 that the following files do not require modification:
 
-- **`.github/workflows/ci.yml`** — no edit. `dtolnay/rust-toolchain@stable`
-  reads `rust-toolchain.toml` and installs the pinned channel. The
-  `@stable` suffix is the action's own ref, not a Rust channel
-  selector.
-
 - **`scripts/check-rust-ci.sh`** — no edit. The script invokes
   `cargo fmt`, `cargo clippy`, `cargo test` directly; cargo
   respects `rust-toolchain.toml` automatically.
@@ -430,8 +452,9 @@ that the following files do not require modification:
 - **`Cargo.toml`** — no edit unless §10 selects Option D
   (additive `rust-version` field).
 
-If any of these turn out to require a change, the implementation
-PR escalates rather than silently editing them.
+If any of these turn out to require a change beyond the explicit
+`.github/workflows/ci.yml` update above, the implementation PR
+escalates rather than silently editing them.
 
 ### 5.3 Operator local verification before merge
 
@@ -457,10 +480,14 @@ the purpose.
 ### 5.4 CI verification
 
 GitHub Actions must run green on the implementation PR's branch.
-Any new clippy lints that surface from the toolchain bump are
-fixed in the same PR. The operator should expect a non-zero
-chance of a small fixup commit on top of the pin commit if the
-operator's previous local toolchain was significantly behind.
+The CI log must show `dtolnay/rust-toolchain` installing the selected
+channel from the explicit `toolchain` input, and a later
+`rustup show active-toolchain` / `cargo --version` verification step
+must match the selected channel from `rust-toolchain.toml`. Any new
+clippy lints that surface from the toolchain bump are fixed in the
+same PR. The operator should expect a non-zero chance of a small fixup
+commit on top of the pin commit if the operator's previous local
+toolchain was significantly behind.
 
 ---
 
@@ -469,13 +496,14 @@ operator's previous local toolchain was significantly behind.
 | Component | LOC |
 |---|---|
 | `rust-toolchain.toml` (new file) | 4–6 |
+| `.github/workflows/ci.yml` `toolchain` input + verify step | 5–7 |
 | `docs/playbooks/remote-agent-bootstrap.md` §3b note | 3–5 |
 | `docs/14-testing-standards.md` toolchain note | 3–5 |
 | `CHANGELOG.md` entry | 1 |
 | `docs/AGENT_STATE.md` R1 status flip | 1–2 |
 | Optional: `Cargo.toml` `rust-version` (Option D) | 1 |
 | Possible fixup: clippy lints surfaced by the bump | 0–unknown |
-| **Total (excluding fixup)** | **~13–20 LOC** |
+| **Total (excluding fixup)** | **~18–27 LOC** |
 
 Implementation effort is small and almost entirely doc + config.
 The dominant uncertainty is whether the bump surfaces new clippy
@@ -577,9 +605,12 @@ demonstrate each of the following:
    expensive to demonstrate.
 
 3. **CI installs the pinned channel.** A CI run on the
-   implementation PR's branch logs the toolchain version
-   (visible in the `dtolnay/rust-toolchain` action's output and
-   in the `cargo fmt` step's first lines) and matches the pin.
+   implementation PR's branch logs the toolchain version from the
+   `dtolnay/rust-toolchain` setup step after the workflow passes the
+   selected channel through `with.toolchain`. A later verification
+   command (`rustup show active-toolchain` and/or `cargo --version`)
+   also matches the pin. The implementation PR must not claim that
+   the action inferred the channel from `rust-toolchain.toml`.
 
 4. **`cargo fmt --all -- --check` passes** against the same
    staged tree on operator Mac and CI.
@@ -611,8 +642,9 @@ demonstrate each of the following:
 
 1. **Option B (`channel = "1.95"`), Option A (`channel = "1.95.0"`),
    or a different channel string entirely?** Recommendation §4 is
-   B. Operator may override; the implementation PR uses the
-   exact string the operator selects here.
+   B. Operator may override; the implementation PR uses the exact
+   string the operator selects here in both `rust-toolchain.toml` and
+   `.github/workflows/ci.yml` `with.toolchain`.
 
 2. **Include Option D's additive `rust-version = "1.95"` in
    `[workspace.package]` of `Cargo.toml`?** Recommendation §4 is
