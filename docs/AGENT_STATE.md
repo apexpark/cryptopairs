@@ -437,7 +437,7 @@ Follow-ups carried forward from prior reviews. Ordered by source review then sev
 | ID | Severity | Description | Status |
 |---|---|---|---|
 | S4 | medium | Add `pairs_cue_projection_total{outcome}` counter; double evaluation cost on drift pairs needs a metric and a runbook note. | **resolved by PR #170 (`aad7445`)** — strategy-service `/metrics` now renders `pairs_cue_projection_total{outcome}` with bounded outcomes `NOT_REQUIRED`, `PROJECTED`, `PROJECTED_BLOCKED`, and `PROJECTION_FAILED`; operator docs/runbook describe projection-failure handling. |
-| S6 | low | UI’s `cueDisplayedVariant` shows champion name in `CHAMPION_PROJECTION_FAILED` state. Consider rendering `--` or `BLOCKED` instead. (`apps/web/src/App.tsx:206-211`) | open |
+| S6 | low | UI’s `cueDisplayedVariant` shows champion name in `CHAMPION_PROJECTION_FAILED` state. Consider rendering `--` or `BLOCKED` instead. (`apps/web/src/App.tsx:206-211`) | proposed resolved by `codex/s6-projection-failed-ui` — `cueDisplayedVariant` now renders `BLOCKED` for `CHAMPION_PROJECTION_FAILED`, with focused frontend coverage for failed vs projected display paths. |
 | S7 | low | Reoptimize / write path does not yet emit `cue.selection_state`. Bridge in Slice B+ work or accept as deferred. | partially addressed by Slice B (counts now emitted in response, but `selection_state` shape itself still cue-only) |
 | S8 | low | Unreachable fifth match arm at `services/strategy-service/src/main.rs:4676-4681`. Replace with `unreachable!` or document. | **resolved by PR #160 (`79893c6`)** — the impossible fifth arm in `build_cue_selection_state(...)` is now `unreachable!`, making the invariant explicit and fail-closed. |
 
