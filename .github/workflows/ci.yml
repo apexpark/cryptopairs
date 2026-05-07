@@ -32,7 +32,13 @@ jobs:
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
         with:
+          toolchain: "1.95"
           components: rustfmt, clippy
+
+      - name: Verify Rust toolchain
+        run: |
+          rustup show active-toolchain
+          cargo --version
 
       - name: Cargo format
         run: cargo fmt --all -- --check

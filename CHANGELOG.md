@@ -5,6 +5,7 @@ This project follows SemVer as defined in `docs/02-versioning-and-releases.md`.
 
 ## Unreleased
 ### Operator Tooling
+- Pinned the Rust toolchain to channel `1.95` for local rustup-aware cargo invocations and CI, with CI logging the active toolchain before cargo checks.
 - `.githooks/pre-push` now autostashes unstaged and untracked work before running the Rust preflight so pushes check the staged tree, with `scripts/test-pre-push.sh` covering the restore paths.
 
 ### Added
