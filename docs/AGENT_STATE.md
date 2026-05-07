@@ -32,7 +32,7 @@ Status snapshot of the four slices defined in `docs/26-champion-selection-integr
 |---|---|---|---|
 | Slice A — Separate evaluation from champion presentation | **Committed on sprint base** | local | Verified: schema validation passed; full `cargo test --workspace` passed in pre-push hook (covers `cue_for_pairs_response_*` × 5 + `evaluate_pair_honors_preferred_variant_override`); tsc passed. |
 | Slice B — Make transition accounting complete | **Committed on sprint base** | local | Verified: full `cargo test --workspace` passed in pre-push hook (covers `selection_transition_counts_*` × 3 + `reoptimize_response_serializes_transition_counts_at_top_level` + `update_persist_summary_for_transition_records_all_summary_counts`); clippy clean; reoptimize schema validation passed (0.2.0). |
-| Slice C — Remove incumbent bias in host runtime | **Unblocked, planning pickable by remote agent** | unassigned | Host verification outputs were captured on 2026-05-05 against `rc/live-trial` at `4dd118242414d38ad33ae50bb433d4988d5276da`. Planning may proceed from those host facts; any host-specific implementation still requires a reviewable local lineage pullback (see §"Blocked / Waiting On"). |
+| Slice C — Remove incumbent bias in host runtime | **Unblocked, planning pickable by remote agent** | codex | Claimed by: codex 2026-05-07. Host verification outputs were captured on 2026-05-05 against `rc/live-trial` at `4dd118242414d38ad33ae50bb433d4988d5276da`. Planning may proceed from those host facts; any host-specific implementation still requires a reviewable local lineage pullback (see §"Blocked / Waiting On"). |
 | Slice D — Recanonicalize legacy rows | Not started | unassigned | Should follow Slice C. |
 
 ### Immediate Safety Action (still active)
