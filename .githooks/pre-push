@@ -5,7 +5,19 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 CHECK_SCRIPT="$ROOT_DIR/scripts/check-rust-ci.sh"
 
 if [[ "${SKIP_RUST_CHECKS:-0}" == "1" ]]; then
-  echo "[pre-push] SKIP_RUST_CHECKS=1 set; skipping Rust CI preflight."
+  echo "[pre-push] SKIP_RUST_CHECKS=1 is no longer supported; use RUST_PREFLIGHT_OVERRIDE='<reason>'." >&2
+  exit 1
+fi
+
+if [[ -n "${RUST_PREFLIGHT_OVERRIDE:-}" ]]; then
+  case "$RUST_PREFLIGHT_OVERRIDE" in
+    1|true|TRUE|yes|YES)
+      echo "[pre-push] RUST_PREFLIGHT_OVERRIDE must be a reason, not a boolean." >&2
+      exit 1
+      ;;
+  esac
+
+  echo "[pre-push] RUST_PREFLIGHT_OVERRIDE set; skipping Rust CI preflight. Reason: $RUST_PREFLIGHT_OVERRIDE"
   exit 0
 fi
 

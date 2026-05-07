@@ -152,7 +152,7 @@ State this in the PR description rather than implying it passed:
 
 If your change implies coverage in any of these categories, either drop the claim or convert to a design-proposal-first PR (see §5).
 
-The escape hatch `SKIP_RUST_CHECKS=1` exists in `.githooks/pre-push` for the local agent's use only and **must not be invoked by remote agents** in any form. If cargo checks are failing on the local agent or CI, fix them; if you cannot, raise a §6 Blocked entry.
+The escape hatch `RUST_PREFLIGHT_OVERRIDE=<reason>` exists in `.githooks/pre-push` for the local agent's emergency use only and **must not be invoked by remote agents** in any form. The hook prints the supplied reason exactly, so do not put secrets, credentials, tokens, or other sensitive values in the reason. Legacy `SKIP_RUST_CHECKS=1` is rejected. If cargo checks are failing on the local agent or CI, fix them; if you cannot, raise a §6 Blocked entry.
 
 ---
 
@@ -238,6 +238,6 @@ When the local agent reviews an inbound PR:
 - [ ] If the change touches `specs/contracts/*` or `specs/examples/*`: schema example validates, version bumped per `docs/02-versioning-and-releases.md`, `CHANGELOG.md` entry present.
 - [ ] If the change touches risk/execution/integrity surfaces: fail-closed posture preserved per `docs/12-risk-and-execution-policy.md`.
 - [ ] Operator-only steps named in the PR are queued or scheduled — do not merge implying they're done.
-- [ ] Both verification paths green for the head SHA: local-agent `scripts/check-rust-ci.sh` AND GitHub Actions CI. Do not merge over a `SKIP_RUST_CHECKS=1` push or a red CI run.
+- [ ] Both verification paths green for the head SHA: local-agent `scripts/check-rust-ci.sh` AND GitHub Actions CI. Do not merge over a `RUST_PREFLIGHT_OVERRIDE` push or a red CI run.
 
 If everything passes, merge to `main` (or the slice's named base branch per `AGENT_STATE.md`) and push. The local agent then bumps the `AGENT_STATE.md` pin if the merge changed `HEAD`.

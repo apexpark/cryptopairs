@@ -5,6 +5,7 @@ This project follows SemVer as defined in `docs/02-versioning-and-releases.md`.
 
 ## Unreleased
 ### Operator Tooling
+- Rotated the pre-push Rust preflight bypass from legacy `SKIP_RUST_CHECKS=1` to reason-bearing `RUST_PREFLIGHT_OVERRIDE=<reason>`, with boolean-ish override values rejected fail-closed.
 - Pinned the Rust toolchain to channel `1.95` for local rustup-aware cargo invocations and CI, with CI logging the active toolchain before cargo checks.
 - `.githooks/pre-push` now autostashes unstaged and untracked work before running the Rust preflight so pushes check the staged tree, with `scripts/test-pre-push.sh` covering the restore paths.
 - `docs/27` live cue mismatch audit now reads `cue.selection_state` fields for stored champion, evaluated best, source, and validation state instead of legacy cue-selected fields.
