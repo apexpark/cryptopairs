@@ -23,6 +23,9 @@ Define required test levels and quality gates across Rust and Python services.
 ## Language-Specific Requirements
 
 1. Rust:
+- The workspace pins its Rust channel in repo-root `rust-toolchain.toml`;
+  local development should use rustup-aware `cargo` invocations so rustfmt,
+  clippy, and tests honor the repository pin.
 - Unit tests alongside modules.
 - Integration tests for adapters and persistence boundaries.
 - Property tests for parsing/state transitions where helpful.
