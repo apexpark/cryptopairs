@@ -203,9 +203,12 @@ function cueSelectionState(cue: Cue | null | undefined) {
   return cue?.selection_state ?? null;
 }
 
-function cueDisplayedVariant(cue: Cue | null | undefined): string {
+export function cueDisplayedVariant(cue: Cue | null | undefined): string {
   if (!cue) {
     return "--";
+  }
+  if (cue.selection_state?.validation_state === "CHAMPION_PROJECTION_FAILED") {
+    return "BLOCKED";
   }
   return cue.selection_state?.stored_champion_variant ?? cue.selected_variant;
 }
