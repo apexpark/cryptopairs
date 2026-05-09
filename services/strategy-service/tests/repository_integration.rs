@@ -13,7 +13,8 @@ mod strategy_service_bin {
         use std::time::{SystemTime, UNIX_EPOCH};
         use strategy_service::{
             CostGateDiagnostics, PairCue, PairEvaluationOutput, PortfolioHint,
-            SetupGateDiagnostics, ShadowMlDiagnostics, TradeGateDiagnostics, VariantEvaluation,
+            SelectedSignalConfig, SetupGateDiagnostics, ShadowMlDiagnostics,
+            SignalFlatlineDiagnostics, TradeGateDiagnostics, VariantEvaluation,
         };
         use tokio::task::JoinHandle;
         use tokio_postgres::{Client, NoTls};
@@ -149,6 +150,7 @@ mod strategy_service_bin {
                 return Ok(());
             };
             let timeframe = Timeframe::OneMinute;
+            let settings = StrategySettings::from_env();
 
             let initialize_pair = "B6_RECORD_INITIALIZE";
             let initialize_summary = fixture
@@ -163,7 +165,7 @@ mod strategy_service_bin {
                         2.0,
                         test_time(1_778_000_001)?,
                     ),
-                    0.25,
+                    &settings,
                 )
                 .await?;
             assert_transition_counts(&initialize_summary, 1, 0, 0, 0);
@@ -182,6 +184,7 @@ mod strategy_service_bin {
                     timeframe,
                     "VOL_NORMALIZED",
                     1.5,
+                    &selected_signal_config("VOL_NORMALIZED", test_time(1_778_000_010)?),
                     test_time(1_778_000_010)?,
                 )
                 .await?;
@@ -197,7 +200,7 @@ mod strategy_service_bin {
                         2.1,
                         test_time(1_778_000_011)?,
                     ),
-                    0.25,
+                    &settings,
                 )
                 .await?;
             assert_transition_counts(&unchanged_summary, 0, 1, 0, 0);
@@ -216,6 +219,7 @@ mod strategy_service_bin {
                     timeframe,
                     "ROBUST_Z",
                     1.0,
+                    &selected_signal_config("ROBUST_Z", test_time(1_778_000_020)?),
                     test_time(1_778_000_020)?,
                 )
                 .await?;
@@ -231,7 +235,7 @@ mod strategy_service_bin {
                         2.0,
                         test_time(1_778_000_021)?,
                     ),
-                    0.25,
+                    &settings,
                 )
                 .await?;
             assert_transition_counts(&promote_summary, 0, 0, 1, 0);
@@ -250,6 +254,7 @@ mod strategy_service_bin {
                     timeframe,
                     "ROBUST_Z",
                     1.0,
+                    &selected_signal_config("ROBUST_Z", test_time(1_778_000_030)?),
                     test_time(1_778_000_030)?,
                 )
                 .await?;
@@ -265,7 +270,7 @@ mod strategy_service_bin {
                         1.1,
                         test_time(1_778_000_031)?,
                     ),
-                    0.25,
+                    &settings,
                 )
                 .await?;
             assert_transition_counts(&keep_summary, 0, 0, 0, 1);
@@ -305,6 +310,7 @@ mod strategy_service_bin {
                     timeframe,
                     "ROBUST_Z",
                     1.25,
+                    &selected_signal_config("ROBUST_Z", test_time(1_778_100_000)?),
                     test_time(1_778_100_000)?,
                 )
                 .await?;
@@ -315,6 +321,7 @@ mod strategy_service_bin {
                     timeframe,
                     "VOL_NORMALIZED",
                     2.75,
+                    &selected_signal_config("VOL_NORMALIZED", latest_updated_at),
                     latest_updated_at,
                 )
                 .await?;
@@ -376,6 +383,7 @@ mod strategy_service_bin {
                     portfolio_hint: PortfolioHint::unavailable(vec![]),
                     shadow_ml: ShadowMlDiagnostics::unavailable(vec![]),
                     selection_state: None,
+                    selected_signal_config: selected_signal_config(selected_variant, evaluated_at),
                     evaluated_at,
                 },
                 variants: vec![
@@ -412,6 +420,35 @@ mod strategy_service_bin {
                 spread_vol_bps: 2.0,
                 stored_champion_variant: None,
                 stored_champion_projection: None,
+                flatline_diagnostics: SignalFlatlineDiagnostics {
+                    status: "HEALTHY".to_string(),
+                    window_bars: 720,
+                    z_stddev: 1.0,
+                    z_p95_minus_p5: 2.0,
+                    zero_crossings: 3,
+                    entry_band_crossings: 1,
+                    max_abs_z: 2.1,
+                    rationale_codes: vec![],
+                },
+            }
+        }
+
+        fn selected_signal_config(
+            variant: &str,
+            updated_at: DateTime<Utc>,
+        ) -> SelectedSignalConfig {
+            SelectedSignalConfig {
+                variant: variant.to_string(),
+                entry_band: 1.8,
+                exit_band: 0.6,
+                stop_band: 3.2,
+                lookback_bars: 520,
+                hold_bars: 20,
+                max_half_life_bars: 120.0,
+                train_bars: 64_800,
+                validation_bars: 30_240,
+                source: "B6_REPOSITORY_TEST".to_string(),
+                updated_at,
             }
         }
 

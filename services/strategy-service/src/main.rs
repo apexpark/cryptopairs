@@ -4249,6 +4249,7 @@ struct TradeNowRow {
     blocked_reason_code: Option<String>,
     watch_reason_code: Option<String>,
     rationale_codes: Vec<String>,
+    #[allow(dead_code)]
     #[serde(skip_serializing)]
     historical_quality: Option<TradeNowHistoricalQuality>,
 }
