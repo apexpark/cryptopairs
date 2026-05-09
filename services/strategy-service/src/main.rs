@@ -722,6 +722,29 @@ impl CueProjectionOutcome {
     }
 }
 
+fn classify_cue_projection_outcome(
+    output: &PairEvaluationOutput,
+    block_on_champion_drift: bool,
+) -> CueProjectionOutcome {
+    let Some(stored_champion_variant) = output.stored_champion_variant.as_deref() else {
+        return CueProjectionOutcome::NotRequired;
+    };
+
+    if stored_champion_variant == output.cue.selected_variant {
+        return CueProjectionOutcome::NotRequired;
+    }
+
+    if output.stored_champion_projection.is_none() {
+        return CueProjectionOutcome::ProjectionFailed;
+    }
+
+    if block_on_champion_drift {
+        CueProjectionOutcome::ProjectedBlocked
+    } else {
+        CueProjectionOutcome::Projected
+    }
+}
+
 const METRIC_TIMEFRAMES: [Timeframe; 3] = [
     Timeframe::OneMinute,
     Timeframe::FifteenMinutes,
@@ -4226,6 +4249,7 @@ struct TradeNowRow {
     blocked_reason_code: Option<String>,
     watch_reason_code: Option<String>,
     rationale_codes: Vec<String>,
+    #[allow(dead_code)]
     #[serde(skip_serializing)]
     historical_quality: Option<TradeNowHistoricalQuality>,
 }
@@ -6299,14 +6323,8 @@ fn cue_for_pairs_response(output: &PairEvaluationOutput, block_on_champion_drift
     cue
 }
 
-fn cue_with_champion_drift_applied(
-    state: &AppState,
-    output: &PairEvaluationOutput,
-) -> PairCue {
-    cue_for_pairs_response(
-        output,
-        state.settings.block_on_champion_drift,
-    )
+fn cue_with_champion_drift_applied(state: &AppState, output: &PairEvaluationOutput) -> PairCue {
+    cue_for_pairs_response(output, state.settings.block_on_champion_drift)
 }
 
 fn resolve_trade_now_live_watch_reason_code(cue: &PairCue, open_live_trade: bool) -> &'static str {
@@ -9857,7 +9875,10 @@ async fn evaluate_pair_for_timeframe(
     output.stored_champion_variant = stored_champion_variant;
     state
         .metrics
-        .record_cue_projection(CueProjectionOutcome::NotRequired);
+        .record_cue_projection(classify_cue_projection_outcome(
+            &output,
+            state.settings.block_on_champion_drift,
+        ));
 
     Ok(output)
 }
@@ -10580,10 +10601,10 @@ mod tests {
     use super::{
         apply_data_freshness_gate, apply_live_mark_override_to_snapshot, artifact_download_path,
         bootstrap_deviation_exceeds_threshold, bootstrap_snapshot_is_fresh, build_trade_now_row,
-        canonical_metric_instrument, classify_expectancy_result, classify_reopt_error_severity,
-        compute_candle_age_seconds, compute_expectancy_metrics, compute_pair_funding_bps_per_event,
-        compute_pair_slippage_sample_bps, compute_walk_forward_summary, cue_for_pairs_response,
-        days_covered,
+        canonical_metric_instrument, classify_cue_projection_outcome, classify_expectancy_result,
+        classify_reopt_error_severity, compute_candle_age_seconds, compute_expectancy_metrics,
+        compute_pair_funding_bps_per_event, compute_pair_slippage_sample_bps,
+        compute_walk_forward_summary, cue_for_pairs_response, days_covered,
         decide_candidate_probation_transition, decide_champion_transition,
         derive_paper_trades_from_series, derive_replay_trades_from_series,
         estimate_research_combinations, evaluate_recent_performance_gate,
@@ -10595,20 +10616,21 @@ mod tests {
         parse_trade_now_query, percentile, project_continuous_funding_bps, refresh_setup_gate,
         resolve_artifact_path, resolve_learning_overlay_policy, resolve_reoptimize_status,
         resolve_selected_signal_config, resolve_taker_fee_bps, retention_cutoff_ts,
-        selected_signal_config_from_expectancy, summarize_recent_performance, CandidateInboxQuery,
-        CandidateLifecycleState, CandidateOperatorAction, CandidateProbationInputs,
-        CandidateProbationRow, ChampionDecision, ExpectancyConfig, ExpectancyMetrics,
-        ExpectancyQuery, FundingCostEstimate, FundingRateInputMode, LearningOverlayApprovalSource,
+        selected_signal_config_from_expectancy, summarize_recent_performance,
+        update_persist_summary_for_transition, CandidateInboxQuery, CandidateLifecycleState,
+        CandidateOperatorAction, CandidateProbationInputs, CandidateProbationRow, ChampionDecision,
+        CueProjectionOutcome, ExpectancyConfig, ExpectancyMetrics, ExpectancyQuery,
+        FundingCostEstimate, FundingRateInputMode, LearningOverlayApprovalSource,
         LearningOverlayBlockedReason, LearningOverlayEntry, LearningOverlaySnapshot,
         LearningOverlayUniverseBucket, LearningOverlayWatchReason, LearningRecommendation,
         MaintenanceAction, OpportunityHistoryQuery, OpportunityHistoryStatsQuery, PaperTradesQuery,
-        PersistSummary, ReoptError, ReoptErrorSeverity, ReoptimizeResponse,
-        ReoptimizeRunStatus, ReplayTradeEntry, ReplayTradePathSummary, ReplayTradesQuery,
-        ResearchSweepRequest, SampledSlippageStatus, SelectedSignalRow,
-        SelectionTransitionCounts, StrategyMarketMetricsResponse, StrategyMetrics,
-        StrategySettings, TradeNowHistoricalQuality, TradeNowObservabilityStore, TradeNowQuery,
-        update_persist_summary_for_transition, LEARNING_OVERLAY_TTL_SECS,
-        SELECTED_CONFIG_SOURCE_LEGACY_FALLBACK, SELECTED_CONFIG_SOURCE_OPERATOR_PROMOTION,
+        PersistSummary, ReoptError, ReoptErrorSeverity, ReoptimizeResponse, ReoptimizeRunStatus,
+        ReplayTradeEntry, ReplayTradePathSummary, ReplayTradesQuery, ResearchSweepRequest,
+        SampledSlippageStatus, SelectedSignalRow, SelectionTransitionCounts,
+        StrategyMarketMetricsResponse, StrategyMetrics, StrategySettings,
+        TradeNowHistoricalQuality, TradeNowObservabilityStore, TradeNowQuery,
+        LEARNING_OVERLAY_TTL_SECS, SELECTED_CONFIG_SOURCE_LEGACY_FALLBACK,
+        SELECTED_CONFIG_SOURCE_OPERATOR_PROMOTION,
     };
     use axum::{routing::get, Json, Router};
     use chrono::{Duration, Utc};
@@ -10970,9 +10992,45 @@ mod tests {
     }
 
     #[test]
+    fn cue_projection_outcome_is_truthful_to_need_and_result() {
+        let no_champion = output("VOL_NORMALIZED", 2.0, 1.0, 2.0);
+        assert_eq!(
+            classify_cue_projection_outcome(&no_champion, false),
+            CueProjectionOutcome::NotRequired
+        );
+
+        let mut unchanged = output("ROBUST_Z", 2.0, 2.0, 1.0);
+        unchanged.stored_champion_variant = Some("ROBUST_Z".to_string());
+        assert_eq!(
+            classify_cue_projection_outcome(&unchanged, true),
+            CueProjectionOutcome::NotRequired
+        );
+
+        let mut projected = output("VOL_NORMALIZED", 2.0, 1.0, 2.0);
+        projected.stored_champion_variant = Some("ROBUST_Z".to_string());
+        projected.stored_champion_projection = Some(projected.cue.clone());
+        assert_eq!(
+            classify_cue_projection_outcome(&projected, false),
+            CueProjectionOutcome::Projected
+        );
+        assert_eq!(
+            classify_cue_projection_outcome(&projected, true),
+            CueProjectionOutcome::ProjectedBlocked
+        );
+
+        let mut failed = output("VOL_NORMALIZED", 2.0, 1.0, 2.0);
+        failed.stored_champion_variant = Some("ROBUST_Z".to_string());
+        assert_eq!(
+            classify_cue_projection_outcome(&failed, true),
+            CueProjectionOutcome::ProjectionFailed
+        );
+    }
+
+    #[test]
     fn strategy_metrics_render_projection_and_transition_counters() {
         let metrics = StrategyMetrics::new();
         metrics.record_cue_projection(CueProjectionOutcome::Projected);
+        metrics.record_cue_projection(CueProjectionOutcome::ProjectedBlocked);
         metrics.record_cue_projection(CueProjectionOutcome::ProjectionFailed);
         metrics.record_cue_projection(CueProjectionOutcome::ProjectionFailed);
 
@@ -10986,6 +11044,7 @@ mod tests {
 
         assert!(body.contains("# TYPE pairs_cue_projection_total counter"));
         assert!(body.contains("pairs_cue_projection_total{outcome=\"PROJECTED\"} 1"));
+        assert!(body.contains("pairs_cue_projection_total{outcome=\"PROJECTED_BLOCKED\"} 1"));
         assert!(body.contains("pairs_cue_projection_total{outcome=\"PROJECTION_FAILED\"} 2"));
         assert!(body.contains(
             "strategy_selection_transition_total{decision=\"INITIALIZE\",timeframe=\"1m\"} 1"
@@ -11056,6 +11115,7 @@ mod tests {
     fn reoptimize_response_serializes_transition_counts_at_top_level() {
         let payload = ReoptimizeResponse {
             generated_at: Utc::now(),
+            status: ReoptimizeRunStatus::Degraded.as_str().to_string(),
             timeframes: vec!["1m".to_string()],
             pairs_processed: 1,
             cues_generated: 1,
@@ -11075,9 +11135,22 @@ mod tests {
             cost_gate_fail: 0,
             portfolio_advice_available: 1,
             portfolio_advice_unavailable: 0,
+            critical_error_count: 0,
+            non_critical_error_count: 1,
+            timeframe_statuses: vec![super::ReoptimizeTimeframeStatus {
+                timeframe: "1m".to_string(),
+                status: ReoptimizeRunStatus::Degraded.as_str().to_string(),
+                pairs_evaluated: 1,
+                critical_error_count: 0,
+                non_critical_error_count: 1,
+                flatline_summary: super::ReoptFlatlineSummary::default(),
+            }],
+            flatline_summary: super::ReoptFlatlineSummary::default(),
             errors: vec![ReoptError {
                 pair_id: "PF_XBTUSD__PF_ETHUSD".to_string(),
                 timeframe: "1m".to_string(),
+                code: "EXAMPLE".to_string(),
+                severity: ReoptErrorSeverity::NonCritical.as_str().to_string(),
                 error: "example".to_string(),
             }],
         };
@@ -14051,6 +14124,7 @@ mod tests {
             trade_gate: TradeGateDiagnostics::unavailable(vec![]),
             portfolio_hint: PortfolioHint::unavailable(vec![]),
             shadow_ml: ShadowMlDiagnostics::unavailable(vec![]),
+            selection_state: None,
             selected_signal_config: selected_signal_config("COINTEGRATION_Z"),
             evaluated_at: Utc::now(),
         };

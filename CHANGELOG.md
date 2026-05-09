@@ -13,6 +13,7 @@ This project follows SemVer as defined in `docs/02-versioning-and-releases.md`.
 ### Added
 - Strategy service now exposes Prometheus-style `/metrics` counters for champion-selection observability:
   - `pairs_cue_projection_total{outcome}`
+    - records `PROJECTED_BLOCKED` separately when champion projection succeeds but drift blocking keeps the cue non-actionable
   - `strategy_selection_transition_total{decision,timeframe}`
   - `strategy_selection_rows_updated_without_transition_total{timeframe}`
 - Multi-agent operating model:
