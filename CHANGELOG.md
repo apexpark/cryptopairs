@@ -716,3 +716,5 @@ This project follows SemVer as defined in `docs/02-versioning-and-releases.md`.
   explicit rationale provenance, and preserves the raw live `net_edge_bps` display.
 - Trade-now observability now tracks surfaced `LEARNING_ELIGIBLE_OVERRIDE` rows and applied
   `LEARNING_SELECTION_COST_OVERRIDE_APPLIED` rows alongside challenger-bypass suppressions.
+- Strategy `trade-now` historical-quality aggregates now cast ratio columns to `DOUBLE PRECISION`,
+  preventing live endpoint panics when reading `win_rate` and `stop_rate` from Postgres.
