@@ -393,8 +393,8 @@ fn split_range_into_segments(
 #[cfg(test)]
 mod tests {
     use super::{
-        backfill_window_start, incremental_window_start, should_run_full_sweep,
-        retention_cutoff_ts, should_run_retention_prune, split_range_into_segments,
+        backfill_window_start, incremental_window_start, retention_cutoff_ts,
+        should_run_full_sweep, should_run_retention_prune, split_range_into_segments,
     };
     use crate::config::TimeframeDays;
     use chrono::{TimeZone, Utc};
