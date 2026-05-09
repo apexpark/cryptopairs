@@ -2021,9 +2021,21 @@ impl StrategyRepository {
                         COALESCE(SUM(net_bps), 0.0) AS sum_net_bps,
                         AVG(net_bps) AS avg_net_bps,
                         percentile_cont(0.5) WITHIN GROUP (ORDER BY net_bps) AS median_net_bps,
-                        AVG(CASE WHEN net_bps > 0 THEN 1.0 ELSE 0.0 END) AS win_rate,
+                        AVG(
+                            CASE
+                                WHEN net_bps > 0
+                                    THEN 1.0::DOUBLE PRECISION
+                                ELSE 0.0::DOUBLE PRECISION
+                            END
+                        ) AS win_rate,
                         AVG(bars_held::DOUBLE PRECISION) AS avg_bars_held,
-                        AVG(CASE WHEN exit_kind = 'stop' THEN 1.0 ELSE 0.0 END) AS stop_rate,
+                        AVG(
+                            CASE
+                                WHEN exit_kind = 'stop'
+                                    THEN 1.0::DOUBLE PRECISION
+                                ELSE 0.0::DOUBLE PRECISION
+                            END
+                        ) AS stop_rate,
                         MAX(exit_ts) AS last_exit_ts
                  FROM strategy_paper_trades_history
                  WHERE timeframe = $1
