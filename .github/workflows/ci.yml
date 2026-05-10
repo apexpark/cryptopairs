@@ -6,10 +6,25 @@ on:
     branches:
       - main
       - "codex/**"
+      - "claude/**"
 
 jobs:
   rust:
     runs-on: ubuntu-latest
+    services:
+      timescaledb:
+        image: timescale/timescaledb:2.16.1-pg16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d postgres"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -17,7 +32,13 @@ jobs:
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
         with:
+          toolchain: "1.95"
           components: rustfmt, clippy
+
+      - name: Verify Rust toolchain
+        run: |
+          rustup show active-toolchain
+          cargo --version
 
       - name: Cargo format
         run: cargo fmt --all -- --check
@@ -26,6 +47,9 @@ jobs:
         run: cargo clippy --workspace --all-targets -- -D warnings
 
       - name: Cargo test
+        env:
+          STRATEGY_TEST_DATABASE_URL: postgres://postgres:postgres@localhost:5432/postgres
+          CI: "true"
         run: cargo test --workspace
 
   python:

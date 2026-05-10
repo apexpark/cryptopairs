@@ -2573,7 +2573,7 @@ fn fold_spread_positions(events: &[SpreadLedgerEvent]) -> Vec<PortfolioPositionR
             })
         })
         .collect();
-    rows.sort_by(|left, right| right.updated_at.cmp(&left.updated_at));
+    rows.sort_by_key(|right| std::cmp::Reverse(right.updated_at));
     rows
 }
 

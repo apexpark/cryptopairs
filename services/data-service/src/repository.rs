@@ -8,6 +8,11 @@ use tokio_postgres::{types::ToSql, Client, NoTls};
 #[async_trait]
 pub trait MarketDataRepository: Send + Sync {
     async fn fetch_candles(&self, request: &DataQueryRequest) -> Result<Vec<Candle>>;
+    async fn fetch_latest_candle_ts(
+        &self,
+        instrument: &str,
+        timeframe: Timeframe,
+    ) -> Result<Option<DateTime<Utc>>>;
     async fn upsert_candles(
         &self,
         instrument: &str,
@@ -31,6 +36,7 @@ pub trait MarketDataRepository: Send + Sync {
         timeframe: Timeframe,
         cutoff_ts: DateTime<Utc>,
     ) -> Result<u64>;
+    async fn delete_trades_older_than(&self, cutoff_ts: DateTime<Utc>) -> Result<u64>;
 }
 
 #[derive(Debug, Clone)]
@@ -54,6 +60,17 @@ impl MarketDataRepository for UnconfiguredRepository {
         let _ = request;
         Err(anyhow!(
             "market data repository is not configured; wire TimescaleDB + Kraken backfill first"
+        ))
+    }
+
+    async fn fetch_latest_candle_ts(
+        &self,
+        instrument: &str,
+        timeframe: Timeframe,
+    ) -> Result<Option<DateTime<Utc>>> {
+        let _ = (instrument, timeframe);
+        Err(anyhow!(
+            "market data repository is not configured; latest candle lookup unavailable"
         ))
     }
 
@@ -107,6 +124,13 @@ impl MarketDataRepository for UnconfiguredRepository {
         let _ = (timeframe, cutoff_ts);
         Err(anyhow!(
             "market data repository is not configured; candle retention prune unavailable"
+        ))
+    }
+
+    async fn delete_trades_older_than(&self, cutoff_ts: DateTime<Utc>) -> Result<u64> {
+        let _ = cutoff_ts;
+        Err(anyhow!(
+            "market data repository is not configured; trade retention prune unavailable"
         ))
     }
 }
@@ -181,6 +205,25 @@ impl MarketDataRepository for PostgresMarketDataRepository {
                 volume: row.get(5),
             })
             .collect())
+    }
+
+    async fn fetch_latest_candle_ts(
+        &self,
+        instrument: &str,
+        timeframe: Timeframe,
+    ) -> Result<Option<DateTime<Utc>>> {
+        let row = self
+            .client
+            .query_one(
+                "SELECT MAX(ts) AS max_ts
+                 FROM candles
+                 WHERE instrument = $1
+                   AND timeframe = $2",
+                &[&instrument, &timeframe_string(timeframe)],
+            )
+            .await?;
+        let max_ts: Option<DateTime<Utc>> = row.get(0);
+        Ok(max_ts)
     }
 
     async fn upsert_candles(
@@ -303,6 +346,18 @@ impl MarketDataRepository for PostgresMarketDataRepository {
                  WHERE timeframe = $1
                    AND ts < $2",
                 &[&timeframe_string(timeframe), &cutoff_ts],
+            )
+            .await?;
+        Ok(deleted)
+    }
+
+    async fn delete_trades_older_than(&self, cutoff_ts: DateTime<Utc>) -> Result<u64> {
+        let deleted = self
+            .client
+            .execute(
+                "DELETE FROM trades
+                 WHERE ts < $1",
+                &[&cutoff_ts],
             )
             .await?;
         Ok(deleted)

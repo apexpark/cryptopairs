@@ -54,6 +54,39 @@ window:
 bash scripts/deploy.sh --services strategy-service --health-retries 30 --health-sleep-secs 2
 ```
 
+## Storage Retention Controls (Self-Hosted Timescale)
+
+To keep hosted storage bounded, set retention env keys in `/opt/cryptopairs/.env.hosted`:
+
+```bash
+BACKFILL_INTERVAL_SECONDS=60
+BACKFILL_WINDOW_DAYS_1M=90
+BACKFILL_WINDOW_DAYS_15M=365
+BACKFILL_WINDOW_DAYS_1H=730
+CANDLES_RETENTION_DAYS_1M=90
+CANDLES_RETENTION_DAYS_15M=365
+CANDLES_RETENTION_DAYS_1H=730
+TRADES_RETENTION_DAYS=120
+CANDLES_PRUNE_INTERVAL_SECONDS=3600
+STRATEGY_OPPORTUNITY_HISTORY_RETENTION_DAYS=180
+STRATEGY_PAPER_TRADES_HISTORY_RETENTION_DAYS=180
+STRATEGY_HISTORY_PRUNE_INTERVAL_SECONDS=3600
+```
+
+Apply updated settings:
+
+```bash
+cd /opt/cryptopairs
+bash scripts/deploy.sh --skip-pull --services data-service,strategy-service
+```
+
+Verify bounded-growth settings are live:
+
+```bash
+docker exec cryptopairs-data-service printenv | rg 'TRADES_RETENTION_DAYS|CANDLES_PRUNE_INTERVAL_SECONDS'
+docker exec cryptopairs-strategy-service printenv | rg 'STRATEGY_OPPORTUNITY_HISTORY_RETENTION_DAYS|STRATEGY_PAPER_TRADES_HISTORY_RETENTION_DAYS|STRATEGY_HISTORY_PRUNE_INTERVAL_SECONDS'
+```
+
 ## Web Password Gate (UI Login Box)
 
 The web app can require a password before loading any dashboard content.

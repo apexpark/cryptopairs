@@ -1,22 +1,66 @@
 use crate::{config::TimeframeDays, normalize_request_window, AppState};
 use chrono::{DateTime, Duration, Utc};
 use common_types::{DataQueryRequest, Timeframe};
+use std::collections::HashMap;
 use tokio::time::{sleep, Duration as TokioDuration};
 use tracing::{info, warn};
 
 const KRAKEN_MAX_CANDLES_PER_REQUEST: i64 = 2000;
+const BACKFILL_FULL_SWEEP_BOOTSTRAP_SECONDS: u64 = 300;
 
+#[derive(Debug, Clone, Hash, PartialEq, Eq)]
+struct BackfillKey {
+    instrument: String,
+    timeframe: Timeframe,
+}
+
+#[derive(Debug, Clone, Copy)]
+enum BackfillMode {
+    Incremental,
+    FullSweep,
+    Bootstrap,
+}
+
+impl BackfillMode {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Incremental => "incremental",
+            Self::FullSweep => "full_sweep",
+            Self::Bootstrap => "bootstrap",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Default)]
+struct BackfillWindowResult {
+    total_written: usize,
+    latest_ts: Option<DateTime<Utc>>,
+}
+
+#[allow(clippy::too_many_arguments)]
 pub fn spawn_backfill_worker(
     state: AppState,
     symbols: Vec<String>,
     interval_seconds: u64,
+    overlap_steps: i64,
+    full_sweep_interval_seconds: u64,
     backfill_window_days: TimeframeDays,
     candles_retention_days: TimeframeDays,
+    trades_retention_days: u64,
     prune_interval_seconds: u64,
 ) -> tokio::task::JoinHandle<()> {
     tokio::spawn(async move {
         let mut last_prune_at: Option<DateTime<Utc>> = None;
+        let mut last_full_sweep_at: Option<DateTime<Utc>> = None;
+        let mut latest_cursors: HashMap<BackfillKey, DateTime<Utc>> = HashMap::new();
         loop {
+            let cycle_started_at = Utc::now();
+            let run_full_sweep = should_run_full_sweep(
+                last_full_sweep_at,
+                cycle_started_at,
+                full_sweep_interval_seconds,
+            );
+            let mut cycle_written = 0usize;
             for symbol in &symbols {
                 for timeframe in [
                     Timeframe::OneMinute,
@@ -25,27 +69,100 @@ pub fn spawn_backfill_worker(
                 ] {
                     let now = Utc::now();
                     let window_start = backfill_window_start(now, timeframe, backfill_window_days);
+                    let key = BackfillKey {
+                        instrument: symbol.clone(),
+                        timeframe,
+                    };
+                    let (start_ts, mode) = if run_full_sweep {
+                        (window_start, BackfillMode::FullSweep)
+                    } else {
+                        let latest_ts = match latest_cursors.get(&key).copied() {
+                            Some(ts) => Some(ts),
+                            None => match state
+                                .repository
+                                .fetch_latest_candle_ts(symbol, timeframe)
+                                .await
+                            {
+                                Ok(ts) => {
+                                    if let Some(latest) = ts {
+                                        latest_cursors.insert(key.clone(), latest);
+                                    }
+                                    ts
+                                }
+                                Err(error) => {
+                                    warn!(
+                                        instrument = %symbol,
+                                        timeframe = %timeframe.as_str(),
+                                        error = %error,
+                                        "backfill worker failed to load latest candle cursor"
+                                    );
+                                    None
+                                }
+                            },
+                        };
+
+                        match latest_ts {
+                            Some(last_ts) => (
+                                incremental_window_start(
+                                    last_ts,
+                                    timeframe,
+                                    overlap_steps,
+                                    window_start,
+                                    now,
+                                ),
+                                BackfillMode::Incremental,
+                            ),
+                            None => (window_start, BackfillMode::Bootstrap),
+                        }
+                    };
                     let request = DataQueryRequest {
                         instrument: symbol.clone(),
                         timeframe,
-                        start_ts: window_start,
+                        start_ts,
                         end_ts: now,
                     };
 
-                    if let Err(error) = backfill_window(&state, &request).await {
-                        warn!(
-                            instrument = %symbol,
-                            timeframe = ?timeframe,
-                            error = %error,
-                            "backfill worker failed for window"
-                        );
+                    match backfill_window(&state, &request).await {
+                        Ok(result) => {
+                            cycle_written = cycle_written.saturating_add(result.total_written);
+                            if let Some(latest_ts) = result.latest_ts {
+                                latest_cursors.insert(key, latest_ts);
+                            }
+                            if result.total_written > 0 {
+                                info!(
+                                    instrument = %symbol,
+                                    timeframe = %timeframe.as_str(),
+                                    mode = %mode.as_str(),
+                                    start_ts = %request.start_ts,
+                                    end_ts = %request.end_ts,
+                                    total_written = result.total_written,
+                                    "backfill worker persisted candles"
+                                );
+                            }
+                        }
+                        Err(error) => {
+                            warn!(
+                                instrument = %symbol,
+                                timeframe = ?timeframe,
+                                mode = %mode.as_str(),
+                                start_ts = %request.start_ts,
+                                end_ts = %request.end_ts,
+                                error = %error,
+                                "backfill worker failed for window"
+                            );
+                        }
                     }
                 }
+            }
+            if run_full_sweep {
+                last_full_sweep_at = Some(cycle_started_at);
             }
 
             let now = Utc::now();
             if should_run_retention_prune(last_prune_at, now, prune_interval_seconds) {
-                match prune_expired_candles(&state, now, candles_retention_days).await {
+                match prune_expired_data(&state, now, candles_retention_days, trades_retention_days)
+                    .await
+                {
                     Ok(_) => {
                         last_prune_at = Some(now);
                     }
@@ -58,12 +175,24 @@ pub fn spawn_backfill_worker(
                 }
             }
 
+            let cycle_elapsed_seconds = now.signed_duration_since(cycle_started_at).num_seconds();
+            info!(
+                run_full_sweep,
+                cycle_elapsed_seconds,
+                cycle_written,
+                tracked_cursors = latest_cursors.len(),
+                "backfill worker cycle completed"
+            );
+
             sleep(TokioDuration::from_secs(interval_seconds)).await;
         }
     })
 }
 
-async fn backfill_window(state: &AppState, request: &DataQueryRequest) -> anyhow::Result<()> {
+async fn backfill_window(
+    state: &AppState,
+    request: &DataQueryRequest,
+) -> anyhow::Result<BackfillWindowResult> {
     let normalized_request = normalize_request_window(request);
     let local = state.repository.fetch_candles(&normalized_request).await?;
     let report = crate::gap_detector::build_integrity_report(
@@ -72,7 +201,10 @@ async fn backfill_window(state: &AppState, request: &DataQueryRequest) -> anyhow
         state.integrity_threshold_pct,
     );
     if report.missing_ranges.is_empty() {
-        return Ok(());
+        return Ok(BackfillWindowResult {
+            total_written: 0,
+            latest_ts: local.last().map(|candle| candle.ts),
+        });
     }
 
     let mut total_written = 0usize;
@@ -119,13 +251,6 @@ async fn backfill_window(state: &AppState, request: &DataQueryRequest) -> anyhow
         }
     }
 
-    info!(
-        instrument = %normalized_request.instrument,
-        timeframe = ?normalized_request.timeframe,
-        total_written,
-        "backfill worker persisted candles"
-    );
-
     let refreshed = state.repository.fetch_candles(&normalized_request).await?;
     let refreshed_report = crate::gap_detector::build_integrity_report(
         &normalized_request,
@@ -136,7 +261,10 @@ async fn backfill_window(state: &AppState, request: &DataQueryRequest) -> anyhow
         .repository
         .record_quality_interval(&normalized_request, &refreshed_report)
         .await?;
-    Ok(())
+    Ok(BackfillWindowResult {
+        total_written,
+        latest_ts: refreshed.last().map(|candle| candle.ts),
+    })
 }
 
 fn backfill_window_start(
@@ -145,6 +273,34 @@ fn backfill_window_start(
     backfill_window_days: TimeframeDays,
 ) -> DateTime<Utc> {
     now - Duration::days(backfill_window_days.days_for(timeframe))
+}
+
+fn incremental_window_start(
+    last_seen_ts: DateTime<Utc>,
+    timeframe: Timeframe,
+    overlap_steps: i64,
+    lower_bound: DateTime<Utc>,
+    upper_bound: DateTime<Utc>,
+) -> DateTime<Utc> {
+    let step_seconds = timeframe.step_seconds().max(1);
+    let overlap = Duration::seconds(step_seconds.saturating_mul(overlap_steps.max(1)));
+    let with_overlap = last_seen_ts - overlap;
+    let clamped = std::cmp::max(with_overlap, lower_bound);
+    std::cmp::min(clamped, upper_bound)
+}
+
+fn should_run_full_sweep(
+    last_full_sweep_at: Option<DateTime<Utc>>,
+    now: DateTime<Utc>,
+    full_sweep_interval_seconds: u64,
+) -> bool {
+    match last_full_sweep_at {
+        None => true,
+        Some(last) => {
+            now.signed_duration_since(last).num_seconds()
+                >= full_sweep_interval_seconds.max(BACKFILL_FULL_SWEEP_BOOTSTRAP_SECONDS) as i64
+        }
+    }
 }
 
 fn should_run_retention_prune(
@@ -187,6 +343,32 @@ async fn prune_expired_candles(
     Ok(())
 }
 
+fn retention_cutoff_ts(now: DateTime<Utc>, retention_days: u64) -> DateTime<Utc> {
+    now - Duration::days(retention_days.max(1) as i64)
+}
+
+async fn prune_expired_data(
+    state: &AppState,
+    now: DateTime<Utc>,
+    candle_retention_days: TimeframeDays,
+    trades_retention_days: u64,
+) -> anyhow::Result<()> {
+    prune_expired_candles(state, now, candle_retention_days).await?;
+
+    let trades_cutoff_ts = retention_cutoff_ts(now, trades_retention_days);
+    let deleted = state
+        .repository
+        .delete_trades_older_than(trades_cutoff_ts)
+        .await?;
+    info!(
+        retention_days = trades_retention_days.max(1),
+        cutoff_ts = %trades_cutoff_ts,
+        rows_deleted = deleted,
+        "trade retention prune completed"
+    );
+    Ok(())
+}
+
 fn split_range_into_segments(
     start_ts: DateTime<Utc>,
     end_ts: DateTime<Utc>,
@@ -210,7 +392,10 @@ fn split_range_into_segments(
 
 #[cfg(test)]
 mod tests {
-    use super::{backfill_window_start, should_run_retention_prune, split_range_into_segments};
+    use super::{
+        backfill_window_start, incremental_window_start, retention_cutoff_ts,
+        should_run_full_sweep, should_run_retention_prune, split_range_into_segments,
+    };
     use crate::config::TimeframeDays;
     use chrono::{TimeZone, Utc};
     use common_types::Timeframe;
@@ -284,5 +469,65 @@ mod tests {
         assert!(should_run_retention_prune(None, now, 3_600));
         assert!(!should_run_retention_prune(Some(last), now, 3_600));
         assert!(should_run_retention_prune(Some(last), now, 900));
+    }
+
+    #[test]
+    fn retention_cutoff_clamps_to_minimum_day() {
+        let now = Utc
+            .timestamp_opt(1_700_000_000, 0)
+            .single()
+            .expect("valid timestamp");
+        let cutoff = retention_cutoff_ts(now, 0);
+        assert_eq!(now.signed_duration_since(cutoff).num_days(), 1);
+    }
+
+    #[test]
+    fn incremental_window_start_applies_overlap_and_bounds() {
+        let lower = Utc
+            .timestamp_opt(1_700_000_000, 0)
+            .single()
+            .expect("valid timestamp");
+        let last = lower + chrono::Duration::minutes(10);
+        let upper = lower + chrono::Duration::minutes(12);
+
+        let start = incremental_window_start(last, Timeframe::OneMinute, 2, lower, upper);
+        assert_eq!(start, lower + chrono::Duration::minutes(8));
+
+        let clamped_lower = incremental_window_start(
+            lower + chrono::Duration::minutes(1),
+            Timeframe::OneMinute,
+            4,
+            lower,
+            upper,
+        );
+        assert_eq!(clamped_lower, lower);
+
+        let clamped_upper = incremental_window_start(
+            upper + chrono::Duration::minutes(5),
+            Timeframe::OneMinute,
+            2,
+            lower,
+            upper,
+        );
+        assert_eq!(clamped_upper, upper);
+    }
+
+    #[test]
+    fn full_sweep_interval_respected() {
+        let now = Utc
+            .timestamp_opt(1_700_000_000, 0)
+            .single()
+            .expect("valid timestamp");
+        assert!(should_run_full_sweep(None, now, 10_800));
+        assert!(!should_run_full_sweep(
+            Some(now - chrono::Duration::seconds(120)),
+            now,
+            10_800
+        ));
+        assert!(should_run_full_sweep(
+            Some(now - chrono::Duration::seconds(10_900)),
+            now,
+            10_800
+        ));
     }
 }

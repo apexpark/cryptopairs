@@ -51,6 +51,27 @@ export interface ShadowMl {
   rationale_codes: string[];
 }
 
+export interface CueSelectionState {
+  best_variant: string;
+  best_opportunity_score: number;
+  best_direction_hint: DirectionHint;
+  best_confidence_band: "LOW" | "MEDIUM" | "HIGH";
+  stored_champion_variant: string | null;
+  stored_champion_score: number | null;
+  stored_champion_direction_hint: DirectionHint | null;
+  stored_champion_confidence_band: "LOW" | "MEDIUM" | "HIGH" | null;
+  transition_decision: "INITIALIZE" | "UNCHANGED" | "KEEP_CHAMPION" | "PROMOTE_CHALLENGER";
+  score_delta_to_champion: number | null;
+  drift_active: boolean;
+  source: "EVALUATED_BEST" | "STORED_CHAMPION_PROJECTION";
+  validation_state:
+    | "NO_STORED_CHAMPION"
+    | "BEST_IS_CHAMPION"
+    | "CHAMPION_PROJECTED"
+    | "CHAMPION_PROJECTED_BLOCKED"
+    | "CHAMPION_PROJECTION_FAILED";
+}
+
 export interface Cue {
   pair_id: string;
   left_instrument: string;
@@ -75,6 +96,7 @@ export interface Cue {
   trade_gate?: TradeGate;
   portfolio_hint: PortfolioHint;
   shadow_ml: ShadowMl;
+  selection_state?: CueSelectionState;
   evaluated_at: string;
 }
 
@@ -129,6 +151,59 @@ export interface StrategyPairsCuesResponse {
   skipped: Array<{ pair_id: string; reason: string }>;
 }
 
+export type TradeNowDecisionBucket = "TRADE_NOW" | "WATCHLIST" | "EXCLUDED";
+export type TradeNowApprovalSource =
+  | "LEARNING_SELECTION"
+  | "LEARNING_ELIGIBLE_OVERRIDE"
+  | "OPERATOR_PROMOTED_ACTIVE_CHAMPION"
+  | "NONE";
+
+export interface StrategyPairsTradeNowRow {
+  pair_id: string;
+  left_instrument: string;
+  right_instrument: string;
+  timeframe: Timeframe;
+  selected_variant: string;
+  direction_hint: DirectionHint;
+  spread_z: number;
+  opportunity_score: number;
+  confidence_band: "LOW" | "MEDIUM" | "HIGH";
+  expected_hold_bars: number;
+  net_edge_bps: number;
+  setup_gate_pass: boolean;
+  cost_gate_pass: boolean;
+  trade_gate_pass: boolean;
+  open_live_trade: boolean;
+  portfolio_target_weight: number | null;
+  portfolio_risk_contribution: number | null;
+  approval_source: TradeNowApprovalSource;
+  requires_fresh_overlay: boolean;
+  learning_recommendation: string | null;
+  learning_trade_eligible: boolean | null;
+  learning_selection_selected: boolean | null;
+  learning_reason_codes: string[];
+  learning_cycle_generated_at: string | null;
+  selected_config_source: string;
+  legacy_fallback_active: boolean;
+  decision_bucket: TradeNowDecisionBucket;
+  decision_reason_code: string;
+  blocked_reason_code: string | null;
+  watch_reason_code: string | null;
+  rationale_codes: string[];
+}
+
+export interface StrategyPairsTradeNowResponse {
+  generated_at: string;
+  timeframe_filter: Timeframe | null;
+  learning_overlay_generated_at: string | null;
+  learning_overlay_age_seconds: number | null;
+  learning_overlay_fresh: boolean;
+  learning_overlay_ttl_seconds: number;
+  tradable_now: StrategyPairsTradeNowRow[];
+  watchlist: StrategyPairsTradeNowRow[];
+  excluded: StrategyPairsTradeNowRow[];
+}
+
 export interface StrategyPairsOpportunityHistoryResponse {
   timeframe: Timeframe;
   generated_at: string;
@@ -150,6 +225,22 @@ export interface StrategyPairsOpportunityHistoryResponse {
     rationale_codes: string[];
     cost_gate_rationale_codes: string[];
     evaluated_at: string;
+  }>;
+}
+
+export interface StrategyPairsOpportunityHistoryStatsResponse {
+  generated_at: string;
+  timeframe_filter: Timeframe | null;
+  total_rows: number;
+  first_evaluated_at: string | null;
+  last_evaluated_at: string | null;
+  days_covered: number;
+  by_timeframe: Array<{
+    timeframe: Timeframe;
+    rows: number;
+    first_evaluated_at: string | null;
+    last_evaluated_at: string | null;
+    days_covered: number;
   }>;
 }
 

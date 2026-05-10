@@ -5,7 +5,19 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 CHECK_SCRIPT="$ROOT_DIR/scripts/check-rust-ci.sh"
 
 if [[ "${SKIP_RUST_CHECKS:-0}" == "1" ]]; then
-  echo "[pre-push] SKIP_RUST_CHECKS=1 set; skipping Rust CI preflight."
+  echo "[pre-push] SKIP_RUST_CHECKS=1 is no longer supported; use RUST_PREFLIGHT_OVERRIDE='<reason>'." >&2
+  exit 1
+fi
+
+if [[ -n "${RUST_PREFLIGHT_OVERRIDE:-}" ]]; then
+  case "$RUST_PREFLIGHT_OVERRIDE" in
+    1|true|TRUE|yes|YES)
+      echo "[pre-push] RUST_PREFLIGHT_OVERRIDE must be a reason, not a boolean." >&2
+      exit 1
+      ;;
+  esac
+
+  echo "[pre-push] RUST_PREFLIGHT_OVERRIDE set; skipping Rust CI preflight. Reason: $RUST_PREFLIGHT_OVERRIDE"
   exit 0
 fi
 
@@ -13,6 +25,63 @@ if [[ ! -x "$CHECK_SCRIPT" ]]; then
   echo "[pre-push] Missing executable preflight script: $CHECK_SCRIPT"
   echo "[pre-push] Run: chmod +x scripts/check-rust-ci.sh"
   exit 1
+fi
+
+AUTOSTASH_REF=""
+
+restore_autostash() {
+  local status=$?
+  local trap_reason="${1:-EXIT}"
+
+  case "$trap_reason" in
+    INT)
+      status=130
+      ;;
+    TERM)
+      status=143
+      ;;
+  esac
+
+  trap - EXIT INT TERM
+
+  if [[ -n "$AUTOSTASH_REF" ]]; then
+    # Reset before `stash pop --index` so same-path staged+unstaged edits
+    # restore to their original split instead of merging over the staged file.
+    if ! git reset --hard --quiet HEAD; then
+      echo "[pre-push] ERROR: failed to prepare for pre-push autostash restore ($AUTOSTASH_REF). Your work is preserved in git stash list; resolve with: git stash pop --index $AUTOSTASH_REF" >&2
+      exit 1
+    fi
+
+    if ! git stash pop --index --quiet "$AUTOSTASH_REF"; then
+      echo "[pre-push] ERROR: failed to restore pre-push autostash ($AUTOSTASH_REF). Your work is preserved in git stash list; resolve with: git stash pop --index $AUTOSTASH_REF" >&2
+      exit 1
+    fi
+  fi
+
+  exit "$status"
+}
+
+UNTRACKED_FILES="$(git ls-files --others --exclude-standard)"
+NEEDS_AUTOSTASH=0
+
+if git diff --quiet && git diff --cached --quiet && [[ -z "$UNTRACKED_FILES" ]]; then
+  NEEDS_AUTOSTASH=0
+elif ! git diff --quiet || [[ -n "$UNTRACKED_FILES" ]]; then
+  NEEDS_AUTOSTASH=1
+fi
+
+if [[ "$NEEDS_AUTOSTASH" == "1" ]]; then
+  git stash push --keep-index --include-untracked --quiet --message "pre-push autostash"
+  AUTOSTASH_REF="$(git stash list --format="%gd" | head -n 1)"
+
+  if [[ -z "$AUTOSTASH_REF" ]]; then
+    echo "[pre-push] ERROR: git stash did not create a pre-push autostash." >&2
+    exit 1
+  fi
+
+  trap 'restore_autostash EXIT' EXIT
+  trap 'restore_autostash INT' INT
+  trap 'restore_autostash TERM' TERM
 fi
 
 echo "[pre-push] Reminder: running Rust CI preflight before push."

@@ -1,0 +1,122 @@
+{
+  "schema_version": "1.0.0",
+  "generated_at": "2026-03-16T02:15:00Z",
+  "cycle_index": 12,
+  "strategy_service_url": "http://127.0.0.1:18083",
+  "policy_path": "infra/config/signal_learning_policy.json",
+  "state_path": "artifacts/signal_learning/state.json",
+  "logic_path": "artifacts/signal_learning/signal_logic.json",
+  "timeframes": ["1m", "15m", "1h"],
+  "summary": {
+    "pairs_evaluated": 48,
+    "promote_recommendations": 7,
+    "demote_recommendations": 4,
+    "hold_recommendations": 37,
+    "mutated_pairs": 3,
+    "trade_eligible_timeframes": 6,
+    "pairs_with_consensus": 4,
+    "pairs_with_veto": 1,
+    "hard_veto_timeframes": 1,
+    "selection_selected_count": 3,
+    "degraded_timeframes": 0
+  },
+  "selection": {
+    "enabled": true,
+    "candidate_count": 9,
+    "qualified_count": 7,
+    "selected_count": 3,
+    "selected_with_paper_low_sample_count": 1,
+    "top1_dwell_cycles_by_pair_tf": {
+      "PF_XBTUSD__PF_SOLUSD|1m": 6,
+      "PF_SOLUSD__PF_AVAXUSD|1h": 4
+    },
+    "selection_turnover_rate": 0.14,
+    "top_1": {
+      "pair_id": "PF_XBTUSD__PF_SOLUSD",
+      "timeframe": "1m",
+      "selection_utility": 0.7835,
+      "confidence": 0.83,
+      "combined_robust_net_bps": 5.82,
+      "combined_trades": 144,
+      "reason_codes": [
+        "POSITIVE_STABILITY_CONFIRMED"
+      ],
+      "arbitration_reason_codes": []
+    },
+    "top_k": [
+      {
+        "pair_id": "PF_XBTUSD__PF_SOLUSD",
+        "timeframe": "1m",
+        "selection_utility": 0.7835,
+        "confidence": 0.83,
+        "combined_robust_net_bps": 5.82,
+        "combined_trades": 144,
+        "reason_codes": [
+          "POSITIVE_STABILITY_CONFIRMED"
+        ],
+        "arbitration_reason_codes": []
+      }
+    ]
+  },
+  "timeframe_reports": [
+    {
+      "timeframe": "1m",
+      "status": "OK",
+      "pair_count": 16,
+      "selected_count": 1,
+      "errors": [],
+      "pairs": [
+        {
+          "pair_id": "PF_XBTUSD__PF_SOLUSD",
+          "timeframe": "1m",
+          "recommendation": "PROMOTE",
+          "confidence": 0.83,
+          "cycle_score": 0.42,
+          "combined_avg_net_bps": 6.31,
+          "combined_robust_net_bps": 5.82,
+          "combined_trades": 44,
+          "entry_band_multiplier": 0.95,
+          "size_multiplier": 1.1,
+          "size_cap_tier": "MID",
+          "enabled": true,
+          "trade_eligible": true,
+          "selection_utility": 0.7835,
+          "selection_selected": true,
+          "mutated": true,
+          "reason_codes": [
+            "POSITIVE_STABILITY_CONFIRMED",
+            "PROMOTE_MUTATION_APPLIED"
+          ],
+          "arbitration_reason_codes": [],
+          "hard_veto_active": false,
+          "hard_veto_reason": null
+        },
+        {
+          "pair_id": "PF_XBTUSD__PF_ADAUSD",
+          "timeframe": "1m",
+          "recommendation": "PROMOTE",
+          "confidence": 0.86,
+          "cycle_score": 0.38,
+          "combined_avg_net_bps": 4.52,
+          "combined_robust_net_bps": 4.05,
+          "combined_trades": 112,
+          "entry_band_multiplier": 1.0,
+          "size_multiplier": 0.9,
+          "size_cap_tier": "LOW",
+          "enabled": true,
+          "trade_eligible": false,
+          "selection_utility": null,
+          "selection_selected": false,
+          "mutated": false,
+          "reason_codes": [
+            "POSITIVE_STABILITY_CONFIRMED",
+            "PAIR_CROSS_TF_CONSENSUS_NOT_MET"
+          ],
+          "arbitration_reason_codes": [
+            "PAIR_CROSS_TF_CONSENSUS_NOT_MET"
+          ]
+        }
+      ]
+    }
+  ]
+}

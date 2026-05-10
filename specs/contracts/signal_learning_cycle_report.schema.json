@@ -1,0 +1,196 @@
+{
+  "$id": "https://cryptopairs/specs/contracts/signal_learning_cycle_report.schema.json",
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "SignalLearningCycleReport",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "generated_at",
+    "cycle_index",
+    "strategy_service_url",
+    "policy_path",
+    "summary",
+    "selection",
+    "timeframe_reports"
+  ],
+  "properties": {
+    "schema_version": {
+      "type": "string"
+    },
+    "generated_at": {
+      "type": "string"
+    },
+    "cycle_index": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "strategy_service_url": {
+      "type": "string"
+    },
+    "policy_path": {
+      "type": "string"
+    },
+    "state_path": {
+      "type": "string"
+    },
+    "logic_path": {
+      "type": "string"
+    },
+    "timeframes": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "enum": ["1m", "15m", "1h"]
+      }
+    },
+    "summary": {
+      "type": "object",
+      "required": [
+        "pairs_evaluated",
+        "promote_recommendations",
+        "demote_recommendations",
+        "hold_recommendations",
+        "mutated_pairs",
+        "trade_eligible_timeframes",
+        "pairs_with_consensus",
+        "pairs_with_veto",
+        "hard_veto_timeframes",
+        "selection_selected_count",
+        "degraded_timeframes"
+      ],
+      "properties": {
+        "pairs_evaluated": { "type": "integer", "minimum": 0 },
+        "promote_recommendations": { "type": "integer", "minimum": 0 },
+        "demote_recommendations": { "type": "integer", "minimum": 0 },
+        "hold_recommendations": { "type": "integer", "minimum": 0 },
+        "mutated_pairs": { "type": "integer", "minimum": 0 },
+        "trade_eligible_timeframes": { "type": "integer", "minimum": 0 },
+        "pairs_with_consensus": { "type": "integer", "minimum": 0 },
+        "pairs_with_veto": { "type": "integer", "minimum": 0 },
+        "hard_veto_timeframes": { "type": "integer", "minimum": 0 },
+        "selection_selected_count": { "type": "integer", "minimum": 0 },
+        "degraded_timeframes": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "selection": {
+      "type": "object",
+      "required": [
+        "enabled",
+        "candidate_count",
+        "qualified_count",
+        "selected_count",
+        "selected_with_paper_low_sample_count",
+        "top1_dwell_cycles_by_pair_tf",
+        "selection_turnover_rate",
+        "top_1",
+        "top_k"
+      ],
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "candidate_count": { "type": "integer", "minimum": 0 },
+        "qualified_count": { "type": "integer", "minimum": 0 },
+        "selected_count": { "type": "integer", "minimum": 0 },
+        "selected_with_paper_low_sample_count": { "type": "integer", "minimum": 0 },
+        "top1_dwell_cycles_by_pair_tf": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "selection_turnover_rate": { "type": "number", "minimum": 0.0 },
+        "top_1": {
+          "type": ["object", "null"]
+        },
+        "top_k": {
+          "type": "array",
+          "items": { "type": "object" }
+        }
+      }
+    },
+    "timeframe_reports": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["timeframe", "status", "pairs"],
+        "properties": {
+          "timeframe": {
+            "type": "string",
+            "enum": ["1m", "15m", "1h"]
+          },
+          "status": {
+            "type": "string",
+            "enum": ["OK", "DEGRADED", "ERROR"]
+          },
+          "pair_count": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "selected_count": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "errors": {
+            "type": "array",
+            "items": { "type": "object" }
+          },
+          "pairs": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": [
+                "pair_id",
+                "timeframe",
+                "recommendation",
+                "confidence",
+                "cycle_score",
+                "combined_avg_net_bps",
+                "combined_robust_net_bps",
+                "combined_trades",
+                "trade_eligible",
+                "mutated"
+              ],
+              "properties": {
+                "pair_id": { "type": "string" },
+                "timeframe": {
+                  "type": "string",
+                  "enum": ["1m", "15m", "1h"]
+                },
+                "recommendation": {
+                  "type": "string",
+                  "enum": ["PROMOTE", "DEMOTE", "HOLD"]
+                },
+                "confidence": { "type": "number" },
+                "cycle_score": { "type": "number" },
+                "combined_avg_net_bps": { "type": "number" },
+                "combined_robust_net_bps": { "type": "number" },
+                "combined_trades": { "type": "integer", "minimum": 0 },
+                "entry_band_multiplier": { "type": "number" },
+                "size_multiplier": { "type": "number" },
+                "size_cap_tier": {
+                  "type": "string",
+                  "enum": ["HIGH", "MID", "LOW"]
+                },
+                "enabled": { "type": "boolean" },
+                "trade_eligible": { "type": "boolean" },
+                "selection_utility": { "type": ["number", "null"] },
+                "selection_selected": { "type": "boolean" },
+                "mutated": { "type": "boolean" },
+                "reason_codes": {
+                  "type": "array",
+                  "items": { "type": "string" }
+                },
+                "arbitration_reason_codes": {
+                  "type": "array",
+                  "items": { "type": "string" }
+                },
+                "hard_veto_active": { "type": "boolean" },
+                "hard_veto_reason": { "type": ["string", "null"] }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

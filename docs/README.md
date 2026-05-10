@@ -47,6 +47,8 @@ If instructions conflict, use this order:
 - `docs/20-alpha-delivery-control.md`
 - `docs/21-hosted-deployment-control.md`
 - `docs/22-strategy-tuning-control.md`
+- `docs/23-autonomous-optimizer-roadmap.md`
+- `docs/24-trade-now-opportunity-proposal.md`
 - `docs/playbooks/backfill-runbook.md`
 - `docs/playbooks/incident-runbook.md`
 - `docs/playbooks/execution-operations-runbook.md`
