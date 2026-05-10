@@ -217,15 +217,14 @@
       "learning_selection_selected": null,
       "learning_reason_codes": [],
       "learning_cycle_generated_at": null,
-      "selected_config_source": "LEGACY_ROW_FALLBACK",
-      "legacy_fallback_active": true,
+      "selected_config_source": "RECANONICALIZED_LEGACY_ROW",
+      "legacy_fallback_active": false,
       "decision_bucket": "EXCLUDED",
       "decision_reason_code": "PROVENANCE_POLICY_BLOCKED",
-      "blocked_reason_code": "LEGACY_FALLBACK_ACTIVE",
+      "blocked_reason_code": "RECANONICALIZED_LEGACY_ROW_ACTIVE",
       "watch_reason_code": null,
       "rationale_codes": [
-        "LEGACY_FALLBACK_ACTIVE",
-        "OUTSIDE_APPROVED_UNIVERSE"
+        "RECANONICALIZED_LEGACY_ROW_ACTIVE"
       ]
     },
     {

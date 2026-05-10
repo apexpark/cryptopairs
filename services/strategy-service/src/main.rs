@@ -467,6 +467,7 @@ impl StrategySettings {
 }
 
 const SELECTED_CONFIG_SOURCE_LEGACY_FALLBACK: &str = "LEGACY_ROW_FALLBACK";
+const SELECTED_CONFIG_SOURCE_RECANONICALIZED_LEGACY_ROW: &str = "RECANONICALIZED_LEGACY_ROW";
 const SELECTED_CONFIG_SOURCE_OPERATOR_PROMOTION: &str = "OPERATOR_PROMOTION";
 
 fn default_selected_signal_config(
@@ -1136,6 +1137,7 @@ enum LearningOverlayUniverseBucket {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum LearningOverlayBlockedReason {
     LegacyFallbackActive,
+    RecanonicalizedLegacyRowActive,
     PendingChallengerRequiresPromotion,
     OutsideApprovedUniverse,
 }
@@ -1320,12 +1322,20 @@ fn resolve_learning_overlay_policy(
         .map(|entry| entry.learning_reason_codes.clone())
         .unwrap_or_default();
 
-    if selected_config_source == SELECTED_CONFIG_SOURCE_LEGACY_FALLBACK {
+    if selected_config_source == SELECTED_CONFIG_SOURCE_LEGACY_FALLBACK
+        || selected_config_source == SELECTED_CONFIG_SOURCE_RECANONICALIZED_LEGACY_ROW
+    {
         return LearningOverlayPolicyDecision {
             approval_source: LearningOverlayApprovalSource::None,
             bucket: LearningOverlayUniverseBucket::Excluded,
             requires_fresh_overlay: false,
-            blocked_reason: Some(LearningOverlayBlockedReason::LegacyFallbackActive),
+            blocked_reason: Some(
+                if selected_config_source == SELECTED_CONFIG_SOURCE_LEGACY_FALLBACK {
+                    LearningOverlayBlockedReason::LegacyFallbackActive
+                } else {
+                    LearningOverlayBlockedReason::RecanonicalizedLegacyRowActive
+                },
+            ),
             watch_reason: None,
             learning_recommendation,
             learning_trade_eligible,
@@ -6407,6 +6417,9 @@ async fn fetch_open_live_trade_pairs(
 fn resolve_trade_now_blocked_reason_code(policy: &LearningOverlayPolicyDecision) -> &'static str {
     match policy.blocked_reason {
         Some(LearningOverlayBlockedReason::LegacyFallbackActive) => "LEGACY_FALLBACK_ACTIVE",
+        Some(LearningOverlayBlockedReason::RecanonicalizedLegacyRowActive) => {
+            "RECANONICALIZED_LEGACY_ROW_ACTIVE"
+        }
         Some(LearningOverlayBlockedReason::PendingChallengerRequiresPromotion) => {
             "PENDING_CHALLENGER_REQUIRES_PROMOTION"
         }
@@ -6476,6 +6489,8 @@ fn build_trade_now_row(
 ) -> TradeNowRow {
     let selected_config_source = cue.selected_signal_config.source.clone();
     let legacy_fallback_active = selected_config_source == SELECTED_CONFIG_SOURCE_LEGACY_FALLBACK;
+    let recanonicalized_legacy_row_active =
+        selected_config_source == SELECTED_CONFIG_SOURCE_RECANONICALIZED_LEGACY_ROW;
     let setup_gate_pass = cue.setup_gate.status == "AVAILABLE" && cue.setup_gate.pass;
     let raw_cost_gate_pass = cue.cost_gate.status == "AVAILABLE" && cue.cost_gate.pass;
     let raw_trade_gate_pass = cue.trade_gate.status == "AVAILABLE" && cue.trade_gate.pass;
@@ -6505,7 +6520,10 @@ fn build_trade_now_row(
             LearningOverlayUniverseBucket::Excluded => {
                 let blocked_reason_code = resolve_trade_now_blocked_reason_code(policy);
                 let decision_reason_code = match policy.blocked_reason {
-                    Some(LearningOverlayBlockedReason::LegacyFallbackActive) => {
+                    Some(
+                        LearningOverlayBlockedReason::LegacyFallbackActive
+                        | LearningOverlayBlockedReason::RecanonicalizedLegacyRowActive,
+                    ) => {
                         "PROVENANCE_POLICY_BLOCKED"
                     }
                     Some(LearningOverlayBlockedReason::PendingChallengerRequiresPromotion) => {
@@ -6648,6 +6666,11 @@ fn build_trade_now_row(
     }
     if legacy_fallback_active {
         push_unique_code(&mut rationale_codes, "LEGACY_FALLBACK_ACTIVE");
+    } else if recanonicalized_legacy_row_active {
+        push_unique_code(
+            &mut rationale_codes,
+            "RECANONICALIZED_LEGACY_ROW_ACTIVE",
+        );
     } else {
         push_unique_code(&mut rationale_codes, "NON_LEGACY_CHAMPION");
     }
@@ -6658,6 +6681,8 @@ fn build_trade_now_row(
     }
     if matches!(policy.bucket, LearningOverlayUniverseBucket::Excluded)
         && policy.blocked_reason != Some(LearningOverlayBlockedReason::LegacyFallbackActive)
+        && policy.blocked_reason
+            != Some(LearningOverlayBlockedReason::RecanonicalizedLegacyRowActive)
         && policy.blocked_reason
             != Some(LearningOverlayBlockedReason::PendingChallengerRequiresPromotion)
     {
@@ -10643,6 +10668,7 @@ mod tests {
         TradeNowHistoricalQuality, TradeNowObservabilityStore, TradeNowQuery,
         LEARNING_OVERLAY_TTL_SECS, SELECTED_CONFIG_SOURCE_LEGACY_FALLBACK,
         SELECTED_CONFIG_SOURCE_OPERATOR_PROMOTION,
+        SELECTED_CONFIG_SOURCE_RECANONICALIZED_LEGACY_ROW,
     };
     use axum::{routing::get, Json, Router};
     use chrono::{Duration, Utc};
@@ -11960,6 +11986,35 @@ mod tests {
     }
 
     #[test]
+    fn learning_overlay_policy_excludes_recanonicalized_legacy_rows() {
+        let entry = overlay_entry(
+            "PF_XBTUSD__PF_ETHUSD",
+            Timeframe::OneMinute,
+            LearningRecommendation::Promote,
+            true,
+            true,
+        );
+        let decision = resolve_learning_overlay_policy(
+            Some(&entry),
+            &overlay_snapshot(true),
+            SELECTED_CONFIG_SOURCE_RECANONICALIZED_LEGACY_ROW,
+            None,
+            None,
+        );
+
+        assert_eq!(
+            decision.approval_source,
+            LearningOverlayApprovalSource::None
+        );
+        assert_eq!(decision.bucket, LearningOverlayUniverseBucket::Excluded);
+        assert_eq!(
+            decision.blocked_reason,
+            Some(LearningOverlayBlockedReason::RecanonicalizedLegacyRowActive)
+        );
+        assert_eq!(decision.learning_selection_selected, Some(true));
+    }
+
+    #[test]
     fn trade_now_query_uses_defaults() {
         let settings = StrategySettings::from_env();
         let query = TradeNowQuery {
@@ -12289,6 +12344,47 @@ mod tests {
             row.blocked_reason_code.as_deref(),
             Some("PENDING_CHALLENGER_REQUIRES_PROMOTION")
         );
+    }
+
+    #[test]
+    fn trade_now_row_excludes_recanonicalized_legacy_rows_as_provenance_blocked() {
+        let cue = trade_now_ready_cue(
+            "PF_XBTUSD__PF_ETHUSD",
+            Timeframe::OneMinute,
+            SELECTED_CONFIG_SOURCE_RECANONICALIZED_LEGACY_ROW,
+        );
+        let snapshot = overlay_snapshot(true);
+        let entry = overlay_entry(
+            "PF_XBTUSD__PF_ETHUSD",
+            Timeframe::OneMinute,
+            LearningRecommendation::Promote,
+            true,
+            true,
+        );
+        let policy = resolve_learning_overlay_policy(
+            Some(&entry),
+            &snapshot,
+            SELECTED_CONFIG_SOURCE_RECANONICALIZED_LEGACY_ROW,
+            None,
+            None,
+        );
+        let row = build_trade_now_row(&cue, &snapshot, &policy, false, None);
+
+        assert_eq!(row.decision_bucket, "EXCLUDED");
+        assert_eq!(row.decision_reason_code, "PROVENANCE_POLICY_BLOCKED");
+        assert_eq!(
+            row.blocked_reason_code.as_deref(),
+            Some("RECANONICALIZED_LEGACY_ROW_ACTIVE")
+        );
+        assert!(!row.legacy_fallback_active);
+        assert!(row
+            .rationale_codes
+            .iter()
+            .any(|code| code == "RECANONICALIZED_LEGACY_ROW_ACTIVE"));
+        assert!(!row
+            .rationale_codes
+            .iter()
+            .any(|code| code == "NON_LEGACY_CHAMPION"));
     }
 
     #[test]

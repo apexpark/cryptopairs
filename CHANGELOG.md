@@ -16,6 +16,7 @@ This project follows SemVer as defined in `docs/02-versioning-and-releases.md`.
     - records `PROJECTED_BLOCKED` separately when champion projection succeeds but drift blocking keeps the cue non-actionable
   - `strategy_selection_transition_total{decision,timeframe}`
   - `strategy_selection_rows_updated_without_transition_total{timeframe}`
+- Trade Now now treats `RECANONICALIZED_LEGACY_ROW` selected-signal provenance as a distinct fail-closed provenance block (`RECANONICALIZED_LEGACY_ROW_ACTIVE`) until an explicit approved non-repair source replaces it.
 - Multi-agent operating model:
   - `AGENTS.md` §8 defines Local vs Remote agent roles, the canonical-source rule, work allocation defaults, branch/PR conventions, and a mandatory hydration sequence (`AGENTS.md` → `docs/AGENT_STATE.md` → `docs/playbooks/remote-agent-bootstrap.md` → task brief → code).
   - `docs/AGENT_STATE.md` is a living state file: sprint pin, in-flight work, blocked items, open follow-ups (S4/S6-S8 from Slice A review, B1-B6 from Slice B review including the new B6 Postgres-backed test harness item, X1-X2 cross-cutting), and update protocol. Curated by the local agent; deltas proposed by remote agents in their PRs.
