@@ -9,14 +9,14 @@
 
 | Field | Value |
 |---|---|
-| Last updated (UTC) | 2026-05-08 |
+| Last updated (UTC) | 2026-05-10 |
 | Updated by | codex |
-| Repo HEAD pin (committed) | `2d66495bd44e1ead3042d1c981d5b21104b7a6a8` |
-| Pin branch | `codex/fix-clippy-run-24549051096` |
-| Sprint base branch | `codex/fix-clippy-run-24549051096` |
-| Pin notes | Pin notes: state-affecting commits since a87b8ae (bootstrap playbook) are pin-convention (2148693), cargo-blocked workaround (a2fa027), pin extraction fix (0602178), sprint-base configurable (c70b6a0), legacy PR protocol (2369308), retention sprint (b195447), Slice A (2771479), Slice B (e60e634), retention import + fmt restore (05bca71), clippy sort-by fix (a82e8f0), B6 design proposal merge (ff38663), B3+S8 merge (79893c6), curation post-PRs (400a776), B6 §10 answers captured (c3933d7), host verification capture (76ca372), B6 implementation merge (7a572df, PR #163), R2 design proposal merge (f87e291, PR #162), curation post-R2 design (86e014c), R2 implementation merge (d17103, PR #164), post-squash pin fix (f8b370b), Slice C planning proposal merge (3a44100, PR #166), R1 design proposal merge (4ac38b5, PR #167), R3 design proposal merge (a1c536d, PR #168), R1 toolchain implementation merge (74ef7c6, PR #169), S4+B5 metrics implementation merge (aad7445, PR #170), X1 audit docs merge (0d28534, PR #171), R3 preflight override implementation merge (f874f7c, PR #172), S6 projection-failed UI merge (94c109e, PR #173), Slice D recanonicalization design merge (38ccc01, PR #174), and X3 reporting diagnostics design merge (2d66495, PR #175). Pin lags this curation commit by 1 per the convention. Sprint base branch row is the canonical PR target. Pin row contains exactly one backticked SHA so the §1 regex extracts unambiguously. Note: feature-branch SHAs (claim/impl/fixup commits before squash-merge) are deliberately omitted because they are not reachable from sprint base after squash. |
+| Repo HEAD pin (committed) | `af5bb5418af4b0de9bc93e430026d983315a653b` |
+| Pin branch | `codex/reconcile-live-trial-main` |
+| Sprint base branch | `main` |
+| Pin notes | Reconciliation branch state after merging the reviewed GitHub lineage into latest main, applying the host-only historical-quality cast hotfix, and adding the fail-closed recanonicalized-legacy provenance guard. Pin lags this curation commit by 1 per the convention. Sprint base branch row is now the canonical PR target for new work after this reconciliation lands. |
 | Origin | `https://github.com/apexpark/cryptopairs.git` |
-| Working-tree state | **CLEAN on sprint base after curation** — PRs #171, #172, #173, #174, and #175 are landed on `codex/fix-clippy-run-24549051096`; follow-up state below is curated in the post-merge curation commit. |
+| Working-tree state | **CLEAN on reconciliation branch after curation** — `codex/reconcile-live-trial-main` is based on latest `origin/main`, merges the reviewed selection/Trade Now lineage, applies the host hotfix, and keeps host-runtime verification operator-only. |
 
 If the pin above is not reachable from `HEAD` via fast-forward, this file is stale; if `HEAD` is ahead of the pin, see §"Pin Convention".
 
@@ -32,8 +32,8 @@ Status snapshot of the four slices defined in `docs/26-champion-selection-integr
 |---|---|---|---|
 | Slice A — Separate evaluation from champion presentation | **Committed on sprint base** | local | Verified: schema validation passed; full `cargo test --workspace` passed in pre-push hook (covers `cue_for_pairs_response_*` × 5 + `evaluate_pair_honors_preferred_variant_override`); tsc passed. |
 | Slice B — Make transition accounting complete | **Committed on sprint base** | local | Verified: full `cargo test --workspace` passed in pre-push hook (covers `selection_transition_counts_*` × 3 + `reoptimize_response_serializes_transition_counts_at_top_level` + `update_persist_summary_for_transition_records_all_summary_counts`); clippy clean; reoptimize schema validation passed (0.2.0). |
-| Slice C — Remove incumbent bias in host runtime | **Planning merged; implementation blocked on host-lineage import** | operator/local | Design proposal PR #166 (`3a44100`) recommends cherry-picking the host `rc/live-trial` lineage into a reviewable branch, then implementing neutral champion selection behind a rollout flag. Implementation must not start until the operator imports the host lineage and resolves the proposal's open decisions (see §"Blocked / Waiting On" and Slice-C-impl follow-up below). |
-| Slice D — Recanonicalize legacy rows | **Design proposal merged; implementation blocked on Slice C observation/operator approval** | unassigned | PR #174 (`38ccc01`) recommends dry-run-first, operator-confirmed recanonicalization with rollback/pre-image artifacts. Implementation must wait for Slice C neutral-selection observation evidence and operator approval of the proposal's open questions; recanonicalized rows remain repair-only, not trade-eligible. |
+| Slice C — Remove incumbent bias in host runtime | **Review lineage reconciled; host redeploy pending** | operator/local | `codex/reconcile-live-trial-main` merges the reviewed GitHub lineage onto latest `main` and restores the missing `/metrics` projection/transition observability before host redeploy. Keep `STRATEGY_BLOCK_ON_CHAMPION_DRIFT=true` until host verification proves the reconciled runtime is deployed and observable. |
+| Slice D — Recanonicalize legacy rows | **Runtime guard added; observation pending** | operator/local | Operator recanonicalized the 12 1m host rows from `LEGACY_ROW_FALLBACK` to `RECANONICALIZED_LEGACY_ROW`. The reconciliation branch treats that source as repair-only and fail-closed (`RECANONICALIZED_LEGACY_ROW_ACTIVE`) until an explicit approved non-repair source replaces it. |
 
 ### Immediate Safety Action (still active)
 
@@ -77,16 +77,18 @@ Source of truth for shipped behavior is `CHANGELOG.md` `## Unreleased` section. 
 
 ## Blocked / Waiting On
 
-### B-Host-Lineage (planning unblocked; host lineage still divergent)
+### B-Host-Lineage (review lineage reconciled; host redeploy pending)
 
-Operator captured the `docs/27` read-only host verification outputs on **2026-05-05 02:29:31Z**. Those outputs are enough to unblock **Slice C planning** against the live host facts. The host branch is still divergent and dirty, so **host-specific implementation work** remains contingent on pulling the lineage into a reviewable local branch.
+Operator captured a fresh read-only host fact packet on **2026-05-10**. The host is clean at `912a86260c48bb5e4c0e65cdba4f59b976d80c7c`, safety remains fail-closed (`STRATEGY_BLOCK_ON_CHAMPION_DRIFT=true`, `EXECUTION_DISPATCH_MODE=fail_closed`), and `/metrics` returns HTTP 404. The reconciliation branch `codex/reconcile-live-trial-main` merges the reviewed GitHub lineage onto latest `main`, applies the host-only historical-quality cast hotfix, and adds a fail-closed runtime/contract guard for `RECANONICALIZED_LEGACY_ROW`.
 
-Remaining operator-only step for implementation, if Slice C planning leads to code work:
-1. Pull the host runtime lineage into a local reviewable branch (or merge it back to `origin`) before any host-specific implementation PR is approved.
+Remaining operator-only step before calling the host reconciled:
+1. Deploy the reconciled `main` lineage after local/CI gates pass.
+2. Re-run host checks proving `/metrics` exposes `pairs_cue_projection_total`, `strategy_selection_transition_total`, and `strategy_selection_rows_updated_without_transition_total`.
+3. Re-confirm `STRATEGY_BLOCK_ON_CHAMPION_DRIFT=true` and `EXECUTION_DISPATCH_MODE=fail_closed`.
 
 Neither the local nor any remote agent has SSH access to `cryptopairs`. This is operator-only.
 
-Repository identity raw output:
+Prior 2026-05-05 repository identity raw output:
 
 ```text
 4dd118242414d38ad33ae50bb433d4988d5276da
@@ -482,12 +484,11 @@ Follow-ups carried forward from prior reviews. Ordered by source review then sev
 
 Pickable items, in priority order:
 
-1. **Operator action: Slice C import decision/import** — choose the import path from PR #166 (recommended: cherry-pick host-only `rc/live-trial` commits onto `cherry-picked-from-rc-live-trial`) and import the host lineage into a local reviewable branch before any Slice C implementation PR is approved.
-2. **Remote/local agent: Slice C implementation** — only after host lineage import and operator decisions; implement neutral champion selection behind the approved rollout path, preserve Slice A/B semantics, and add B6 pg-backed tests.
-3. **Operator/local agent: Slice C observation capture** — after Slice C implementation/deployment, capture the neutral-selection observation evidence required by the Slice D and X3 proposals before either follow-up implementation starts.
-4. **Remote/local agent: Slice D implementation** — only after Slice C observation and operator approval of PR #174's open questions; implement dry-run-first recanonicalization without making legacy or repair-only provenance trade-eligible.
-5. **Remote/local agent: X3 implementation** — only after Slice C lands and is observed; implement PR #175's optional/additive reporting diagnostics while preserving legacy `selected_variant`.
-6. **Operator action (long-term cleanup)**: PR the full agent-docs chain from `codex/fix-clippy-run-24549051096` to `main` when ready, then flip Sprint base branch in §Pin to `main`.
+1. **Local/operator: finish reconciliation PR to `main`** — review `codex/reconcile-live-trial-main`, run cargo-dependent gates, merge once green, and deploy from reconciled `main`.
+2. **Operator action: host verification after deploy** — prove `/metrics` exposes projection/transition counters and safety env remains fail-closed.
+3. **Operator/local agent: Slice C observation capture** — after reconciled deployment, capture neutral-selection and Trade Now observation evidence required by the Slice D and X3 proposals.
+4. **Remote/local agent: Slice D hardening follow-up** — if needed after observation, implement a dry-run-first recanonicalization maintenance path without making legacy or repair-only provenance trade-eligible.
+5. **Remote/local agent: X3 implementation** — only after reconciled deployment is observed; implement PR #175's optional/additive reporting diagnostics while preserving legacy `selected_variant`.
 
 ---
 
