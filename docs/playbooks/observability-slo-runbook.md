@@ -12,6 +12,9 @@ Provide operator-facing SLO checks and alert response flow for execution and acc
 2. Account summary endpoint:
 - `GET /v1/account/observability/summary?exchange=<...>&account_id=<...>&window_minutes=<n>`
 
+3. Strategy Prometheus metrics endpoint:
+- `GET /metrics` on the strategy service.
+
 ## Core SLO Signals
 
 1. Manual execution safety
@@ -25,6 +28,11 @@ Provide operator-facing SLO checks and alert response flow for execution and acc
 3. Account health
 - `account_snapshot_age` (P1): latest snapshot age must stay below threshold.
 - `account_reconcile_non_ok` (P2): non-OK reconcile count should stay below threshold.
+
+4. Strategy champion-selection integrity
+- `strategy_selection_rows_updated_without_transition_total{timeframe}` (P2): any increase means selected rows were written without an accounted transition decision; keep live trading fail-closed until investigated.
+- `strategy_selection_transition_total{decision,timeframe}` (P3/P2 trend): should show steady-state `INITIALIZE`, `UNCHANGED`, `KEEP_CHAMPION`, or `PROMOTE_CHALLENGER` activity during reoptimization windows.
+- `pairs_cue_projection_total{outcome="PROJECTION_FAILED"}` (P2 trend): increases mean stored champion projection could not be materialized; inspect affected cue logs before trusting operator-facing champion state.
 
 ## Alert Actions
 

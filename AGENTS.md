@@ -130,3 +130,77 @@ If blocked, provide:
 - what you couldn’t verify
 - minimal safe proposal
 - explicit questions needed to proceed
+
+---
+
+## 8) Agent Topology and Work Allocation
+
+This repository is worked by multiple agents. Roles, capabilities, and the canonical-source rule are mandatory for all of them.
+
+### 8.1 Roles
+
+There are two roles:
+
+1. **Local agent** (runs on the operator’s machine; one per session)
+   - Runs against the operator’s working tree (treated as canonical for review and final say).
+   - Does **review and curation**, not heavy implementation.
+   - Curates `docs/AGENT_STATE.md` and approves merges to long-lived branches.
+   - Has direct file access to the working tree, including uncommitted changes.
+
+2. **Remote agent** (Codex or Claude, runs off-host; may be more than one in flight)
+   - Has the larger token budget, so does the **heavy lifting**: implementation, refactor, tests, contract/example updates, schema validation runs.
+   - Pulls from `origin` only (no access to operator-local uncommitted changes).
+   - May commit, merge, and push.
+   - Has no SSH access to runtime hosts (e.g. `cryptopairs` Hetzner). Anything requiring host verification must stop and request operator action.
+
+### 8.2 Canonical Source Rule
+
+The operator’s **local working tree** is the canonical source for review intent and final acceptance.
+- `origin` is the sync point, not the source of truth.
+- If a remote agent’s pushed work conflicts with local intent, local wins.
+- Remote agents MUST NOT force-push to long-lived branches (`main`, `rc/*`).
+- Remote agents MUST rebase or merge cleanly onto the latest `origin/<base-branch>` before opening a PR.
+
+### 8.3 Work Allocation (default split)
+
+| Activity | Default owner | Notes |
+|---|---|---|
+| Implementation, refactor, tests | Remote | Heavy token cost |
+| Contract/example/schema updates | Remote | Must include validation run |
+| Self-review (lint, type-check, schema validate) | Remote | Required before PR |
+| Independent code/spec review | Remote (a *different* agent than the implementer) | Cross-agent review only |
+| Final acceptance review | Local | Reads PR diff against the spec/brief |
+| Merge to `main` / long-lived branches | Local (preferred) | Remote may merge if local explicitly delegates |
+| `docs/AGENT_STATE.md` curation | Local | Updated at slice/PR boundaries |
+| Host verification (SSH) | Operator-only | Neither role has SSH; remote MUST stop and ask |
+| Touching the broader dirty worktree | Local-only | Remote agents only see committed state |
+
+If a remote agent finds it must touch files outside the agreed slice scope, it stops and posts an escalation per §7.
+
+### 8.4 Mandatory Hydration Sequence (every agent, every session)
+
+Before doing any work — including review — read in this order:
+
+1. `AGENTS.md` (this file)
+2. `docs/AGENT_STATE.md` (current sprint, in-flight work, blocked items, open follow-ups, last commit pin)
+3. `docs/playbooks/remote-agent-bootstrap.md` (operational procedure for §8.4 — bootstrap prompt, self-preflight, claim protocol, verification sequence, branch/commit/PR templates, blocking protocol, local review checklist)
+4. Any task-specific brief or spec named in `AGENT_STATE.md`’s “Currently In Flight” section
+5. Code paths and contracts referenced by the brief
+
+If `docs/AGENT_STATE.md` is missing, stale (last-updated more than 7 days old without a current sprint), or its commit pin is not reachable from `HEAD` via fast-forward (`git merge-base --is-ancestor <pin> HEAD`), stop and request operator refresh per §7. The pin records the "as of" anchor for state; it is not required to equal literal `HEAD`. See `docs/AGENT_STATE.md` §"Pin Convention" for the why and the playbook §1 self-preflight for the canonical check.
+
+### 8.5 Branching and PR Convention
+
+- Long-lived branches: `main`, `rc/*` — protected; remote agents do not force-push.
+- Feature branches: `<agent-id>/<short-slug>` (e.g. `codex/slice-c-host-lineage`, `claude/b4-record-evaluation-test`).
+- Remote agents open PRs against the base named in `AGENT_STATE.md`’s active slice (defaults to `main`).
+- PR descriptions MUST include: slice or follow-up ID being addressed, files touched, verification commands run with their pass/fail, any in-scope items deliberately left for follow-up.
+
+### 8.6 Definition of Done — Remote Agent Addendum
+
+A remote agent’s PR is ready for local review only if:
+- All §6 conditions are met.
+- The §8.5 PR description is complete.
+- `docs/AGENT_STATE.md` contains a proposed delta (added as part of the PR), or the PR description states why no state change is required.
+- No host-only verification step is left assumed-passing — anything that needs SSH is explicitly listed for operator action.
+

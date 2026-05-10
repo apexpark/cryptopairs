@@ -1,0 +1,124 @@
+{
+  "$id": "https://cryptopairs/specs/contracts/strategy_trade_now_observability_response.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Strategy Trade Now Observability Response",
+  "description": "Operator-facing observability snapshot for trade-now governance suppressions and override exposure paths.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "generated_at",
+    "learning_challenger_bypass_suppressed_total",
+    "learning_challenger_bypass_suppressed",
+    "learning_eligible_override_tradable_total",
+    "learning_eligible_override_tradable",
+    "learning_selection_cost_override_applied_total",
+    "learning_selection_cost_override_applied"
+  ],
+  "properties": {
+    "generated_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "learning_challenger_bypass_suppressed_total": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "learning_challenger_bypass_suppressed": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/suppressedRow"
+      }
+    },
+    "learning_eligible_override_tradable_total": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "learning_eligible_override_tradable": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/surfacedRow"
+      }
+    },
+    "learning_selection_cost_override_applied_total": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "learning_selection_cost_override_applied": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/overrideRow"
+      }
+    }
+  },
+  "$defs": {
+    "suppressedRow": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "pair_id",
+        "timeframe",
+        "suppressed_total"
+      ],
+      "properties": {
+        "pair_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "timeframe": {
+          "type": "string",
+          "enum": ["1m", "15m", "1h"]
+        },
+        "suppressed_total": {
+          "type": "integer",
+          "minimum": 1
+        }
+      }
+    },
+    "surfacedRow": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "pair_id",
+        "timeframe",
+        "surfaced_total"
+      ],
+      "properties": {
+        "pair_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "timeframe": {
+          "type": "string",
+          "enum": ["1m", "15m", "1h"]
+        },
+        "surfaced_total": {
+          "type": "integer",
+          "minimum": 1
+        }
+      }
+    },
+    "overrideRow": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "pair_id",
+        "timeframe",
+        "applied_total"
+      ],
+      "properties": {
+        "pair_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "timeframe": {
+          "type": "string",
+          "enum": ["1m", "15m", "1h"]
+        },
+        "applied_total": {
+          "type": "integer",
+          "minimum": 1
+        }
+      }
+    }
+  }
+}

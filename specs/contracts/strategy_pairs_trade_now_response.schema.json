@@ -1,0 +1,414 @@
+{
+  "$id": "https://cryptopairs/specs/contracts/strategy_pairs_trade_now_response.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Strategy Pairs Trade Now Response",
+  "description": "Operator-facing trade-now read model that buckets opportunities into trade-now, watchlist, and excluded surfaces.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "generated_at",
+    "timeframe_filter",
+    "learning_overlay_generated_at",
+    "learning_overlay_age_seconds",
+    "learning_overlay_fresh",
+    "learning_overlay_ttl_seconds",
+    "tradable_now",
+    "watchlist",
+    "excluded"
+  ],
+  "properties": {
+    "generated_at": { "type": "string", "format": "date-time" },
+    "timeframe_filter": {
+      "anyOf": [
+        { "type": "string", "enum": ["1m", "15m", "1h"] },
+        { "type": "null" }
+      ]
+    },
+    "learning_overlay_generated_at": {
+      "anyOf": [
+        { "type": "string", "format": "date-time" },
+        { "type": "null" }
+      ]
+    },
+    "learning_overlay_age_seconds": {
+      "anyOf": [
+        { "type": "number", "minimum": 0 },
+        { "type": "null" }
+      ]
+    },
+    "learning_overlay_fresh": { "type": "boolean" },
+    "learning_overlay_ttl_seconds": { "type": "integer", "minimum": 1 },
+    "tradable_now": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/tradeNowRow" }
+    },
+    "watchlist": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/watchlistRow" }
+    },
+    "excluded": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/excludedRow" }
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "learning_overlay_fresh": { "const": true }
+        },
+        "required": ["learning_overlay_fresh"]
+      },
+      "then": {
+        "properties": {
+          "learning_overlay_generated_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "learning_overlay_age_seconds": {
+            "type": "number",
+            "minimum": 0
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "learning_overlay_generated_at": { "type": "null" }
+        },
+        "required": ["learning_overlay_generated_at"]
+      },
+      "then": {
+        "properties": {
+          "learning_overlay_age_seconds": { "type": "null" },
+          "learning_overlay_fresh": { "const": false }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "learning_overlay_fresh": { "const": false }
+        },
+        "required": ["learning_overlay_fresh"]
+      },
+      "then": {
+        "properties": {
+          "tradable_now": {
+            "items": {
+              "type": "object",
+              "properties": {
+                "approval_source": {
+                  "const": "OPERATOR_PROMOTED_ACTIVE_CHAMPION"
+                }
+              },
+              "required": ["approval_source"]
+            }
+          }
+        }
+      }
+    }
+  ],
+  "$defs": {
+    "approvalSource": {
+      "type": "string",
+      "enum": [
+        "LEARNING_SELECTION",
+        "LEARNING_ELIGIBLE_OVERRIDE",
+        "OPERATOR_PROMOTED_ACTIVE_CHAMPION",
+        "NONE"
+      ]
+    },
+    "decisionBucket": {
+      "type": "string",
+      "enum": ["TRADE_NOW", "WATCHLIST", "EXCLUDED"]
+    },
+    "decisionReasonCode": {
+      "type": "string",
+      "enum": [
+        "LEARNING_SELECTED_AND_LIVE_GATES_PASS",
+        "LEARNING_ELIGIBLE_OVERRIDE_AND_LIVE_GATES_PASS",
+        "OPERATOR_PROMOTED_AND_LIVE_GATES_PASS",
+        "APPROVED_BUT_WAITING_ON_LIVE_CONDITIONS",
+        "LEARNING_POSITIVE_BUT_NOT_SELECTED",
+        "STALE_OVERLAY_DOWNGRADED_TO_WATCHLIST",
+        "PROVENANCE_POLICY_BLOCKED",
+        "OUTSIDE_APPROVED_UNIVERSE",
+        "GOVERNANCE_POLICY_BLOCKED"
+      ]
+    },
+    "blockedReasonCode": {
+      "type": "string",
+      "enum": [
+        "LEGACY_FALLBACK_ACTIVE",
+        "RECANONICALIZED_LEGACY_ROW_ACTIVE",
+        "OUTSIDE_APPROVED_UNIVERSE",
+        "LEARNING_HOLD",
+        "LEARNING_NOT_TRADE_ELIGIBLE",
+        "LIVE_SAFETY_NOT_READY",
+        "PENDING_CHALLENGER_REQUIRES_PROMOTION"
+      ]
+    },
+    "watchReasonCode": {
+      "type": "string",
+      "enum": [
+        "LIVE_TRIGGER_NOT_READY",
+        "SETUP_GATE_NOT_PASSING",
+        "COST_GATE_NOT_PASSING",
+        "TRADE_GATE_NOT_PASSING",
+        "OPEN_POSITION_CONFLICT",
+        "LEARNING_ELIGIBLE_NOT_SELECTED",
+        "LEARNING_OVERLAY_STALE"
+      ]
+    },
+    "rationaleCode": {
+      "type": "string",
+      "enum": [
+        "APPROVAL_SOURCE_LEARNING_SELECTION",
+        "APPROVAL_SOURCE_LEARNING_ELIGIBLE_OVERRIDE",
+        "APPROVAL_SOURCE_OPERATOR_PROMOTED",
+        "LEARNING_SELECTION_SELECTED",
+        "LEARNING_ELIGIBLE_OVERRIDE_QUALIFIED",
+        "LEARNING_SELECTION_COST_OVERRIDE_APPLIED",
+        "LEARNING_TRADE_ELIGIBLE",
+        "LEARNING_HOLD",
+        "LEARNING_NOT_TRADE_ELIGIBLE",
+        "LEARNING_OVERLAY_FRESH",
+        "LEARNING_OVERLAY_STALE",
+        "LIVE_SETUP_GATE_PASS",
+        "LIVE_COST_GATE_PASS",
+        "LIVE_TRADE_GATE_PASS",
+        "LIVE_SETUP_GATE_FAIL",
+        "LIVE_COST_GATE_FAIL",
+        "LIVE_TRADE_GATE_FAIL",
+        "LIVE_TRIGGER_NOT_READY",
+        "OPEN_POSITION_CONFLICT",
+        "NON_LEGACY_CHAMPION",
+        "LEGACY_FALLBACK_ACTIVE",
+        "RECANONICALIZED_LEGACY_ROW_ACTIVE",
+        "OPERATOR_PROMOTION_ACTIVE",
+        "PENDING_CHALLENGER_REVIEW",
+        "OUTSIDE_APPROVED_UNIVERSE",
+        "REQUIRES_FRESH_OVERLAY"
+      ]
+    },
+    "decisionRowBase": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "pair_id",
+        "left_instrument",
+        "right_instrument",
+        "timeframe",
+        "selected_variant",
+        "direction_hint",
+        "spread_z",
+        "opportunity_score",
+        "confidence_band",
+        "expected_hold_bars",
+        "net_edge_bps",
+        "setup_gate_pass",
+        "cost_gate_pass",
+        "trade_gate_pass",
+        "open_live_trade",
+        "portfolio_target_weight",
+        "portfolio_risk_contribution",
+        "approval_source",
+        "requires_fresh_overlay",
+        "learning_recommendation",
+        "learning_trade_eligible",
+        "learning_selection_selected",
+        "learning_reason_codes",
+        "learning_cycle_generated_at",
+        "selected_config_source",
+        "legacy_fallback_active",
+        "decision_bucket",
+        "decision_reason_code",
+        "blocked_reason_code",
+        "watch_reason_code",
+        "rationale_codes"
+      ],
+      "properties": {
+        "pair_id": { "type": "string" },
+        "left_instrument": { "type": "string" },
+        "right_instrument": { "type": "string" },
+        "timeframe": { "type": "string", "enum": ["1m", "15m", "1h"] },
+        "selected_variant": {
+          "type": "string",
+          "enum": ["COINTEGRATION_Z", "ROBUST_Z", "VOL_NORMALIZED", "FUNDING_ADJUSTED"]
+        },
+        "direction_hint": {
+          "type": "string",
+          "enum": ["LONG_SPREAD", "SHORT_SPREAD", "NONE"]
+        },
+        "spread_z": { "type": "number" },
+        "opportunity_score": { "type": "number" },
+        "confidence_band": {
+          "type": "string",
+          "enum": ["LOW", "MEDIUM", "HIGH"]
+        },
+        "expected_hold_bars": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Nominal holding-window expectation for the active variant/config, even when the row is excluded."
+        },
+        "net_edge_bps": { "type": "number" },
+        "setup_gate_pass": { "type": "boolean" },
+        "cost_gate_pass": { "type": "boolean" },
+        "trade_gate_pass": { "type": "boolean" },
+        "open_live_trade": { "type": "boolean" },
+        "portfolio_target_weight": {
+          "anyOf": [
+            { "type": "number" },
+            { "type": "null" }
+          ]
+        },
+        "portfolio_risk_contribution": {
+          "anyOf": [
+            { "type": "number", "minimum": 0, "maximum": 1 },
+            { "type": "null" }
+          ]
+        },
+        "approval_source": { "$ref": "#/$defs/approvalSource" },
+        "requires_fresh_overlay": {
+          "type": "boolean",
+          "description": "True when the row's current bucket assignment relies on a fresh learning overlay. Operator-promoted active champions set this to false."
+        },
+        "learning_recommendation": {
+          "anyOf": [
+            { "type": "string", "enum": ["PROMOTE", "DEMOTE", "HOLD"] },
+            { "type": "null" }
+          ]
+        },
+        "learning_trade_eligible": {
+          "anyOf": [
+            { "type": "boolean" },
+            { "type": "null" }
+          ]
+        },
+        "learning_selection_selected": {
+          "anyOf": [
+            { "type": "boolean" },
+            { "type": "null" }
+          ]
+        },
+        "learning_reason_codes": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "learning_cycle_generated_at": {
+          "anyOf": [
+            { "type": "string", "format": "date-time" },
+            { "type": "null" }
+          ]
+        },
+        "selected_config_source": {
+          "type": "string"
+        },
+        "legacy_fallback_active": { "type": "boolean" },
+        "decision_bucket": { "$ref": "#/$defs/decisionBucket" },
+        "decision_reason_code": {
+          "$ref": "#/$defs/decisionReasonCode",
+          "description": "Single headline reason for the current bucket assignment."
+        },
+        "blocked_reason_code": {
+          "anyOf": [
+            { "$ref": "#/$defs/blockedReasonCode" },
+            { "type": "null" }
+          ]
+        },
+        "watch_reason_code": {
+          "anyOf": [
+            { "$ref": "#/$defs/watchReasonCode" },
+            { "type": "null" }
+          ]
+        },
+        "rationale_codes": {
+          "type": "array",
+          "description": "Supporting atomic tags that explain the headline decision reason code without duplicating bucket semantics.",
+          "items": { "$ref": "#/$defs/rationaleCode" },
+          "minItems": 1,
+          "uniqueItems": true
+        }
+      }
+    },
+    "tradeNowRow": {
+      "allOf": [
+        { "$ref": "#/$defs/decisionRowBase" },
+        {
+          "type": "object",
+          "properties": {
+            "decision_bucket": { "const": "TRADE_NOW" },
+            "approval_source": {
+              "enum": [
+                "LEARNING_SELECTION",
+                "LEARNING_ELIGIBLE_OVERRIDE",
+                "OPERATOR_PROMOTED_ACTIVE_CHAMPION"
+              ]
+            },
+            "watch_reason_code": { "type": "null" },
+            "blocked_reason_code": { "type": "null" }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "approval_source": {
+                "enum": ["LEARNING_SELECTION", "LEARNING_ELIGIBLE_OVERRIDE"]
+              }
+            },
+            "required": ["approval_source"]
+          },
+          "then": {
+            "properties": {
+              "requires_fresh_overlay": { "const": true }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "approval_source": {
+                "const": "OPERATOR_PROMOTED_ACTIVE_CHAMPION"
+              }
+            },
+            "required": ["approval_source"]
+          },
+          "then": {
+            "properties": {
+              "requires_fresh_overlay": { "const": false }
+            }
+          }
+        }
+      ]
+    },
+    "watchlistRow": {
+      "allOf": [
+        { "$ref": "#/$defs/decisionRowBase" },
+        {
+          "type": "object",
+          "properties": {
+            "decision_bucket": { "const": "WATCHLIST" },
+            "watch_reason_code": { "$ref": "#/$defs/watchReasonCode" },
+            "blocked_reason_code": { "type": "null" }
+          }
+        }
+      ]
+    },
+    "excludedRow": {
+      "allOf": [
+        { "$ref": "#/$defs/decisionRowBase" },
+        {
+          "type": "object",
+          "properties": {
+            "decision_bucket": { "const": "EXCLUDED" },
+            "blocked_reason_code": { "$ref": "#/$defs/blockedReasonCode" },
+            "watch_reason_code": { "type": "null" }
+          }
+        }
+      ]
+    }
+  },
+  "version": "0.3.1"
+}

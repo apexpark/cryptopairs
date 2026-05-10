@@ -67,6 +67,7 @@ Hard constraint:
 5. Adaptive ranking layer
 - Keep current shadow ML path as non-binding ranker.
 - Add champion/challenger tracking by timeframe and regime.
+- Persist the active live signal configuration (variant + bands + lookback/hold windows) so live cue generation can use promoted settings rather than only process-level defaults.
 
 ## Sequenced Delivery Plan
 
@@ -101,10 +102,15 @@ Deliverables:
   - suggested portfolio sizing,
   - candidate-set diagnostics.
 - Extend `POST /v1/strategy/pairs/reoptimize` with counters for new diagnostics.
+- Add explicit optimizer run status contract in reoptimize response:
+  - `status` (`OK|DEGRADED|FAILED`) plus critical/non-critical error counts.
+  - Per-timeframe status summaries and flatline aggregation.
+- Add canonical selected-variant flatline diagnostics computed from the same live signal series used by cue selection.
 
 Acceptance criteria:
 - Default behavior remains current if new toggles disabled.
 - Non-actionable output when any required input is missing.
+- Critical optimizer failures trigger fail-closed continuation (no further mutation writes for the affected timeframe after first critical error).
 
 ### Slice D: Observability + hardening
 
@@ -114,11 +120,15 @@ Deliverables:
   - residual signal coverage,
   - advisory generation success/failure,
   - champion/challenger drift.
+- Backtest/historical signal hardening:
+  - remove full-sample hindsight normalization from backtest z-score generation.
+  - use causal prior-window z-score normalization for backtest/replay/expectancy/sweep marker generation.
 - Playbook updates for strategy degradation or cost-model mismatch.
 
 Acceptance criteria:
 - Incident timeline reconstructible from logs.
 - Alertable metrics available for unresolved strategy degradation.
+- Backtest marker/equity evolution is invariant to future-only tail shocks for all earlier bars (no leakage).
 
 ## Proposed API/Contract Additions (PROPOSAL)
 

@@ -26,8 +26,11 @@ pub struct Settings {
     pub kraken_history_bounds_path: String,
     pub symbols: Vec<String>,
     pub backfill_interval_seconds: u64,
+    pub backfill_incremental_overlap_steps: i64,
+    pub backfill_full_sweep_interval_seconds: u64,
     pub backfill_window_days: TimeframeDays,
     pub candles_retention_days: TimeframeDays,
+    pub trades_retention_days: u64,
     pub candles_prune_interval_seconds: u64,
 }
 
@@ -58,6 +61,10 @@ impl Settings {
             .ok()
             .and_then(|value| value.parse::<u64>().ok())
             .unwrap_or(60);
+        let backfill_incremental_overlap_steps =
+            parse_env_i64("BACKFILL_INCREMENTAL_OVERLAP_STEPS", 2).max(1);
+        let backfill_full_sweep_interval_seconds =
+            parse_env_u64("BACKFILL_FULL_SWEEP_INTERVAL_SECONDS", 10_800).max(300);
         let backfill_window_days = TimeframeDays {
             one_minute: parse_env_u64("BACKFILL_WINDOW_DAYS_1M", 120).max(1),
             fifteen_minutes: parse_env_u64("BACKFILL_WINDOW_DAYS_15M", 540).max(1),
@@ -68,6 +75,7 @@ impl Settings {
             fifteen_minutes: parse_env_u64("CANDLES_RETENTION_DAYS_15M", 540).max(1),
             one_hour: parse_env_u64("CANDLES_RETENTION_DAYS_1H", 1_095).max(1),
         };
+        let trades_retention_days = parse_env_u64("TRADES_RETENTION_DAYS", 3_650).max(1);
         let candles_prune_interval_seconds =
             parse_env_u64("CANDLES_PRUNE_INTERVAL_SECONDS", 3_600).max(60);
 
@@ -79,8 +87,11 @@ impl Settings {
             kraken_history_bounds_path,
             symbols,
             backfill_interval_seconds,
+            backfill_incremental_overlap_steps,
+            backfill_full_sweep_interval_seconds,
             backfill_window_days,
             candles_retention_days,
+            trades_retention_days,
             candles_prune_interval_seconds,
         }
     }
@@ -90,5 +101,12 @@ fn parse_env_u64(key: &str, default: u64) -> u64 {
     std::env::var(key)
         .ok()
         .and_then(|value| value.parse::<u64>().ok())
+        .unwrap_or(default)
+}
+
+fn parse_env_i64(key: &str, default: i64) -> i64 {
+    std::env::var(key)
+        .ok()
+        .and_then(|value| value.parse::<i64>().ok())
         .unwrap_or(default)
 }
