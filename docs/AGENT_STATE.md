@@ -9,14 +9,14 @@
 
 | Field | Value |
 |---|---|
-| Last updated (UTC) | 2026-05-10 |
+| Last updated (UTC) | 2026-05-11 |
 | Updated by | codex |
-| Repo HEAD pin (committed) | `af5bb5418af4b0de9bc93e430026d983315a653b` |
-| Pin branch | `codex/reconcile-live-trial-main` |
+| Repo HEAD pin (committed) | `21286c6b2cf3bce5d951e621ca341ba73d175103` |
+| Pin branch | `main` |
 | Sprint base branch | `main` |
-| Pin notes | Reconciliation branch state after merging the reviewed GitHub lineage into latest main, applying the host-only historical-quality cast hotfix, and adding the fail-closed recanonicalized-legacy provenance guard. Pin lags this curation commit by 1 per the convention. Sprint base branch row is now the canonical PR target for new work after this reconciliation lands. |
+| Pin notes | Post-PR #177 squash-merge state on `main`. The pin is the reachable merge commit that reconciles the reviewed live-trial lineage, applies the host-only historical-quality cast hotfix, restores `/metrics` projection/transition observability, and adds the fail-closed recanonicalized-legacy provenance guard. |
 | Origin | `https://github.com/apexpark/cryptopairs.git` |
-| Working-tree state | **CLEAN on reconciliation branch after curation** — `codex/reconcile-live-trial-main` is based on latest `origin/main`, merges the reviewed selection/Trade Now lineage, applies the host hotfix, and keeps host-runtime verification operator-only. |
+| Working-tree state | **CLEAN on `main` after PR #177** — host is deployed from `origin/main` at `21286c6b2cf3bce5d951e621ca341ba73d175103`; host-runtime verification remains operator-only. |
 
 If the pin above is not reachable from `HEAD` via fast-forward, this file is stale; if `HEAD` is ahead of the pin, see §"Pin Convention".
 
@@ -32,8 +32,8 @@ Status snapshot of the four slices defined in `docs/26-champion-selection-integr
 |---|---|---|---|
 | Slice A — Separate evaluation from champion presentation | **Committed on sprint base** | local | Verified: schema validation passed; full `cargo test --workspace` passed in pre-push hook (covers `cue_for_pairs_response_*` × 5 + `evaluate_pair_honors_preferred_variant_override`); tsc passed. |
 | Slice B — Make transition accounting complete | **Committed on sprint base** | local | Verified: full `cargo test --workspace` passed in pre-push hook (covers `selection_transition_counts_*` × 3 + `reoptimize_response_serializes_transition_counts_at_top_level` + `update_persist_summary_for_transition_records_all_summary_counts`); clippy clean; reoptimize schema validation passed (0.2.0). |
-| Slice C — Remove incumbent bias in host runtime | **Review lineage reconciled; host redeploy pending** | operator/local | `codex/reconcile-live-trial-main` merges the reviewed GitHub lineage onto latest `main` and restores the missing `/metrics` projection/transition observability before host redeploy. Keep `STRATEGY_BLOCK_ON_CHAMPION_DRIFT=true` until host verification proves the reconciled runtime is deployed and observable. |
-| Slice D — Recanonicalize legacy rows | **Runtime guard added; observation pending** | operator/local | Operator recanonicalized the 12 1m host rows from `LEGACY_ROW_FALLBACK` to `RECANONICALIZED_LEGACY_ROW`. The reconciliation branch treats that source as repair-only and fail-closed (`RECANONICALIZED_LEGACY_ROW_ACTIVE`) until an explicit approved non-repair source replaces it. |
+| Slice C — Remove incumbent bias in host runtime | **Reconciled on main; host deployed; observation active** | operator/local | PR #177 squash-merged the reviewed GitHub lineage onto `main` at `21286c6`, and operator deployed that exact commit to host. `/metrics` now exposes the projection/transition counters. Keep `STRATEGY_BLOCK_ON_CHAMPION_DRIFT=true` through the observation window. |
+| Slice D — Recanonicalize legacy rows | **Runtime guard deployed; observation active** | operator/local | Operator recanonicalized the 12 1m host rows from `LEGACY_ROW_FALLBACK` to `RECANONICALIZED_LEGACY_ROW`. Deployed `main` treats that source as repair-only and fail-closed (`RECANONICALIZED_LEGACY_ROW_ACTIVE`) until an explicit approved non-repair source replaces it. |
 
 ### Immediate Safety Action (still active)
 
@@ -42,7 +42,7 @@ Per `docs/26` §"Immediate Safety Action":
 - Live `ENTRY` / `EXIT` for this strategy runtime MUST stay disabled.
 - Cues are research-visible but NOT execution-trustworthy.
 
-Do not relax these until Slice C is verified.
+Do not relax these during the 72-hour observation window.
 
 ---
 
@@ -72,21 +72,21 @@ Source of truth for shipped behavior is `CHANGELOG.md` `## Unreleased` section. 
 - **Committed (`94c109e`)**: S6 projection-failed UI fix (PR #173) — Trade and Analytics render `CHAMPION_PROJECTION_FAILED` cues as `BLOCKED` instead of displaying an untrustworthy stored champion variant, with focused frontend coverage for failed, projected, projected-blocked, no-stored-champion, and legacy cue paths.
 - **Committed (`38ccc01`)**: Slice D recanonicalization design proposal (PR #174) — `docs/proposals/SLICE-D-recanonicalize-legacy-rows.md` recommends a dry-run-first, operator-confirmed maintenance action for legacy selected rows, gated on Slice C neutral-selection observation evidence, with row-level eligibility reasons, repair-only provenance, pre-image rollback artifacts, additive/versioned contracts, bounded metrics/logs, and operator-only host verification.
 - **Committed (`2d66495`)**: X3 reporting diagnostics design proposal (PR #175) — `docs/proposals/X3-reporting-alignment-diagnostics.md` recommends optional additive `selection_diagnostics` for backtest, live-z, paper-trades, and opportunity-history surfaces after Slice C observation, while preserving legacy `selected_variant` compatibility and deferring implementation/schema changes to a later PR.
+- **Committed (`21286c6`)**: Live-trial lineage reconciliation (PR #177) — `main` now contains the reviewed selection/Trade Now lineage, the host-deployed historical-quality cast hotfix, `/metrics` projection/transition observability, and the fail-closed `RECANONICALIZED_LEGACY_ROW_ACTIVE` Trade Now provenance block. Rust, Python, contracts, docs, and Vercel checks were green before merge; operator deployed the exact commit to host and verified safety gates stayed fail-closed.
 
 ---
 
 ## Blocked / Waiting On
 
-### B-Host-Lineage (review lineage reconciled; host redeploy pending)
+### B-Host-Lineage (deployed; 72-hour observation active)
 
-Operator captured a fresh read-only host fact packet on **2026-05-10**. The host is clean at `912a86260c48bb5e4c0e65cdba4f59b976d80c7c`, safety remains fail-closed (`STRATEGY_BLOCK_ON_CHAMPION_DRIFT=true`, `EXECUTION_DISPATCH_MODE=fail_closed`), and `/metrics` returns HTTP 404. The reconciliation branch `codex/reconcile-live-trial-main` merges the reviewed GitHub lineage onto latest `main`, applies the host-only historical-quality cast hotfix, and adds a fail-closed runtime/contract guard for `RECANONICALIZED_LEGACY_ROW`.
+Operator deployed `origin/main` commit `21286c6b2cf3bce5d951e621ca341ba73d175103` to host on **2026-05-10**. Host tree was clean after deploy, branch was `main`, `/metrics` returned HTTP 200 and exposed `pairs_cue_projection_total`, `strategy_selection_transition_total`, and `strategy_selection_rows_updated_without_transition_total`. Safety remained fail-closed: `STRATEGY_BLOCK_ON_CHAMPION_DRIFT=true`, `EXECUTION_DISPATCH_MODE=fail_closed`, `OPERATOR_PROMOTION` unset, open trade count zero, and no live ENTRY/EXIT activation evidence.
 
-Remaining operator-only step before calling the host reconciled:
-1. Deploy the reconciled `main` lineage after local/CI gates pass.
-2. Re-run host checks proving `/metrics` exposes `pairs_cue_projection_total`, `strategy_selection_transition_total`, and `strategy_selection_rows_updated_without_transition_total`.
-3. Re-confirm `STRATEGY_BLOCK_ON_CHAMPION_DRIFT=true` and `EXECUTION_DISPATCH_MODE=fail_closed`.
+T0 Trade Now verification showed `trade_now=0`, `watchlist=0`, `excluded=48`; all 12 `RECANONICALIZED_LEGACY_ROW` rows were excluded with `decision_reason_code=PROVENANCE_POLICY_BLOCKED`, `blocked_reason_code=RECANONICALIZED_LEGACY_ROW_ACTIVE`, and `legacy_fallback_active=false`.
 
-Neither the local nor any remote agent has SSH access to `cryptopairs`. This is operator-only.
+T+24 observation on **2026-05-10T22:49Z** showed host still clean at `21286c6b2cf3bce5d951e621ca341ba73d175103`, `/metrics` still healthy, selection accounting gap counters at zero, and Trade Now at `trade_now=0`, `watchlist=8-9`, `excluded=39`. Current blockers are learning/provenance/live-gate conditions, not deployment or metrics. Continue read-only T+48 and T+72 capture; do not enable live ENTRY/EXIT, set `OPERATOR_PROMOTION`, mutate selected rows, or expand the approved universe during the window.
+
+Neither the local nor any remote agent has SSH access to `cryptopairs`. Host verification remains operator-only.
 
 Prior 2026-05-05 repository identity raw output:
 
@@ -484,11 +484,11 @@ Follow-ups carried forward from prior reviews. Ordered by source review then sev
 
 Pickable items, in priority order:
 
-1. **Local/operator: finish reconciliation PR to `main`** — review `codex/reconcile-live-trial-main`, run cargo-dependent gates, merge once green, and deploy from reconciled `main`.
-2. **Operator action: host verification after deploy** — prove `/metrics` exposes projection/transition counters and safety env remains fail-closed.
-3. **Operator/local agent: Slice C observation capture** — after reconciled deployment, capture neutral-selection and Trade Now observation evidence required by the Slice D and X3 proposals.
-4. **Remote/local agent: Slice D hardening follow-up** — if needed after observation, implement a dry-run-first recanonicalization maintenance path without making legacy or repair-only provenance trade-eligible.
-5. **Remote/local agent: X3 implementation** — only after reconciled deployment is observed; implement PR #175's optional/additive reporting diagnostics while preserving legacy `selected_variant`.
+1. **Operator/local agent: continue T+48 and T+72 observation capture** — preserve fail-closed runtime settings and compare Trade Now buckets, blocked reasons, opportunity history, paper trades, and drift events against T0/T+24.
+2. **Remote/UI agent: Trade Now observation UI** — improve the web UI for the current observation window using existing Trade Now and observability contracts; do not add controls that mutate runtime state.
+3. **Remote/local agent: Slice D hardening follow-up** — if needed after observation, implement a dry-run-first recanonicalization maintenance path without making legacy or repair-only provenance trade-eligible.
+4. **Remote/local agent: X3 implementation** — only after reconciled deployment is observed; implement PR #175's optional/additive reporting diagnostics while preserving legacy `selected_variant`.
+5. **Remote/local agent: blocker-specific strategy follow-up** — only after T+72, target the blocker shown by evidence (learning hold/not eligible, live setup/cost gates, or approved-universe policy) rather than weakening Trade Now safety gates.
 
 ---
 
