@@ -6523,9 +6523,7 @@ fn build_trade_now_row(
                     Some(
                         LearningOverlayBlockedReason::LegacyFallbackActive
                         | LearningOverlayBlockedReason::RecanonicalizedLegacyRowActive,
-                    ) => {
-                        "PROVENANCE_POLICY_BLOCKED"
-                    }
+                    ) => "PROVENANCE_POLICY_BLOCKED",
                     Some(LearningOverlayBlockedReason::PendingChallengerRequiresPromotion) => {
                         "GOVERNANCE_POLICY_BLOCKED"
                     }
@@ -6667,10 +6665,7 @@ fn build_trade_now_row(
     if legacy_fallback_active {
         push_unique_code(&mut rationale_codes, "LEGACY_FALLBACK_ACTIVE");
     } else if recanonicalized_legacy_row_active {
-        push_unique_code(
-            &mut rationale_codes,
-            "RECANONICALIZED_LEGACY_ROW_ACTIVE",
-        );
+        push_unique_code(&mut rationale_codes, "RECANONICALIZED_LEGACY_ROW_ACTIVE");
     } else {
         push_unique_code(&mut rationale_codes, "NON_LEGACY_CHAMPION");
     }
