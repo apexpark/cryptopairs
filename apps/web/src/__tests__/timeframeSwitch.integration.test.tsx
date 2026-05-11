@@ -450,13 +450,6 @@ describe("global timeframe switching", () => {
         undefined,
         "mean_revert"
       );
-      expect(api.fetchStrategyBacktest).toHaveBeenCalledWith(
-        "1m",
-        PAIR_ID,
-        2000,
-        undefined,
-        "mean_revert"
-      );
       expect(api.fetchMarketMetrics).toHaveBeenCalledWith(LEFT);
       expect(api.fetchMarketMetrics).toHaveBeenCalledWith(RIGHT);
       expect(api.fetchExecutionPortfolioPositions).toHaveBeenCalledWith(
@@ -484,15 +477,9 @@ describe("global timeframe switching", () => {
         undefined,
         "mean_revert"
       );
-      expect(api.fetchStrategyBacktest).toHaveBeenCalledWith(
-        "15m",
-        PAIR_ID,
-        1600,
-        undefined,
-        "mean_revert"
-      );
       expect(screen.getByRole("button", { name: /Timeframe: 15m/i })).toBeInTheDocument();
     });
+    expect(api.fetchStrategyBacktest).not.toHaveBeenCalled();
   });
 
   it("uses 1h chart depth when switched to 1h", async () => {
@@ -523,15 +510,9 @@ describe("global timeframe switching", () => {
         undefined,
         "mean_revert"
       );
-      expect(api.fetchStrategyBacktest).toHaveBeenCalledWith(
-        "1h",
-        PAIR_ID,
-        1200,
-        undefined,
-        "mean_revert"
-      );
       expect(screen.getByRole("button", { name: /Timeframe: 1h/i })).toBeInTheDocument();
     });
+    expect(api.fetchStrategyBacktest).not.toHaveBeenCalled();
   });
 
   it("threads taker commission override to strategy queries when configured", async () => {
@@ -558,14 +539,8 @@ describe("global timeframe switching", () => {
         10,
         "mean_revert"
       );
-      expect(api.fetchStrategyBacktest).toHaveBeenCalledWith(
-        "1m",
-        PAIR_ID,
-        2000,
-        10,
-        "mean_revert"
-      );
     });
+    expect(api.fetchStrategyBacktest).not.toHaveBeenCalled();
   });
 
   it("warns when a persisted pair falls back to the live cue set without overwriting storage", async () => {
@@ -573,6 +548,19 @@ describe("global timeframe switching", () => {
     window.localStorage.setItem("cp.pair", JSON.stringify(missingPairId));
 
     render(<App />);
+
+    await waitFor(() => {
+      expect(api.fetchStrategyLiveZ).toHaveBeenCalledWith(
+        "1m",
+        PAIR_ID,
+        2000,
+        2000,
+        undefined,
+        "mean_revert"
+      );
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "Research Bench" }));
 
     await waitFor(() => {
       expect(api.fetchStrategyBacktest).toHaveBeenCalledWith(
@@ -583,8 +571,6 @@ describe("global timeframe switching", () => {
         "mean_revert"
       );
     });
-
-    fireEvent.click(screen.getByRole("button", { name: "Research Bench" }));
 
     expect(
       screen.getByText(
@@ -633,6 +619,7 @@ describe("global timeframe switching", () => {
         "mean_revert"
       );
     });
+    expect(api.fetchStrategyBacktest).not.toHaveBeenCalled();
 
     fireEvent.click(screen.getByText("Advanced Audit"));
 

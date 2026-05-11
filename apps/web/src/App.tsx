@@ -57,9 +57,11 @@ import type {
   OrderIntentHistoryResponse,
   ReconcileResponse,
   SpreadPosition,
+  StrategyPairsBacktestResponse,
   StrategyPairsCuesResponse,
   StrategyPairsCandidateInboxResponse,
   StrategyPairsExpectancyResponse,
+  StrategyPairsLiveZResponse,
   StrategyPairsOpportunityHistoryResponse,
   StrategyPairsOpportunityHistoryStatsResponse,
   StrategyPairsPaperTradesResponse,
@@ -113,6 +115,7 @@ const NAV_ITEMS: Array<{ id: PageId; label: string }> = [
 
 const TIMEFRAMES: Timeframe[] = ["1m", "15m", "1h"];
 const TRADE_PAIR_STATUS_CUE_LIMIT = 80;
+const TRADE_CHART_PRELOAD_LIMIT = 16;
 const RESEARCH_Z_METHODS: StrategyZMethod[] = [
   "ROBUST_Z",
   "COINTEGRATION_Z",
@@ -122,6 +125,22 @@ const RESEARCH_Z_METHODS: StrategyZMethod[] = [
 const WEB_BUILD_STAMP = "2026-02-23-02";
 const CADENCE_WINDOW_HOURS = 168;
 const CADENCE_HISTORY_LIMIT = 20_000;
+
+function chartCacheKey(
+  timeframe: Timeframe,
+  pairId: string,
+  bars: number,
+  takerFeeBpsOverride: number | null,
+  exitMode: BacktestExitMode
+): string {
+  return [
+    timeframe,
+    pairId,
+    bars,
+    takerFeeBpsOverride == null ? "default-fee" : takerFeeBpsOverride.toString(),
+    exitMode,
+  ].join("|");
+}
 
 function analyticsRefreshMs(timeframe: Timeframe): number {
   if (timeframe === "1m") {
@@ -1561,6 +1580,14 @@ function App(): JSX.Element {
   const [intentHistoryByPair, setIntentHistoryByPair] = useState<
     Record<string, OrderIntentHistoryResponse[]>
   >({});
+  const liveZChartCacheRef = useRef<Map<string, StrategyPairsLiveZResponse>>(new Map());
+  const liveZChartInflightRef = useRef<Map<string, Promise<StrategyPairsLiveZResponse>>>(
+    new Map()
+  );
+  const backtestChartCacheRef = useRef<Map<string, StrategyPairsBacktestResponse>>(new Map());
+  const backtestChartInflightRef = useRef<Map<string, Promise<StrategyPairsBacktestResponse>>>(
+    new Map()
+  );
   const positionsRefreshSeqRef = useRef(0);
   const positionsRef = useRef<Record<string, SpreadPosition>>({});
   const openTradesRef = useRef<ExecutionOpenTradesResponse | null>(null);
@@ -1627,6 +1654,7 @@ function App(): JSX.Element {
   }, [cuesResponse]);
 
   const currentPairId = selectedCueRow?.cue.pair_id ?? "";
+
   const approvedCadenceRows = useMemo(
     () =>
       tradeNowResponse
@@ -1775,6 +1803,142 @@ function App(): JSX.Element {
     () => parseCommissionPercentToBps(takerCommissionPct),
     [takerCommissionPct]
   );
+
+  const loadLiveZChart = useCallback(
+    (
+      pairId: string,
+      bars: number,
+      options: { forceRefresh?: boolean } = {}
+    ): Promise<StrategyPairsLiveZResponse> => {
+      const key = chartCacheKey(
+        timeframe,
+        pairId,
+        bars,
+        takerFeeBpsOverride,
+        backtestExitMode
+      );
+      const inflight = liveZChartInflightRef.current.get(key);
+      if (inflight) {
+        return inflight;
+      }
+      if (!options.forceRefresh) {
+        const cached = liveZChartCacheRef.current.get(key);
+        if (cached) {
+          return Promise.resolve(cached);
+        }
+      }
+      const request =
+        takerFeeBpsOverride == null
+          ? fetchStrategyLiveZ(timeframe, pairId, bars, bars, undefined, backtestExitMode)
+          : fetchStrategyLiveZ(
+              timeframe,
+              pairId,
+              bars,
+              bars,
+              takerFeeBpsOverride,
+              backtestExitMode
+            );
+      const cachedRequest = request.then((response) => {
+        liveZChartCacheRef.current.set(key, response);
+        return response;
+      });
+      liveZChartInflightRef.current.set(key, cachedRequest);
+      cachedRequest.then(
+        () => liveZChartInflightRef.current.delete(key),
+        () => liveZChartInflightRef.current.delete(key)
+      );
+      return cachedRequest;
+    },
+    [backtestExitMode, takerFeeBpsOverride, timeframe]
+  );
+
+  const loadBacktestChart = useCallback(
+    (
+      pairId: string,
+      bars: number,
+      options: { forceRefresh?: boolean } = {}
+    ): Promise<StrategyPairsBacktestResponse> => {
+      const key = chartCacheKey(
+        timeframe,
+        pairId,
+        bars,
+        takerFeeBpsOverride,
+        backtestExitMode
+      );
+      const inflight = backtestChartInflightRef.current.get(key);
+      if (inflight) {
+        return inflight;
+      }
+      if (!options.forceRefresh) {
+        const cached = backtestChartCacheRef.current.get(key);
+        if (cached) {
+          return Promise.resolve(cached);
+        }
+      }
+      const request =
+        takerFeeBpsOverride == null
+          ? fetchStrategyBacktest(timeframe, pairId, bars, undefined, backtestExitMode)
+          : fetchStrategyBacktest(timeframe, pairId, bars, takerFeeBpsOverride, backtestExitMode);
+      const cachedRequest = request.then((response) => {
+        backtestChartCacheRef.current.set(key, response);
+        return response;
+      });
+      backtestChartInflightRef.current.set(key, cachedRequest);
+      cachedRequest.then(
+        () => backtestChartInflightRef.current.delete(key),
+        () => backtestChartInflightRef.current.delete(key)
+      );
+      return cachedRequest;
+    },
+    [backtestExitMode, takerFeeBpsOverride, timeframe]
+  );
+
+  useEffect(() => {
+    if (!uiAccessGranted || page !== "trade" || !tradeNowResponse || !cuesResponse?.cues.length) {
+      return;
+    }
+    let cancelled = false;
+    const bars = clampAnalyticsChartBars(analyticsChartBars);
+    const liveCuePairIds = new Set(cuesResponse.cues.map((entry) => entry.cue.pair_id));
+    const seen = new Set<string>();
+    const pairIds = [currentPairId, ...tradeNowRows(tradeNowResponse).map((row) => row.pair_id)]
+      .filter((pairId) => {
+        if (!pairId || seen.has(pairId) || !liveCuePairIds.has(pairId)) {
+          return false;
+        }
+        seen.add(pairId);
+        return true;
+      })
+      .slice(0, TRADE_CHART_PRELOAD_LIMIT);
+
+    const warmCharts = async (): Promise<void> => {
+      for (const pairId of pairIds) {
+        if (cancelled) {
+          return;
+        }
+        try {
+          await loadLiveZChart(pairId, bars);
+        } catch {
+          // Warming is opportunistic. The selected-pair path still reports chart errors.
+        }
+      }
+    };
+
+    void warmCharts();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    analyticsChartBars,
+    cuesResponse,
+    currentPairId,
+    loadLiveZChart,
+    page,
+    tradeNowResponse,
+    uiAccessGranted,
+  ]);
+
   const researchEntryZNumber = Number.parseFloat(researchEntryZ);
   const researchExitZNumber = Number.parseFloat(researchExitZ);
   const researchStopZNumber = Number.parseFloat(researchStopZ);
@@ -2172,50 +2336,21 @@ function App(): JSX.Element {
       const bars = clampAnalyticsChartBars(analyticsChartBars);
 
       try {
-        const liveZRequest =
-          takerFeeBpsOverride == null
-            ? fetchStrategyLiveZ(
-                timeframe,
-                selectedCueRow.cue.pair_id,
-                bars,
-                bars,
-                undefined,
-                backtestExitMode
-              )
-            : fetchStrategyLiveZ(
-                timeframe,
-                selectedCueRow.cue.pair_id,
-                bars,
-                bars,
-                takerFeeBpsOverride,
-                backtestExitMode
-              );
-        const backtestRequest =
-          takerFeeBpsOverride == null
-            ? fetchStrategyBacktest(
-                timeframe,
-                selectedCueRow.cue.pair_id,
-                bars,
-                undefined,
-                backtestExitMode
-              )
-            : fetchStrategyBacktest(
-                timeframe,
-                selectedCueRow.cue.pair_id,
-                bars,
-                takerFeeBpsOverride,
-                backtestExitMode
-              );
-        const [liveZ, backtest] = await Promise.all([
-          liveZRequest,
-          backtestRequest,
-        ]);
+        const liveZ = await loadLiveZChart(selectedCueRow.cue.pair_id, bars, {
+          forceRefresh: !firstLoad,
+        });
+        const backtest =
+          page === "analytics"
+            ? await loadBacktestChart(selectedCueRow.cue.pair_id, bars, {
+                forceRefresh: !firstLoad,
+              })
+            : null;
 
         if (cancelled) {
           return;
         }
 
-        if (liveZ.points.length < 20 || backtest.points.length < 20) {
+        if (liveZ.points.length < 20 || (backtest && backtest.points.length < 20)) {
           setAnalyticsError("Insufficient aligned data for analytics charts.");
           setZSeries([]);
           setZTimestamps([]);
@@ -2228,8 +2363,8 @@ function App(): JSX.Element {
 
         const zValues = liveZ.points.map((point) => point.z);
         const zTimes = liveZ.points.map((point) => point.ts);
-        const equity = backtest.points.map((point) => point.equity);
-        const equityTimes = backtest.points.map((point) => point.ts);
+        const equity = backtest?.points.map((point) => point.equity) ?? [];
+        const equityTimes = backtest?.points.map((point) => point.ts) ?? [];
         const markers = liveZ.markers.filter((marker) =>
           marker.kind === "entry" || marker.kind === "exit" || marker.kind === "stop"
         );
@@ -2278,8 +2413,9 @@ function App(): JSX.Element {
     selectedCueRow,
     timeframe,
     uiAccessGranted,
-    takerFeeBpsOverride,
-    backtestExitMode,
+    page,
+    loadLiveZChart,
+    loadBacktestChart,
     analyticsChartBars,
   ]);
 
