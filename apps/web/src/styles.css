@@ -563,7 +563,7 @@ table {
   display: flex;
   flex-direction: column;
   gap: 10px;
-  overflow: auto;
+  overflow: visible;
 }
 
 .opportunities-summary {
@@ -574,6 +574,7 @@ table {
   display: grid;
   gap: 8px;
   min-height: 0;
+  overflow: visible;
 }
 
 .simple-pairs-header {
@@ -596,17 +597,44 @@ table {
 }
 
 .simple-pairs-table-wrap {
-  max-height: 52vh;
+  max-height: none;
+  overflow: visible;
 }
 
 .simple-pairs-table {
-  min-width: 420px;
+  min-width: 0;
+  table-layout: fixed;
   font-size: 0.82rem;
 }
 
 .simple-pairs-table td {
   vertical-align: middle;
   font-size: 0.82rem;
+  overflow: visible;
+}
+
+.simple-pairs-table th:nth-child(1),
+.simple-pairs-table td:nth-child(1) {
+  width: 58%;
+}
+
+.simple-pairs-table th:nth-child(2),
+.simple-pairs-table td:nth-child(2) {
+  width: 25%;
+}
+
+.simple-pairs-table th:nth-child(3),
+.simple-pairs-table td:nth-child(3) {
+  width: 17%;
+}
+
+.simple-pairs-table .opportunity-pair-stack {
+  min-width: 0;
+}
+
+.simple-pairs-table .opportunity-pair-stack strong,
+.simple-pairs-table .opportunity-pair-stack span {
+  overflow-wrap: anywhere;
 }
 
 .simple-pairs-table tr[role="button"] {
@@ -654,19 +682,22 @@ table {
   content: attr(data-tooltip);
   position: absolute;
   z-index: 20;
-  left: calc(100% + 8px);
-  top: 50%;
-  width: min(260px, 70vw);
-  transform: translateY(-50%);
+  right: 0;
+  top: calc(100% + 7px);
+  width: min(210px, 58vw);
+  max-width: calc(100vw - 48px);
+  transform: none;
   border: 1px solid var(--line-strong);
   border-radius: 8px;
   background: var(--panel);
   color: var(--text);
   box-shadow: 0 14px 36px rgba(20, 29, 48, 0.18);
-  padding: 8px 10px;
-  font-size: 0.78rem;
-  line-height: 1.35;
+  padding: 7px 8px;
+  font-size: 0.68rem;
+  line-height: 1.3;
+  text-align: left;
   white-space: normal;
+  overflow-wrap: anywhere;
   opacity: 0;
   pointer-events: none;
   transition: opacity 0.12s ease;
@@ -676,14 +707,14 @@ table {
   content: "";
   position: absolute;
   z-index: 21;
-  left: calc(100% + 4px);
-  top: 50%;
+  right: 12px;
+  top: calc(100% + 3px);
   width: 9px;
   height: 9px;
-  transform: translateY(-50%) rotate(45deg);
+  transform: rotate(45deg);
   background: var(--panel);
   border-left: 1px solid var(--line-strong);
-  border-bottom: 1px solid var(--line-strong);
+  border-top: 1px solid var(--line-strong);
   opacity: 0;
   pointer-events: none;
   transition: opacity 0.12s ease;
