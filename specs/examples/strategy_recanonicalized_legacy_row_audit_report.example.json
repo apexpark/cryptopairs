@@ -28,8 +28,8 @@
       "updated_at": "2026-05-11T04:20:00Z",
       "current_evaluated_best_variant": "ROBUST_Z",
       "current_evaluated_best_score": 3.01,
-      "selection_state_source": "EVALUATED_BEST",
-      "selection_state_validation_state": "BEST_IS_CHAMPION",
+      "selection_state_source": null,
+      "selection_state_validation_state": null,
       "primary_classification": "CURRENT_EVALUATION_MATCHES_SELECTED_VARIANT",
       "classifications": [
         "ALREADY_REPAIR_ONLY_BLOCKED",
@@ -54,8 +54,8 @@
       "updated_at": "2026-05-11T04:21:00Z",
       "current_evaluated_best_variant": "VOL_NORMALIZED",
       "current_evaluated_best_score": 2.18,
-      "selection_state_source": "STORED_CHAMPION_PROJECTION",
-      "selection_state_validation_state": "CHAMPION_PROJECTED_BLOCKED",
+      "selection_state_source": null,
+      "selection_state_validation_state": null,
       "primary_classification": "CURRENT_EVALUATION_DIFFERS",
       "classifications": [
         "ALREADY_REPAIR_ONLY_BLOCKED",

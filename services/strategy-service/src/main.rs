@@ -9023,8 +9023,8 @@ fn parse_env_bool(key: &str, default: bool) -> bool {
 mod tests {
     use super::{
         artifact_download_path, bootstrap_deviation_exceeds_threshold, bootstrap_snapshot_is_fresh,
-        canonical_metric_instrument, classify_expectancy_result, compute_expectancy_metrics,
-        classify_recanonicalized_legacy_row,
+        canonical_metric_instrument, classify_expectancy_result,
+        classify_recanonicalized_legacy_row, compute_expectancy_metrics,
         compute_pair_funding_bps_per_event, compute_pair_slippage_sample_bps,
         compute_walk_forward_summary, cue_for_pairs_response, days_covered,
         decide_candidate_probation_transition, decide_champion_transition,
@@ -9034,19 +9034,18 @@ mod tests {
         normalize_funding_rate, parse_backtest_exit_mode, parse_candidate_inbox_query,
         parse_expectancy_query, parse_opportunity_history_stats_timeframe,
         parse_opportunity_history_window, parse_paper_trades_window, parse_replay_trades_query,
-        percentile, project_continuous_funding_bps, refresh_setup_gate,
-        selected_config_source, resolve_artifact_path, resolve_taker_fee_bps, retention_cutoff_ts,
+        percentile, project_continuous_funding_bps, refresh_setup_gate, resolve_artifact_path,
+        resolve_taker_fee_bps, retention_cutoff_ts, selected_config_source,
         summarize_recent_performance, update_persist_summary_for_transition, CandidateInboxQuery,
         CandidateLifecycleState, CandidateOperatorAction, CandidateProbationInputs,
         ChampionDecision, CueProjectionOutcome, ExpectancyMetrics, ExpectancyQuery,
         FundingCostEstimate, FundingRateInputMode, MaintenanceAction, OpportunityHistoryQuery,
         OpportunityHistoryStatsQuery, PaperTradesQuery, PersistSummary,
-        RecanonicalizedLegacyRowEvaluationProof, ReoptError, ReoptimizeResponse,
-        ReplayTradeEntry, ReplayTradePathSummary, ReplayTradesQuery, ResearchSweepRequest,
-        SampledSlippageStatus, SelectedSignalAuditRow, SelectedSignalRow,
-        SelectionTransitionCounts, StrategyMarketMetricsResponse, StrategyMetrics,
-        StrategySettings, RECANONICALIZED_LEGACY_ROW_ACTIVE_REASON,
-        RECANONICALIZED_LEGACY_ROW_SOURCE,
+        RecanonicalizedLegacyRowEvaluationProof, ReoptError, ReoptimizeResponse, ReplayTradeEntry,
+        ReplayTradePathSummary, ReplayTradesQuery, ResearchSweepRequest, SampledSlippageStatus,
+        SelectedSignalAuditRow, SelectedSignalRow, SelectionTransitionCounts,
+        StrategyMarketMetricsResponse, StrategyMetrics, StrategySettings,
+        RECANONICALIZED_LEGACY_ROW_ACTIVE_REASON, RECANONICALIZED_LEGACY_ROW_SOURCE,
     };
     use chrono::Utc;
     use common_types::Timeframe;

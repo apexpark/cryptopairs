@@ -331,10 +331,8 @@ mod strategy_service_bin {
 
         #[tokio::test]
         async fn recanonicalized_audit_does_not_mutate_selected_signal() -> anyhow::Result<()> {
-            let Some(fixture) = PgFixture::connect(
-                "recanonicalized_audit_does_not_mutate_selected_signal",
-            )
-            .await?
+            let Some(fixture) =
+                PgFixture::connect("recanonicalized_audit_does_not_mutate_selected_signal").await?
             else {
                 return Ok(());
             };
