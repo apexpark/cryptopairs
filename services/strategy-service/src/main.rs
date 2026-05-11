@@ -5405,7 +5405,7 @@ fn classify_recanonicalized_legacy_row(
             selected_variant: row.selected_variant.clone(),
             selected_score: row.selected_score,
             selected_config_source,
-            updated_at: row.updated_at.clone(),
+            updated_at: row.updated_at,
             current_evaluated_best_variant,
             current_evaluated_best_score,
             selection_state_source,
