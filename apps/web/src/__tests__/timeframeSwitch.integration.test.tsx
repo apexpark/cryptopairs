@@ -37,6 +37,7 @@ const api = vi.hoisted(() => ({
   fetchStrategyCues: vi.fn(),
   fetchStrategyLiveZ: vi.fn(),
   fetchStrategyTradeNow: vi.fn(),
+  fetchStrategyTradeNowObservability: vi.fn(),
   fetchStrategyUiAuthStatus: vi.fn(),
   submitOrderIntent: vi.fn(),
   updateKillSwitchState: vi.fn(),
@@ -226,8 +227,8 @@ function buildTradeNowRow(pairId: string, timeframe: Timeframe, bucket: "TRADE_N
     learning_selection_selected: bucket === "EXCLUDED" ? null : true,
     learning_reason_codes: bucket === "WATCHLIST" ? ["LEARNING_OVERLAY_STALE"] : [],
     learning_cycle_generated_at: bucket === "EXCLUDED" ? null : "2026-02-20T00:00:00Z",
-    selected_config_source: bucket === "EXCLUDED" ? "LEGACY_ROW_FALLBACK" : "AUTO_CHAMPION",
-    legacy_fallback_active: bucket === "EXCLUDED",
+    selected_config_source: bucket === "EXCLUDED" ? "RECANONICALIZED_LEGACY_ROW" : "AUTO_CHAMPION",
+    legacy_fallback_active: false,
     decision_bucket: bucket,
     decision_reason_code:
       bucket === "TRADE_NOW"
@@ -235,11 +236,11 @@ function buildTradeNowRow(pairId: string, timeframe: Timeframe, bucket: "TRADE_N
         : bucket === "WATCHLIST"
           ? "STALE_OVERLAY_DOWNGRADED_TO_WATCHLIST"
           : "PROVENANCE_POLICY_BLOCKED",
-    blocked_reason_code: bucket === "EXCLUDED" ? "LEGACY_FALLBACK_ACTIVE" : null,
+    blocked_reason_code: bucket === "EXCLUDED" ? "RECANONICALIZED_LEGACY_ROW_ACTIVE" : null,
     watch_reason_code: bucket === "WATCHLIST" ? "LEARNING_OVERLAY_STALE" : null,
     rationale_codes:
       bucket === "EXCLUDED"
-        ? ["LEGACY_FALLBACK_ACTIVE", "OUTSIDE_APPROVED_UNIVERSE"]
+        ? ["RECANONICALIZED_LEGACY_ROW_ACTIVE", "OUTSIDE_APPROVED_UNIVERSE"]
         : ["APPROVAL_SOURCE_LEARNING_SELECTION", "NON_LEGACY_CHAMPION"],
   };
 }
@@ -348,6 +349,15 @@ beforeEach(() => {
   api.fetchStrategyTradeNow.mockImplementation(async (timeframe: Timeframe) =>
     timeframe === "1h" ? buildEmptyTradeNowResponse(timeframe) : buildTradeNowResponse(timeframe)
   );
+  api.fetchStrategyTradeNowObservability.mockResolvedValue({
+    generated_at: "2026-02-20T00:00:00Z",
+    learning_challenger_bypass_suppressed_total: 0,
+    learning_challenger_bypass_suppressed: [],
+    learning_eligible_override_tradable_total: 0,
+    learning_eligible_override_tradable: [],
+    learning_selection_cost_override_applied_total: 0,
+    learning_selection_cost_override_applied: [],
+  });
   api.fetchStrategyOpportunityHistory.mockImplementation(async (timeframe: Timeframe) =>
     buildOpportunityHistoryResponse(timeframe)
   );
@@ -597,12 +607,25 @@ describe("global timeframe switching", () => {
         "Approved operator surface: Trade Now, Watchlist, Excluded, and Research Bench."
       )
     ).toBeInTheDocument();
-    expect(screen.getByText("Watchlist")).toBeInTheDocument();
-    expect(screen.getByText("Excluded")).toBeInTheDocument();
+    expect(screen.getAllByText("Watchlist").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("Excluded").length).toBeGreaterThan(0);
     expect(screen.getAllByText("Research Bench").length).toBeGreaterThan(0);
     expect(screen.getByText("Cadence Snapshot")).toBeInTheDocument();
     expect(screen.getByText("Approved-ready rows/day")).toBeInTheDocument();
     expect(screen.getByText("Stored history coverage")).toBeInTheDocument();
+    expect(screen.getByText("Dispatch mode")).toBeInTheDocument();
+    expect(screen.getByText("Champion drift blocking")).toBeInTheDocument();
+    expect(screen.getByText("Trade Now observability")).toBeInTheDocument();
+    expect(screen.getByText("Observation Blockers")).toBeInTheDocument();
+    expect(screen.getByText("LEARNING_HOLD")).toBeInTheDocument();
+    expect(screen.getByText("LEARNING_NOT_TRADE_ELIGIBLE")).toBeInTheDocument();
+    expect(screen.getAllByText("RECANONICALIZED_LEGACY_ROW_ACTIVE").length).toBeGreaterThan(0);
+    expect(screen.getByText("Recanonicalized fail-closed")).toBeInTheDocument();
+    expect(screen.getByText("Fail closed")).toBeInTheDocument();
+    expect(screen.getByText("PI_SOLUSD__PI_AVAXUSD")).toBeInTheDocument();
+    expect(screen.getAllByText("LEARNING_SELECTION").length).toBeGreaterThan(0);
+    expect(screen.getByText("STALE_OVERLAY_DOWNGRADED_TO_WATCHLIST")).toBeInTheDocument();
+    expect(screen.getAllByText("AUTO_CHAMPION").length).toBeGreaterThan(0);
 
     selectTimeframe("1h");
 

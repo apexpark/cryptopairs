@@ -570,6 +570,73 @@ table {
   margin: 0;
 }
 
+.trade-now-status-strip {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(130px, 1fr));
+  gap: 8px;
+}
+
+.status-strip-item,
+.bucket-count,
+.blocker-count {
+  border: 1px solid var(--line-soft);
+  border-radius: 8px;
+  background: var(--panel-2);
+  padding: 8px;
+  min-width: 0;
+  display: grid;
+  gap: 4px;
+}
+
+.status-strip-item strong,
+.bucket-count strong,
+.blocker-count strong {
+  font-size: 0.88rem;
+  line-height: 1.2;
+  overflow-wrap: anywhere;
+}
+
+.bucket-count-grid {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(110px, 1fr));
+  gap: 8px;
+}
+
+.bucket-count span {
+  color: var(--muted);
+  font-size: 0.72rem;
+}
+
+.trade-now-breakdown {
+  border: 1px solid var(--line-soft);
+  border-radius: 8px;
+  background: var(--panel-2);
+  padding: 8px;
+  display: grid;
+  gap: 8px;
+}
+
+.trade-now-breakdown-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.trade-now-breakdown-header h3 {
+  margin: 0;
+}
+
+.blocker-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(120px, 1fr));
+  gap: 8px;
+}
+
+.blocker-count strong {
+  font-size: 1rem;
+}
+
 .opportunity-bucket-stack {
   display: grid;
   gap: 10px;
@@ -608,6 +675,10 @@ table {
   max-height: 220px;
 }
 
+.opportunity-bucket-table {
+  min-width: 920px;
+}
+
 .opportunity-bucket-table td {
   vertical-align: top;
   font-size: 0.72rem;
@@ -617,6 +688,45 @@ table {
 .opportunity-status-stack {
   display: grid;
   gap: 4px;
+}
+
+.fail-closed-row {
+  background: color-mix(in srgb, var(--tone-bad) 8%, transparent);
+}
+
+.fail-closed-row:hover,
+.fail-closed-row.selected-row {
+  background: color-mix(in srgb, var(--tone-bad) 14%, var(--nav-active));
+}
+
+.gate-badge-row {
+  display: flex;
+  gap: 4px;
+  flex-wrap: wrap;
+}
+
+.gate-badge {
+  border: 1px solid var(--line-soft);
+  border-radius: 999px;
+  padding: 2px 6px;
+  font-size: 0.64rem;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.gate-badge.pass {
+  color: var(--tone-ok);
+  border-color: color-mix(in srgb, var(--tone-ok) 45%, var(--line));
+}
+
+.gate-badge.fail {
+  color: var(--tone-bad);
+  border-color: color-mix(in srgb, var(--tone-bad) 45%, var(--line));
+}
+
+.code-text {
+  font-family: "SFMono-Regular", "Cascadia Code", "Roboto Mono", monospace;
+  overflow-wrap: anywhere;
 }
 
 .cadence-card {
@@ -1334,7 +1444,10 @@ button:disabled {
   }
 
   .cadence-grid,
-  .cadence-split {
+  .cadence-split,
+  .trade-now-status-strip,
+  .bucket-count-grid,
+  .blocker-grid {
     grid-template-columns: 1fr;
   }
 
