@@ -1,5 +1,6 @@
 import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import type { KeyboardEvent } from "react";
 import LineChart from "./components/LineChart";
 import {
   allAcceptedDispatchAcknowledged,
@@ -111,6 +112,7 @@ const NAV_ITEMS: Array<{ id: PageId; label: string }> = [
 ];
 
 const TIMEFRAMES: Timeframe[] = ["1m", "15m", "1h"];
+const TRADE_PAIR_STATUS_CUE_LIMIT = 80;
 const RESEARCH_Z_METHODS: StrategyZMethod[] = [
   "ROBUST_Z",
   "COINTEGRATION_Z",
@@ -943,6 +945,81 @@ function tradeNowToneClass(
     return "status-pill warn";
   }
   return "status-pill bad";
+}
+
+type SimpleTradeNowStatus = {
+  label: "Ready" | "Setup" | "Wait";
+  tone: "ready" | "setup" | "wait";
+  why: string;
+};
+
+function plainTradeNowWhy(row: StrategyPairsTradeNowRow): string {
+  const headline = tradeNowHeadlineCode(row);
+  if (row.decision_bucket === "TRADE_NOW") {
+    return "Ready now: current trade checks are passing.";
+  }
+  switch (headline) {
+    case "RECANONICALIZED_LEGACY_ROW_ACTIVE":
+    case "LEGACY_FALLBACK_ACTIVE":
+      return "Locked while old setup data is replaced.";
+    case "OUTSIDE_APPROVED_UNIVERSE":
+      return "Not enough recent evidence yet.";
+    case "LEARNING_HOLD":
+      return "The system is still collecting evidence for this pair.";
+    case "LEARNING_NOT_TRADE_ELIGIBLE":
+    case "LEARNING_ELIGIBLE_NOT_SELECTED":
+      return "Close, but needs stronger recent evidence.";
+    case "SETUP_GATE_NOT_PASSING":
+    case "TRADE_GATE_NOT_PASSING":
+    case "LIVE_TRIGGER_NOT_READY":
+      return "Market is close, but trade conditions are not ready.";
+    case "COST_GATE_NOT_PASSING":
+      return "Estimated costs are too high right now.";
+    case "OPEN_POSITION_CONFLICT":
+      return "There is already an open position for this pair.";
+    case "LEARNING_OVERLAY_STALE":
+    case "STALE_OVERLAY_DOWNGRADED_TO_WATCHLIST":
+      return "Waiting for a fresh model update.";
+    case "PENDING_CHALLENGER_REQUIRES_PROMOTION":
+      return "A newer setup needs review before use.";
+    case "LIVE_SAFETY_NOT_READY":
+      return "Safety checks are not ready.";
+    default:
+      return row.decision_bucket === "WATCHLIST"
+        ? "Setup forming, but not ready yet."
+        : "Wait for this pair to pass safety checks.";
+  }
+}
+
+function simpleTradeNowStatus(row: StrategyPairsTradeNowRow): SimpleTradeNowStatus {
+  if (row.decision_bucket === "TRADE_NOW") {
+    return { label: "Ready", tone: "ready", why: plainTradeNowWhy(row) };
+  }
+  if (row.decision_bucket === "WATCHLIST") {
+    return { label: "Setup", tone: "setup", why: plainTradeNowWhy(row) };
+  }
+  return { label: "Wait", tone: "wait", why: plainTradeNowWhy(row) };
+}
+
+function simpleTradeNowCounts(rows: StrategyPairsTradeNowRow[]): {
+  ready: number;
+  setup: number;
+  wait: number;
+} {
+  return rows.reduce(
+    (counts, row) => {
+      const status = simpleTradeNowStatus(row);
+      if (status.label === "Ready") {
+        counts.ready += 1;
+      } else if (status.label === "Setup") {
+        counts.setup += 1;
+      } else {
+        counts.wait += 1;
+      }
+      return counts;
+    },
+    { ready: 0, setup: 0, wait: 0 }
+  );
 }
 
 const TRADE_NOW_OBSERVATION_BLOCKERS = [
@@ -1843,8 +1920,8 @@ function App(): JSX.Element {
       try {
         const cuesRequest =
           takerFeeBpsOverride == null
-            ? fetchStrategyCues(timeframe, 20)
-            : fetchStrategyCues(timeframe, 20, takerFeeBpsOverride);
+            ? fetchStrategyCues(timeframe, TRADE_PAIR_STATUS_CUE_LIMIT)
+            : fetchStrategyCues(timeframe, TRADE_PAIR_STATUS_CUE_LIMIT, takerFeeBpsOverride);
         const tradeNowRequest =
           takerFeeBpsOverride == null
             ? fetchStrategyTradeNow(timeframe)
@@ -3537,104 +3614,80 @@ function SectionCard({
   );
 }
 
-function TradeNowBucketSection(props: {
-  title: string;
-  subtitle: string;
+function SimpleTradeNowPairsSection(props: {
   rows: StrategyPairsTradeNowRow[];
   selectedPairId: string;
   onSelectPair: (pairId: string) => void;
-  emptyText: string;
 }): JSX.Element {
+  const counts = simpleTradeNowCounts(props.rows);
+
+  const handleRowKeyDown = (
+    event: KeyboardEvent<HTMLTableRowElement>,
+    pairId: string
+  ): void => {
+    if (event.key === "Enter" || event.key === " ") {
+      event.preventDefault();
+      props.onSelectPair(pairId);
+    }
+  };
+
   return (
-    <section className="opportunity-bucket">
-      <div className="opportunity-bucket-header">
+    <section className="simple-pairs-section">
+      <div className="simple-pairs-header">
         <div>
-          <h3>{props.title}</h3>
-          <p className="opportunity-bucket-subtitle">{props.subtitle}</p>
+          <h3>Pairs</h3>
+          <p className="opportunity-bucket-subtitle">
+            Click a pair to load its 16x chart. Hover a status for the plain-language reason.
+          </p>
         </div>
-        <span className="status-pill">{props.rows.length}</span>
+        <div className="simple-status-counts">
+          <span className="simple-status-pill ready">Ready {counts.ready}</span>
+          <span className="simple-status-pill setup">Setup {counts.setup}</span>
+          <span className="simple-status-pill wait">Wait {counts.wait}</span>
+        </div>
       </div>
       {props.rows.length ? (
-        <div className="table-wrap opportunity-bucket-table-wrap">
-          <table className="opportunity-bucket-table">
+        <div className="table-wrap simple-pairs-table-wrap">
+          <table className="simple-pairs-table">
             <thead>
               <tr>
                 <th>Pair</th>
-                <th>TF</th>
-                <th>Approval</th>
-                <th>Decision</th>
-                <th>Watch / Block</th>
-                <th>Gates</th>
-                <th>Z</th>
+                <th>Status</th>
                 <th>Edge</th>
-                <th>Config</th>
               </tr>
             </thead>
             <tbody>
               {props.rows.map((row) => {
-                const failClosed = isRecanonicalizedFailClosed(row);
+                const status = simpleTradeNowStatus(row);
                 return (
                   <tr
                     key={`${row.pair_id}-${row.timeframe}`}
-                    className={[
-                      row.pair_id === props.selectedPairId ? "selected-row" : "",
-                      failClosed ? "fail-closed-row" : "",
-                    ]
-                      .filter(Boolean)
-                      .join(" ")}
+                    className={row.pair_id === props.selectedPairId ? "selected-row" : ""}
                     onClick={() => props.onSelectPair(row.pair_id)}
+                    onKeyDown={(event) => handleRowKeyDown(event, row.pair_id)}
+                    tabIndex={0}
+                    role="button"
+                    aria-label={`${formatPairLabel(row.pair_id)} ${status.label}. ${status.why}`}
                   >
                     <td>
                       <div className="opportunity-pair-stack">
                         <strong>{formatPairLabel(row.pair_id)}</strong>
-                        <span className="small-text code-text">{row.pair_id}</span>
                         <span className="small-text">
-                          {row.selected_variant} | {formatDirectionHintLabel(row.direction_hint)}
+                          {row.timeframe} | {formatDirectionHintLabel(row.direction_hint)}
                         </span>
                       </div>
                     </td>
-                    <td>{row.timeframe}</td>
                     <td>
-                      <span className="small-text code-text">{row.approval_source}</span>
+                      <span
+                        className={`simple-status-pill ${status.tone} status-tooltip`}
+                        data-tooltip={status.why}
+                        title={status.why}
+                        tabIndex={0}
+                      >
+                        {status.label}
+                      </span>
                     </td>
-                    <td>
-                      <div className="opportunity-status-stack">
-                        <span className={tradeNowToneClass(row)}>
-                          {formatReasonCodeLabel(row.decision_reason_code)}
-                        </span>
-                        <span className="small-text code-text">{row.decision_reason_code}</span>
-                      </div>
-                    </td>
-                    <td>
-                      <div className="opportunity-status-stack">
-                        {failClosed ? <span className="status-pill bad">Fail closed</span> : null}
-                        <span className="small-text code-text">
-                          {row.watch_reason_code ?? row.blocked_reason_code ?? "--"}
-                        </span>
-                        <span className="small-text">{tradeNowDetailLabel(row)}</span>
-                      </div>
-                    </td>
-                    <td>
-                      <div className="gate-badge-row">
-                        <span className={gateBadgeClass(row.setup_gate_pass)}>Setup</span>
-                        <span className={gateBadgeClass(row.cost_gate_pass)}>Cost</span>
-                        <span className={gateBadgeClass(row.trade_gate_pass)}>Trade</span>
-                      </div>
-                    </td>
-                    <td>{formatSigned(row.spread_z)}</td>
                     <td>{formatSigned(row.net_edge_bps)}bp</td>
-                    <td>
-                      <div className="opportunity-status-stack">
-                        <span className="small-text code-text">{row.selected_config_source}</span>
-                        <span className="small-text">
-                          {row.legacy_fallback_active
-                            ? "legacy fallback"
-                            : failClosed
-                              ? "repair-only provenance"
-                              : "non-legacy or approved"}
-                        </span>
-                      </div>
-                    </td>
                   </tr>
                 );
               })}
@@ -3642,7 +3695,7 @@ function TradeNowBucketSection(props: {
           </table>
         </div>
       ) : (
-        <p className="empty-text">{props.emptyText}</p>
+        <p className="empty-text">No pair status rows are available.</p>
       )}
     </section>
   );
@@ -3943,6 +3996,125 @@ function TradeNowBlockerBreakdown(props: {
   );
 }
 
+function AdvancedTradeNowAudit(props: {
+  tradeNow: StrategyPairsTradeNowResponse | null;
+  cues: StrategyPairsCuesResponse | null;
+  selectedPairId: string;
+  executionDispatchMode: ExecutionDispatchModeResponse | null;
+  observability: StrategyTradeNowObservabilityResponse | null;
+  observabilityError: string | null;
+}): JSX.Element {
+  const [open, setOpen] = useState(false);
+  const rows = tradeNowRows(props.tradeNow);
+  const selectedRow = rows.find((row) => row.pair_id === props.selectedPairId) ?? rows[0] ?? null;
+  const blockerBreakdown = tradeNowBlockerBreakdown(props.tradeNow);
+  const drift = deriveChampionDriftObservation(props.tradeNow, props.cues);
+  const observabilityTotal = tradeNowObservabilityTotal(props.observability);
+
+  return (
+    <details className="advanced-audit" open={open}>
+      <summary
+        aria-expanded={open}
+        onClick={(event) => {
+          event.preventDefault();
+          setOpen((previous) => !previous);
+        }}
+      >
+        Advanced Audit
+      </summary>
+      {open ? (
+        <div className="advanced-audit-body">
+          <div className="advanced-audit-grid">
+            <div className="audit-card">
+              <h3>Bucket counts</h3>
+              <p className="code-text">
+                trade_now={props.tradeNow?.tradable_now.length ?? 0} | watchlist=
+                {props.tradeNow?.watchlist.length ?? 0} | excluded=
+                {props.tradeNow?.excluded.length ?? 0}
+              </p>
+              <p className="code-text">
+                generated_at={props.tradeNow?.generated_at ?? "--"}
+              </p>
+            </div>
+            <div className="audit-card">
+              <h3>System checks</h3>
+              <p className="code-text">
+                dispatch_mode={props.executionDispatchMode?.mode ?? "UNKNOWN"}
+              </p>
+              <p className="code-text">champion_drift={drift.label}</p>
+            </div>
+            <div className="audit-card">
+              <h3>Trade Now observability</h3>
+              <p className="code-text">
+                status=
+                {props.observabilityError
+                  ? "UNAVAILABLE"
+                  : props.observability
+                    ? "AVAILABLE"
+                    : "UNKNOWN"}
+              </p>
+              <p className="code-text">governance_exposure_events={observabilityTotal}</p>
+            </div>
+            <div className="audit-card">
+              <h3>Observation blockers</h3>
+              {blockerBreakdown.map((entry) => (
+                <p key={entry.code} className="code-text">
+                  {entry.code}={entry.count}
+                </p>
+              ))}
+            </div>
+          </div>
+
+          {selectedRow ? (
+            <div className="table-wrap advanced-selected-table-wrap">
+              <table className="advanced-selected-table">
+                <thead>
+                  <tr>
+                    <th>Selected pair</th>
+                    <th>Decision</th>
+                    <th>Watch / block</th>
+                    <th>Approval</th>
+                    <th>Gates</th>
+                    <th>Config</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr>
+                    <td>
+                      <span className="code-text">{selectedRow.pair_id}</span>
+                    </td>
+                    <td>
+                      <span className="code-text">{selectedRow.decision_reason_code}</span>
+                    </td>
+                    <td>
+                      <span className="code-text">
+                        {selectedRow.watch_reason_code ?? selectedRow.blocked_reason_code ?? "--"}
+                      </span>
+                    </td>
+                    <td>
+                      <span className="code-text">{selectedRow.approval_source}</span>
+                    </td>
+                    <td>
+                      <span className="code-text">
+                        setup={String(selectedRow.setup_gate_pass)} | cost=
+                        {String(selectedRow.cost_gate_pass)} | trade=
+                        {String(selectedRow.trade_gate_pass)}
+                      </span>
+                    </td>
+                    <td>
+                      <span className="code-text">{selectedRow.selected_config_source}</span>
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          ) : null}
+        </div>
+      ) : null}
+    </details>
+  );
+}
+
 function TradePage(props: {
   cues: StrategyPairsCuesResponse | null;
   tradeNow: StrategyPairsTradeNowResponse | null;
@@ -4009,7 +4181,6 @@ function TradePage(props: {
     props.cues?.cues.find((entry) => entry.cue.pair_id === props.selectedPairId) ??
     props.cues?.cues[0] ??
     null;
-  const selectedSelectionState = cueSelectionState(selectedCue?.cue);
   const spreadSizeNumber = Number.parseFloat(props.spreadSize);
   const spreadLots = Number.isFinite(spreadSizeNumber) && spreadSizeNumber > 0 ? spreadSizeNumber : 0;
   const leftInstrument = selectedCue?.cue.left_instrument ?? "LEFT";
@@ -4306,151 +4477,41 @@ function TradePage(props: {
     addExposureSizing?.reason ??
     reduceSizing?.reason ??
     null;
-  const tradeNowCounts = {
-    tradableNow: props.tradeNow?.tradable_now.length ?? 0,
-    watchlist: props.tradeNow?.watchlist.length ?? 0,
-    excluded: props.tradeNow?.excluded.length ?? 0,
-  };
-  const tradeNowTotalRows =
-    tradeNowCounts.tradableNow + tradeNowCounts.watchlist + tradeNowCounts.excluded;
-  const recanonicalizedExcludedCount = tradeNowRows(props.tradeNow).filter(
-    isRecanonicalizedFailClosed
-  ).length;
-  const approvedUniverseEmpty =
-    !!props.tradeNow &&
-    tradeNowCounts.tradableNow === 0 &&
-    tradeNowCounts.watchlist === 0 &&
-    tradeNowCounts.excluded === 0;
-  const noTradableNow = !!props.tradeNow && tradeNowCounts.tradableNow === 0;
-  const overlayStatusLabel = props.tradeNow?.learning_overlay_generated_at
-    ? props.tradeNow.learning_overlay_fresh
-      ? `Overlay fresh (${formatOverlayAgeLabel(props.tradeNow.learning_overlay_age_seconds)})`
-      : `Overlay stale (${formatOverlayAgeLabel(props.tradeNow.learning_overlay_age_seconds)})`
-    : "No learning overlay loaded";
+  const pairStatusRows = tradeNowRows(props.tradeNow);
 
   return (
     <div className="trade-grid">
       <SectionCard
-        title="Trade Now"
-        subtitle="Approved operator surface: Trade Now, Watchlist, Excluded, and Research Bench."
+        title="Pairs"
+        subtitle="Select a pair to load the chart. Hover a status for the reason."
         className="opportunities-panel"
       >
-        <div className="chip-row opportunities-summary">
-          <span className="chip tone-info">Timeframe {props.timeframe}</span>
-          <span className={`chip ${props.tradeNow?.learning_overlay_fresh ? "tone-ok" : "tone-warn"}`}>
-            {overlayStatusLabel}
-          </span>
-          <span className="chip tone-ok">Trade Now {tradeNowCounts.tradableNow}</span>
-          <span className="chip tone-warn">Watchlist {tradeNowCounts.watchlist}</span>
-          <span className="chip tone-bad">Excluded {tradeNowCounts.excluded}</span>
-        </div>
-
-        <TradeNowObservationStrip
-          tradeNow={props.tradeNow}
-          cues={props.cues}
-          executionDispatchMode={props.executionDispatchMode}
-          observability={props.tradeNowObservability}
-          observabilityLoading={props.tradeNowObservabilityLoading}
-          observabilityError={props.tradeNowObservabilityError}
-        />
-
-        <div className="bucket-count-grid">
-          <div className="bucket-count tone-ok">
-            <span>Trade Now</span>
-            <strong>{tradeNowCounts.tradableNow}</strong>
-          </div>
-          <div className="bucket-count tone-warn">
-            <span>Watchlist</span>
-            <strong>{tradeNowCounts.watchlist}</strong>
-          </div>
-          <div className="bucket-count tone-bad">
-            <span>Excluded</span>
-            <strong>{tradeNowCounts.excluded}</strong>
-          </div>
-          <div className="bucket-count">
-            <span>Total rows</span>
-            <strong>{tradeNowTotalRows}</strong>
-          </div>
-          <div className="bucket-count tone-bad">
-            <span>Recanonicalized fail-closed</span>
-            <strong>{recanonicalizedExcludedCount}</strong>
-          </div>
-        </div>
-
         {props.tradeNowLoading ? (
           <div className="message-box">
-            <p>Loading trade-now filter...</p>
+            <p>Loading pair status...</p>
           </div>
         ) : null}
         {props.tradeNowError ? (
           <div className="message-box">
             <p className="tone-warn">{props.tradeNowError}</p>
             <p className="small-text">
-              Research Bench remains available, but live operator filtering is fail-closed until this
-              endpoint recovers.
+              Pair status is unavailable, so entries stay blocked until data returns.
             </p>
           </div>
         ) : null}
-        {approvedUniverseEmpty ? (
-          <div className="message-box">
-            <p>
-              No approved universe rows exist for {props.timeframe}. This timeframe currently has no
-              learning-selected or operator-promoted active rows, so Trade Now stays empty and the
-              Research Bench below remains advisory only.
-            </p>
-          </div>
-        ) : null}
-        {!approvedUniverseEmpty && noTradableNow && !props.tradeNowError ? (
-          <div className="message-box">
-            <p>
-              No currently tradable approved opportunities for {props.timeframe}. Review Watchlist for
-              near-ready rows or use Research Bench for what-if analysis.
-            </p>
-          </div>
-        ) : null}
-        <TradeNowBlockerBreakdown tradeNow={props.tradeNow} />
-        <CadenceSnapshotCard
-          cadence={props.cadenceSnapshot}
-          loading={props.cadenceLoading}
-          error={props.cadenceError}
-          timeframe={props.timeframe}
-          approvedPairCount={props.approvedPairCount}
+        <SimpleTradeNowPairsSection
+          rows={pairStatusRows}
+          selectedPairId={props.selectedPairId}
+          onSelectPair={props.onSelectPair}
         />
-
-        <div className="opportunity-bucket-stack">
-          <TradeNowBucketSection
-            title="Trade Now"
-            subtitle="Approved rows passing live gates right now."
-            rows={props.tradeNow?.tradable_now ?? []}
-            selectedPairId={props.selectedPairId}
-            onSelectPair={props.onSelectPair}
-            emptyText="No approved rows currently pass live gates."
-          />
-          <TradeNowBucketSection
-            title="Watchlist"
-            subtitle="Approved rows that need fresher overlay or live setup improvement."
-            rows={props.tradeNow?.watchlist ?? []}
-            selectedPairId={props.selectedPairId}
-            onSelectPair={props.onSelectPair}
-            emptyText="No approved rows are waiting nearby."
-          />
-          <TradeNowBucketSection
-            title="Excluded"
-            subtitle="Rows blocked by governance, provenance, or approval policy."
-            rows={props.tradeNow?.excluded ?? []}
-            selectedPairId={props.selectedPairId}
-            onSelectPair={props.onSelectPair}
-            emptyText="No rows are currently excluded by policy."
-          />
-          <ResearchBenchSection
-            cues={props.cues}
-            selectedPairId={props.selectedPairId}
-            onSelectPair={props.onSelectPair}
-            dataDegraded={props.dataDegraded}
-            openTradePairIds={props.openTradePairIds}
-            liveZByPair={props.liveZByPair}
-          />
-        </div>
+        <AdvancedTradeNowAudit
+          tradeNow={props.tradeNow}
+          cues={props.cues}
+          selectedPairId={props.selectedPairId}
+          executionDispatchMode={props.executionDispatchMode}
+          observability={props.tradeNowObservability}
+          observabilityError={props.tradeNowObservabilityError}
+        />
       </SectionCard>
 
       <SectionCard
@@ -4485,51 +4546,8 @@ function TradePage(props: {
           showLatestValueLabel
           latestValueLabelFormatter={(value) => `Z ${value.toFixed(2)}`}
           zoomEnabled
+          initialZoomFactor={16}
         />
-
-        <div className="chip-row">
-          <span className="chip">Signal dots: entry/exit/stop (recomputed)</span>
-          <span className="chip tone-info">Execution dots: persist from executed intents</span>
-          <span className="chip tone-info">
-            Live Z: {props.liveCurrentZ != null ? props.liveCurrentZ.toFixed(2) : "--"}
-            {props.liveCurrentZUpdatedAt ? ` @ ${formatLocalTime(props.liveCurrentZUpdatedAt)}` : ""}
-          </span>
-        </div>
-
-        <div className="chip-row">
-          {selectedCue?.cue.rationale_codes.length ? (
-            selectedCue.cue.rationale_codes.map((code) => (
-              <span key={code} className="chip">
-                {code}
-              </span>
-            ))
-          ) : (
-            <>
-              <span className="chip tone-ok">COINT PASS</span>
-              <span className="chip tone-info">HALF-LIFE OK</span>
-              <span className="chip tone-ok">COST PASS</span>
-              <span className="chip tone-warn">REGIME {selectedCue?.cue.regime ?? "N/A"}</span>
-            </>
-          )}
-        </div>
-
-        {selectedCue && selectedSelectionState ? (
-          <div className="mini-card">
-            <p className="small-text">
-              Selected for trade: {cueDisplayedVariant(selectedCue.cue)}
-              {selectedSelectionState.drift_active
-                ? ` | Best live variant: ${cueBestVariant(selectedCue.cue)}`
-                : ""}
-            </p>
-            <p
-              className={`small-text ${
-                selectedSelectionState.drift_active ? "tone-warn" : "tone-info"
-              }`}
-            >
-              Selection state: {formatSelectionStateLabel(selectedSelectionState.validation_state)}
-            </p>
-          </div>
-        ) : null}
 
         <div className="timeline-card open-trades-card">
           <h3>Open Trades</h3>

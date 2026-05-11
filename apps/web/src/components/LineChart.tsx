@@ -24,6 +24,7 @@ interface LineChartProps {
   showLatestValueLabel?: boolean;
   latestValueLabelFormatter?: (value: number) => string;
   zoomEnabled?: boolean;
+  initialZoomFactor?: number;
 }
 
 function markerColor(kind: ChartMarker["kind"]): string {
@@ -106,6 +107,7 @@ export default function LineChart({
   showLatestValueLabel = false,
   latestValueLabelFormatter = (value) => value.toFixed(2),
   zoomEnabled = false,
+  initialZoomFactor = 1,
 }: LineChartProps): JSX.Element {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const [svgWidth, setSvgWidth] = useState(1000);
@@ -114,7 +116,7 @@ export default function LineChart({
     const base = [1, 2, 4, 8, 16];
     return base.filter((factor) => factor === 1 || Math.floor(values.length / factor) >= minZoomWindowPoints);
   }, [minZoomWindowPoints, values.length]);
-  const [zoomFactor, setZoomFactor] = useState(1);
+  const [zoomFactor, setZoomFactor] = useState(initialZoomFactor);
   const [windowEndIndex, setWindowEndIndex] = useState(values.length - 1);
 
   useEffect(() => {
@@ -123,7 +125,13 @@ export default function LineChart({
       setWindowEndIndex(values.length - 1);
       return;
     }
-    setZoomFactor((previous) => (zoomOptions.includes(previous) ? previous : 1));
+    const preferredZoomFactor =
+      zoomOptions.includes(initialZoomFactor)
+        ? initialZoomFactor
+        : [...zoomOptions].reverse().find((factor) => factor <= initialZoomFactor) ?? 1;
+    setZoomFactor((previous) =>
+      zoomOptions.includes(previous) && previous !== 1 ? previous : preferredZoomFactor
+    );
     setWindowEndIndex((previous) => {
       const latest = values.length - 1;
       if (previous >= latest - 1) {
@@ -131,7 +139,7 @@ export default function LineChart({
       }
       return clamp(previous, 0, latest);
     });
-  }, [zoomEnabled, zoomOptions, values.length]);
+  }, [initialZoomFactor, zoomEnabled, zoomOptions, values.length]);
 
   useEffect(() => {
     const node = containerRef.current;
