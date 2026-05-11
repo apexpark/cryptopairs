@@ -5360,9 +5360,8 @@ fn classify_recanonicalized_legacy_row(
         Err(error) => {
             reason_codes.push("MISSING_CURRENT_EVALUATION_PROOF".to_string());
             reason_codes.push(format!("EVALUATION_ERROR:{error}"));
-            classifications.push(
-                RecanonicalizedLegacyRowClassification::MissingCurrentEvaluationProof,
-            );
+            classifications
+                .push(RecanonicalizedLegacyRowClassification::MissingCurrentEvaluationProof);
             primary = Some(RecanonicalizedLegacyRowClassification::MissingCurrentEvaluationProof);
             None
         }
