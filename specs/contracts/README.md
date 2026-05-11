@@ -48,3 +48,4 @@ Current baseline contracts:
 - `specs/contracts/strategy_pairs_portfolio_plan_response.schema.json`
 - `specs/contracts/strategy_tuning_report.schema.json`
 - `specs/contracts/strategy_maintenance_latest_response.schema.json`
+- `specs/contracts/strategy_recanonicalized_legacy_row_audit_report.schema.json`

@@ -1,0 +1,197 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://apexpark.io/specs/contracts/strategy_recanonicalized_legacy_row_audit_report.schema.json",
+  "title": "StrategyRecanonicalizedLegacyRowAuditReport",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "generated_at",
+    "mode",
+    "dry_run",
+    "mutation_performed",
+    "target_source",
+    "replacement_source_required",
+    "timeframe",
+    "pair_id",
+    "counts",
+    "rows",
+    "notes"
+  ],
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "const": "1.0.0"
+    },
+    "generated_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "mode": {
+      "type": "string",
+      "const": "DRY_RUN"
+    },
+    "dry_run": {
+      "type": "boolean",
+      "const": true
+    },
+    "mutation_performed": {
+      "type": "boolean",
+      "const": false
+    },
+    "target_source": {
+      "type": "string",
+      "const": "RECANONICALIZED_LEGACY_ROW"
+    },
+    "replacement_source_required": {
+      "type": "string",
+      "const": "APPROVED_NON_REPAIR_SOURCE"
+    },
+    "timeframe": {
+      "type": ["string", "null"],
+      "enum": ["1m", "15m", "1h", null]
+    },
+    "pair_id": {
+      "type": ["string", "null"]
+    },
+    "counts": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "rows_seen",
+        "repair_source_rows_seen",
+        "already_repair_only_blocked",
+        "current_evaluation_matches_selected_variant",
+        "current_evaluation_differs",
+        "missing_selected_config",
+        "missing_current_evaluation_proof",
+        "blocked_by_safety_integrity_uncertainty"
+      ],
+      "properties": {
+        "rows_seen": { "type": "integer", "minimum": 0 },
+        "repair_source_rows_seen": { "type": "integer", "minimum": 0 },
+        "already_repair_only_blocked": { "type": "integer", "minimum": 0 },
+        "current_evaluation_matches_selected_variant": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "current_evaluation_differs": { "type": "integer", "minimum": 0 },
+        "missing_selected_config": { "type": "integer", "minimum": 0 },
+        "missing_current_evaluation_proof": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "blocked_by_safety_integrity_uncertainty": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "rows": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "pair_id",
+          "timeframe",
+          "selected_variant",
+          "selected_score",
+          "selected_config_source",
+          "updated_at",
+          "current_evaluated_best_variant",
+          "current_evaluated_best_score",
+          "selection_state_source",
+          "selection_state_validation_state",
+          "primary_classification",
+          "classifications",
+          "trade_now_eligible",
+          "trade_now_blocked_reason_code",
+          "reason_codes"
+        ],
+        "properties": {
+          "pair_id": { "type": "string" },
+          "timeframe": { "type": "string" },
+          "selected_variant": { "type": "string" },
+          "selected_score": { "type": "number" },
+          "selected_config_source": {
+            "type": ["string", "null"],
+            "enum": ["RECANONICALIZED_LEGACY_ROW", null]
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "current_evaluated_best_variant": {
+            "type": ["string", "null"],
+            "enum": [
+              "COINTEGRATION_Z",
+              "ROBUST_Z",
+              "VOL_NORMALIZED",
+              "FUNDING_ADJUSTED",
+              null
+            ]
+          },
+          "current_evaluated_best_score": {
+            "type": ["number", "null"]
+          },
+          "selection_state_source": {
+            "type": ["string", "null"],
+            "enum": ["EVALUATED_BEST", "STORED_CHAMPION_PROJECTION", null]
+          },
+          "selection_state_validation_state": {
+            "type": ["string", "null"],
+            "enum": [
+              "NO_STORED_CHAMPION",
+              "BEST_IS_CHAMPION",
+              "CHAMPION_PROJECTED",
+              "CHAMPION_PROJECTED_BLOCKED",
+              "CHAMPION_PROJECTION_FAILED",
+              null
+            ]
+          },
+          "primary_classification": {
+            "$ref": "#/$defs/classification"
+          },
+          "classifications": {
+            "type": "array",
+            "minItems": 1,
+            "uniqueItems": true,
+            "items": {
+              "$ref": "#/$defs/classification"
+            }
+          },
+          "trade_now_eligible": {
+            "type": "boolean",
+            "const": false
+          },
+          "trade_now_blocked_reason_code": {
+            "type": "string",
+            "const": "RECANONICALIZED_LEGACY_ROW_ACTIVE"
+          },
+          "reason_codes": {
+            "type": "array",
+            "items": { "type": "string" }
+          }
+        }
+      }
+    },
+    "notes": {
+      "type": "array",
+      "items": { "type": "string" }
+    }
+  },
+  "$defs": {
+    "classification": {
+      "type": "string",
+      "enum": [
+        "ALREADY_REPAIR_ONLY_BLOCKED",
+        "CURRENT_EVALUATION_MATCHES_SELECTED_VARIANT",
+        "CURRENT_EVALUATION_DIFFERS",
+        "MISSING_SELECTED_CONFIG",
+        "MISSING_CURRENT_EVALUATION_PROOF",
+        "BLOCKED_BY_SAFETY_INTEGRITY_UNCERTAINTY"
+      ]
+    }
+  }
+}

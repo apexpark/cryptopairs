@@ -448,6 +448,149 @@ struct SelectedSignalRow {
     opportunity_score: f64,
 }
 
+const RECANONICALIZED_LEGACY_ROW_SOURCE: &str = "RECANONICALIZED_LEGACY_ROW";
+const RECANONICALIZED_LEGACY_ROW_ACTIVE_REASON: &str = "RECANONICALIZED_LEGACY_ROW_ACTIVE";
+
+#[derive(Debug, Clone)]
+struct SelectedSignalAuditRow {
+    pair_id: String,
+    timeframe: String,
+    selected_variant: String,
+    selected_score: f64,
+    updated_at: DateTime<Utc>,
+    config_json: Option<String>,
+    source_column: Option<String>,
+}
+
+impl SelectedSignalAuditRow {
+    fn parsed_timeframe(&self) -> Option<Timeframe> {
+        Timeframe::parse(&self.timeframe)
+    }
+
+    fn selected_config_source(&self) -> Option<String> {
+        selected_config_source(self.config_json.as_deref(), self.source_column.as_deref())
+    }
+
+    fn has_selected_config_payload(&self) -> bool {
+        selected_config_json_object(self.config_json.as_deref())
+            .map(|object| object.keys().any(|key| key != "source"))
+            .unwrap_or(false)
+    }
+}
+
+#[derive(Debug, Clone)]
+struct RecanonicalizedLegacyRowEvaluationProof {
+    current_best_variant: String,
+    current_best_opportunity_score: f64,
+    selection_state_source: Option<String>,
+    selection_state_validation_state: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+enum RecanonicalizedLegacyRowClassification {
+    AlreadyRepairOnlyBlocked,
+    CurrentEvaluationMatchesSelectedVariant,
+    CurrentEvaluationDiffers,
+    MissingSelectedConfig,
+    MissingCurrentEvaluationProof,
+    BlockedBySafetyIntegrityUncertainty,
+}
+
+impl RecanonicalizedLegacyRowClassification {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::AlreadyRepairOnlyBlocked => "ALREADY_REPAIR_ONLY_BLOCKED",
+            Self::CurrentEvaluationMatchesSelectedVariant => {
+                "CURRENT_EVALUATION_MATCHES_SELECTED_VARIANT"
+            }
+            Self::CurrentEvaluationDiffers => "CURRENT_EVALUATION_DIFFERS",
+            Self::MissingSelectedConfig => "MISSING_SELECTED_CONFIG",
+            Self::MissingCurrentEvaluationProof => "MISSING_CURRENT_EVALUATION_PROOF",
+            Self::BlockedBySafetyIntegrityUncertainty => "BLOCKED_BY_SAFETY_INTEGRITY_UNCERTAINTY",
+        }
+    }
+}
+
+#[derive(Debug, Default, Serialize)]
+struct RecanonicalizedLegacyRowAuditCounts {
+    rows_seen: usize,
+    repair_source_rows_seen: usize,
+    already_repair_only_blocked: usize,
+    current_evaluation_matches_selected_variant: usize,
+    current_evaluation_differs: usize,
+    missing_selected_config: usize,
+    missing_current_evaluation_proof: usize,
+    blocked_by_safety_integrity_uncertainty: usize,
+}
+
+impl RecanonicalizedLegacyRowAuditCounts {
+    fn record(&mut self, classifications: &[RecanonicalizedLegacyRowClassification]) {
+        for classification in classifications {
+            match classification {
+                RecanonicalizedLegacyRowClassification::AlreadyRepairOnlyBlocked => {
+                    self.already_repair_only_blocked += 1
+                }
+                RecanonicalizedLegacyRowClassification::CurrentEvaluationMatchesSelectedVariant => {
+                    self.current_evaluation_matches_selected_variant += 1
+                }
+                RecanonicalizedLegacyRowClassification::CurrentEvaluationDiffers => {
+                    self.current_evaluation_differs += 1
+                }
+                RecanonicalizedLegacyRowClassification::MissingSelectedConfig => {
+                    self.missing_selected_config += 1
+                }
+                RecanonicalizedLegacyRowClassification::MissingCurrentEvaluationProof => {
+                    self.missing_current_evaluation_proof += 1
+                }
+                RecanonicalizedLegacyRowClassification::BlockedBySafetyIntegrityUncertainty => {
+                    self.blocked_by_safety_integrity_uncertainty += 1
+                }
+            }
+        }
+    }
+}
+
+#[derive(Debug, Serialize)]
+struct RecanonicalizedLegacyRowAuditReport {
+    schema_version: String,
+    generated_at: DateTime<Utc>,
+    mode: String,
+    dry_run: bool,
+    mutation_performed: bool,
+    target_source: String,
+    replacement_source_required: String,
+    timeframe: Option<String>,
+    pair_id: Option<String>,
+    counts: RecanonicalizedLegacyRowAuditCounts,
+    rows: Vec<RecanonicalizedLegacyRowAuditReportRow>,
+    notes: Vec<String>,
+}
+
+#[derive(Debug, Serialize)]
+struct RecanonicalizedLegacyRowAuditReportRow {
+    pair_id: String,
+    timeframe: String,
+    selected_variant: String,
+    selected_score: f64,
+    selected_config_source: Option<String>,
+    updated_at: DateTime<Utc>,
+    current_evaluated_best_variant: Option<String>,
+    current_evaluated_best_score: Option<f64>,
+    selection_state_source: Option<String>,
+    selection_state_validation_state: Option<String>,
+    primary_classification: String,
+    classifications: Vec<String>,
+    trade_now_eligible: bool,
+    trade_now_blocked_reason_code: String,
+    reason_codes: Vec<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct RecanonicalizedLegacyRowAuditQuery {
+    timeframe: Option<String>,
+    pair_id: Option<String>,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ChampionDecision {
     Initialize,
@@ -808,6 +951,33 @@ struct PersistSummary {
     selected_rows_written: usize,
     drift_rows_written: usize,
     transition_counts: SelectionTransitionCounts,
+}
+
+fn selected_config_json_object(
+    raw: Option<&str>,
+) -> Option<serde_json::Map<String, serde_json::Value>> {
+    let value = serde_json::from_str::<serde_json::Value>(raw?).ok()?;
+    value.as_object().cloned()
+}
+
+fn selected_config_source(
+    config_json: Option<&str>,
+    source_column: Option<&str>,
+) -> Option<String> {
+    selected_config_json_object(config_json)
+        .and_then(|object| {
+            object
+                .get("source")
+                .and_then(|value| value.as_str())
+                .map(|value| value.trim().to_string())
+        })
+        .filter(|value| !value.is_empty())
+        .or_else(|| {
+            source_column
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(str::to_string)
+        })
 }
 
 impl StrategyRepository {
@@ -2206,6 +2376,76 @@ impl StrategyRepository {
             signal_variant: row.get(0),
             opportunity_score: row.get(1),
         }))
+    }
+
+    async fn strategy_selected_signal_has_column(&self, column_name: &str) -> anyhow::Result<bool> {
+        let row = self
+            .client
+            .query_one(
+                "SELECT EXISTS (
+                    SELECT 1
+                    FROM information_schema.columns
+                    WHERE table_schema = current_schema()
+                      AND table_name = 'strategy_selected_signal'
+                      AND column_name = $1
+                 )",
+                &[&column_name],
+            )
+            .await?;
+        Ok(row.get(0))
+    }
+
+    async fn fetch_selected_signal_audit_rows(
+        &self,
+        timeframe: Option<Timeframe>,
+        pair_id: Option<&str>,
+    ) -> anyhow::Result<Vec<SelectedSignalAuditRow>> {
+        let has_config_json = self
+            .strategy_selected_signal_has_column("config_json")
+            .await?;
+        let has_source = self.strategy_selected_signal_has_column("source").await?;
+        let config_projection = if has_config_json {
+            "config_json::TEXT AS config_json"
+        } else {
+            "NULL::TEXT AS config_json"
+        };
+        let source_projection = if has_source {
+            "\"source\"::TEXT AS source"
+        } else {
+            "NULL::TEXT AS source"
+        };
+        let sql = format!(
+            "SELECT pair_id, timeframe, signal_variant, opportunity_score, updated_at,
+                    {config_projection}, {source_projection}
+             FROM strategy_selected_signal
+             WHERE ($1::TEXT IS NULL OR timeframe = $1)
+               AND ($2::TEXT IS NULL OR pair_id = $2)
+             ORDER BY timeframe, pair_id"
+        );
+        let timeframe_filter = timeframe.map(|timeframe| timeframe.as_str().to_string());
+        let pair_id_filter = pair_id.map(str::to_string);
+        let rows = self
+            .client
+            .query(
+                &sql,
+                &[
+                    &timeframe_filter as &(dyn ToSql + Sync),
+                    &pair_id_filter as &(dyn ToSql + Sync),
+                ],
+            )
+            .await?;
+        Ok(rows
+            .into_iter()
+            .map(|row| SelectedSignalAuditRow {
+                pair_id: row.get(0),
+                timeframe: row.get(1),
+                selected_variant: row.get(2),
+                selected_score: row.get(3),
+                updated_at: row.get(4),
+                config_json: row.get(5),
+                source_column: row.get(6),
+            })
+            .collect())
     }
 }
 
@@ -4028,6 +4268,10 @@ async fn main() -> anyhow::Result<()> {
             "/v1/strategy/maintenance/artifact",
             get(maintenance_artifact),
         )
+        .route(
+            "/v1/strategy/maintenance/recanonicalized-legacy-row-audit",
+            get(recanonicalized_legacy_row_audit),
+        )
         .route("/v1/strategy/maintenance/action", post(maintenance_action))
         .layer(cors)
         .with_state(state);
@@ -4934,6 +5178,250 @@ async fn maintenance_action(
         report,
         error: None,
     }))
+}
+
+async fn recanonicalized_legacy_row_audit(
+    State(state): State<AppState>,
+    Query(query): Query<RecanonicalizedLegacyRowAuditQuery>,
+) -> Result<Json<RecanonicalizedLegacyRowAuditReport>, ApiError> {
+    let timeframe = match query.timeframe.as_deref() {
+        Some(raw) => Some(Timeframe::parse(raw).ok_or_else(|| {
+            ApiError::BadRequest("invalid timeframe; expected 1m, 15m, 1h".to_string())
+        })?),
+        None => None,
+    };
+    let pair_id = query
+        .pair_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string);
+
+    let report = build_recanonicalized_legacy_row_audit_report(
+        &state,
+        timeframe,
+        pair_id.as_deref(),
+        Utc::now(),
+    )
+    .await?;
+    Ok(Json(report))
+}
+
+async fn build_recanonicalized_legacy_row_audit_report(
+    state: &AppState,
+    timeframe: Option<Timeframe>,
+    pair_id: Option<&str>,
+    generated_at: DateTime<Utc>,
+) -> Result<RecanonicalizedLegacyRowAuditReport, ApiError> {
+    let selected_rows = state
+        .repository
+        .fetch_selected_signal_audit_rows(timeframe, pair_id)
+        .await
+        .map_err(|error| ApiError::Upstream(format!("unable to read selected rows: {error}")))?;
+
+    let mut counts = RecanonicalizedLegacyRowAuditCounts {
+        rows_seen: selected_rows.len(),
+        ..Default::default()
+    };
+    let mut report_rows = Vec::new();
+
+    for row in selected_rows {
+        let selected_config_source = row.selected_config_source();
+        if selected_config_source.as_deref() != Some(RECANONICALIZED_LEGACY_ROW_SOURCE) {
+            continue;
+        }
+        counts.repair_source_rows_seen += 1;
+        let proof = evaluate_recanonicalized_legacy_row_current_state(state, &row).await;
+        let report_row =
+            classify_recanonicalized_legacy_row(&row, selected_config_source, proof.as_ref());
+        counts.record(&report_row.classification_values);
+        report_rows.push(report_row.row);
+    }
+
+    Ok(RecanonicalizedLegacyRowAuditReport {
+        schema_version: "1.0.0".to_string(),
+        generated_at,
+        mode: "DRY_RUN".to_string(),
+        dry_run: true,
+        mutation_performed: false,
+        target_source: RECANONICALIZED_LEGACY_ROW_SOURCE.to_string(),
+        replacement_source_required: "APPROVED_NON_REPAIR_SOURCE".to_string(),
+        timeframe: timeframe.map(|value| value.as_str().to_string()),
+        pair_id: pair_id.map(str::to_string),
+        counts,
+        rows: report_rows,
+        notes: vec![
+            "Dry-run audit only; no selected rows, approved universe, database rows, strategy config, runtime environment, or deployment state were mutated."
+                .to_string(),
+            "RECANONICALIZED_LEGACY_ROW remains repair-only and not trade-eligible; a separate approved apply-mode design is required before any replacement source can be written."
+                .to_string(),
+        ],
+    })
+}
+
+async fn evaluate_recanonicalized_legacy_row_current_state(
+    state: &AppState,
+    row: &SelectedSignalAuditRow,
+) -> Result<RecanonicalizedLegacyRowEvaluationProof, String> {
+    let timeframe = row
+        .parsed_timeframe()
+        .ok_or_else(|| format!("invalid selected-row timeframe '{}'", row.timeframe))?;
+    let pair = state
+        .settings
+        .pairs
+        .iter()
+        .find(|candidate| candidate.pair_id() == row.pair_id)
+        .ok_or_else(|| {
+            format!(
+                "pair '{}' is not configured for strategy evaluation",
+                row.pair_id
+            )
+        })?;
+    let lookback = state.settings.lookback_bars(timeframe) as i64;
+    let left = state
+        .repository
+        .fetch_recent_closes(&pair.left, timeframe, lookback)
+        .await
+        .map_err(|error| error.to_string())?;
+    let right = state
+        .repository
+        .fetch_recent_closes(&pair.right, timeframe, lookback)
+        .await
+        .map_err(|error| error.to_string())?;
+    let (timestamps, left_closes, right_closes) = align_closes(left, right);
+    if timestamps.len() < 120 {
+        return Err(format!(
+            "insufficient aligned candles for pair={} timeframe={} bars={}",
+            row.pair_id,
+            timeframe.as_str(),
+            timestamps.len()
+        ));
+    }
+    let output = evaluate_pair(PairEvaluationInput {
+        pair_id: row.pair_id.clone(),
+        left_instrument: pair.left.clone(),
+        right_instrument: pair.right.clone(),
+        timeframe,
+        timestamps,
+        left_closes,
+        right_closes,
+        entry_band: state.settings.entry_band,
+        exit_band: state.settings.exit_band,
+        stop_band: state.settings.stop_band,
+        hold_bars: state.settings.hold_bars(timeframe),
+        max_half_life_bars: state.settings.max_half_life_bars(timeframe),
+        funding_drag_bps: state.settings.funding_drag_bps,
+        taker_fee_bps: state.settings.trading_fee_bps,
+        min_samples_target: state.settings.min_samples_target,
+        preferred_variant: None,
+    })
+    .map_err(|error| error.to_string())?;
+
+    Ok(RecanonicalizedLegacyRowEvaluationProof {
+        current_best_variant: output.cue.selected_variant,
+        current_best_opportunity_score: output.cue.opportunity_score,
+        selection_state_source: None,
+        selection_state_validation_state: None,
+    })
+}
+
+struct ClassifiedRecanonicalizedLegacyRow {
+    row: RecanonicalizedLegacyRowAuditReportRow,
+    classification_values: Vec<RecanonicalizedLegacyRowClassification>,
+}
+
+fn classify_recanonicalized_legacy_row(
+    row: &SelectedSignalAuditRow,
+    selected_config_source: Option<String>,
+    proof: Result<&RecanonicalizedLegacyRowEvaluationProof, &String>,
+) -> ClassifiedRecanonicalizedLegacyRow {
+    let mut classifications =
+        vec![RecanonicalizedLegacyRowClassification::AlreadyRepairOnlyBlocked];
+    let mut reason_codes = vec![
+        RECANONICALIZED_LEGACY_ROW_ACTIVE_REASON.to_string(),
+        "REPAIR_SOURCE_NOT_TRADABLE".to_string(),
+        "DRY_RUN_NO_MUTATION".to_string(),
+        "DISTINCT_APPROVED_NON_REPAIR_SOURCE_REQUIRED".to_string(),
+    ];
+    let mut current_evaluated_best_variant = None;
+    let mut current_evaluated_best_score = None;
+    let mut selection_state_source = None;
+    let mut selection_state_validation_state = None;
+
+    let mut primary = None;
+    let proof = match proof {
+        Ok(proof) => {
+            current_evaluated_best_variant = Some(proof.current_best_variant.clone());
+            current_evaluated_best_score = Some(proof.current_best_opportunity_score);
+            selection_state_source = proof.selection_state_source.clone();
+            selection_state_validation_state = proof.selection_state_validation_state.clone();
+            Some(proof)
+        }
+        Err(error) => {
+            reason_codes.push("MISSING_CURRENT_EVALUATION_PROOF".to_string());
+            reason_codes.push(format!("EVALUATION_ERROR:{error}"));
+            classifications.push(
+                RecanonicalizedLegacyRowClassification::MissingCurrentEvaluationProof,
+            );
+            primary = Some(RecanonicalizedLegacyRowClassification::MissingCurrentEvaluationProof);
+            None
+        }
+    };
+
+    if !row.has_selected_config_payload() {
+        reason_codes.push("MISSING_SELECTED_CONFIG".to_string());
+        classifications.push(RecanonicalizedLegacyRowClassification::MissingSelectedConfig);
+        primary = Some(RecanonicalizedLegacyRowClassification::MissingSelectedConfig);
+    }
+
+    if let Some(proof) = proof {
+        let classification = match proof.selection_state_validation_state.as_deref() {
+            Some("CHAMPION_PROJECTION_FAILED") => {
+                reason_codes.push("CHAMPION_PROJECTION_FAILED".to_string());
+                RecanonicalizedLegacyRowClassification::BlockedBySafetyIntegrityUncertainty
+            }
+            _ if proof.current_best_variant == row.selected_variant => {
+                reason_codes.push("CURRENT_EVALUATION_MATCHES_SELECTED_VARIANT".to_string());
+                RecanonicalizedLegacyRowClassification::CurrentEvaluationMatchesSelectedVariant
+            }
+            _ => {
+                reason_codes.push("CURRENT_EVALUATION_DIFFERS_FROM_SELECTED_VARIANT".to_string());
+                RecanonicalizedLegacyRowClassification::CurrentEvaluationDiffers
+            }
+        };
+        if !classifications.contains(&classification) {
+            classifications.push(classification);
+        }
+        if primary.is_none() {
+            primary = Some(classification);
+        }
+    }
+    let primary =
+        primary.unwrap_or(RecanonicalizedLegacyRowClassification::AlreadyRepairOnlyBlocked);
+
+    ClassifiedRecanonicalizedLegacyRow {
+        row: RecanonicalizedLegacyRowAuditReportRow {
+            pair_id: row.pair_id.clone(),
+            timeframe: row.timeframe.clone(),
+            selected_variant: row.selected_variant.clone(),
+            selected_score: row.selected_score,
+            selected_config_source,
+            updated_at: row.updated_at.clone(),
+            current_evaluated_best_variant,
+            current_evaluated_best_score,
+            selection_state_source,
+            selection_state_validation_state,
+            primary_classification: primary.as_str().to_string(),
+            classifications: classifications
+                .iter()
+                .map(|classification| classification.as_str().to_string())
+                .collect(),
+            trade_now_eligible: false,
+            trade_now_blocked_reason_code: RECANONICALIZED_LEGACY_ROW_ACTIVE_REASON.to_string(),
+            reason_codes,
+        },
+        classification_values: classifications,
+    }
 }
 
 fn build_cue_selection_state(
@@ -8536,6 +9024,7 @@ mod tests {
     use super::{
         artifact_download_path, bootstrap_deviation_exceeds_threshold, bootstrap_snapshot_is_fresh,
         canonical_metric_instrument, classify_expectancy_result, compute_expectancy_metrics,
+        classify_recanonicalized_legacy_row,
         compute_pair_funding_bps_per_event, compute_pair_slippage_sample_bps,
         compute_walk_forward_summary, cue_for_pairs_response, days_covered,
         decide_candidate_probation_transition, decide_champion_transition,
@@ -8545,16 +9034,19 @@ mod tests {
         normalize_funding_rate, parse_backtest_exit_mode, parse_candidate_inbox_query,
         parse_expectancy_query, parse_opportunity_history_stats_timeframe,
         parse_opportunity_history_window, parse_paper_trades_window, parse_replay_trades_query,
-        percentile, project_continuous_funding_bps, refresh_setup_gate, resolve_artifact_path,
-        resolve_taker_fee_bps, retention_cutoff_ts, summarize_recent_performance,
-        update_persist_summary_for_transition, CandidateInboxQuery, CandidateLifecycleState,
-        CandidateOperatorAction, CandidateProbationInputs, ChampionDecision, CueProjectionOutcome,
-        ExpectancyMetrics, ExpectancyQuery, FundingCostEstimate, FundingRateInputMode,
-        MaintenanceAction, OpportunityHistoryQuery, OpportunityHistoryStatsQuery, PaperTradesQuery,
-        PersistSummary, ReoptError, ReoptimizeResponse, ReplayTradeEntry, ReplayTradePathSummary,
-        ReplayTradesQuery, ResearchSweepRequest, SampledSlippageStatus, SelectedSignalRow,
+        percentile, project_continuous_funding_bps, refresh_setup_gate,
+        selected_config_source, resolve_artifact_path, resolve_taker_fee_bps, retention_cutoff_ts,
+        summarize_recent_performance, update_persist_summary_for_transition, CandidateInboxQuery,
+        CandidateLifecycleState, CandidateOperatorAction, CandidateProbationInputs,
+        ChampionDecision, CueProjectionOutcome, ExpectancyMetrics, ExpectancyQuery,
+        FundingCostEstimate, FundingRateInputMode, MaintenanceAction, OpportunityHistoryQuery,
+        OpportunityHistoryStatsQuery, PaperTradesQuery, PersistSummary,
+        RecanonicalizedLegacyRowEvaluationProof, ReoptError, ReoptimizeResponse,
+        ReplayTradeEntry, ReplayTradePathSummary, ReplayTradesQuery, ResearchSweepRequest,
+        SampledSlippageStatus, SelectedSignalAuditRow, SelectedSignalRow,
         SelectionTransitionCounts, StrategyMarketMetricsResponse, StrategyMetrics,
-        StrategySettings,
+        StrategySettings, RECANONICALIZED_LEGACY_ROW_ACTIVE_REASON,
+        RECANONICALIZED_LEGACY_ROW_SOURCE,
     };
     use chrono::Utc;
     use common_types::Timeframe;
@@ -9027,6 +9519,181 @@ mod tests {
             Some(MaintenanceAction::Revert)
         ));
         assert!(MaintenanceAction::parse("hold").is_none());
+    }
+
+    fn repair_source_audit_row(
+        config_json: Option<&str>,
+        source_column: Option<&str>,
+    ) -> SelectedSignalAuditRow {
+        SelectedSignalAuditRow {
+            pair_id: "PF_XBTUSD__PF_ETHUSD".to_string(),
+            timeframe: "1m".to_string(),
+            selected_variant: "ROBUST_Z".to_string(),
+            selected_score: 1.25,
+            updated_at: Utc::now(),
+            config_json: config_json.map(str::to_string),
+            source_column: source_column.map(str::to_string),
+        }
+    }
+
+    fn evaluation_proof(
+        best_variant: &str,
+        validation_state: Option<&str>,
+    ) -> RecanonicalizedLegacyRowEvaluationProof {
+        RecanonicalizedLegacyRowEvaluationProof {
+            current_best_variant: best_variant.to_string(),
+            current_best_opportunity_score: 2.5,
+            selection_state_source: Some("EVALUATED_BEST".to_string()),
+            selection_state_validation_state: validation_state.map(str::to_string),
+        }
+    }
+
+    #[test]
+    fn selected_config_source_prefers_config_json_then_source_column() {
+        assert_eq!(
+            selected_config_source(
+                Some(r#"{"source":"RECANONICALIZED_LEGACY_ROW"}"#),
+                Some("AUTO_CHAMPION"),
+            )
+            .as_deref(),
+            Some(RECANONICALIZED_LEGACY_ROW_SOURCE)
+        );
+        assert_eq!(
+            selected_config_source(None, Some("RECANONICALIZED_LEGACY_ROW")).as_deref(),
+            Some(RECANONICALIZED_LEGACY_ROW_SOURCE)
+        );
+        assert_eq!(selected_config_source(Some(r#"{"source":""}"#), None), None);
+    }
+
+    #[test]
+    fn recanonicalized_repair_source_remains_trade_now_blocked_when_current_eval_matches() {
+        let row = repair_source_audit_row(
+            Some(r#"{"source":"RECANONICALIZED_LEGACY_ROW","variant":"ROBUST_Z"}"#),
+            None,
+        );
+        let proof = evaluation_proof("ROBUST_Z", Some("BEST_IS_CHAMPION"));
+        let classified = classify_recanonicalized_legacy_row(
+            &row,
+            Some(RECANONICALIZED_LEGACY_ROW_SOURCE.to_string()),
+            Ok(&proof),
+        );
+
+        assert!(!classified.row.trade_now_eligible);
+        assert_eq!(
+            classified.row.trade_now_blocked_reason_code,
+            RECANONICALIZED_LEGACY_ROW_ACTIVE_REASON
+        );
+        assert_eq!(
+            classified.row.primary_classification,
+            "CURRENT_EVALUATION_MATCHES_SELECTED_VARIANT"
+        );
+        assert!(classified
+            .row
+            .classifications
+            .iter()
+            .any(|classification| classification == "ALREADY_REPAIR_ONLY_BLOCKED"));
+        assert!(classified
+            .row
+            .reason_codes
+            .iter()
+            .any(|reason| reason == "REPAIR_SOURCE_NOT_TRADABLE"));
+    }
+
+    #[test]
+    fn recanonicalized_audit_reports_current_eval_differs_without_mutation_intent() {
+        let row = repair_source_audit_row(
+            Some(r#"{"source":"RECANONICALIZED_LEGACY_ROW","variant":"ROBUST_Z"}"#),
+            None,
+        );
+        let proof = evaluation_proof("VOL_NORMALIZED", Some("CHAMPION_PROJECTED_BLOCKED"));
+        let classified = classify_recanonicalized_legacy_row(
+            &row,
+            Some(RECANONICALIZED_LEGACY_ROW_SOURCE.to_string()),
+            Ok(&proof),
+        );
+
+        assert_eq!(
+            classified.row.primary_classification,
+            "CURRENT_EVALUATION_DIFFERS"
+        );
+        assert_eq!(
+            classified.row.current_evaluated_best_variant.as_deref(),
+            Some("VOL_NORMALIZED")
+        );
+        assert!(classified
+            .row
+            .reason_codes
+            .iter()
+            .any(|reason| reason == "DRY_RUN_NO_MUTATION"));
+    }
+
+    #[test]
+    fn recanonicalized_audit_reports_missing_selected_config() {
+        let row = repair_source_audit_row(None, Some(RECANONICALIZED_LEGACY_ROW_SOURCE));
+        let proof = evaluation_proof("ROBUST_Z", Some("BEST_IS_CHAMPION"));
+        let classified = classify_recanonicalized_legacy_row(
+            &row,
+            Some(RECANONICALIZED_LEGACY_ROW_SOURCE.to_string()),
+            Ok(&proof),
+        );
+
+        assert_eq!(
+            classified.row.primary_classification,
+            "MISSING_SELECTED_CONFIG"
+        );
+        assert!(classified
+            .row
+            .reason_codes
+            .iter()
+            .any(|reason| reason == "MISSING_SELECTED_CONFIG"));
+    }
+
+    #[test]
+    fn recanonicalized_audit_reports_missing_current_evaluation_proof() {
+        let row = repair_source_audit_row(
+            Some(r#"{"source":"RECANONICALIZED_LEGACY_ROW","variant":"ROBUST_Z"}"#),
+            None,
+        );
+        let error = "insufficient aligned candles".to_string();
+        let classified = classify_recanonicalized_legacy_row(
+            &row,
+            Some(RECANONICALIZED_LEGACY_ROW_SOURCE.to_string()),
+            Err(&error),
+        );
+
+        assert_eq!(
+            classified.row.primary_classification,
+            "MISSING_CURRENT_EVALUATION_PROOF"
+        );
+        assert!(classified
+            .row
+            .reason_codes
+            .iter()
+            .any(|reason| reason == "MISSING_CURRENT_EVALUATION_PROOF"));
+    }
+
+    #[test]
+    fn recanonicalized_audit_reports_safety_uncertainty() {
+        let row = repair_source_audit_row(
+            Some(r#"{"source":"RECANONICALIZED_LEGACY_ROW","variant":"ROBUST_Z"}"#),
+            None,
+        );
+        let proof = evaluation_proof("ROBUST_Z", Some("CHAMPION_PROJECTION_FAILED"));
+        let classified = classify_recanonicalized_legacy_row(
+            &row,
+            Some(RECANONICALIZED_LEGACY_ROW_SOURCE.to_string()),
+            Ok(&proof),
+        );
+
+        assert_eq!(
+            classified.row.primary_classification,
+            "BLOCKED_BY_SAFETY_INTEGRITY_UNCERTAINTY"
+        );
+        assert!(classified
+            .row
+            .reason_codes
+            .iter()
+            .any(|reason| reason == "CHAMPION_PROJECTION_FAILED"));
     }
 
     #[test]

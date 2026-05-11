@@ -11,6 +11,12 @@ This project follows SemVer as defined in `docs/02-versioning-and-releases.md`.
 - `docs/27` live cue mismatch audit now reads `cue.selection_state` fields for stored champion, evaluated best, source, and validation state instead of legacy cue-selected fields.
 
 ### Added
+- Strategy service now exposes a read-only Slice D repair-source audit dry-run:
+  - New endpoint: `GET /v1/strategy/maintenance/recanonicalized-legacy-row-audit`
+  - New contract/example:
+    - `specs/contracts/strategy_recanonicalized_legacy_row_audit_report.schema.json`
+    - `specs/examples/strategy_recanonicalized_legacy_row_audit_report.example.json`
+  - The audit reports `RECANONICALIZED_LEGACY_ROW` selected rows with row-level classifications and keeps them repair-only / not trade-eligible; no apply mode or selected-row mutation is included.
 - Strategy service now exposes Prometheus-style `/metrics` counters for champion-selection observability:
   - `pairs_cue_projection_total{outcome}`
   - `strategy_selection_transition_total{decision,timeframe}`
