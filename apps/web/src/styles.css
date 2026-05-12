@@ -299,7 +299,8 @@ input {
   border: 1px solid var(--line-strong);
   border-radius: 12px;
   padding: 10px;
-  overflow: auto;
+  overflow-x: hidden;
+  overflow-y: auto;
   scrollbar-gutter: stable;
 }
 
@@ -321,7 +322,7 @@ input {
 
 .trade-grid {
   display: grid;
-  grid-template-columns: minmax(230px, 1fr) minmax(620px, 2.8fr) minmax(320px, 1.1fr);
+  grid-template-columns: minmax(260px, 1fr) minmax(0, 2.8fr) minmax(300px, 1.1fr);
   gap: 10px;
   align-items: start;
   height: 100%;
@@ -517,6 +518,7 @@ input {
   border-radius: 10px;
   padding: 10px;
   min-height: clamp(180px, 22vh, 280px);
+  min-width: 0;
   color: var(--text);
 }
 
@@ -564,6 +566,7 @@ table {
   flex-direction: column;
   gap: 10px;
   overflow: visible;
+  min-width: 0;
 }
 
 .opportunities-summary {
@@ -574,6 +577,7 @@ table {
   display: grid;
   gap: 8px;
   min-height: 0;
+  min-width: 0;
   overflow: visible;
 }
 
@@ -581,7 +585,9 @@ table {
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
+  flex-wrap: wrap;
   gap: 10px;
+  min-width: 0;
 }
 
 .simple-pairs-header h3 {
@@ -594,10 +600,12 @@ table {
   gap: 6px;
   flex-wrap: wrap;
   justify-content: flex-end;
+  min-width: 0;
 }
 
 .simple-pairs-table-wrap {
   max-height: none;
+  min-width: 0;
   overflow: visible;
 }
 
@@ -1347,6 +1355,7 @@ button:disabled {
 .execution-panel,
 .how-main-panel {
   min-height: 0;
+  min-width: 0;
   max-height: 100%;
 }
 
@@ -1623,6 +1632,27 @@ button:disabled {
   .topbar-right {
     justify-content: flex-end;
   }
+
+  .trade-grid {
+    grid-template-columns: 1fr;
+    grid-template-rows: auto;
+    align-items: stretch;
+    height: auto;
+  }
+
+  .opportunities-panel,
+  .analysis-panel,
+  .execution-panel {
+    max-height: none;
+  }
+
+  .execution-panel {
+    overflow: visible;
+  }
+
+  .analysis-panel {
+    grid-template-rows: auto auto auto auto;
+  }
 }
 
 @media (max-width: 1200px) {
@@ -1694,7 +1724,8 @@ button:disabled {
   }
 
   .content-shell {
-    overflow: visible;
+    overflow-x: hidden;
+    overflow-y: visible;
   }
 
   .simple-pairs-header {
