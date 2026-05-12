@@ -1,0 +1,79 @@
+{
+  "schema_version": "1.0.0",
+  "generated_at": "2026-05-11T04:30:00Z",
+  "mode": "DRY_RUN",
+  "dry_run": true,
+  "mutation_performed": false,
+  "target_source": "RECANONICALIZED_LEGACY_ROW",
+  "replacement_source_required": "APPROVED_NON_REPAIR_SOURCE",
+  "timeframe": "1m",
+  "pair_id": null,
+  "counts": {
+    "rows_seen": 2,
+    "repair_source_rows_seen": 2,
+    "already_repair_only_blocked": 2,
+    "current_evaluation_matches_selected_variant": 1,
+    "current_evaluation_differs": 1,
+    "missing_selected_config": 0,
+    "missing_current_evaluation_proof": 0,
+    "blocked_by_safety_integrity_uncertainty": 0
+  },
+  "rows": [
+    {
+      "pair_id": "PF_XBTUSD__PF_ETHUSD",
+      "timeframe": "1m",
+      "selected_variant": "ROBUST_Z",
+      "selected_score": 2.95,
+      "selected_config_source": "RECANONICALIZED_LEGACY_ROW",
+      "updated_at": "2026-05-11T04:20:00Z",
+      "current_evaluated_best_variant": "ROBUST_Z",
+      "current_evaluated_best_score": 3.01,
+      "selection_state_source": null,
+      "selection_state_validation_state": null,
+      "primary_classification": "CURRENT_EVALUATION_MATCHES_SELECTED_VARIANT",
+      "classifications": [
+        "ALREADY_REPAIR_ONLY_BLOCKED",
+        "CURRENT_EVALUATION_MATCHES_SELECTED_VARIANT"
+      ],
+      "trade_now_eligible": false,
+      "trade_now_blocked_reason_code": "RECANONICALIZED_LEGACY_ROW_ACTIVE",
+      "reason_codes": [
+        "RECANONICALIZED_LEGACY_ROW_ACTIVE",
+        "REPAIR_SOURCE_NOT_TRADABLE",
+        "DRY_RUN_NO_MUTATION",
+        "DISTINCT_APPROVED_NON_REPAIR_SOURCE_REQUIRED",
+        "CURRENT_EVALUATION_MATCHES_SELECTED_VARIANT"
+      ]
+    },
+    {
+      "pair_id": "PF_ETHUSD__PF_SOLUSD",
+      "timeframe": "1m",
+      "selected_variant": "COINTEGRATION_Z",
+      "selected_score": 1.44,
+      "selected_config_source": "RECANONICALIZED_LEGACY_ROW",
+      "updated_at": "2026-05-11T04:21:00Z",
+      "current_evaluated_best_variant": "VOL_NORMALIZED",
+      "current_evaluated_best_score": 2.18,
+      "selection_state_source": null,
+      "selection_state_validation_state": null,
+      "primary_classification": "CURRENT_EVALUATION_DIFFERS",
+      "classifications": [
+        "ALREADY_REPAIR_ONLY_BLOCKED",
+        "CURRENT_EVALUATION_DIFFERS"
+      ],
+      "trade_now_eligible": false,
+      "trade_now_blocked_reason_code": "RECANONICALIZED_LEGACY_ROW_ACTIVE",
+      "reason_codes": [
+        "RECANONICALIZED_LEGACY_ROW_ACTIVE",
+        "REPAIR_SOURCE_NOT_TRADABLE",
+        "DRY_RUN_NO_MUTATION",
+        "DISTINCT_APPROVED_NON_REPAIR_SOURCE_REQUIRED",
+        "CURRENT_EVALUATION_DIFFERS_FROM_SELECTED_VARIANT"
+      ]
+    }
+  ],
+  "notes": [
+    "Dry-run audit only; no selected rows, approved universe, database rows, strategy config, runtime environment, or deployment state were mutated.",
+    "RECANONICALIZED_LEGACY_ROW remains repair-only and not trade-eligible; a separate approved apply-mode design is required before any replacement source can be written."
+  ]
+}

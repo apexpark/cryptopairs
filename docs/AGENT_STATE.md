@@ -9,14 +9,14 @@
 
 | Field | Value |
 |---|---|
-| Last updated (UTC) | 2026-05-08 |
+| Last updated (UTC) | 2026-05-11 |
 | Updated by | codex |
-| Repo HEAD pin (committed) | `2d66495bd44e1ead3042d1c981d5b21104b7a6a8` |
-| Pin branch | `codex/fix-clippy-run-24549051096` |
+| Repo HEAD pin (committed) | `988a5315369599491e0c1aae16b034f774c2886a` |
+| Pin branch | `codex/slice-d-repair-audit` |
 | Sprint base branch | `codex/fix-clippy-run-24549051096` |
-| Pin notes | Pin notes: state-affecting commits since a87b8ae (bootstrap playbook) are pin-convention (2148693), cargo-blocked workaround (a2fa027), pin extraction fix (0602178), sprint-base configurable (c70b6a0), legacy PR protocol (2369308), retention sprint (b195447), Slice A (2771479), Slice B (e60e634), retention import + fmt restore (05bca71), clippy sort-by fix (a82e8f0), B6 design proposal merge (ff38663), B3+S8 merge (79893c6), curation post-PRs (400a776), B6 §10 answers captured (c3933d7), host verification capture (76ca372), B6 implementation merge (7a572df, PR #163), R2 design proposal merge (f87e291, PR #162), curation post-R2 design (86e014c), R2 implementation merge (d17103, PR #164), post-squash pin fix (f8b370b), Slice C planning proposal merge (3a44100, PR #166), R1 design proposal merge (4ac38b5, PR #167), R3 design proposal merge (a1c536d, PR #168), R1 toolchain implementation merge (74ef7c6, PR #169), S4+B5 metrics implementation merge (aad7445, PR #170), X1 audit docs merge (0d28534, PR #171), R3 preflight override implementation merge (f874f7c, PR #172), S6 projection-failed UI merge (94c109e, PR #173), Slice D recanonicalization design merge (38ccc01, PR #174), and X3 reporting diagnostics design merge (2d66495, PR #175). Pin lags this curation commit by 1 per the convention. Sprint base branch row is the canonical PR target. Pin row contains exactly one backticked SHA so the §1 regex extracts unambiguously. Note: feature-branch SHAs (claim/impl/fixup commits before squash-merge) are deliberately omitted because they are not reachable from sprint base after squash. |
+| Pin notes | Feature branch update for the Slice D repair-source audit-only implementation. The pin records the sprint-base HEAD before this PR's AGENT_STATE change so the pin lags this branch update by one commit after commit. Sprint base branch row remains the canonical PR target. Pin row contains exactly one backticked SHA so the §1 regex extracts unambiguously. |
 | Origin | `https://github.com/apexpark/cryptopairs.git` |
-| Working-tree state | **CLEAN on sprint base after curation** — PRs #171, #172, #173, #174, and #175 are landed on `codex/fix-clippy-run-24549051096`; follow-up state below is curated in the post-merge curation commit. |
+| Working-tree state | **Feature branch in review** — `codex/slice-d-repair-audit` proposes a dry-run/audit-only Slice D report path against `codex/fix-clippy-run-24549051096`. |
 
 If the pin above is not reachable from `HEAD` via fast-forward, this file is stale; if `HEAD` is ahead of the pin, see §"Pin Convention".
 
@@ -33,7 +33,7 @@ Status snapshot of the four slices defined in `docs/26-champion-selection-integr
 | Slice A — Separate evaluation from champion presentation | **Committed on sprint base** | local | Verified: schema validation passed; full `cargo test --workspace` passed in pre-push hook (covers `cue_for_pairs_response_*` × 5 + `evaluate_pair_honors_preferred_variant_override`); tsc passed. |
 | Slice B — Make transition accounting complete | **Committed on sprint base** | local | Verified: full `cargo test --workspace` passed in pre-push hook (covers `selection_transition_counts_*` × 3 + `reoptimize_response_serializes_transition_counts_at_top_level` + `update_persist_summary_for_transition_records_all_summary_counts`); clippy clean; reoptimize schema validation passed (0.2.0). |
 | Slice C — Remove incumbent bias in host runtime | **Planning merged; implementation blocked on host-lineage import** | operator/local | Design proposal PR #166 (`3a44100`) recommends cherry-picking the host `rc/live-trial` lineage into a reviewable branch, then implementing neutral champion selection behind a rollout flag. Implementation must not start until the operator imports the host lineage and resolves the proposal's open decisions (see §"Blocked / Waiting On" and Slice-C-impl follow-up below). |
-| Slice D — Recanonicalize legacy rows | **Design proposal merged; implementation blocked on Slice C observation/operator approval** | unassigned | PR #174 (`38ccc01`) recommends dry-run-first, operator-confirmed recanonicalization with rollback/pre-image artifacts. Implementation must wait for Slice C neutral-selection observation evidence and operator approval of the proposal's open questions; recanonicalized rows remain repair-only, not trade-eligible. |
+| Slice D — Recanonicalize legacy rows | **Audit/dry-run implementation in review** | codex | Operator approved an audit-only repair-source dry-run PR on 2026-05-11 based on new read-only server findings for stuck `RECANONICALIZED_LEGACY_ROW` rows. Scope is report-only: no apply mode, no selected-row mutation, no Trade Now eligibility relaxation, and recanonicalized rows remain repair-only / not trade-eligible. |
 
 ### Immediate Safety Action (still active)
 
@@ -485,7 +485,7 @@ Pickable items, in priority order:
 1. **Operator action: Slice C import decision/import** — choose the import path from PR #166 (recommended: cherry-pick host-only `rc/live-trial` commits onto `cherry-picked-from-rc-live-trial`) and import the host lineage into a local reviewable branch before any Slice C implementation PR is approved.
 2. **Remote/local agent: Slice C implementation** — only after host lineage import and operator decisions; implement neutral champion selection behind the approved rollout path, preserve Slice A/B semantics, and add B6 pg-backed tests.
 3. **Operator/local agent: Slice C observation capture** — after Slice C implementation/deployment, capture the neutral-selection observation evidence required by the Slice D and X3 proposals before either follow-up implementation starts.
-4. **Remote/local agent: Slice D implementation** — only after Slice C observation and operator approval of PR #174's open questions; implement dry-run-first recanonicalization without making legacy or repair-only provenance trade-eligible.
+4. **Local review: Slice D repair-source audit PR** — review the audit-only dry-run report path from `codex/slice-d-repair-audit`; it must remain read-only, must not add apply mode, and must not make repair-source rows trade-eligible.
 5. **Remote/local agent: X3 implementation** — only after Slice C lands and is observed; implement PR #175's optional/additive reporting diagnostics while preserving legacy `selected_variant`.
 6. **Operator action (long-term cleanup)**: PR the full agent-docs chain from `codex/fix-clippy-run-24549051096` to `main` when ready, then flip Sprint base branch in §Pin to `main`.
 

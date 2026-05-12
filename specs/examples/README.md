@@ -41,3 +41,4 @@ Current baseline examples:
 - `specs/examples/strategy_pairs_portfolio_plan_response.example.json`
 - `specs/examples/strategy_tuning_report.example.json`
 - `specs/examples/strategy_maintenance_latest_response.example.json`
+- `specs/examples/strategy_recanonicalized_legacy_row_audit_report.example.json`

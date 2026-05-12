@@ -329,6 +329,74 @@ mod strategy_service_bin {
             Ok(())
         }
 
+        #[tokio::test]
+        async fn recanonicalized_audit_does_not_mutate_selected_signal() -> anyhow::Result<()> {
+            let Some(fixture) =
+                PgFixture::connect("recanonicalized_audit_does_not_mutate_selected_signal").await?
+            else {
+                return Ok(());
+            };
+            let pair_id = "B6_RECANONICALIZED_AUDIT";
+            let timeframe = Timeframe::OneMinute;
+            let updated_at = test_time(1_778_200_060)?;
+            fixture
+                .client
+                .batch_execute("ALTER TABLE strategy_selected_signal ADD COLUMN config_json TEXT")
+                .await?;
+            fixture
+                .client
+                .execute(
+                    "INSERT INTO strategy_selected_signal
+                     (pair_id, timeframe, signal_variant, opportunity_score, updated_at, config_json)
+                     VALUES ($1,$2,$3,$4,$5,$6)",
+                    &[
+                        &pair_id,
+                        &timeframe.as_str(),
+                        &"ROBUST_Z",
+                        &1.25_f64,
+                        &updated_at,
+                        &r#"{"source":"RECANONICALIZED_LEGACY_ROW","variant":"ROBUST_Z"}"#,
+                    ],
+                )
+                .await?;
+            let before_count = fixture.selected_signal_count().await?;
+            let before_row = fixture.selected_signal_for(pair_id, timeframe).await?;
+
+            let rows = fixture
+                .repository
+                .fetch_selected_signal_audit_rows(Some(timeframe), Some(pair_id))
+                .await?;
+            assert_eq!(rows.len(), 1);
+            assert_eq!(
+                rows[0].selected_config_source().as_deref(),
+                Some(RECANONICALIZED_LEGACY_ROW_SOURCE)
+            );
+            let proof = RecanonicalizedLegacyRowEvaluationProof {
+                current_best_variant: "ROBUST_Z".to_string(),
+                current_best_opportunity_score: 1.25,
+                selection_state_source: Some("EVALUATED_BEST".to_string()),
+                selection_state_validation_state: Some("BEST_IS_CHAMPION".to_string()),
+            };
+            let classified = classify_recanonicalized_legacy_row(
+                &rows[0],
+                rows[0].selected_config_source(),
+                Ok(&proof),
+            );
+            assert_eq!(
+                classified.row.primary_classification,
+                "CURRENT_EVALUATION_MATCHES_SELECTED_VARIANT"
+            );
+            assert!(!classified.row.trade_now_eligible);
+
+            assert_eq!(fixture.selected_signal_count().await?, before_count);
+            assert_eq!(
+                fixture.selected_signal_for(pair_id, timeframe).await?,
+                before_row
+            );
+
+            Ok(())
+        }
+
         fn assert_transition_counts(
             summary: &PersistSummary,
             initialize: usize,

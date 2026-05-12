@@ -79,10 +79,25 @@ Analytics tab reads:
   - `GET /v1/strategy/pairs/opportunity-history/download?timeframe=<1m|15m|1h>&hours=<n>&only_pass=<bool>&limit=<n>`
  - opportunity history retention meter via:
    - `GET /v1/strategy/pairs/opportunity-history/stats?timeframe=<optional:1m|15m|1h>`
+- repair-source selected-row audit via:
+  - `GET /v1/strategy/maintenance/recanonicalized-legacy-row-audit?timeframe=<optional:1m|15m|1h>&pair_id=<optional>`
 
 Maintenance controls and history downloads are available on the dedicated `Maintenance` page in the left nav (positioned under `Data Quality`).
 
 If available, report downloads appear in the Analytics panel.
+
+## Repair-Source Audit Dry-Run
+
+The recanonicalized legacy-row audit is report-only. It reads
+`strategy_selected_signal` rows whose selected config source is
+`RECANONICALIZED_LEGACY_ROW`, evaluates current proof when available, and
+returns row-level reason codes describing what a future separately approved
+apply-mode design would need before replacing the repair source with an
+approved non-repair source.
+
+The endpoint does not enqueue an action, write an artifact, update selected
+rows, alter strategy config, change runtime environment, or change deployment
+state. `RECANONICALIZED_LEGACY_ROW` remains repair-only and not trade-eligible.
 
 ## Host Action Worker (Required For One-Click Promote/Revert)
 
