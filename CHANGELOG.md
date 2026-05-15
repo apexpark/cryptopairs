@@ -680,6 +680,7 @@ This project follows SemVer as defined in `docs/02-versioning-and-releases.md`.
   - preview quantities now reflect actual executable submit size.
 
 ### Fixed
+- Trade Now Pairs table columns now stay inside the Pairs frame at narrow window widths.
 - Trade and Analytics now render champion projection failures as `BLOCKED`
   instead of displaying an untrustworthy stored champion variant.
 - Hosted compose wiring for execution dispatch mode:

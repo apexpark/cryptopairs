@@ -610,30 +610,36 @@ table {
 }
 
 .simple-pairs-table {
+  width: 100%;
   min-width: 0;
   table-layout: fixed;
   font-size: 0.82rem;
 }
 
+.simple-pairs-table th,
 .simple-pairs-table td {
+  min-width: 0;
   vertical-align: middle;
   font-size: 0.82rem;
-  overflow: visible;
+  overflow-wrap: anywhere;
 }
 
 .simple-pairs-table th:nth-child(1),
 .simple-pairs-table td:nth-child(1) {
-  width: 58%;
+  width: 50%;
 }
 
 .simple-pairs-table th:nth-child(2),
 .simple-pairs-table td:nth-child(2) {
-  width: 25%;
+  width: 26%;
+  text-align: center;
 }
 
 .simple-pairs-table th:nth-child(3),
 .simple-pairs-table td:nth-child(3) {
-  width: 17%;
+  width: 24%;
+  text-align: right;
+  white-space: normal;
 }
 
 .simple-pairs-table .opportunity-pair-stack {
@@ -658,6 +664,8 @@ table {
   position: relative;
   display: inline-flex;
   align-items: center;
+  justify-content: center;
+  max-width: 100%;
   border: 1px solid var(--line-soft);
   border-radius: 999px;
   padding: 5px 9px;
@@ -1696,6 +1704,43 @@ button:disabled {
 
   .execution-grid {
     grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 420px) {
+  .simple-pairs-table {
+    font-size: 0.76rem;
+  }
+
+  .simple-pairs-table th,
+  .simple-pairs-table td {
+    padding-inline: 6px;
+    font-size: 0.76rem;
+  }
+
+  .simple-pairs-table th:nth-child(1),
+  .simple-pairs-table td:nth-child(1) {
+    width: 57%;
+  }
+
+  .simple-pairs-table th:nth-child(2),
+  .simple-pairs-table td:nth-child(2) {
+    width: 16%;
+  }
+
+  .simple-pairs-table th:nth-child(3),
+  .simple-pairs-table td:nth-child(3) {
+    width: 27%;
+  }
+
+  .simple-pairs-table .opportunity-pair-stack strong {
+    font-size: 0.72rem;
+    line-height: 1.15;
+  }
+
+  .simple-status-pill {
+    padding-inline: 4px;
+    font-size: 0.64rem;
   }
 }
 
