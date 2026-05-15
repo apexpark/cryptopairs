@@ -3274,8 +3274,16 @@ function App(): JSX.Element {
       side: leg.side,
       qty: leg.qty,
       sizing: action === "EMERGENCY_STOP_CLOSE" ? undefined : sizingPayload,
-      operator_confirmed: action === "EMERGENCY_STOP_CLOSE" ? false : effectiveOperatorConfirmed,
-      operator_id: action === "EMERGENCY_STOP_CLOSE" ? null : operatorId,
+      operator_confirmed: practiceModeActive
+        ? true
+        : action === "EMERGENCY_STOP_CLOSE"
+          ? false
+          : effectiveOperatorConfirmed,
+      operator_id: practiceModeActive
+        ? operatorId.trim()
+        : action === "EMERGENCY_STOP_CLOSE"
+          ? null
+          : operatorId,
       min_coverage_pct: 99.5,
     });
 
