@@ -439,4 +439,61 @@ describe("manual trade flow", () => {
       );
     });
   });
+
+  it("requires an explicit operator SIM override before bypassing blocked execution gates", async () => {
+    api.fetchExecutionDispatchMode.mockResolvedValue({
+      mode: "SIMULATE_ACK",
+      requires_live_arm: false,
+    });
+    api.fetchKillSwitchState.mockResolvedValue({
+      active: true,
+      reason: "operator safety hold",
+      updated_at: "2026-02-20T00:00:00Z",
+    });
+    api.fetchExecutionDecision.mockResolvedValue({
+      instrument: LEFT,
+      timeframe: "1m",
+      decision: "BLOCKED",
+      reason: "integrity gate blocked signal: test",
+      min_coverage_pct: 99.5,
+      evaluated_at: "2026-02-20T00:00:00Z",
+    });
+    api.fetchReconcile.mockResolvedValue({
+      reconcile: {
+        exchange: "kraken_futures",
+        account_id: "primary",
+        ts: "2026-02-20T00:00:00Z",
+        status: "NOT_OK",
+        drift_notional: 125,
+        notes: "test drift",
+      },
+    });
+
+    render(<App />);
+
+    await waitFor(() => {
+      expect(api.fetchExecutionDispatchMode).toHaveBeenCalled();
+      expect(screen.getByText("SIM READY")).toBeInTheDocument();
+    });
+
+    const longEntryButton = screen.getByRole("button", { name: "Long Spread Entry" });
+    expect(longEntryButton).toBeDisabled();
+    expect(screen.getAllByText("Sim gate override is OFF.").length).toBeGreaterThan(0);
+
+    fireEvent.click(screen.getByRole("button", { name: "Override Gates for Sim" }));
+
+    await waitFor(() => {
+      expect(screen.getByText("SIM OVERRIDE")).toBeInTheDocument();
+      expect(longEntryButton).not.toBeDisabled();
+    });
+
+    fireEvent.click(longEntryButton);
+
+    await waitFor(() => {
+      expect(api.submitOrderIntent).toHaveBeenCalledTimes(2);
+      expect(api.dispatchOrderIntent).toHaveBeenCalledTimes(2);
+    });
+    expect(api.submitOrderIntent.mock.calls[0][0].operator_confirmed).toBe(true);
+    expect(api.dispatchOrderIntent.mock.calls[0][0].actor).toBe("operator-kevin");
+  });
 });

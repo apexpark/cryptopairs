@@ -1561,6 +1561,7 @@ function App(): JSX.Element {
   const [headerMetricsError, setHeaderMetricsError] = useState<string | null>(null);
   const [spreadSize, setSpreadSize] = useState<string>("1");
   const [operatorConfirmed, setOperatorConfirmed] = useState<boolean>(false);
+  const [simGateOverrideArmed, setSimGateOverrideArmed] = useState<boolean>(false);
   const [tradeMessage, setTradeMessage] = useState<string>("No trade submitted yet.");
   const [submitting, setSubmitting] = useState(false);
 
@@ -1971,8 +1972,9 @@ function App(): JSX.Element {
     }),
     [killSwitch?.active, leftDecisionAllowed, rightDecisionAllowed, reconcileResponse]
   );
-  const simGateBypass = executionDispatchMode?.mode === "SIMULATE_ACK";
-  const effectiveGateState = simGateBypass
+  const simGateOverrideActive =
+    executionDispatchMode?.mode === "SIMULATE_ACK" && simGateOverrideArmed;
+  const effectiveGateState = simGateOverrideActive
     ? {
         killSwitchActive: false,
         leftAllowed: true,
@@ -1981,7 +1983,14 @@ function App(): JSX.Element {
       }
     : gateState;
   const requiresLiveArm = executionDispatchMode?.requires_live_arm ?? true;
-  const effectiveOperatorConfirmed = operatorConfirmed || !requiresLiveArm;
+  const effectiveOperatorConfirmed =
+    operatorConfirmed || executionDispatchMode?.mode === "SIMULATE_ACK";
+
+  useEffect(() => {
+    if (executionDispatchMode?.mode !== "SIMULATE_ACK" && simGateOverrideArmed) {
+      setSimGateOverrideArmed(false);
+    }
+  }, [executionDispatchMode?.mode, simGateOverrideArmed]);
 
   const baseEntryGuard = {
     operatorConfirmed: effectiveOperatorConfirmed,
@@ -3489,9 +3498,11 @@ function App(): JSX.Element {
           timeline={currentTimeline}
           spreadSize={spreadSize}
           operatorConfirmed={operatorConfirmed}
+          simGateOverrideArmed={simGateOverrideArmed}
           operatorId={operatorId}
           setSpreadSize={setSpreadSize}
           setOperatorConfirmed={setOperatorConfirmed}
+          setSimGateOverrideArmed={setSimGateOverrideArmed}
           setOperatorId={setOperatorId}
           canLongEntry={canLongEntry}
           canShortEntry={canShortEntry}
@@ -3697,10 +3708,12 @@ function App(): JSX.Element {
 
       <footer className="footer-note">
         <span>Global timeframe selector applies to all pages and strategy panels.</span>
-        <span className={gateSafe ? "tone-ok" : "tone-bad"}>
-          {gateSafe
-            ? "Trade gates healthy"
-            : "Fail-closed mode: entry actions blocked until all gates are safe"}
+        <span className={simGateOverrideActive ? "tone-warn" : gateSafe ? "tone-ok" : "tone-bad"}>
+          {simGateOverrideActive
+            ? "SIM gate override active: live gates unchanged"
+            : gateSafe
+              ? "Trade gates healthy"
+              : "Fail-closed mode: entry actions blocked until all gates are safe"}
         </span>
         {headerMetricsError ? <span className="tone-warn">{headerMetricsError}</span> : null}
         <span className="small-text" aria-hidden="true">
@@ -4286,9 +4299,11 @@ function TradePage(props: {
   timeline: TimelineEvent[];
   spreadSize: string;
   operatorConfirmed: boolean;
+  simGateOverrideArmed: boolean;
   operatorId: string;
   setSpreadSize: (value: string) => void;
   setOperatorConfirmed: (value: boolean) => void;
+  setSimGateOverrideArmed: (value: boolean) => void;
   setOperatorId: (value: string) => void;
   canLongEntry: boolean;
   canShortEntry: boolean;
@@ -4446,7 +4461,24 @@ function TradePage(props: {
         ...(selectedCue.cue.cost_gate?.rationale_codes ?? []),
       ])
     : new Set<string>();
-  const bypassExecutionGates = props.dispatchMode === "SIMULATE_ACK";
+  const simOverrideAvailable = props.dispatchMode === "SIMULATE_ACK";
+  const bypassExecutionGates = simOverrideAvailable && props.simGateOverrideArmed;
+  const dispatchModeBadge =
+    props.dispatchMode === "LIVE_KRAKEN"
+      ? props.operatorConfirmed
+        ? "LIVE ARMED"
+        : "LIVE LOCKED"
+      : props.dispatchMode === "SIMULATE_ACK"
+        ? props.simGateOverrideArmed
+          ? "SIM OVERRIDE"
+          : "SIM READY"
+        : "FAIL-CLOSED";
+  const dispatchModeBadgeClass =
+    props.dispatchMode === "LIVE_KRAKEN" && props.operatorConfirmed
+      ? "live"
+      : props.dispatchMode === "FAIL_CLOSED"
+        ? "blocked"
+        : "sim";
 
   const sizingReason = (
     result: SpreadSizingPlanResult | null,
@@ -4472,8 +4504,11 @@ function TradePage(props: {
     if (props.submitting) {
       return "Action in progress.";
     }
-    if (props.requiresLiveArm && !props.operatorConfirmed) {
-      return "Execution mode is SIM ONLY. Arm LIVE to enable entry actions.";
+    if (props.dispatchMode === "FAIL_CLOSED") {
+      return "Execution dispatch is FAIL_CLOSED. Switch the backend to SIMULATE_ACK for sim trades.";
+    }
+    if (props.dispatchMode === "LIVE_KRAKEN" && props.requiresLiveArm && !props.operatorConfirmed) {
+      return "Live dispatch is locked. Arm LIVE to enable entry actions.";
     }
     if (!props.operatorId.trim().length) {
       return "Operator ID is required.";
@@ -4485,6 +4520,9 @@ function TradePage(props: {
     const localSizingReason = sizingReason(sizing);
     if (localSizingReason) {
       return localSizingReason;
+    }
+    if (simOverrideAvailable && !props.simGateOverrideArmed && !isGateSafe(props.gateState)) {
+      return "Sim gate override is OFF.";
     }
     if (!bypassExecutionGates && props.gateState.killSwitchActive) {
       return "Kill switch is ACTIVE.";
@@ -4547,8 +4585,10 @@ function TradePage(props: {
     ? "Action in progress."
     : props.currentPosition.direction === "NONE" || props.currentPosition.totalSize <= 0
       ? "No open spread position to reduce."
-      : props.requiresLiveArm && !props.operatorConfirmed
-        ? "Execution mode is SIM ONLY. Arm LIVE to reduce."
+      : props.dispatchMode === "FAIL_CLOSED"
+        ? "Execution dispatch is FAIL_CLOSED. Switch the backend to SIMULATE_ACK for sim trades."
+        : props.dispatchMode === "LIVE_KRAKEN" && props.requiresLiveArm && !props.operatorConfirmed
+          ? "Live dispatch is locked. Arm LIVE to reduce."
         : !props.operatorId.trim().length
           ? "Operator ID is required."
           : reduceNotionalMessage
@@ -4780,30 +4820,52 @@ function TradePage(props: {
             <div className="execution-mode-card">
               <div className="execution-mode-row">
                 <strong>Execution Mode</strong>
-                <span
-                  className={`mode-badge ${
-                    props.requiresLiveArm ? (props.operatorConfirmed ? "live" : "sim") : "sim"
-                  }`}
-                >
-                  {props.requiresLiveArm
-                    ? props.operatorConfirmed
-                      ? "LIVE ARMED"
-                      : "SIM ONLY"
-                    : "SIM ENABLED"}
-                </span>
+                <span className={`mode-badge ${dispatchModeBadgeClass}`}>{dispatchModeBadge}</span>
               </div>
               <label className="checkbox-row">
                 <input
                   type="checkbox"
                   checked={props.operatorConfirmed}
                   onChange={(event) => props.setOperatorConfirmed(event.target.checked)}
-                  disabled={!props.requiresLiveArm}
+                  disabled={props.dispatchMode !== "LIVE_KRAKEN" || !props.requiresLiveArm}
                 />
-                {props.requiresLiveArm ? "Live Trading Armed" : "Live arm not required in SIMULATE_ACK"}
+                {props.dispatchMode === "LIVE_KRAKEN"
+                  ? "Live Trading Armed"
+                  : "Live arm unavailable outside LIVE_KRAKEN"}
               </label>
               <div className="execution-mode-meta small-text">
                 Dispatch mode: {props.dispatchMode}
               </div>
+              <div className="sim-override-row">
+                <div className="sim-override-copy">
+                  <strong>SIM Gate Override</strong>
+                  <p className="small-text">
+                    {props.simGateOverrideArmed
+                      ? "ON: simulated actions may bypass execution gates."
+                      : "OFF: execution gates still block simulated actions."}
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  className={props.simGateOverrideArmed ? "danger compact-button" : "secondary compact-button"}
+                  disabled={
+                    !simOverrideAvailable ||
+                    props.submitting ||
+                    !props.operatorId.trim().length
+                  }
+                  aria-pressed={props.simGateOverrideArmed}
+                  onClick={() => props.setSimGateOverrideArmed(!props.simGateOverrideArmed)}
+                >
+                  {props.simGateOverrideArmed ? "Disable SIM Override" : "Override Gates for Sim"}
+                </button>
+              </div>
+              {!simOverrideAvailable ? (
+                <p className="action-disabled-reason">
+                  SIM override requires backend dispatch mode SIMULATE_ACK.
+                </p>
+              ) : !props.operatorId.trim().length ? (
+                <p className="action-disabled-reason">Operator ID is required to arm SIM override.</p>
+              ) : null}
               <div className="kill-switch-row">
                 <div className="kill-switch-copy">
                   <strong>Global Disable (Kill Switch)</strong>
