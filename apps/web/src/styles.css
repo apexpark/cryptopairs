@@ -1487,6 +1487,25 @@ button:disabled {
   margin: 4px 0 6px 0;
 }
 
+.live-trading-row {
+  margin-top: 6px;
+  padding-top: 6px;
+  border-top: 1px dashed var(--line-soft);
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 10px;
+}
+
+.live-trading-copy p {
+  margin: 3px 0 0 0;
+}
+
+.live-arm-toggle {
+  margin-top: 0;
+  white-space: nowrap;
+}
+
 .mode-badge {
   border: 1px solid var(--line-soft);
   border-radius: 999px;
@@ -1510,7 +1529,7 @@ button:disabled {
   border-color: color-mix(in srgb, var(--tone-bad) 55%, var(--line));
 }
 
-.sim-override-row {
+.practice-mode-row {
   margin-top: 6px;
   padding-top: 6px;
   border-top: 1px dashed var(--line-soft);
@@ -1520,7 +1539,7 @@ button:disabled {
   gap: 10px;
 }
 
-.sim-override-copy p {
+.practice-mode-copy p {
   margin: 3px 0 0 0;
 }
 
@@ -1771,13 +1790,22 @@ button:disabled {
     font-size: 0.64rem;
   }
 
-  .sim-override-row {
+  .practice-mode-row {
     align-items: stretch;
     flex-direction: column;
   }
 
-  .sim-override-row .compact-button {
+  .practice-mode-row .compact-button {
     width: 100%;
+  }
+
+  .live-trading-row {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .live-arm-toggle {
+    white-space: normal;
   }
 }
 
