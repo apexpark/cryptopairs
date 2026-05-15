@@ -86,6 +86,29 @@ fn ack_watchdog_enabled_for_dispatch_mode(dispatch_mode: DispatchMode) -> bool {
     !matches!(dispatch_mode, DispatchMode::SimulateAck)
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ExecutionMode {
+    Live,
+    Paper,
+}
+
+impl ExecutionMode {
+    fn parse(value: &str) -> Option<Self> {
+        match value.trim().to_ascii_uppercase().as_str() {
+            "LIVE" => Some(Self::Live),
+            "PAPER" => Some(Self::Paper),
+            _ => None,
+        }
+    }
+
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Live => "LIVE",
+            Self::Paper => "PAPER",
+        }
+    }
+}
+
 fn normalize_secret_value(raw: String) -> Option<String> {
     let trimmed = raw.trim().to_string();
     if trimmed.is_empty() {
@@ -678,6 +701,7 @@ impl ExecutionRepository {
                     operator_confirmed BOOLEAN NOT NULL,
                     operator_id TEXT,
                     min_coverage_pct DOUBLE PRECISION NOT NULL,
+                    execution_mode TEXT NOT NULL DEFAULT 'LIVE',
                     decision TEXT NOT NULL,
                     reason TEXT NOT NULL DEFAULT '',
                     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
@@ -717,7 +741,9 @@ impl ExecutionRepository {
                  ALTER TABLE execution_order_intents
                  ADD COLUMN IF NOT EXISTS spread_z DOUBLE PRECISION;
                  ALTER TABLE execution_order_intents
-                 ADD COLUMN IF NOT EXISTS sizing_json TEXT;",
+                 ADD COLUMN IF NOT EXISTS sizing_json TEXT;
+                 ALTER TABLE execution_order_intents
+                 ADD COLUMN IF NOT EXISTS execution_mode TEXT NOT NULL DEFAULT 'LIVE';",
             )
             .await?;
         Ok(())
@@ -792,7 +818,7 @@ impl ExecutionRepository {
             .query_opt(
                 "SELECT idempotency_key, instrument, timeframe, action, side, qty,
                         sizing_json, operator_confirmed, operator_id, min_coverage_pct, exchange, account_id,
-                        pair_id, spread_direction, spread_z, decision, reason, created_at
+                        pair_id, spread_direction, spread_z, execution_mode, decision, reason, created_at
                  FROM execution_order_intents
                  WHERE idempotency_key = $1",
                 &[&idempotency_key],
@@ -815,9 +841,10 @@ impl ExecutionRepository {
             pair_id: row.get(12),
             spread_direction: row.get(13),
             spread_z: row.get(14),
-            decision: row.get(15),
-            reason: row.get(16),
-            created_at: row.get(17),
+            execution_mode: row.get(15),
+            decision: row.get(16),
+            reason: row.get(17),
+            created_at: row.get(18),
         }))
     }
 
@@ -830,11 +857,12 @@ impl ExecutionRepository {
             .query_opt(
                 "SELECT i.idempotency_key, i.instrument, i.timeframe, i.action, i.side, i.qty,
                         i.sizing_json, i.operator_confirmed, i.operator_id, i.min_coverage_pct, i.exchange, i.account_id,
-                        i.pair_id, i.spread_direction, i.spread_z, i.decision, i.reason, i.created_at
+                        i.pair_id, i.spread_direction, i.spread_z, i.execution_mode, i.decision, i.reason, i.created_at
                  FROM execution_order_intents i
                  JOIN execution_dispatch_attempts d
                    ON d.idempotency_key = i.idempotency_key
                 WHERE d.exchange_order_id = $1
+                  AND i.execution_mode = 'LIVE'
                  ORDER BY d.created_at DESC
                  LIMIT 1",
                 &[&exchange_order_id],
@@ -857,9 +885,10 @@ impl ExecutionRepository {
             pair_id: row.get(12),
             spread_direction: row.get(13),
             spread_z: row.get(14),
-            decision: row.get(15),
-            reason: row.get(16),
-            created_at: row.get(17),
+            execution_mode: row.get(15),
+            decision: row.get(16),
+            reason: row.get(17),
+            created_at: row.get(18),
         }))
     }
 
@@ -869,8 +898,8 @@ impl ExecutionRepository {
                 "INSERT INTO execution_order_intents
                  (idempotency_key, instrument, timeframe, action, side, qty, sizing_json,
                   operator_confirmed, operator_id, min_coverage_pct, exchange, account_id,
-                  pair_id, spread_direction, spread_z, decision, reason, created_at)
-                 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)
+                  pair_id, spread_direction, spread_z, execution_mode, decision, reason, created_at)
+                 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19)
                  ON CONFLICT (idempotency_key) DO NOTHING",
                 &[
                     &record.idempotency_key as &(dyn ToSql + Sync),
@@ -888,6 +917,7 @@ impl ExecutionRepository {
                     &record.pair_id,
                     &record.spread_direction,
                     &record.spread_z,
+                    &record.execution_mode,
                     &record.decision,
                     &record.reason,
                     &record.created_at,
@@ -944,6 +974,7 @@ impl ExecutionRepository {
                  WHERE i.exchange = $1
                    AND i.account_id = $2
                    AND i.instrument = $3
+                   AND i.execution_mode = 'LIVE'
                    AND i.decision = 'ACCEPTED'
                    AND latest.state IN ('APPROVED', 'PENDING_SUBMIT', 'ACKNOWLEDGED', 'PARTIALLY_FILLED', 'FILLED')",
                 &[&exchange, &account_id, &instrument],
@@ -981,6 +1012,7 @@ impl ExecutionRepository {
                       ON latest.idempotency_key = i.idempotency_key
                     WHERE i.exchange = $1
                       AND i.account_id = $2
+                      AND i.execution_mode = 'LIVE'
                       AND i.decision = 'ACCEPTED'
                       AND latest.state IN ('APPROVED', 'PENDING_SUBMIT', 'ACKNOWLEDGED', 'PARTIALLY_FILLED', 'FILLED')
                     GROUP BY i.instrument
@@ -1006,6 +1038,7 @@ impl ExecutionRepository {
                  WHERE exchange=$1
                    AND account_id=$2
                    AND instrument=$3
+                   AND execution_mode='LIVE'
                    AND action='ENTRY'
                    AND decision='ACCEPTED'
                  ORDER BY created_at DESC
@@ -1020,6 +1053,7 @@ impl ExecutionRepository {
         &self,
         exchange: &str,
         account_id: &str,
+        execution_mode: ExecutionMode,
     ) -> anyhow::Result<Vec<SpreadLedgerEvent>> {
         let rows = self
             .client
@@ -1035,12 +1069,13 @@ impl ExecutionRepository {
                    ON latest.idempotency_key = i.idempotency_key
                  WHERE i.exchange = $1
                    AND i.account_id = $2
+                   AND i.execution_mode = $3
                    AND i.decision = 'ACCEPTED'
                    AND i.pair_id IS NOT NULL
                    AND i.pair_id <> ''
                    AND latest.state IN ('ACKNOWLEDGED', 'PARTIALLY_FILLED', 'FILLED')
                  ORDER BY i.created_at ASC",
-                &[&exchange, &account_id],
+                &[&exchange, &account_id, &execution_mode.as_str()],
             )
             .await?;
         Ok(rows
@@ -1061,6 +1096,7 @@ impl ExecutionRepository {
         &self,
         exchange: &str,
         account_id: &str,
+        execution_mode: ExecutionMode,
     ) -> anyhow::Result<Vec<SpreadOpenTradeEvent>> {
         let rows = self
             .client
@@ -1076,12 +1112,13 @@ impl ExecutionRepository {
                    ON latest.idempotency_key = i.idempotency_key
                  WHERE i.exchange = $1
                    AND i.account_id = $2
+                   AND i.execution_mode = $3
                    AND i.decision = 'ACCEPTED'
                    AND i.pair_id IS NOT NULL
                    AND i.pair_id <> ''
                    AND latest.state IN ('ACKNOWLEDGED', 'PARTIALLY_FILLED', 'FILLED')
                  ORDER BY i.created_at ASC",
-                &[&exchange, &account_id],
+                &[&exchange, &account_id, &execution_mode.as_str()],
             )
             .await?;
         Ok(rows
@@ -1268,7 +1305,10 @@ impl ExecutionRepository {
                    FROM execution_order_state_events
                    ORDER BY idempotency_key, created_at DESC
                  ) latest
+                 JOIN execution_order_intents i
+                   ON i.idempotency_key = latest.idempotency_key
                  WHERE latest.state = 'ACKNOWLEDGED'
+                   AND i.execution_mode = 'LIVE'
                    AND latest.created_at <= NOW() - ($1::BIGINT * INTERVAL '1 second')
                  ORDER BY latest.created_at ASC
                  LIMIT $2",
@@ -1301,6 +1341,7 @@ impl ExecutionRepository {
                  ) d
                    ON d.idempotency_key = i.idempotency_key
                  WHERE i.exchange = 'kraken_futures'
+                   AND i.execution_mode = 'LIVE'
                    AND latest.state IN ('ACKNOWLEDGED', 'PARTIALLY_FILLED')
                  ORDER BY i.created_at ASC
                  LIMIT $1",
@@ -1345,6 +1386,7 @@ impl ExecutionRepository {
                  FROM execution_order_intents
                  WHERE exchange=$1
                    AND account_id=$2
+                   AND execution_mode='LIVE'
                    AND created_at >= NOW() - ($3::BIGINT * INTERVAL '1 minute')",
                 &[&exchange, &account_id, &bounded_window],
             )
@@ -1356,9 +1398,14 @@ impl ExecutionRepository {
                     COUNT(*) AS dispatch_total,
                     COUNT(*) FILTER (WHERE result_state='REJECTED') AS dispatch_rejected,
                     COUNT(*) FILTER (WHERE result_state='ACKNOWLEDGED') AS dispatch_acknowledged
-                 FROM execution_dispatch_attempts
-                 WHERE created_at >= NOW() - ($1::BIGINT * INTERVAL '1 minute')",
-                &[&bounded_window],
+                 FROM execution_dispatch_attempts d
+                 JOIN execution_order_intents i
+                   ON i.idempotency_key = d.idempotency_key
+                 WHERE i.exchange=$1
+                   AND i.account_id=$2
+                   AND i.execution_mode='LIVE'
+                   AND d.created_at >= NOW() - ($3::BIGINT * INTERVAL '1 minute')",
+                &[&exchange, &account_id, &bounded_window],
             )
             .await?;
         let stale_ack_row = self
@@ -1375,6 +1422,7 @@ impl ExecutionRepository {
                    ON i.idempotency_key = latest.idempotency_key
                  WHERE i.exchange=$1
                    AND i.account_id=$2
+                   AND i.execution_mode='LIVE'
                    AND latest.state='ACKNOWLEDGED'
                    AND latest.created_at <= NOW() - ($3::BIGINT * INTERVAL '1 second')",
                 &[&exchange, &account_id, &stale_ack_seconds.max(1)],
@@ -1454,6 +1502,25 @@ struct OrderIntentRequest {
     min_coverage_pct: Option<f64>,
 }
 
+#[derive(Debug)]
+struct PreparedOrderIntent {
+    idempotency_key: String,
+    exchange: String,
+    account_id: String,
+    pair_id: Option<String>,
+    instrument: String,
+    timeframe: Timeframe,
+    action: OrderIntentAction,
+    spread_direction: Option<String>,
+    spread_z: Option<f64>,
+    side: String,
+    qty: f64,
+    sizing_json: Option<String>,
+    operator_confirmed: bool,
+    operator_id: Option<String>,
+    min_coverage_pct: f64,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct SpreadSizingRequest {
     target_notional_usd: f64,
@@ -1477,6 +1544,7 @@ struct OrderIntentResponse {
     idempotency_key: String,
     exchange: String,
     account_id: String,
+    execution_mode: String,
     pair_id: Option<String>,
     instrument: String,
     timeframe: String,
@@ -1493,11 +1561,12 @@ struct OrderIntentResponse {
     evaluated_at: DateTime<Utc>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 struct OrderIntentRecord {
     idempotency_key: String,
     exchange: String,
     account_id: String,
+    execution_mode: String,
     pair_id: Option<String>,
     instrument: String,
     timeframe: String,
@@ -1536,7 +1605,7 @@ struct OrderStateEvent {
     created_at: DateTime<Utc>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Clone)]
 struct DispatchAttempt {
     attempt_no: i32,
     result_state: String,
@@ -1585,6 +1654,7 @@ struct FoldedSpreadPosition {
 struct PortfolioPositionsQuery {
     exchange: String,
     account_id: String,
+    execution_mode: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -1592,6 +1662,7 @@ struct PortfolioOpenTradesQuery {
     exchange: String,
     account_id: String,
     pair_id: Option<String>,
+    execution_mode: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -1607,6 +1678,7 @@ struct PortfolioPositionRow {
 struct PortfolioPositionsResponse {
     exchange: String,
     account_id: String,
+    execution_mode: String,
     generated_at: DateTime<Utc>,
     positions: Vec<PortfolioPositionRow>,
 }
@@ -1638,9 +1710,18 @@ struct OpenTradeRow {
 struct PortfolioOpenTradesResponse {
     exchange: String,
     account_id: String,
+    execution_mode: String,
     generated_at: DateTime<Utc>,
     warnings: Vec<String>,
     trades: Vec<OpenTradeRow>,
+}
+
+#[derive(Debug, Serialize)]
+struct PaperOrderIntentResponse {
+    schema_version: String,
+    intent: OrderIntentResponse,
+    dispatch: DispatchIntentResponse,
+    recorded_at: DateTime<Utc>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -1953,6 +2034,7 @@ async fn main() -> anyhow::Result<()> {
             get(kill_switch).post(update_kill_switch),
         )
         .route("/v1/execution/order-intent", post(order_intent))
+        .route("/v1/execution/paper/order-intent", post(paper_order_intent))
         .route(
             "/v1/execution/portfolio/positions",
             get(portfolio_positions),
@@ -2586,21 +2668,24 @@ async fn portfolio_positions(
             "exchange and account_id are required".to_string(),
         ));
     }
+    let execution_mode = parse_execution_mode_query(query.execution_mode.as_deref())?;
     let events = state
         .repository
-        .fetch_spread_ledger_events(&query.exchange, &query.account_id)
+        .fetch_spread_ledger_events(&query.exchange, &query.account_id, execution_mode)
         .await
         .map_err(|error| ApiError::Upstream(error.to_string()))?;
     let positions = fold_spread_positions(&events);
     info!(
         exchange = %query.exchange,
         account_id = %query.account_id,
+        execution_mode = %execution_mode.as_str(),
         positions_count = positions.len(),
         "execution portfolio positions generated"
     );
     Ok(Json(PortfolioPositionsResponse {
         exchange: query.exchange,
         account_id: query.account_id,
+        execution_mode: execution_mode.as_str().to_string(),
         generated_at: Utc::now(),
         positions,
     }))
@@ -2758,6 +2843,7 @@ async fn portfolio_open_trades(
             "exchange and account_id are required".to_string(),
         ));
     }
+    let execution_mode = parse_execution_mode_query(query.execution_mode.as_deref())?;
     let pair_filter = query
         .pair_id
         .as_deref()
@@ -2767,7 +2853,7 @@ async fn portfolio_open_trades(
 
     let position_events = state
         .repository
-        .fetch_spread_ledger_events(&query.exchange, &query.account_id)
+        .fetch_spread_ledger_events(&query.exchange, &query.account_id, execution_mode)
         .await
         .map_err(|error| ApiError::Upstream(error.to_string()))?;
     let mut positions = fold_spread_positions(&position_events);
@@ -2778,6 +2864,7 @@ async fn portfolio_open_trades(
         return Ok(Json(PortfolioOpenTradesResponse {
             exchange: query.exchange,
             account_id: query.account_id,
+            execution_mode: execution_mode.as_str().to_string(),
             generated_at: Utc::now(),
             warnings: vec![],
             trades: vec![],
@@ -2802,7 +2889,7 @@ async fn portfolio_open_trades(
 
     let open_trade_events = state
         .repository
-        .fetch_spread_open_trade_events(&query.exchange, &query.account_id)
+        .fetch_spread_open_trade_events(&query.exchange, &query.account_id, execution_mode)
         .await
         .map_err(|error| ApiError::Upstream(error.to_string()))?;
     let folded_legs_by_pair = fold_open_trade_legs(&open_trade_events, &active_pairs);
@@ -2897,6 +2984,7 @@ async fn portfolio_open_trades(
     Ok(Json(PortfolioOpenTradesResponse {
         exchange: query.exchange,
         account_id: query.account_id,
+        execution_mode: execution_mode.as_str().to_string(),
         generated_at: Utc::now(),
         warnings,
         trades,
@@ -3159,10 +3247,10 @@ async fn evaluate_risk_gate_from_store(
     ))
 }
 
-async fn order_intent(
-    State(state): State<AppState>,
-    Json(payload): Json<OrderIntentRequest>,
-) -> Result<Json<OrderIntentResponse>, ApiError> {
+fn prepare_order_intent_payload(
+    payload: OrderIntentRequest,
+    default_min_coverage_pct: f64,
+) -> Result<PreparedOrderIntent, ApiError> {
     if payload.idempotency_key.trim().is_empty() {
         return Err(ApiError::BadRequest(
             "idempotency_key is required".to_string(),
@@ -3184,28 +3272,18 @@ async fn order_intent(
     })?;
     let side = normalize_side(&payload.side)
         .ok_or_else(|| ApiError::BadRequest("side must be BUY or SELL".to_string()))?;
-    let normalized_operator_id = normalize_optional_string(payload.operator_id.as_deref());
-    let normalized_pair_id = normalize_optional_string(payload.pair_id.as_deref());
-    let normalized_spread_direction =
-        normalize_spread_direction(payload.spread_direction.as_deref())?;
-    let normalized_spread_z = payload
+    let operator_id = normalize_optional_string(payload.operator_id.as_deref());
+    let pair_id = normalize_optional_string(payload.pair_id.as_deref());
+    let spread_direction = normalize_spread_direction(payload.spread_direction.as_deref())?;
+    let spread_z = payload
         .spread_z
         .filter(|value| value.is_finite() && value.abs() <= 100.0);
-    if payload.spread_z.is_some() && normalized_spread_z.is_none() {
+    if payload.spread_z.is_some() && spread_z.is_none() {
         return Err(ApiError::BadRequest(
             "spread_z must be finite and within +/-100 when provided".to_string(),
         ));
     }
-    validate_manual_controls(
-        action,
-        state.dispatch_mode,
-        payload.operator_confirmed,
-        normalized_operator_id.as_deref(),
-    )?;
-
-    let min_coverage_pct = payload
-        .min_coverage_pct
-        .unwrap_or(state.default_min_coverage_pct);
+    let min_coverage_pct = payload.min_coverage_pct.unwrap_or(default_min_coverage_pct);
     let sizing_json = payload
         .sizing
         .as_ref()
@@ -3213,28 +3291,60 @@ async fn order_intent(
         .transpose()
         .map_err(|error| ApiError::BadRequest(format!("invalid sizing payload: {error}")))?;
 
+    Ok(PreparedOrderIntent {
+        idempotency_key: payload.idempotency_key,
+        exchange: payload.exchange,
+        account_id: payload.account_id,
+        pair_id,
+        instrument: payload.instrument,
+        timeframe,
+        action,
+        spread_direction,
+        spread_z,
+        side: side.to_string(),
+        qty: payload.qty,
+        sizing_json,
+        operator_confirmed: payload.operator_confirmed,
+        operator_id,
+        min_coverage_pct,
+    })
+}
+
+async fn order_intent(
+    State(state): State<AppState>,
+    Json(payload): Json<OrderIntentRequest>,
+) -> Result<Json<OrderIntentResponse>, ApiError> {
+    let prepared = prepare_order_intent_payload(payload, state.default_min_coverage_pct)?;
+    validate_manual_controls(
+        prepared.action,
+        state.dispatch_mode,
+        prepared.operator_confirmed,
+        prepared.operator_id.as_deref(),
+    )?;
+
     if let Some(existing) = state
         .repository
-        .fetch_order_intent(&payload.idempotency_key)
+        .fetch_order_intent(&prepared.idempotency_key)
         .await
         .map_err(|error| ApiError::Upstream(error.to_string()))?
     {
         if !is_same_intent(
             &existing,
-            &payload.exchange,
-            &payload.account_id,
-            normalized_pair_id.as_deref(),
-            &payload.instrument,
-            timeframe,
-            action,
-            normalized_spread_direction.as_deref(),
-            normalized_spread_z,
-            side,
-            payload.qty,
-            sizing_json.as_deref(),
-            payload.operator_confirmed,
-            normalized_operator_id.as_deref(),
-            min_coverage_pct,
+            ExecutionMode::Live,
+            &prepared.exchange,
+            &prepared.account_id,
+            prepared.pair_id.as_deref(),
+            &prepared.instrument,
+            prepared.timeframe,
+            prepared.action,
+            prepared.spread_direction.as_deref(),
+            prepared.spread_z,
+            &prepared.side,
+            prepared.qty,
+            prepared.sizing_json.as_deref(),
+            prepared.operator_confirmed,
+            prepared.operator_id.as_deref(),
+            prepared.min_coverage_pct,
         ) {
             return Err(ApiError::BadRequest(
                 "idempotency_key already used with different payload".to_string(),
@@ -3242,16 +3352,23 @@ async fn order_intent(
         }
         return Ok(Json(map_order_intent(existing)));
     }
-    validate_order_qty_constraints(action, &payload.instrument, payload.qty)?;
-    if matches!(action, OrderIntentAction::Entry | OrderIntentAction::Exit) {
-        if let Some(sizing) = payload.sizing.as_ref() {
+    validate_order_qty_constraints(prepared.action, &prepared.instrument, prepared.qty)?;
+    if matches!(
+        prepared.action,
+        OrderIntentAction::Entry | OrderIntentAction::Exit
+    ) {
+        if let Some(sizing_json) = prepared.sizing_json.as_ref() {
+            let sizing: SpreadSizingRequest =
+                serde_json::from_str(sizing_json).map_err(|error| {
+                    ApiError::BadRequest(format!("invalid sizing payload: {error}"))
+                })?;
             validate_spread_sizing_request(
-                &payload.instrument,
-                normalized_pair_id.as_deref(),
-                sizing,
+                &prepared.instrument,
+                prepared.pair_id.as_deref(),
+                &sizing,
                 state.sizing_tolerance_notional_drift_pct,
                 state.sizing_tolerance_hedge_ratio_drift_pct,
-                payload.qty,
+                prepared.qty,
             )?;
         }
     }
@@ -3264,45 +3381,48 @@ async fn order_intent(
 
     let bypass_safety = bypass_safety_gates_for_dispatch_mode(state.dispatch_mode);
 
-    let gate_decision = if matches!(action, OrderIntentAction::EmergencyStopClose) || bypass_safety
-    {
-        GateDecision::Allowed
-    } else {
-        evaluate_integrity_gate_from_store(
-            &state.postgres_url,
-            &payload.instrument,
-            timeframe,
-            min_coverage_pct,
-        )
-        .await
-        .map_err(|error| ApiError::Upstream(error.to_string()))?
-    };
-
-    let reconcile_decision = if matches!(action, OrderIntentAction::EmergencyStopClose)
-        || bypass_safety
-    {
-        ReconcileDecision::Allowed
-    } else {
-        fetch_latest_reconcile_decision_from_service(&state, &payload.exchange, &payload.account_id)
+    let gate_decision =
+        if matches!(prepared.action, OrderIntentAction::EmergencyStopClose) || bypass_safety {
+            GateDecision::Allowed
+        } else {
+            evaluate_integrity_gate_from_store(
+                &state.postgres_url,
+                &prepared.instrument,
+                prepared.timeframe,
+                prepared.min_coverage_pct,
+            )
             .await
             .map_err(|error| ApiError::Upstream(error.to_string()))?
-    };
+        };
 
-    let risk_decision = if matches!(action, OrderIntentAction::EmergencyStopClose) || bypass_safety
-    {
-        GateDecision::Allowed
-    } else {
-        evaluate_risk_gate_from_store(
-            &state,
-            &payload.exchange,
-            &payload.account_id,
-            &payload.instrument,
-            action,
-            payload.qty,
-        )
-        .await
-        .map_err(|error| ApiError::Upstream(error.to_string()))?
-    };
+    let reconcile_decision =
+        if matches!(prepared.action, OrderIntentAction::EmergencyStopClose) || bypass_safety {
+            ReconcileDecision::Allowed
+        } else {
+            fetch_latest_reconcile_decision_from_service(
+                &state,
+                &prepared.exchange,
+                &prepared.account_id,
+            )
+            .await
+            .map_err(|error| ApiError::Upstream(error.to_string()))?
+        };
+
+    let risk_decision =
+        if matches!(prepared.action, OrderIntentAction::EmergencyStopClose) || bypass_safety {
+            GateDecision::Allowed
+        } else {
+            evaluate_risk_gate_from_store(
+                &state,
+                &prepared.exchange,
+                &prepared.account_id,
+                &prepared.instrument,
+                prepared.action,
+                prepared.qty,
+            )
+            .await
+            .map_err(|error| ApiError::Upstream(error.to_string()))?
+        };
 
     let (
         effective_kill_switch_active,
@@ -3326,7 +3446,7 @@ async fn order_intent(
     };
 
     let intent_decision = evaluate_order_intent(
-        action,
+        prepared.action,
         effective_kill_switch_active,
         effective_gate_decision,
         effective_reconcile_decision,
@@ -3338,21 +3458,22 @@ async fn order_intent(
     };
 
     let record = OrderIntentRecord {
-        idempotency_key: payload.idempotency_key,
-        exchange: payload.exchange,
-        account_id: payload.account_id,
-        pair_id: normalized_pair_id,
-        instrument: payload.instrument,
-        timeframe: timeframe.as_str().to_string(),
-        action: action.as_str().to_string(),
-        spread_direction: normalized_spread_direction,
-        spread_z: normalized_spread_z,
-        side: side.to_string(),
-        qty: payload.qty,
-        sizing_json,
-        operator_confirmed: payload.operator_confirmed,
-        operator_id: normalized_operator_id,
-        min_coverage_pct,
+        idempotency_key: prepared.idempotency_key,
+        exchange: prepared.exchange,
+        account_id: prepared.account_id,
+        execution_mode: ExecutionMode::Live.as_str().to_string(),
+        pair_id: prepared.pair_id,
+        instrument: prepared.instrument,
+        timeframe: prepared.timeframe.as_str().to_string(),
+        action: prepared.action.as_str().to_string(),
+        spread_direction: prepared.spread_direction,
+        spread_z: prepared.spread_z,
+        side: prepared.side,
+        qty: prepared.qty,
+        sizing_json: prepared.sizing_json,
+        operator_confirmed: prepared.operator_confirmed,
+        operator_id: prepared.operator_id,
+        min_coverage_pct: prepared.min_coverage_pct,
         decision,
         reason,
         created_at: Utc::now(),
@@ -3381,6 +3502,221 @@ async fn order_intent(
     );
 
     Ok(Json(map_order_intent(stored)))
+}
+
+async fn acknowledge_paper_order(
+    state: &AppState,
+    record: &OrderIntentRecord,
+    actor: &str,
+) -> Result<DispatchAttempt, ApiError> {
+    let current_state = state
+        .repository
+        .fetch_latest_order_state(&record.idempotency_key)
+        .await
+        .map_err(|error| ApiError::Upstream(error.to_string()))?
+        .ok_or_else(|| {
+            ApiError::Upstream("paper order lifecycle missing current state".to_string())
+        })?;
+
+    if current_state == OrderLifecycleState::Approved {
+        state
+            .repository
+            .record_state_event(
+                &record.idempotency_key,
+                OrderLifecycleState::PendingSubmit,
+                "paper order staged; no exchange order sent",
+                actor,
+            )
+            .await
+            .map_err(|error| ApiError::Upstream(error.to_string()))?;
+        state
+            .repository
+            .record_state_event(
+                &record.idempotency_key,
+                OrderLifecycleState::Acknowledged,
+                "paper order acknowledged; no exchange order sent",
+                actor,
+            )
+            .await
+            .map_err(|error| ApiError::Upstream(error.to_string()))?;
+    } else if current_state != OrderLifecycleState::Acknowledged {
+        return Err(ApiError::BadRequest(format!(
+            "paper order cannot be acknowledged from current_state={}",
+            current_state.as_str()
+        )));
+    }
+
+    let existing_attempt = state
+        .repository
+        .fetch_dispatch_attempts(&record.idempotency_key)
+        .await
+        .map_err(|error| ApiError::Upstream(error.to_string()))?
+        .into_iter()
+        .rfind(|attempt| attempt.result_state == OrderLifecycleState::Acknowledged.as_str());
+
+    if let Some(attempt) = existing_attempt {
+        return Ok(attempt);
+    }
+
+    let synthetic_order_id = format!(
+        "PAPER-{}-{}",
+        record.idempotency_key,
+        Utc::now().timestamp_millis()
+    );
+    state
+        .repository
+        .insert_dispatch_attempt(
+            &record.idempotency_key,
+            OrderLifecycleState::Acknowledged,
+            Some(&synthetic_order_id),
+            "paper order acknowledged; no exchange order sent",
+            actor,
+        )
+        .await
+        .map_err(|error| ApiError::Upstream(error.to_string()))
+}
+
+fn map_paper_order_response(
+    record: OrderIntentRecord,
+    dispatch_attempt: DispatchAttempt,
+) -> PaperOrderIntentResponse {
+    PaperOrderIntentResponse {
+        schema_version: "1.0.0".to_string(),
+        intent: map_order_intent(record.clone()),
+        dispatch: DispatchIntentResponse {
+            idempotency_key: record.idempotency_key,
+            result: dispatch_attempt.result_state,
+            from_state: Some(OrderLifecycleState::Approved.as_str().to_string()),
+            to_state: Some(OrderLifecycleState::Acknowledged.as_str().to_string()),
+            exchange_order_id: dispatch_attempt.exchange_order_id,
+            reason: Some(dispatch_attempt.reason),
+            attempted_at: dispatch_attempt.created_at,
+        },
+        recorded_at: Utc::now(),
+    }
+}
+
+async fn paper_order_intent(
+    State(state): State<AppState>,
+    Json(payload): Json<OrderIntentRequest>,
+) -> Result<Json<PaperOrderIntentResponse>, ApiError> {
+    let prepared = prepare_order_intent_payload(payload, state.default_min_coverage_pct)?;
+    if prepared.operator_id.is_none() {
+        return Err(ApiError::BadRequest(
+            "operator_id is required for paper order audit".to_string(),
+        ));
+    }
+
+    if let Some(existing) = state
+        .repository
+        .fetch_order_intent(&prepared.idempotency_key)
+        .await
+        .map_err(|error| ApiError::Upstream(error.to_string()))?
+    {
+        if !is_same_intent(
+            &existing,
+            ExecutionMode::Paper,
+            &prepared.exchange,
+            &prepared.account_id,
+            prepared.pair_id.as_deref(),
+            &prepared.instrument,
+            prepared.timeframe,
+            prepared.action,
+            prepared.spread_direction.as_deref(),
+            prepared.spread_z,
+            &prepared.side,
+            prepared.qty,
+            prepared.sizing_json.as_deref(),
+            prepared.operator_confirmed,
+            prepared.operator_id.as_deref(),
+            prepared.min_coverage_pct,
+        ) {
+            return Err(ApiError::BadRequest(
+                "idempotency_key already used with different payload".to_string(),
+            ));
+        }
+        let dispatch_attempt = acknowledge_paper_order(
+            &state,
+            &existing,
+            existing.operator_id.as_deref().unwrap_or("operator"),
+        )
+        .await?;
+        return Ok(Json(map_paper_order_response(existing, dispatch_attempt)));
+    }
+
+    validate_order_qty_constraints(prepared.action, &prepared.instrument, prepared.qty)?;
+    if matches!(
+        prepared.action,
+        OrderIntentAction::Entry | OrderIntentAction::Exit
+    ) {
+        if let Some(sizing_json) = prepared.sizing_json.as_ref() {
+            let sizing: SpreadSizingRequest =
+                serde_json::from_str(sizing_json).map_err(|error| {
+                    ApiError::BadRequest(format!("invalid sizing payload: {error}"))
+                })?;
+            validate_spread_sizing_request(
+                &prepared.instrument,
+                prepared.pair_id.as_deref(),
+                &sizing,
+                state.sizing_tolerance_notional_drift_pct,
+                state.sizing_tolerance_hedge_ratio_drift_pct,
+                prepared.qty,
+            )?;
+        }
+    }
+
+    let actor = prepared
+        .operator_id
+        .as_deref()
+        .unwrap_or("operator")
+        .to_string();
+    let record = OrderIntentRecord {
+        idempotency_key: prepared.idempotency_key,
+        exchange: prepared.exchange,
+        account_id: prepared.account_id,
+        execution_mode: ExecutionMode::Paper.as_str().to_string(),
+        pair_id: prepared.pair_id,
+        instrument: prepared.instrument,
+        timeframe: prepared.timeframe.as_str().to_string(),
+        action: prepared.action.as_str().to_string(),
+        spread_direction: prepared.spread_direction,
+        spread_z: prepared.spread_z,
+        side: prepared.side,
+        qty: prepared.qty,
+        sizing_json: prepared.sizing_json,
+        operator_confirmed: prepared.operator_confirmed,
+        operator_id: prepared.operator_id,
+        min_coverage_pct: prepared.min_coverage_pct,
+        decision: "ACCEPTED".to_string(),
+        reason: "paper order accepted; no exchange order sent".to_string(),
+        created_at: Utc::now(),
+    };
+
+    state
+        .repository
+        .insert_order_intent(&record)
+        .await
+        .map_err(|error| ApiError::Upstream(error.to_string()))?;
+
+    let stored = state
+        .repository
+        .fetch_order_intent(&record.idempotency_key)
+        .await
+        .map_err(|error| ApiError::Upstream(error.to_string()))?
+        .ok_or_else(|| ApiError::Upstream("paper order persistence failed".to_string()))?;
+    let dispatch_attempt = acknowledge_paper_order(&state, &stored, &actor).await?;
+
+    info!(
+        idempotency_key = %stored.idempotency_key,
+        exchange = %stored.exchange,
+        account_id = %stored.account_id,
+        execution_mode = %stored.execution_mode,
+        action = %stored.action,
+        operator_id = ?stored.operator_id,
+        "execution paper order recorded"
+    );
+
+    Ok(Json(map_paper_order_response(stored, dispatch_attempt)))
 }
 
 async fn order_intent_history(
@@ -3763,7 +4099,9 @@ async fn ingest_order_event(
         "execution order event ingested"
     );
 
-    if is_terminal_state(target_state) {
+    if is_terminal_state(target_state)
+        && resolved_intent.execution_mode == ExecutionMode::Live.as_str()
+    {
         trigger_reconcile_after_terminal(&state, &resolved_intent, target_state, "order-event")
             .await;
     }
@@ -3872,6 +4210,14 @@ fn normalize_optional_string(value: Option<&str>) -> Option<String> {
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .map(ToString::to_string)
+}
+
+fn parse_execution_mode_query(value: Option<&str>) -> Result<ExecutionMode, ApiError> {
+    let Some(raw) = value.map(str::trim).filter(|value| !value.is_empty()) else {
+        return Ok(ExecutionMode::Live);
+    };
+    ExecutionMode::parse(raw)
+        .ok_or_else(|| ApiError::BadRequest("execution_mode must be LIVE or PAPER".to_string()))
 }
 
 fn relative_drift_pct(target: f64, achieved: f64) -> f64 {
@@ -4040,6 +4386,7 @@ fn parse_ingest_target_state(value: &str) -> Option<OrderLifecycleState> {
 #[allow(clippy::too_many_arguments)]
 fn is_same_intent(
     existing: &OrderIntentRecord,
+    execution_mode: ExecutionMode,
     exchange: &str,
     account_id: &str,
     pair_id: Option<&str>,
@@ -4057,6 +4404,7 @@ fn is_same_intent(
 ) -> bool {
     existing.exchange == exchange
         && existing.account_id == account_id
+        && existing.execution_mode == execution_mode.as_str()
         && existing.pair_id.as_deref() == pair_id
         && existing.instrument == instrument
         && existing.timeframe == timeframe.as_str()
@@ -4080,6 +4428,7 @@ fn map_order_intent(record: OrderIntentRecord) -> OrderIntentResponse {
         idempotency_key: record.idempotency_key,
         exchange: record.exchange,
         account_id: record.account_id,
+        execution_mode: record.execution_mode,
         pair_id: record.pair_id,
         instrument: record.instrument,
         timeframe: record.timeframe,
@@ -4107,10 +4456,11 @@ mod tests {
         ack_watchdog_enabled_for_dispatch_mode, build_execution_alerts, build_uri_component,
         bypass_safety_gates_for_dispatch_mode, derive_open_order_transition,
         derive_order_status_transition, fold_spread_positions, is_snapshot_stale,
-        is_terminal_state, parse_ingest_target_state, parse_kraken_open_orders_response,
-        parse_kraken_order_status_response, parse_kraken_submit_response, resolve_secret_value,
-        safe_ratio, sign_kraken_futures_payload, validate_manual_controls,
-        validate_order_qty_constraints, validate_spread_sizing_request, ApiError, DispatchMode,
+        is_terminal_state, parse_execution_mode_query, parse_ingest_target_state,
+        parse_kraken_open_orders_response, parse_kraken_order_status_response,
+        parse_kraken_submit_response, resolve_secret_value, safe_ratio,
+        sign_kraken_futures_payload, validate_manual_controls, validate_order_qty_constraints,
+        validate_spread_sizing_request, ApiError, DispatchMode, ExecutionMode,
         ExecutionObservabilityMetricsRaw, ExecutionObservabilityThresholds, KrakenOpenOrder,
         KrakenStatusOrder, SpreadLedgerEvent, SpreadSizingRequest,
     };
@@ -4180,6 +4530,22 @@ mod tests {
             Some("ops-1"),
         );
         assert!(result.is_ok());
+    }
+
+    #[test]
+    fn execution_mode_query_defaults_live_and_accepts_paper() {
+        assert!(matches!(
+            parse_execution_mode_query(None).expect("default mode"),
+            ExecutionMode::Live
+        ));
+        assert!(matches!(
+            parse_execution_mode_query(Some("paper")).expect("paper mode"),
+            ExecutionMode::Paper
+        ));
+        assert!(matches!(
+            parse_execution_mode_query(Some("sandbox")),
+            Err(ApiError::BadRequest(_))
+        ));
     }
 
     #[test]

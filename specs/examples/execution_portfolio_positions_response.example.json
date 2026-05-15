@@ -1,6 +1,7 @@
 {
   "exchange": "kraken_futures",
   "account_id": "primary",
+  "execution_mode": "LIVE",
   "generated_at": "2026-02-20T03:40:00Z",
   "positions": [
     {

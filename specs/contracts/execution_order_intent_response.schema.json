@@ -8,6 +8,7 @@
     "idempotency_key",
     "exchange",
     "account_id",
+    "execution_mode",
     "instrument",
     "timeframe",
     "action",
@@ -27,6 +28,10 @@
     },
     "account_id": {
       "type": "string"
+    },
+    "execution_mode": {
+      "type": "string",
+      "enum": ["LIVE", "PAPER"]
     },
     "pair_id": {
       "type": ["string", "null"]
@@ -80,5 +85,5 @@
       "format": "date-time"
     }
   },
-  "version": "0.1.0"
+  "version": "0.2.0"
 }

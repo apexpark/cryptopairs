@@ -163,6 +163,25 @@ Preset files in repo:
 Spread metadata for best portfolio fidelity:
 - Include `pair_id`, `spread_direction`, and `spread_z` in `POST /v1/execution/order-intent` payloads.
 
+## Paper Order Path
+
+Practice Mode uses a dedicated paper endpoint:
+
+```bash
+POST /v1/execution/paper/order-intent
+```
+
+Paper order rules:
+1. Requires `operator_id` for audit.
+2. Reuses the order-intent request shape and spread sizing validation.
+3. Records `execution_mode=PAPER` and lifecycle `NEW -> APPROVED -> PENDING_SUBMIT -> ACKNOWLEDGED`.
+4. Does not call the live dispatch adapter and does not require changing `EXECUTION_DISPATCH_MODE`.
+5. Paper portfolio reads are explicit:
+- `GET /v1/execution/portfolio/positions?...&execution_mode=PAPER`
+- `GET /v1/execution/portfolio/open-trades?...&execution_mode=PAPER`
+
+Live portfolio, risk, stale-ack watchdog, live order polling, and live observability summary stay scoped to `execution_mode=LIVE`.
+
 ## Quick Troubleshooting
 
 1. Symptom: Order stuck in `ACKNOWLEDGED`

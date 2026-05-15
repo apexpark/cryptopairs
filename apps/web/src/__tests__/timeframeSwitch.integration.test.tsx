@@ -26,6 +26,7 @@ const api = vi.hoisted(() => ({
   dispatchOrderIntent: vi.fn(),
   fetchExecutionDispatchMode: vi.fn(),
   fetchExecutionDecision: vi.fn(),
+  fetchExecutionOpenTrades: vi.fn(),
   fetchExecutionPortfolioPositions: vi.fn(),
   fetchKillSwitchState: vi.fn(),
   fetchMarketMetrics: vi.fn(),
@@ -40,6 +41,7 @@ const api = vi.hoisted(() => ({
   fetchStrategyTradeNowObservability: vi.fn(),
   fetchStrategyUiAuthStatus: vi.fn(),
   submitOrderIntent: vi.fn(),
+  submitPaperOrderIntent: vi.fn(),
   updateKillSwitchState: vi.fn(),
   verifyStrategyUiAccess: vi.fn(),
 }));
@@ -398,8 +400,17 @@ beforeEach(() => {
   api.fetchExecutionPortfolioPositions.mockResolvedValue({
     exchange: "kraken_futures",
     account_id: "primary",
+    execution_mode: "PAPER",
     generated_at: "2026-02-20T00:00:00Z",
     positions: [],
+  });
+  api.fetchExecutionOpenTrades.mockResolvedValue({
+    exchange: "kraken_futures",
+    account_id: "primary",
+    execution_mode: "PAPER",
+    generated_at: "2026-02-20T00:00:00Z",
+    warnings: [],
+    trades: [],
   });
   api.fetchReconcile.mockResolvedValue({
     reconcile: {
@@ -424,6 +435,12 @@ beforeEach(() => {
   });
 
   api.submitOrderIntent.mockResolvedValue({ decision: "BLOCKED" });
+  api.submitPaperOrderIntent.mockResolvedValue({
+    schema_version: "1.0.0",
+    intent: { decision: "ACCEPTED", execution_mode: "PAPER" },
+    dispatch: { result: "ACKNOWLEDGED" },
+    recorded_at: "2026-02-20T00:00:00Z",
+  });
   api.dispatchOrderIntent.mockResolvedValue({ result: "REJECTED", reason: "not tested" });
   api.fetchOrderIntentHistory.mockResolvedValue({
     idempotency_key: "x",
@@ -454,7 +471,8 @@ describe("global timeframe switching", () => {
       expect(api.fetchMarketMetrics).toHaveBeenCalledWith(RIGHT);
       expect(api.fetchExecutionPortfolioPositions).toHaveBeenCalledWith(
         "kraken_futures",
-        "primary"
+        "primary",
+        "PAPER"
       );
     });
     expect(screen.getByText("XBTUSD Position Size").parentElement).toHaveTextContent("+1.00");

@@ -1,0 +1,82 @@
+{
+  "$id": "https://cryptopairs/specs/contracts/execution_paper_order_intent_response.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "ExecutionPaperOrderIntentResponse",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "intent", "dispatch", "recorded_at"],
+  "properties": {
+    "schema_version": { "type": "string", "const": "1.0.0" },
+    "intent": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "idempotency_key",
+        "exchange",
+        "account_id",
+        "execution_mode",
+        "pair_id",
+        "instrument",
+        "timeframe",
+        "action",
+        "spread_direction",
+        "spread_z",
+        "side",
+        "qty",
+        "operator_confirmed",
+        "operator_id",
+        "min_coverage_pct",
+        "decision",
+        "reason",
+        "evaluated_at"
+      ],
+      "properties": {
+        "idempotency_key": { "type": "string", "minLength": 1 },
+        "exchange": { "type": "string", "minLength": 1 },
+        "account_id": { "type": "string", "minLength": 1 },
+        "execution_mode": { "type": "string", "const": "PAPER" },
+        "pair_id": { "type": ["string", "null"] },
+        "instrument": { "type": "string", "minLength": 1 },
+        "timeframe": { "type": "string", "enum": ["1m", "15m", "1h"] },
+        "action": { "type": "string", "enum": ["ENTRY", "EXIT", "EMERGENCY_STOP_CLOSE"] },
+        "spread_direction": {
+          "type": ["string", "null"],
+          "enum": ["LONG_SPREAD", "SHORT_SPREAD", null]
+        },
+        "spread_z": { "type": ["number", "null"] },
+        "side": { "type": "string", "enum": ["BUY", "SELL"] },
+        "qty": { "type": "number", "exclusiveMinimum": 0 },
+        "operator_confirmed": { "type": "boolean" },
+        "operator_id": { "type": "string", "minLength": 1 },
+        "min_coverage_pct": { "type": "number", "minimum": 0, "maximum": 100 },
+        "decision": { "type": "string", "const": "ACCEPTED" },
+        "reason": { "type": ["string", "null"] },
+        "evaluated_at": { "type": "string", "format": "date-time" }
+      }
+    },
+    "dispatch": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "idempotency_key",
+        "result",
+        "from_state",
+        "to_state",
+        "exchange_order_id",
+        "reason",
+        "attempted_at"
+      ],
+      "properties": {
+        "idempotency_key": { "type": "string", "minLength": 1 },
+        "result": { "type": "string", "const": "ACKNOWLEDGED" },
+        "from_state": { "type": "string", "const": "APPROVED" },
+        "to_state": { "type": "string", "const": "ACKNOWLEDGED" },
+        "exchange_order_id": { "type": "string", "pattern": "^PAPER-" },
+        "reason": { "type": "string" },
+        "attempted_at": { "type": "string", "format": "date-time" }
+      }
+    },
+    "recorded_at": { "type": "string", "format": "date-time" }
+  },
+  "version": "1.0.0"
+}
