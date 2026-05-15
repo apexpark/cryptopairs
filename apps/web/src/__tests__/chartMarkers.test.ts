@@ -14,6 +14,7 @@ function history(args: {
       idempotency_key: args.key,
       exchange: "kraken_futures",
       account_id: "primary",
+      execution_mode: "LIVE",
       pair_id: "PI_XBTUSD__PI_ETHUSD",
       instrument: "PI_XBTUSD",
       timeframe: "1m",

@@ -2,6 +2,7 @@
   "idempotency_key": "ordint-PI_XBTUSD-20260218T141600Z-001",
   "exchange": "kraken_futures",
   "account_id": "primary",
+  "execution_mode": "LIVE",
   "pair_id": "PI_XBTUSD__PI_ETHUSD",
   "instrument": "PI_XBTUSD",
   "timeframe": "1m",

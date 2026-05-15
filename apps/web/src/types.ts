@@ -599,6 +599,7 @@ export interface ExecutionDecisionResponse {
 
 export type ExecutionAction = "ENTRY" | "EXIT" | "EMERGENCY_STOP_CLOSE";
 export type TradeSide = "BUY" | "SELL";
+export type ExecutionMode = "LIVE" | "PAPER";
 
 export interface OrderIntentRequest {
   idempotency_key: string;
@@ -637,6 +638,7 @@ export interface OrderIntentResponse {
   idempotency_key: string;
   exchange: string;
   account_id: string;
+  execution_mode: ExecutionMode;
   pair_id: string | null;
   instrument: string;
   timeframe: Timeframe;
@@ -688,6 +690,13 @@ export interface DispatchIntentResponse {
   attempted_at: string;
 }
 
+export interface PaperOrderIntentResponse {
+  schema_version: string;
+  intent: OrderIntentResponse;
+  dispatch: DispatchIntentResponse;
+  recorded_at: string;
+}
+
 export interface OrderStateEvent {
   state:
     | "NEW"
@@ -734,6 +743,7 @@ export interface ReconcileResponse {
 export interface ExecutionPortfolioPositionsResponse {
   exchange: string;
   account_id: string;
+  execution_mode: ExecutionMode;
   generated_at: string;
   positions: Array<{
     pair_id: string;
@@ -747,6 +757,7 @@ export interface ExecutionPortfolioPositionsResponse {
 export interface ExecutionOpenTradesResponse {
   exchange: string;
   account_id: string;
+  execution_mode: ExecutionMode;
   generated_at: string;
   warnings: string[];
   trades: Array<{

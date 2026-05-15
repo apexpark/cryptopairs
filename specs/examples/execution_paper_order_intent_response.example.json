@@ -1,0 +1,33 @@
+{
+  "schema_version": "1.0.0",
+  "intent": {
+    "idempotency_key": "paper-PI_XBTUSD-20260220T003000Z-001",
+    "exchange": "kraken_futures",
+    "account_id": "primary",
+    "execution_mode": "PAPER",
+    "pair_id": "PI_XBTUSD__PI_ETHUSD",
+    "instrument": "PI_XBTUSD",
+    "timeframe": "1m",
+    "action": "ENTRY",
+    "spread_direction": "LONG_SPREAD",
+    "spread_z": -2.1,
+    "side": "BUY",
+    "qty": 1.25,
+    "operator_confirmed": true,
+    "operator_id": "operator-kevin",
+    "min_coverage_pct": 99.5,
+    "decision": "ACCEPTED",
+    "reason": "paper order accepted; no exchange order sent",
+    "evaluated_at": "2026-02-20T00:30:00Z"
+  },
+  "dispatch": {
+    "idempotency_key": "paper-PI_XBTUSD-20260220T003000Z-001",
+    "result": "ACKNOWLEDGED",
+    "from_state": "APPROVED",
+    "to_state": "ACKNOWLEDGED",
+    "exchange_order_id": "PAPER-paper-PI_XBTUSD-20260220T003000Z-001-1771547400000",
+    "reason": "paper order acknowledged; no exchange order sent",
+    "attempted_at": "2026-02-20T00:30:00Z"
+  },
+  "recorded_at": "2026-02-20T00:30:00Z"
+}

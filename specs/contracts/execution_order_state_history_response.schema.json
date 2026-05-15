@@ -22,9 +22,13 @@
         "idempotency_key",
         "exchange",
         "account_id",
+        "execution_mode",
+        "pair_id",
         "instrument",
         "timeframe",
         "action",
+        "spread_direction",
+        "spread_z",
         "side",
         "qty",
         "operator_confirmed",
@@ -38,12 +42,19 @@
         "idempotency_key": { "type": "string" },
         "exchange": { "type": "string" },
         "account_id": { "type": "string" },
+        "execution_mode": { "type": "string", "enum": ["LIVE", "PAPER"] },
+        "pair_id": { "type": ["string", "null"] },
         "instrument": { "type": "string" },
         "timeframe": { "type": "string", "enum": ["1m", "15m", "1h"] },
         "action": {
           "type": "string",
           "enum": ["ENTRY", "EXIT", "EMERGENCY_STOP_CLOSE"]
         },
+        "spread_direction": {
+          "type": ["string", "null"],
+          "enum": ["LONG_SPREAD", "SHORT_SPREAD", null]
+        },
+        "spread_z": { "type": ["number", "null"] },
         "side": { "type": "string", "enum": ["BUY", "SELL"] },
         "qty": { "type": "number", "exclusiveMinimum": 0 },
         "operator_confirmed": { "type": "boolean" },
@@ -108,5 +119,5 @@
       }
     }
   },
-  "version": "0.1.0"
+  "version": "0.2.0"
 }

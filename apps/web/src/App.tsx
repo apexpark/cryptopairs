@@ -34,6 +34,7 @@ import {
   fetchStrategyTradeNow,
   fetchStrategyTradeNowObservability,
   submitOrderIntent,
+  submitPaperOrderIntent,
 } from "./lib/api";
 import {
   emptyPosition,
@@ -50,6 +51,7 @@ import type {
   DispatchIntentResponse,
   DirectionHint,
   ExecutionDispatchModeResponse,
+  ExecutionMode,
   ExecutionOpenTradesResponse,
   ExecutionAction,
   KillSwitchState,
@@ -1989,6 +1991,7 @@ function App(): JSX.Element {
   const requiresLiveArm = executionDispatchMode?.requires_live_arm ?? true;
   const effectiveOperatorConfirmed =
     operatorConfirmed || practiceModeActive || executionDispatchMode?.mode === "SIMULATE_ACK";
+  const activeExecutionMode: ExecutionMode = practiceModeActive ? "PAPER" : "LIVE";
 
   useEffect(() => {
     if (executionDispatchMode?.mode !== "LIVE_KRAKEN" && operatorConfirmed) {
@@ -2037,8 +2040,8 @@ function App(): JSX.Element {
   const refreshPositions = async (): Promise<void> => {
     const refreshSeq = ++positionsRefreshSeqRef.current;
     const [response, openTrades] = await Promise.all([
-      fetchExecutionPortfolioPositions(exchange, accountId),
-      fetchExecutionOpenTrades(exchange, accountId),
+      fetchExecutionPortfolioPositions(exchange, accountId, activeExecutionMode),
+      fetchExecutionOpenTrades(exchange, accountId, undefined, activeExecutionMode),
     ]);
     if (refreshSeq !== positionsRefreshSeqRef.current) {
       return;
@@ -2314,7 +2317,7 @@ function App(): JSX.Element {
       cancelled = true;
       window.clearInterval(intervalId);
     };
-  }, [exchange, accountId, uiAccessGranted, page, coreError]);
+  }, [exchange, accountId, uiAccessGranted, page, coreError, activeExecutionMode]);
 
   useEffect(() => {
     if (!uiAccessGranted) {
@@ -3258,68 +3261,105 @@ function App(): JSX.Element {
       leftLegQty,
       rightLegQty
     );
+    const buildOrderPayload = (leg: { instrument: string; side: TradeSide; qty: number }, index: number) => ({
+      idempotency_key: `${Date.now()}-${pairId}-${command}-${leg.instrument}-${index}`,
+      exchange,
+      account_id: accountId,
+      pair_id: pairId,
+      instrument: leg.instrument,
+      timeframe,
+      action,
+      spread_direction: direction,
+      spread_z: action === "ENTRY" ? currentZ : null,
+      side: leg.side,
+      qty: leg.qty,
+      sizing: action === "EMERGENCY_STOP_CLOSE" ? undefined : sizingPayload,
+      operator_confirmed: action === "EMERGENCY_STOP_CLOSE" ? false : effectiveOperatorConfirmed,
+      operator_id: action === "EMERGENCY_STOP_CLOSE" ? null : operatorId,
+      min_coverage_pct: 99.5,
+    });
 
     if (practiceModeActive) {
       if (!operatorId.trim().length) {
         setTradeMessage("Operator ID is required.");
         return;
       }
-      const actionLabel =
-        command === "long-entry"
-          ? "Long spread entry"
-          : command === "short-entry"
-            ? "Short spread entry"
-            : command === "add-exposure"
-              ? "Add exposure"
-              : command === "reduce-exposure"
-                ? "Reduce exposure"
-                : "Close spread";
-      const legsText = legs
-        .map(
-          (leg) =>
-            `${formatInstrumentLabel(leg.instrument)} ${leg.side} ${Number.isFinite(leg.qty) ? leg.qty.toFixed(4) : "--"}`
-        )
-        .join(" | ");
-      addTimelineEvent(pairId, {
-        ts: now,
-        text: `PRACTICE ${actionLabel}: no exchange order sent`,
-        tone: "ok",
-      });
-      for (const leg of legs) {
+      setSubmitting(true);
+      try {
+        const responses = await Promise.all(
+          legs.map((leg, index) => submitPaperOrderIntent(buildOrderPayload(leg, index)))
+        );
+        const outcomes: LegExecutionOutcome[] = await Promise.all(
+          responses.map(async (response): Promise<LegExecutionOutcome> => {
+            let history: OrderIntentHistoryResponse | null = null;
+            try {
+              history = await fetchOrderIntentHistory(response.intent.idempotency_key);
+            } catch {
+              history = null;
+            }
+            return {
+              instrument: response.intent.instrument,
+              intentDecision: response.intent.decision,
+              intentReason: response.intent.reason,
+              dispatch: response.dispatch,
+              dispatchError: null,
+              history,
+            };
+          })
+        );
+        const histories = outcomes
+          .map((outcome) => outcome.history)
+          .filter((value): value is OrderIntentHistoryResponse => !!value);
+        upsertIntentHistories(pairId, histories);
+        const allPaperAcknowledged = allAcceptedDispatchAcknowledged(outcomes);
         addTimelineEvent(pairId, {
-          ts: nowIso(),
-          text: `${formatInstrumentLabel(leg.instrument)} planned ${leg.side} ${
-            Number.isFinite(leg.qty) ? leg.qty.toFixed(4) : "--"
+          ts: now,
+          text: `PAPER ${command.toUpperCase()} ${
+            allPaperAcknowledged ? "recorded and acknowledged" : "not fully acknowledged"
           }`,
-          tone: "ok",
+          tone: allPaperAcknowledged ? "ok" : "warn",
         });
+        for (const outcome of outcomes) {
+          addTimelineEvent(pairId, {
+            ts: nowIso(),
+            text: `${formatInstrumentLabel(outcome.instrument)} paper ${outcome.intentDecision} -> ${
+              outcome.dispatch?.result ?? "NO_ACK"
+            }`,
+            tone:
+              outcome.intentDecision === "ACCEPTED" && outcome.dispatch?.result === "ACKNOWLEDGED"
+                ? "ok"
+                : "warn",
+          });
+        }
+        await refreshPositions().catch(() => {
+          setOpenTradesError("Paper open-trades refresh failed. Retaining last known state.");
+        });
+        const legsText = outcomes
+          .map((outcome) => `${formatInstrumentLabel(outcome.instrument)}: ${outcome.intentDecision}`)
+          .join(" | ");
+        setTradeMessage(
+          allPaperAcknowledged
+            ? `Paper trade recorded on the server. No exchange order was sent. ${legsText}`
+            : `Paper trade was not fully acknowledged. ${legsText}`
+        );
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        addTimelineEvent(pairId, {
+          ts: now,
+          text: `PAPER SUBMIT ERROR (${message})`,
+          tone: "bad",
+        });
+        setTradeMessage(`Paper trade error: ${message}`);
+      } finally {
+        setSubmitting(false);
       }
-      setTradeMessage(`Practice order recorded. No exchange order was sent. ${legsText}`);
       return;
     }
 
     setSubmitting(true);
     try {
       const responses = await Promise.all(
-        legs.map((leg, index) =>
-          submitOrderIntent({
-            idempotency_key: `${Date.now()}-${pairId}-${command}-${leg.instrument}-${index}`,
-            exchange,
-            account_id: accountId,
-            pair_id: pairId,
-            instrument: leg.instrument,
-            timeframe,
-            action,
-            spread_direction: direction,
-            spread_z: action === "ENTRY" ? currentZ : null,
-            side: leg.side,
-            qty: leg.qty,
-            sizing: action === "EMERGENCY_STOP_CLOSE" ? undefined : sizingPayload,
-            operator_confirmed: action === "EMERGENCY_STOP_CLOSE" ? false : effectiveOperatorConfirmed,
-            operator_id: action === "EMERGENCY_STOP_CLOSE" ? null : operatorId,
-            min_coverage_pct: 99.5,
-          })
-        )
+        legs.map((leg, index) => submitOrderIntent(buildOrderPayload(leg, index)))
       );
 
       const outcomes: LegExecutionOutcome[] = await Promise.all(
@@ -4773,7 +4813,9 @@ function TradePage(props: {
         <div className="timeline-card open-trades-card">
           <h3>Open Trades</h3>
           {props.openTradesError ? <p className="small-text tone-warn">{props.openTradesError}</p> : null}
-          <p className="open-trades-count">Open positions (all pairs): {props.openTradesCount}</p>
+          <p className="open-trades-count">
+            Open {props.practiceModeActive ? "paper" : "live"} positions (all pairs): {props.openTradesCount}
+          </p>
           {props.openTrade ? (
             <>
               <div className="table-wrap open-trades-table-wrap">
@@ -4846,7 +4888,9 @@ function TradePage(props: {
               </div>
             </>
           ) : (
-            <p className="empty-text">No live position for selected pair.</p>
+            <p className="empty-text">
+              {props.practiceModeActive ? "No paper position for selected pair." : "No live position for selected pair."}
+            </p>
           )}
         </div>
       </SectionCard>
@@ -4892,14 +4936,14 @@ function TradePage(props: {
                 ) : null}
               </div>
               <div className="execution-mode-meta small-text">
-                Practice orders stay on this screen and never submit exchange orders.
+                Practice orders are saved as paper trades and never submit exchange orders.
               </div>
               <div className="practice-mode-row">
                 <div className="practice-mode-copy">
                   <strong>Practice Mode</strong>
                   <p className="small-text">
                     {props.practiceModeActive
-                      ? "On: test orders stay on this screen for review."
+                      ? "On: paper trades are saved for review."
                       : "Off: live trading remains locked unless explicitly armed."}
                   </p>
                 </div>

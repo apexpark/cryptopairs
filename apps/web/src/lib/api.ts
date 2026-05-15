@@ -5,11 +5,13 @@ import type {
   ExecutionOpenTradesResponse,
   ExecutionPortfolioPositionsResponse,
   ExecutionDecisionResponse,
+  ExecutionMode,
   KillSwitchState,
   MarketMetricsResponse,
   OrderIntentHistoryResponse,
   OrderIntentRequest,
   OrderIntentResponse,
+  PaperOrderIntentResponse,
   ReconcileResponse,
   StrategyPairsBacktestResponse,
   StrategyPairsCandidateActionRequest,
@@ -338,22 +340,25 @@ export async function fetchExecutionDecision(
 
 export async function fetchExecutionPortfolioPositions(
   exchange: string,
-  accountId: string
+  accountId: string,
+  executionMode: ExecutionMode = "LIVE"
 ): Promise<ExecutionPortfolioPositionsResponse> {
   const url = `${EXECUTION_SERVICE_BASE_URL}/v1/execution/portfolio/positions?exchange=${encodeURIComponent(
     exchange
-  )}&account_id=${encodeURIComponent(accountId)}`;
+  )}&account_id=${encodeURIComponent(accountId)}&execution_mode=${executionMode}`;
   return parseJson<ExecutionPortfolioPositionsResponse>(await fetch(url));
 }
 
 export async function fetchExecutionOpenTrades(
   exchange: string,
   accountId: string,
-  pairId?: string
+  pairId?: string,
+  executionMode: ExecutionMode = "LIVE"
 ): Promise<ExecutionOpenTradesResponse> {
   const params = new URLSearchParams();
   params.set("exchange", exchange);
   params.set("account_id", accountId);
+  params.set("execution_mode", executionMode);
   if (pairId && pairId.trim().length > 0) {
     params.set("pair_id", pairId);
   }
@@ -366,6 +371,19 @@ export async function submitOrderIntent(
 ): Promise<OrderIntentResponse> {
   const url = `${EXECUTION_SERVICE_BASE_URL}/v1/execution/order-intent`;
   return parseJson<OrderIntentResponse>(
+    await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    })
+  );
+}
+
+export async function submitPaperOrderIntent(
+  payload: OrderIntentRequest
+): Promise<PaperOrderIntentResponse> {
+  const url = `${EXECUTION_SERVICE_BASE_URL}/v1/execution/paper/order-intent`;
+  return parseJson<PaperOrderIntentResponse>(
     await fetch(url, {
       method: "POST",
       headers: { "Content-Type": "application/json" },

@@ -24,6 +24,7 @@ Current baseline contracts:
 - `specs/contracts/execution_kill_switch_state.schema.json`
 - `specs/contracts/execution_order_intent_request.schema.json`
 - `specs/contracts/execution_order_intent_response.schema.json`
+- `specs/contracts/execution_paper_order_intent_response.schema.json`
 - `specs/contracts/execution_portfolio_positions_response.schema.json`
 - `specs/contracts/execution_open_trades_response.schema.json`
 - `specs/contracts/execution_observability_summary_response.schema.json`

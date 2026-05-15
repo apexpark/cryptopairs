@@ -25,6 +25,7 @@ const api = vi.hoisted(() => ({
   dispatchOrderIntent: vi.fn(),
   fetchExecutionDispatchMode: vi.fn(),
   fetchExecutionDecision: vi.fn(),
+  fetchExecutionOpenTrades: vi.fn(),
   fetchExecutionPortfolioPositions: vi.fn(),
   fetchKillSwitchState: vi.fn(),
   fetchMarketMetrics: vi.fn(),
@@ -39,6 +40,7 @@ const api = vi.hoisted(() => ({
   fetchStrategyTradeNowObservability: vi.fn(),
   fetchStrategyUiAuthStatus: vi.fn(),
   submitOrderIntent: vi.fn(),
+  submitPaperOrderIntent: vi.fn(),
   updateKillSwitchState: vi.fn(),
   verifyStrategyUiAccess: vi.fn(),
 }));
@@ -335,12 +337,14 @@ beforeEach(() => {
     .mockResolvedValueOnce({
       exchange: "kraken_futures",
       account_id: "primary",
+      execution_mode: "PAPER",
       generated_at: "2026-02-20T00:00:00Z",
       positions: [],
     })
     .mockResolvedValue({
       exchange: "kraken_futures",
       account_id: "primary",
+      execution_mode: "PAPER",
       generated_at: "2026-02-20T00:00:10Z",
       positions: [
         {
@@ -352,12 +356,41 @@ beforeEach(() => {
         },
       ],
     });
+  api.fetchExecutionOpenTrades.mockResolvedValue({
+    exchange: "kraken_futures",
+    account_id: "primary",
+    execution_mode: "PAPER",
+    generated_at: "2026-02-20T00:00:00Z",
+    warnings: [],
+    trades: [],
+  });
 
   api.submitOrderIntent.mockImplementation(async (payload: any) => ({
     ...payload,
+    execution_mode: "LIVE",
     decision: "ACCEPTED",
     reason: null,
     evaluated_at: "2026-02-20T00:00:00Z",
+  }));
+  api.submitPaperOrderIntent.mockImplementation(async (payload: any) => ({
+    schema_version: "1.0.0",
+    intent: {
+      ...payload,
+      execution_mode: "PAPER",
+      decision: "ACCEPTED",
+      reason: null,
+      evaluated_at: "2026-02-20T00:00:00Z",
+    },
+    dispatch: {
+      idempotency_key: payload.idempotency_key,
+      result: "ACKNOWLEDGED",
+      from_state: "APPROVED",
+      to_state: "ACKNOWLEDGED",
+      exchange_order_id: `paper-${payload.idempotency_key}`,
+      reason: "paper ack",
+      attempted_at: "2026-02-20T00:00:00Z",
+    },
+    recorded_at: "2026-02-20T00:00:00Z",
   }));
   api.dispatchOrderIntent.mockImplementation(async (payload: any) => ({
     idempotency_key: payload.idempotency_key,
@@ -435,12 +468,13 @@ describe("manual trade flow", () => {
       ).toBeInTheDocument();
       expect(api.fetchExecutionPortfolioPositions).toHaveBeenCalledWith(
         "kraken_futures",
-        "primary"
+        "primary",
+        "LIVE"
       );
     });
   });
 
-  it("allows local Practice Mode while live execution remains locked", async () => {
+  it("records server paper trades while live execution remains locked", async () => {
     api.fetchExecutionDispatchMode.mockResolvedValue({
       mode: "FAIL_CLOSED",
       requires_live_arm: false,
@@ -485,11 +519,17 @@ describe("manual trade flow", () => {
     await waitFor(() => {
       expect(
         screen.getByText((content) =>
-          content.includes("Last action: Practice order recorded. No exchange order was sent.")
+          content.includes("Last action: Paper trade recorded on the server. No exchange order was sent.")
         )
       ).toBeInTheDocument();
     });
+    expect(api.submitPaperOrderIntent).toHaveBeenCalledTimes(2);
     expect(api.submitOrderIntent).not.toHaveBeenCalled();
     expect(api.dispatchOrderIntent).not.toHaveBeenCalled();
+    expect(api.fetchExecutionPortfolioPositions).toHaveBeenCalledWith(
+      "kraken_futures",
+      "primary",
+      "PAPER"
+    );
   });
 });
