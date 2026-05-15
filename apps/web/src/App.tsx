@@ -4057,15 +4057,18 @@ function TradeNowObservationStrip(props: {
   const overlayAge = props.tradeNow
     ? formatOverlayAgeLabel(props.tradeNow.learning_overlay_age_seconds)
     : "age unknown";
+  const liveArmRequirementLabel = props.executionDispatchMode
+    ? props.executionDispatchMode.requires_live_arm
+      ? "live arm required"
+      : "live arm not required"
+    : "live arm required until confirmed";
 
   return (
     <div className="trade-now-status-strip">
       <div className="status-strip-item">
         <span className="stat-label">Dispatch mode</span>
         <strong className={`tone-${dispatchTone}`}>{formatDispatchModeLabel(dispatchMode)}</strong>
-        <span className="small-text">
-          {props.executionDispatchMode?.requires_live_arm ? "live arm required" : "live arm not required"}
-        </span>
+        <span className="small-text">{liveArmRequirementLabel}</span>
       </div>
       <div className="status-strip-item">
         <span className="stat-label">Champion drift blocking</span>
