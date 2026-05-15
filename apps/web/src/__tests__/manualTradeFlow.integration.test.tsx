@@ -36,6 +36,7 @@ const api = vi.hoisted(() => ({
   fetchStrategyCues: vi.fn(),
   fetchStrategyLiveZ: vi.fn(),
   fetchStrategyTradeNow: vi.fn(),
+  fetchStrategyTradeNowObservability: vi.fn(),
   fetchStrategyUiAuthStatus: vi.fn(),
   submitOrderIntent: vi.fn(),
   updateKillSwitchState: vi.fn(),
@@ -198,6 +199,15 @@ beforeEach(() => {
     ],
     watchlist: [],
     excluded: [],
+  });
+  api.fetchStrategyTradeNowObservability.mockResolvedValue({
+    generated_at: "2026-02-20T00:00:00Z",
+    learning_challenger_bypass_suppressed_total: 0,
+    learning_challenger_bypass_suppressed: [],
+    learning_eligible_override_tradable_total: 0,
+    learning_eligible_override_tradable: [],
+    learning_selection_cost_override_applied_total: 0,
+    learning_selection_cost_override_applied: [],
   });
   api.fetchStrategyOpportunityHistory.mockResolvedValue({
     timeframe: "1m",

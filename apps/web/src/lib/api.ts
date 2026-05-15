@@ -26,6 +26,7 @@ import type {
   StrategyPairsResearchSweepResponse,
   StrategyPairsLiveZResponse,
   StrategyUiAuthStatusResponse,
+  StrategyTradeNowObservabilityResponse,
   StrategyUiAuthVerifyRequest,
   StrategyUiAuthVerifyResponse,
   UpdateKillSwitchRequest,
@@ -82,6 +83,11 @@ export async function fetchStrategyTradeNow(
     query ? `?${query}` : ""
   }`;
   return parseJson<StrategyPairsTradeNowResponse>(await fetch(url));
+}
+
+export async function fetchStrategyTradeNowObservability(): Promise<StrategyTradeNowObservabilityResponse> {
+  const url = `${STRATEGY_SERVICE_BASE_URL}/v1/strategy/observability/trade-now`;
+  return parseJson<StrategyTradeNowObservabilityResponse>(await fetch(url));
 }
 
 export async function fetchStrategyBacktest(
