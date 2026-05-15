@@ -413,7 +413,7 @@ describe("manual trade flow", () => {
     fireEvent.change(spreadUnitsInput, { target: { value: spreadUnitsInput.min || "1" } });
     fireEvent.blur(spreadUnitsInput);
 
-    fireEvent.click(screen.getByLabelText(/Live Trading Armed/i));
+    fireEvent.click(screen.getByLabelText(/Live Armed/i));
     await waitFor(() => {
       expect(screen.getByRole("button", { name: "Long Spread Entry" })).not.toBeDisabled();
     });
@@ -440,9 +440,9 @@ describe("manual trade flow", () => {
     });
   });
 
-  it("requires an explicit operator SIM override before bypassing blocked execution gates", async () => {
+  it("allows local Practice Mode while live execution remains locked", async () => {
     api.fetchExecutionDispatchMode.mockResolvedValue({
-      mode: "SIMULATE_ACK",
+      mode: "FAIL_CLOSED",
       requires_live_arm: false,
     });
     api.fetchKillSwitchState.mockResolvedValue({
@@ -473,27 +473,23 @@ describe("manual trade flow", () => {
 
     await waitFor(() => {
       expect(api.fetchExecutionDispatchMode).toHaveBeenCalled();
-      expect(screen.getByText("SIM READY")).toBeInTheDocument();
+      expect(screen.getByText("Practice On")).toBeInTheDocument();
     });
 
     const longEntryButton = screen.getByRole("button", { name: "Long Spread Entry" });
-    expect(longEntryButton).toBeDisabled();
-    expect(screen.getAllByText("Sim gate override is OFF.").length).toBeGreaterThan(0);
-
-    fireEvent.click(screen.getByRole("button", { name: "Override Gates for Sim" }));
-
-    await waitFor(() => {
-      expect(screen.getByText("SIM OVERRIDE")).toBeInTheDocument();
-      expect(longEntryButton).not.toBeDisabled();
-    });
+    expect(longEntryButton).not.toBeDisabled();
+    expect(screen.getByRole("button", { name: "Stop Practice Mode" })).toBeInTheDocument();
 
     fireEvent.click(longEntryButton);
 
     await waitFor(() => {
-      expect(api.submitOrderIntent).toHaveBeenCalledTimes(2);
-      expect(api.dispatchOrderIntent).toHaveBeenCalledTimes(2);
+      expect(
+        screen.getByText((content) =>
+          content.includes("Last action: Practice order recorded. No exchange order was sent.")
+        )
+      ).toBeInTheDocument();
     });
-    expect(api.submitOrderIntent.mock.calls[0][0].operator_confirmed).toBe(true);
-    expect(api.dispatchOrderIntent.mock.calls[0][0].actor).toBe("operator-kevin");
+    expect(api.submitOrderIntent).not.toHaveBeenCalled();
+    expect(api.dispatchOrderIntent).not.toHaveBeenCalled();
   });
 });

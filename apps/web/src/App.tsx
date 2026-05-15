@@ -1081,11 +1081,17 @@ function gateBadgeClass(pass: boolean): "gate-badge pass" | "gate-badge fail" {
   return pass ? "gate-badge pass" : "gate-badge fail";
 }
 
-function formatDispatchModeLabel(mode: ExecutionDispatchModeResponse["mode"] | null): string {
-  if (!mode) {
-    return "Unknown";
+function formatTradingModeLabel(mode: ExecutionDispatchModeResponse["mode"] | null): string {
+  if (mode === "LIVE_KRAKEN") {
+    return "Live Trading";
   }
-  return formatReasonCodeLabel(mode);
+  if (mode === "SIMULATE_ACK") {
+    return "Server Practice";
+  }
+  if (mode === "FAIL_CLOSED") {
+    return "Live Locked";
+  }
+  return "Unknown";
 }
 
 function tradeNowObservabilityTotal(
@@ -1561,7 +1567,7 @@ function App(): JSX.Element {
   const [headerMetricsError, setHeaderMetricsError] = useState<string | null>(null);
   const [spreadSize, setSpreadSize] = useState<string>("1");
   const [operatorConfirmed, setOperatorConfirmed] = useState<boolean>(false);
-  const [simGateOverrideArmed, setSimGateOverrideArmed] = useState<boolean>(false);
+  const [practiceModeActive, setPracticeModeActive] = useState<boolean>(true);
   const [tradeMessage, setTradeMessage] = useState<string>("No trade submitted yet.");
   const [submitting, setSubmitting] = useState(false);
 
@@ -1972,9 +1978,7 @@ function App(): JSX.Element {
     }),
     [killSwitch?.active, leftDecisionAllowed, rightDecisionAllowed, reconcileResponse]
   );
-  const simGateOverrideActive =
-    executionDispatchMode?.mode === "SIMULATE_ACK" && simGateOverrideArmed;
-  const effectiveGateState = simGateOverrideActive
+  const effectiveGateState = practiceModeActive
     ? {
         killSwitchActive: false,
         leftAllowed: true,
@@ -1984,13 +1988,13 @@ function App(): JSX.Element {
     : gateState;
   const requiresLiveArm = executionDispatchMode?.requires_live_arm ?? true;
   const effectiveOperatorConfirmed =
-    operatorConfirmed || executionDispatchMode?.mode === "SIMULATE_ACK";
+    operatorConfirmed || practiceModeActive || executionDispatchMode?.mode === "SIMULATE_ACK";
 
   useEffect(() => {
-    if (executionDispatchMode?.mode !== "SIMULATE_ACK" && simGateOverrideArmed) {
-      setSimGateOverrideArmed(false);
+    if (executionDispatchMode?.mode !== "LIVE_KRAKEN" && operatorConfirmed) {
+      setOperatorConfirmed(false);
     }
-  }, [executionDispatchMode?.mode, simGateOverrideArmed]);
+  }, [executionDispatchMode?.mode, operatorConfirmed]);
 
   const baseEntryGuard = {
     operatorConfirmed: effectiveOperatorConfirmed,
@@ -2021,7 +2025,7 @@ function App(): JSX.Element {
     if (coreError) {
       return {
         tone: "bad" as const,
-        text: "Live strategy data is unavailable. Fail-closed mode is active.",
+        text: "Live strategy data is unavailable. Live controls are locked.",
       };
     }
     return {
@@ -3255,6 +3259,45 @@ function App(): JSX.Element {
       rightLegQty
     );
 
+    if (practiceModeActive) {
+      if (!operatorId.trim().length) {
+        setTradeMessage("Operator ID is required.");
+        return;
+      }
+      const actionLabel =
+        command === "long-entry"
+          ? "Long spread entry"
+          : command === "short-entry"
+            ? "Short spread entry"
+            : command === "add-exposure"
+              ? "Add exposure"
+              : command === "reduce-exposure"
+                ? "Reduce exposure"
+                : "Close spread";
+      const legsText = legs
+        .map(
+          (leg) =>
+            `${formatInstrumentLabel(leg.instrument)} ${leg.side} ${Number.isFinite(leg.qty) ? leg.qty.toFixed(4) : "--"}`
+        )
+        .join(" | ");
+      addTimelineEvent(pairId, {
+        ts: now,
+        text: `PRACTICE ${actionLabel}: no exchange order sent`,
+        tone: "ok",
+      });
+      for (const leg of legs) {
+        addTimelineEvent(pairId, {
+          ts: nowIso(),
+          text: `${formatInstrumentLabel(leg.instrument)} planned ${leg.side} ${
+            Number.isFinite(leg.qty) ? leg.qty.toFixed(4) : "--"
+          }`,
+          tone: "ok",
+        });
+      }
+      setTradeMessage(`Practice order recorded. No exchange order was sent. ${legsText}`);
+      return;
+    }
+
     setSubmitting(true);
     try {
       const responses = await Promise.all(
@@ -3498,11 +3541,11 @@ function App(): JSX.Element {
           timeline={currentTimeline}
           spreadSize={spreadSize}
           operatorConfirmed={operatorConfirmed}
-          simGateOverrideArmed={simGateOverrideArmed}
+          practiceModeActive={practiceModeActive}
           operatorId={operatorId}
           setSpreadSize={setSpreadSize}
           setOperatorConfirmed={setOperatorConfirmed}
-          setSimGateOverrideArmed={setSimGateOverrideArmed}
+          setPracticeModeActive={setPracticeModeActive}
           setOperatorId={setOperatorId}
           canLongEntry={canLongEntry}
           canShortEntry={canShortEntry}
@@ -3708,12 +3751,12 @@ function App(): JSX.Element {
 
       <footer className="footer-note">
         <span>Global timeframe selector applies to all pages and strategy panels.</span>
-        <span className={simGateOverrideActive ? "tone-warn" : gateSafe ? "tone-ok" : "tone-bad"}>
-          {simGateOverrideActive
-            ? "SIM gate override active: live gates unchanged"
+        <span className={practiceModeActive ? "tone-warn" : gateSafe ? "tone-ok" : "tone-bad"}>
+          {practiceModeActive
+            ? "Practice Mode active: no exchange orders sent"
             : gateSafe
-              ? "Trade gates healthy"
-              : "Fail-closed mode: entry actions blocked until all gates are safe"}
+              ? "Live safety checks healthy"
+              : "Live trading locked until safety checks are healthy"}
         </span>
         {headerMetricsError ? <span className="tone-warn">{headerMetricsError}</span> : null}
         <span className="small-text" aria-hidden="true">
@@ -4072,15 +4115,15 @@ function TradeNowObservationStrip(props: {
     : "age unknown";
   const liveArmRequirementLabel = props.executionDispatchMode
     ? props.executionDispatchMode.requires_live_arm
-      ? "live arm required"
-      : "live arm not required"
-    : "live arm required until confirmed";
+      ? "live confirmation required"
+      : "live confirmation not required"
+    : "live confirmation required until confirmed";
 
   return (
     <div className="trade-now-status-strip">
       <div className="status-strip-item">
-        <span className="stat-label">Dispatch mode</span>
-        <strong className={`tone-${dispatchTone}`}>{formatDispatchModeLabel(dispatchMode)}</strong>
+        <span className="stat-label">Trading mode</span>
+        <strong className={`tone-${dispatchTone}`}>{formatTradingModeLabel(dispatchMode)}</strong>
         <span className="small-text">{liveArmRequirementLabel}</span>
       </div>
       <div className="status-strip-item">
@@ -4299,11 +4342,11 @@ function TradePage(props: {
   timeline: TimelineEvent[];
   spreadSize: string;
   operatorConfirmed: boolean;
-  simGateOverrideArmed: boolean;
+  practiceModeActive: boolean;
   operatorId: string;
   setSpreadSize: (value: string) => void;
   setOperatorConfirmed: (value: boolean) => void;
-  setSimGateOverrideArmed: (value: boolean) => void;
+  setPracticeModeActive: (value: boolean) => void;
   setOperatorId: (value: string) => void;
   canLongEntry: boolean;
   canShortEntry: boolean;
@@ -4461,24 +4504,29 @@ function TradePage(props: {
         ...(selectedCue.cue.cost_gate?.rationale_codes ?? []),
       ])
     : new Set<string>();
-  const simOverrideAvailable = props.dispatchMode === "SIMULATE_ACK";
-  const bypassExecutionGates = simOverrideAvailable && props.simGateOverrideArmed;
-  const dispatchModeBadge =
-    props.dispatchMode === "LIVE_KRAKEN"
-      ? props.operatorConfirmed
-        ? "LIVE ARMED"
-        : "LIVE LOCKED"
-      : props.dispatchMode === "SIMULATE_ACK"
-        ? props.simGateOverrideArmed
-          ? "SIM OVERRIDE"
-          : "SIM READY"
-        : "FAIL-CLOSED";
-  const dispatchModeBadgeClass =
-    props.dispatchMode === "LIVE_KRAKEN" && props.operatorConfirmed
+  const liveTradingAvailable = props.dispatchMode === "LIVE_KRAKEN";
+  const liveTradingArmed =
+    liveTradingAvailable && (!props.requiresLiveArm || props.operatorConfirmed);
+  const bypassExecutionGates = props.practiceModeActive;
+  const tradingModeBadge = props.practiceModeActive
+    ? "Practice On"
+    : liveTradingArmed
+      ? "Live Armed"
+      : "Live Locked";
+  const tradingModeBadgeClass = props.practiceModeActive
+    ? "sim"
+    : liveTradingArmed
       ? "live"
-      : props.dispatchMode === "FAIL_CLOSED"
-        ? "blocked"
-        : "sim";
+      : "blocked";
+  const modeDisabledReason = (): string | null => {
+    if (props.practiceModeActive || liveTradingArmed) {
+      return null;
+    }
+    if (liveTradingAvailable) {
+      return "Live trading is locked. Turn on Practice Mode to test without exchange orders.";
+    }
+    return "Practice Mode is off. Turn it on to test this trade.";
+  };
 
   const sizingReason = (
     result: SpreadSizingPlanResult | null,
@@ -4504,14 +4552,12 @@ function TradePage(props: {
     if (props.submitting) {
       return "Action in progress.";
     }
-    if (props.dispatchMode === "FAIL_CLOSED") {
-      return "Execution dispatch is FAIL_CLOSED. Switch the backend to SIMULATE_ACK for sim trades.";
-    }
-    if (props.dispatchMode === "LIVE_KRAKEN" && props.requiresLiveArm && !props.operatorConfirmed) {
-      return "Live dispatch is locked. Arm LIVE to enable entry actions.";
-    }
     if (!props.operatorId.trim().length) {
       return "Operator ID is required.";
+    }
+    const localModeDisabledReason = modeDisabledReason();
+    if (localModeDisabledReason) {
+      return localModeDisabledReason;
     }
     const notionalMessage = notionalValidationMessage();
     if (notionalMessage) {
@@ -4521,17 +4567,14 @@ function TradePage(props: {
     if (localSizingReason) {
       return localSizingReason;
     }
-    if (simOverrideAvailable && !props.simGateOverrideArmed && !isGateSafe(props.gateState)) {
-      return "Sim gate override is OFF.";
-    }
     if (!bypassExecutionGates && props.gateState.killSwitchActive) {
-      return "Kill switch is ACTIVE.";
+      return "Live trading is paused by the global disable control.";
     }
     if (!bypassExecutionGates && (!props.gateState.leftAllowed || !props.gateState.rightAllowed)) {
-      return "Integrity gate is blocking one or both legs.";
+      return "Live safety checks are not ready for one or both legs.";
     }
     if (!bypassExecutionGates && !props.gateState.reconcileOk) {
-      return "Reconcile gate is NOT_OK.";
+      return "Live account checks are not ready.";
     }
     return null;
   };
@@ -4541,34 +4584,34 @@ function TradePage(props: {
       return null;
     }
     if (selectedCue.cue.trade_gate?.status === "WAIT" || tradeGateReasons.has("PERFORMANCE_HISTORY_WAIT")) {
-      return "Warning: waiting for minimum paper-trade history.";
+      return "This setup needs more practice history before it is ready.";
     }
     if (selectedCue.cue.trade_gate?.status === "UNAVAILABLE") {
-      return "Warning: trade gate is unavailable.";
+      return "Trade readiness is unavailable right now.";
     }
     if (!tradeGatePass) {
       if (tradeGateReasons.has("AT_OR_BEYOND_STOP_BAND")) {
-        return "Warning: spread is at or beyond stop band.";
+        return "This spread has moved too far to start safely.";
       }
       if (tradeGateReasons.has("RETRACE_COOLDOWN_ACTIVE")) {
-        return "Warning: retrace cooldown is active.";
+        return "This setup is cooling down after a recent move.";
       }
       if (tradeGateReasons.has("BELOW_ENTRY_BAND")) {
-        return "Warning: |z| is below the entry threshold.";
+        return "Early setup: entry level not reached yet.";
       }
       if (tradeGateReasons.has("CHAMPION_DRIFT_BLOCKED")) {
-        return "Warning: champion drift guard is active.";
+        return "This pair is under setup review.";
       }
       if (tradeGateReasons.has("HEDGE_RATIO_UNSTABLE")) {
-        return "Warning: hedge ratio stability is weak.";
+        return "The pair relationship is unstable right now.";
       }
       if (tradeGateReasons.has("PERFORMANCE_GATE_BLOCKED")) {
-        return "Warning: recent paper-trade profitability gate failed.";
+        return "Recent practice results are not strong enough yet.";
       }
       if (tradeGateReasons.has("COST_GATE_BLOCKED")) {
-        return "Warning: estimated costs exceed edge.";
+        return "Estimated costs are too high right now.";
       }
-      return "Warning: setup/cost conditions are not favorable.";
+      return "Setup conditions are not ready yet.";
     }
     return null;
   };
@@ -4581,14 +4624,13 @@ function TradePage(props: {
       ? "No open spread position to add exposure."
       : null);
   const reduceNotionalMessage = notionalValidationMessage();
+  const reduceModeDisabledReason = modeDisabledReason();
   const reduceExposureDisabledReason = props.submitting
     ? "Action in progress."
     : props.currentPosition.direction === "NONE" || props.currentPosition.totalSize <= 0
       ? "No open spread position to reduce."
-      : props.dispatchMode === "FAIL_CLOSED"
-        ? "Execution dispatch is FAIL_CLOSED. Switch the backend to SIMULATE_ACK for sim trades."
-        : props.dispatchMode === "LIVE_KRAKEN" && props.requiresLiveArm && !props.operatorConfirmed
-          ? "Live dispatch is locked. Arm LIVE to reduce."
+      : reduceModeDisabledReason
+        ? reduceModeDisabledReason
         : !props.operatorId.trim().length
           ? "Operator ID is required."
           : reduceNotionalMessage
@@ -4811,7 +4853,7 @@ function TradePage(props: {
 
       <SectionCard
         title="Spread Execution"
-        subtitle="Manual actions with fail-closed execution gates"
+        subtitle="Test trades in Practice Mode. Live trading stays locked unless armed."
         className="execution-panel"
       >
         <div className="execution-grid">
@@ -4819,58 +4861,77 @@ function TradePage(props: {
             <h3>Entry / Add Exposure</h3>
             <div className="execution-mode-card">
               <div className="execution-mode-row">
-                <strong>Execution Mode</strong>
-                <span className={`mode-badge ${dispatchModeBadgeClass}`}>{dispatchModeBadge}</span>
+                <strong>Trading Mode</strong>
+                <span className={`mode-badge ${tradingModeBadgeClass}`}>{tradingModeBadge}</span>
               </div>
-              <label className="checkbox-row">
-                <input
-                  type="checkbox"
-                  checked={props.operatorConfirmed}
-                  onChange={(event) => props.setOperatorConfirmed(event.target.checked)}
-                  disabled={props.dispatchMode !== "LIVE_KRAKEN" || !props.requiresLiveArm}
-                />
-                {props.dispatchMode === "LIVE_KRAKEN"
-                  ? "Live Trading Armed"
-                  : "Live arm unavailable outside LIVE_KRAKEN"}
-              </label>
-              <div className="execution-mode-meta small-text">
-                Dispatch mode: {props.dispatchMode}
-              </div>
-              <div className="sim-override-row">
-                <div className="sim-override-copy">
-                  <strong>SIM Gate Override</strong>
+              <div className="live-trading-row">
+                <div className="live-trading-copy">
+                  <strong>Live Trading</strong>
                   <p className="small-text">
-                    {props.simGateOverrideArmed
-                      ? "ON: simulated actions may bypass execution gates."
-                      : "OFF: execution gates still block simulated actions."}
+                    {liveTradingAvailable
+                      ? props.requiresLiveArm
+                        ? "Requires explicit arming before live orders."
+                        : "Live order controls are available for this session."
+                      : "Locked for this session."}
+                  </p>
+                </div>
+                {liveTradingAvailable && props.requiresLiveArm ? (
+                  <label className="checkbox-row live-arm-toggle">
+                    <input
+                      type="checkbox"
+                      checked={props.operatorConfirmed}
+                      onChange={(event) => {
+                        props.setOperatorConfirmed(event.target.checked);
+                        if (event.target.checked) {
+                          props.setPracticeModeActive(false);
+                        }
+                      }}
+                    />
+                    Live Armed
+                  </label>
+                ) : null}
+              </div>
+              <div className="execution-mode-meta small-text">
+                Practice orders stay on this screen and never submit exchange orders.
+              </div>
+              <div className="practice-mode-row">
+                <div className="practice-mode-copy">
+                  <strong>Practice Mode</strong>
+                  <p className="small-text">
+                    {props.practiceModeActive
+                      ? "On: test orders stay on this screen for review."
+                      : "Off: live trading remains locked unless explicitly armed."}
                   </p>
                 </div>
                 <button
                   type="button"
-                  className={props.simGateOverrideArmed ? "danger compact-button" : "secondary compact-button"}
+                  className={props.practiceModeActive ? "neutral compact-button" : "secondary compact-button"}
                   disabled={
-                    !simOverrideAvailable ||
                     props.submitting ||
                     !props.operatorId.trim().length
                   }
-                  aria-pressed={props.simGateOverrideArmed}
-                  onClick={() => props.setSimGateOverrideArmed(!props.simGateOverrideArmed)}
+                  aria-pressed={props.practiceModeActive}
+                  onClick={() => {
+                    const nextPracticeMode = !props.practiceModeActive;
+                    props.setPracticeModeActive(nextPracticeMode);
+                    if (nextPracticeMode) {
+                      props.setOperatorConfirmed(false);
+                    }
+                  }}
                 >
-                  {props.simGateOverrideArmed ? "Disable SIM Override" : "Override Gates for Sim"}
+                  {props.practiceModeActive ? "Stop Practice Mode" : "Start Practice Mode"}
                 </button>
               </div>
-              {!simOverrideAvailable ? (
-                <p className="action-disabled-reason">
-                  SIM override requires backend dispatch mode SIMULATE_ACK.
-                </p>
-              ) : !props.operatorId.trim().length ? (
-                <p className="action-disabled-reason">Operator ID is required to arm SIM override.</p>
+              {!props.operatorId.trim().length ? (
+                <p className="action-disabled-reason">Operator ID is required to start Practice Mode.</p>
               ) : null}
               <div className="kill-switch-row">
                 <div className="kill-switch-copy">
-                  <strong>Global Disable (Kill Switch)</strong>
+                  <strong>Global Disable</strong>
                   <p className="small-text">
-                    {props.killSwitch?.active ? "ON: entries disabled globally." : "OFF: normal operation."}
+                    {props.killSwitch?.active
+                      ? "On: live entries are stopped."
+                      : "Off: live order controls follow the mode above."}
                   </p>
                 </div>
                 <label className="toggle-switch" aria-label="Global disable kill switch">
