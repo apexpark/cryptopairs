@@ -674,6 +674,8 @@ This project follows SemVer as defined in `docs/02-versioning-and-releases.md`.
   - `GET /v1/execution/decision` returns `ALLOWED` for UI leg checks.
   - order-intent evaluation ignores kill-switch, integrity, reconcile, and risk gates in SIM mode.
   - live modes (`FAIL_CLOSED`, `LIVE_KRAKEN`) retain existing fail-closed gate behavior.
+- Trade page SIM gate bypass is now operator-armed from the Spread Execution panel
+  and remains unavailable unless the backend reports `SIMULATE_ACK`.
 - Trade panel now enforces executable lot-step sizing before submit:
   - spread size is quantized down to a pair-valid executable step for ENTRY/EXIT in UI,
     preventing server-side lot-step rejects (for example `PF_XRPUSD` with integer lots).

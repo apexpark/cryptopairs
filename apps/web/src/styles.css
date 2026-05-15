@@ -1143,6 +1143,15 @@ button.secondary {
   color: #fff;
 }
 
+button.compact-button {
+  width: auto;
+  min-width: 132px;
+  margin-top: 0;
+  padding: 6px 9px;
+  font-size: 0.78rem;
+  white-space: nowrap;
+}
+
 button.neutral {
   background: var(--panel);
   color: var(--text);
@@ -1496,6 +1505,25 @@ button:disabled {
   border-color: color-mix(in srgb, var(--tone-warn) 55%, var(--line));
 }
 
+.mode-badge.blocked {
+  color: var(--tone-bad);
+  border-color: color-mix(in srgb, var(--tone-bad) 55%, var(--line));
+}
+
+.sim-override-row {
+  margin-top: 6px;
+  padding-top: 6px;
+  border-top: 1px dashed var(--line-soft);
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 10px;
+}
+
+.sim-override-copy p {
+  margin: 3px 0 0 0;
+}
+
 .kill-switch-row {
   margin-top: 6px;
   padding-top: 6px;
@@ -1741,6 +1769,15 @@ button:disabled {
   .simple-status-pill {
     padding-inline: 4px;
     font-size: 0.64rem;
+  }
+
+  .sim-override-row {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .sim-override-row .compact-button {
+    width: 100%;
   }
 }
 
