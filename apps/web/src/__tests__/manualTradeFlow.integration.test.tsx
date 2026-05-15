@@ -532,4 +532,104 @@ describe("manual trade flow", () => {
       "PAPER"
     );
   });
+
+  it("records paper close-spread orders with operator audit fields", async () => {
+    api.fetchExecutionDispatchMode.mockResolvedValue({
+      mode: "FAIL_CLOSED",
+      requires_live_arm: false,
+    });
+    api.fetchExecutionPortfolioPositions.mockReset();
+    api.fetchExecutionPortfolioPositions.mockResolvedValue({
+      exchange: "kraken_futures",
+      account_id: "primary",
+      execution_mode: "PAPER",
+      generated_at: "2026-02-20T00:00:00Z",
+      positions: [
+        {
+          pair_id: PAIR_ID,
+          direction: "LONG_SPREAD",
+          total_size: 1.25,
+          avg_entry_z: -2.1,
+          updated_at: "2026-02-20T00:00:10Z",
+        },
+      ],
+    });
+    api.fetchExecutionOpenTrades.mockResolvedValue({
+      exchange: "kraken_futures",
+      account_id: "primary",
+      execution_mode: "PAPER",
+      generated_at: "2026-02-20T00:00:00Z",
+      warnings: [],
+      trades: [
+        {
+          pair_id: PAIR_ID,
+          direction: "LONG_SPREAD",
+          spread_units: 1.25,
+          entry_z: -2.1,
+          updated_at: "2026-02-20T00:00:10Z",
+          pnl_status: "UNAVAILABLE",
+          unrealized_pnl_usd: null,
+          legs: [
+            {
+              instrument: LEFT,
+              side: "BUY",
+              qty: 1.25,
+              entry_ref_price: 67324.3,
+              live_mark: null,
+              mark_time: null,
+              unrealized_pnl_usd: null,
+            },
+            {
+              instrument: RIGHT,
+              side: "SELL",
+              qty: 1.06,
+              entry_ref_price: 3200,
+              live_mark: null,
+              mark_time: null,
+              unrealized_pnl_usd: null,
+            },
+          ],
+        },
+      ],
+    });
+
+    render(<App />);
+
+    const closeButton = await screen.findByRole("button", {
+      name: "Close Spread (all open in pair)",
+    });
+    await waitFor(() => {
+      expect(closeButton).not.toBeDisabled();
+    });
+
+    fireEvent.click(closeButton);
+    fireEvent.click(screen.getByRole("button", { name: "Confirm Close Spread" }));
+
+    await waitFor(() => {
+      expect(api.submitPaperOrderIntent).toHaveBeenCalledTimes(2);
+    });
+
+    expect(api.submitOrderIntent).not.toHaveBeenCalled();
+    expect(api.dispatchOrderIntent).not.toHaveBeenCalled();
+    expect(api.submitPaperOrderIntent.mock.calls.map((call: any[]) => call[0])).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          action: "EMERGENCY_STOP_CLOSE",
+          instrument: LEFT,
+          side: "SELL",
+          qty: 1.25,
+          operator_confirmed: true,
+          operator_id: "operator-kevin",
+        }),
+        expect.objectContaining({
+          action: "EMERGENCY_STOP_CLOSE",
+          instrument: RIGHT,
+          side: "BUY",
+          qty: 1.06,
+          operator_confirmed: true,
+          operator_id: "operator-kevin",
+        }),
+      ])
+    );
+  });
 });
