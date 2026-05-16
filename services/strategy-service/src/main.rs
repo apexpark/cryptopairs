@@ -468,7 +468,15 @@ impl StrategySettings {
 
 const SELECTED_CONFIG_SOURCE_LEGACY_FALLBACK: &str = "LEGACY_ROW_FALLBACK";
 const SELECTED_CONFIG_SOURCE_RECANONICALIZED_LEGACY_ROW: &str = "RECANONICALIZED_LEGACY_ROW";
+const SELECTED_CONFIG_SOURCE_AUTO_CHAMPION: &str = "AUTO_CHAMPION";
 const SELECTED_CONFIG_SOURCE_OPERATOR_PROMOTION: &str = "OPERATOR_PROMOTION";
+
+fn is_repair_selected_config_source(source: &str) -> bool {
+    matches!(
+        source,
+        SELECTED_CONFIG_SOURCE_LEGACY_FALLBACK | SELECTED_CONFIG_SOURCE_RECANONICALIZED_LEGACY_ROW
+    )
+}
 
 fn default_selected_signal_config(
     settings: &StrategySettings,
@@ -1322,9 +1330,7 @@ fn resolve_learning_overlay_policy(
         .map(|entry| entry.learning_reason_codes.clone())
         .unwrap_or_default();
 
-    if selected_config_source == SELECTED_CONFIG_SOURCE_LEGACY_FALLBACK
-        || selected_config_source == SELECTED_CONFIG_SOURCE_RECANONICALIZED_LEGACY_ROW
-    {
+    if is_repair_selected_config_source(selected_config_source) {
         return LearningOverlayPolicyDecision {
             approval_source: LearningOverlayApprovalSource::None,
             bucket: LearningOverlayUniverseBucket::Excluded,
@@ -3071,11 +3077,30 @@ fn decide_champion_transition(
                 existing_config.is_some(),
                 "existing_config must accompany an existing selected-signal row"
             );
+            let same_variant_is_evaluated_best = evaluation
+                .variants
+                .iter()
+                .max_by(|left, right| {
+                    left.opportunity_score
+                        .partial_cmp(&right.opportunity_score)
+                        .unwrap_or(std::cmp::Ordering::Equal)
+                })
+                .map(|best| best.variant.as_str() == current.signal_variant.as_str())
+                .unwrap_or(false);
             let mut selected_config = challenger_config.clone();
-            if challenger_config.source == SELECTED_CONFIG_SOURCE_LEGACY_FALLBACK {
+            if is_repair_selected_config_source(&challenger_config.source) {
                 if let Some(existing_config) = existing_config {
-                    if existing_config.source != SELECTED_CONFIG_SOURCE_LEGACY_FALLBACK {
+                    if !is_repair_selected_config_source(&existing_config.source) {
                         selected_config.source = existing_config.source.clone();
+                    } else if existing_config.source
+                        == SELECTED_CONFIG_SOURCE_RECANONICALIZED_LEGACY_ROW
+                        && challenger_config.source
+                            == SELECTED_CONFIG_SOURCE_RECANONICALIZED_LEGACY_ROW
+                        && same_variant_is_evaluated_best
+                    {
+                        // Recanonicalized rows are repair artifacts; a same-variant evaluated-best
+                        // transition is the narrow path that can graduate them back to normal champion provenance.
+                        selected_config.source = SELECTED_CONFIG_SOURCE_AUTO_CHAMPION.to_string();
                     }
                 }
             }
@@ -10665,8 +10690,8 @@ mod tests {
         SampledSlippageStatus, SelectedSignalRow, SelectionTransitionCounts,
         StrategyMarketMetricsResponse, StrategyMetrics, StrategySettings,
         TradeNowHistoricalQuality, TradeNowObservabilityStore, TradeNowQuery,
-        LEARNING_OVERLAY_TTL_SECS, SELECTED_CONFIG_SOURCE_LEGACY_FALLBACK,
-        SELECTED_CONFIG_SOURCE_OPERATOR_PROMOTION,
+        LEARNING_OVERLAY_TTL_SECS, SELECTED_CONFIG_SOURCE_AUTO_CHAMPION,
+        SELECTED_CONFIG_SOURCE_LEGACY_FALLBACK, SELECTED_CONFIG_SOURCE_OPERATOR_PROMOTION,
         SELECTED_CONFIG_SOURCE_RECANONICALIZED_LEGACY_ROW,
     };
     use axum::{routing::get, Json, Router};
@@ -11423,6 +11448,82 @@ mod tests {
         assert_eq!(transition.selected_config.source, "AUTO_CHAMPION");
         assert!((transition.selected_config.entry_band - 2.05).abs() < 1e-9);
         assert_eq!(transition.selected_config.lookback_bars, 640);
+    }
+
+    #[test]
+    fn champion_transition_self_heals_recanonicalized_source_when_same_variant_is_best() {
+        let settings = StrategySettings::from_env();
+        let updated_at = Utc::now() - Duration::minutes(5);
+        let mut persisted = selected_signal_config("ROBUST_Z");
+        persisted.source = SELECTED_CONFIG_SOURCE_RECANONICALIZED_LEGACY_ROW.to_string();
+        persisted.updated_at = updated_at;
+        let existing = SelectedSignalRow {
+            signal_variant: "ROBUST_Z".to_string(),
+            opportunity_score: 1.0,
+            updated_at,
+            config_json: Some(serde_json::to_string(&persisted).expect("persisted config")),
+        };
+        let existing_config =
+            resolve_selected_signal_config(Some(&existing), &settings, Timeframe::OneMinute)
+                .expect("resolved selected config");
+        let mut evaluation = output("ROBUST_Z", 1.2, 1.3, 1.1);
+        evaluation.cue.selected_signal_config.source =
+            SELECTED_CONFIG_SOURCE_RECANONICALIZED_LEGACY_ROW.to_string();
+        evaluation.cue.selected_signal_config.entry_band = 2.05;
+        evaluation.cue.selected_signal_config.lookback_bars = 640;
+
+        let transition = decide_champion_transition(
+            Some(&existing),
+            Some(&existing_config),
+            &evaluation,
+            0.25,
+            0.15,
+            900,
+        );
+
+        assert_eq!(transition.decision, ChampionDecision::Unchanged);
+        assert_eq!(
+            transition.selected_config.source,
+            SELECTED_CONFIG_SOURCE_AUTO_CHAMPION
+        );
+        assert!((transition.selected_config.entry_band - 2.05).abs() < 1e-9);
+        assert_eq!(transition.selected_config.lookback_bars, 640);
+    }
+
+    #[test]
+    fn champion_transition_keeps_recanonicalized_source_when_same_variant_is_not_best() {
+        let settings = StrategySettings::from_env();
+        let updated_at = Utc::now() - Duration::minutes(5);
+        let mut persisted = selected_signal_config("ROBUST_Z");
+        persisted.source = SELECTED_CONFIG_SOURCE_RECANONICALIZED_LEGACY_ROW.to_string();
+        persisted.updated_at = updated_at;
+        let existing = SelectedSignalRow {
+            signal_variant: "ROBUST_Z".to_string(),
+            opportunity_score: 1.0,
+            updated_at,
+            config_json: Some(serde_json::to_string(&persisted).expect("persisted config")),
+        };
+        let existing_config =
+            resolve_selected_signal_config(Some(&existing), &settings, Timeframe::OneMinute)
+                .expect("resolved selected config");
+        let mut evaluation = output("ROBUST_Z", 1.2, 1.0, 1.4);
+        evaluation.cue.selected_signal_config.source =
+            SELECTED_CONFIG_SOURCE_RECANONICALIZED_LEGACY_ROW.to_string();
+
+        let transition = decide_champion_transition(
+            Some(&existing),
+            Some(&existing_config),
+            &evaluation,
+            0.25,
+            0.15,
+            900,
+        );
+
+        assert_eq!(transition.decision, ChampionDecision::Unchanged);
+        assert_eq!(
+            transition.selected_config.source,
+            SELECTED_CONFIG_SOURCE_RECANONICALIZED_LEGACY_ROW
+        );
     }
 
     #[test]
