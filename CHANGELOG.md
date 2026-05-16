@@ -12,6 +12,10 @@ This project follows SemVer as defined in `docs/02-versioning-and-releases.md`.
 - `.githooks/pre-push` now autostashes unstaged and untracked work before running the Rust preflight so pushes check the staged tree, with `scripts/test-pre-push.sh` covering the restore paths.
 - `docs/27` live cue mismatch audit now reads `cue.selection_state` fields for stored champion, evaluated best, source, and validation state instead of legacy cue-selected fields.
 
+### Changed
+- Heavy strategy-service background workers now default disabled (`STRATEGY_REOPT_WORKER_ENABLED`, `STRATEGY_SAMPLED_SLIPPAGE_WORKER_ENABLED`, `STRATEGY_HISTORY_RETENTION_WORKER_ENABLED`) until the reoptimization path has explicit leases, budgets, and single-flight protection.
+- Recanonicalized legacy selected-signal rows remain repair-only on same-variant reevaluation; reoptimization no longer automatically graduates `RECANONICALIZED_LEGACY_ROW` provenance to `AUTO_CHAMPION`.
+
 ### Added
 - Trade Now rows now include an additive `z_score` alias that mirrors `spread_z` for operator diagnostics and live-z comparisons.
 - Strategy service background sampled-slippage and history-retention workers can now be disabled with explicit env flags, and their first automatic ticks are delayed until their configured interval instead of running immediately at startup.

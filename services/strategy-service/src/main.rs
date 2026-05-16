@@ -224,6 +224,10 @@ struct StrategySettings {
     ui_access_password: String,
 }
 
+const DEFAULT_REOPT_WORKER_ENABLED: bool = false;
+const DEFAULT_SAMPLED_SLIPPAGE_WORKER_ENABLED: bool = false;
+const DEFAULT_HISTORY_RETENTION_WORKER_ENABLED: bool = false;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum FundingRateInputMode {
     Fraction,
@@ -292,15 +296,20 @@ impl StrategySettings {
         let funding_drag_bps = parse_env_f64("STRATEGY_FUNDING_DRAG_BPS", 0.6);
         let min_samples_target = parse_env_usize("STRATEGY_MIN_SAMPLES_TARGET", 8);
         let reopt_interval_secs = parse_env_u64("STRATEGY_REOPT_INTERVAL_SECS", 3600);
-        let reopt_worker_enabled = parse_env_bool("STRATEGY_REOPT_WORKER_ENABLED", true);
+        let reopt_worker_enabled = parse_env_bool(
+            "STRATEGY_REOPT_WORKER_ENABLED",
+            DEFAULT_REOPT_WORKER_ENABLED,
+        );
         let shadow_ml_min_rows = parse_env_usize("STRATEGY_SHADOW_ML_MIN_ROWS", 64);
         let shadow_ml_training_limit = parse_env_usize("STRATEGY_SHADOW_ML_TRAINING_LIMIT", 1200);
         let trading_fee_bps = parse_env_f64("STRATEGY_TRADING_FEE_BPS", 1.2);
         let slippage_base_bps = parse_env_f64("STRATEGY_SLIPPAGE_BASE_BPS", 0.8);
         let slippage_vol_multiplier = parse_env_f64("STRATEGY_SLIPPAGE_VOL_MULTIPLIER", 0.45);
         let slippage_z_multiplier = parse_env_f64("STRATEGY_SLIPPAGE_Z_MULTIPLIER", 0.20);
-        let sampled_slippage_worker_enabled =
-            parse_env_bool("STRATEGY_SAMPLED_SLIPPAGE_WORKER_ENABLED", true);
+        let sampled_slippage_worker_enabled = parse_env_bool(
+            "STRATEGY_SAMPLED_SLIPPAGE_WORKER_ENABLED",
+            DEFAULT_SAMPLED_SLIPPAGE_WORKER_ENABLED,
+        );
         let sampled_slippage_interval_ms =
             parse_env_u64("STRATEGY_SAMPLED_SLIPPAGE_INTERVAL_MS", 1000);
         let sampled_slippage_warmup_secs =
@@ -395,8 +404,10 @@ impl StrategySettings {
             parse_env_u64("STRATEGY_OPPORTUNITY_HISTORY_RETENTION_DAYS", 3_650).max(1);
         let paper_trades_history_retention_days =
             parse_env_u64("STRATEGY_PAPER_TRADES_HISTORY_RETENTION_DAYS", 3_650).max(1);
-        let history_retention_worker_enabled =
-            parse_env_bool("STRATEGY_HISTORY_RETENTION_WORKER_ENABLED", true);
+        let history_retention_worker_enabled = parse_env_bool(
+            "STRATEGY_HISTORY_RETENTION_WORKER_ENABLED",
+            DEFAULT_HISTORY_RETENTION_WORKER_ENABLED,
+        );
         let history_prune_interval_seconds =
             parse_env_u64("STRATEGY_HISTORY_PRUNE_INTERVAL_SECONDS", 3_600).max(60);
         let response_cache_ttl_ms = effective_strategy_response_cache_ttl_ms(parse_env_u64(
@@ -567,7 +578,6 @@ impl StrategySettings {
 
 const SELECTED_CONFIG_SOURCE_LEGACY_FALLBACK: &str = "LEGACY_ROW_FALLBACK";
 const SELECTED_CONFIG_SOURCE_RECANONICALIZED_LEGACY_ROW: &str = "RECANONICALIZED_LEGACY_ROW";
-const SELECTED_CONFIG_SOURCE_AUTO_CHAMPION: &str = "AUTO_CHAMPION";
 const SELECTED_CONFIG_SOURCE_OPERATOR_PROMOTION: &str = "OPERATOR_PROMOTION";
 
 fn is_repair_selected_config_source(source: &str) -> bool {
@@ -3176,30 +3186,11 @@ fn decide_champion_transition(
                 existing_config.is_some(),
                 "existing_config must accompany an existing selected-signal row"
             );
-            let same_variant_is_evaluated_best = evaluation
-                .variants
-                .iter()
-                .max_by(|left, right| {
-                    left.opportunity_score
-                        .partial_cmp(&right.opportunity_score)
-                        .unwrap_or(std::cmp::Ordering::Equal)
-                })
-                .map(|best| best.variant.as_str() == current.signal_variant.as_str())
-                .unwrap_or(false);
             let mut selected_config = challenger_config.clone();
             if is_repair_selected_config_source(&challenger_config.source) {
                 if let Some(existing_config) = existing_config {
                     if !is_repair_selected_config_source(&existing_config.source) {
                         selected_config.source = existing_config.source.clone();
-                    } else if existing_config.source
-                        == SELECTED_CONFIG_SOURCE_RECANONICALIZED_LEGACY_ROW
-                        && challenger_config.source
-                            == SELECTED_CONFIG_SOURCE_RECANONICALIZED_LEGACY_ROW
-                        && same_variant_is_evaluated_best
-                    {
-                        // Recanonicalized rows are repair artifacts; a same-variant evaluated-best
-                        // transition is the narrow path that can graduate them back to normal champion provenance.
-                        selected_config.source = SELECTED_CONFIG_SOURCE_AUTO_CHAMPION.to_string();
                     }
                 }
             }
@@ -11004,7 +10995,8 @@ mod tests {
         ReplayTradePathSummary, ReplayTradesQuery, ResearchSweepRequest, SampledSlippageStatus,
         SelectedSignalRow, SelectionTransitionCounts, StrategyMarketMetricsResponse,
         StrategyMetrics, StrategySettings, TradeNowHistoricalQuality, TradeNowObservabilityStore,
-        TradeNowQuery, LEARNING_OVERLAY_TTL_SECS, SELECTED_CONFIG_SOURCE_AUTO_CHAMPION,
+        TradeNowQuery, DEFAULT_HISTORY_RETENTION_WORKER_ENABLED, DEFAULT_REOPT_WORKER_ENABLED,
+        DEFAULT_SAMPLED_SLIPPAGE_WORKER_ENABLED, LEARNING_OVERLAY_TTL_SECS,
         SELECTED_CONFIG_SOURCE_LEGACY_FALLBACK, SELECTED_CONFIG_SOURCE_OPERATOR_PROMOTION,
         SELECTED_CONFIG_SOURCE_RECANONICALIZED_LEGACY_ROW,
     };
@@ -11073,6 +11065,19 @@ mod tests {
         for value in ["0", "false", "no", "off", "", "maybe"] {
             assert!(!parse_bool_token(value), "{value} should disable");
         }
+    }
+
+    #[test]
+    fn heavy_background_worker_defaults_are_fail_closed() {
+        let enabled_by_default = [
+            DEFAULT_REOPT_WORKER_ENABLED,
+            DEFAULT_SAMPLED_SLIPPAGE_WORKER_ENABLED,
+            DEFAULT_HISTORY_RETENTION_WORKER_ENABLED,
+        ]
+        .into_iter()
+        .filter(|enabled| *enabled)
+        .count();
+        assert_eq!(enabled_by_default, 0);
     }
 
     fn market_metric(
@@ -11801,7 +11806,7 @@ mod tests {
     }
 
     #[test]
-    fn champion_transition_self_heals_recanonicalized_source_when_same_variant_is_best() {
+    fn champion_transition_keeps_recanonicalized_source_when_same_variant_is_best() {
         let settings = StrategySettings::from_env();
         let updated_at = Utc::now() - Duration::minutes(5);
         let mut persisted = selected_signal_config("ROBUST_Z");
@@ -11834,7 +11839,7 @@ mod tests {
         assert_eq!(transition.decision, ChampionDecision::Unchanged);
         assert_eq!(
             transition.selected_config.source,
-            SELECTED_CONFIG_SOURCE_AUTO_CHAMPION
+            SELECTED_CONFIG_SOURCE_RECANONICALIZED_LEGACY_ROW
         );
         assert!((transition.selected_config.entry_band - 2.05).abs() < 1e-9);
         assert_eq!(transition.selected_config.lookback_bars, 640);
