@@ -197,6 +197,16 @@ function selectTimeframe(next: Timeframe): void {
   fireEvent.click(screen.getByText(next));
 }
 
+function expectedChartBars(timeframe: Timeframe): number {
+  if (timeframe === "1m") {
+    return 2000;
+  }
+  if (timeframe === "15m") {
+    return 1600;
+  }
+  return 1200;
+}
+
 beforeEach(() => {
   window.localStorage.clear();
   vi.clearAllMocks();
@@ -364,6 +374,58 @@ describe("global timeframe switching", () => {
       expect(screen.getByRole("button", { name: /Timeframe: 1h/i })).toBeInTheDocument();
     });
   });
+
+  it.each([
+    ["1m", 4.11],
+    ["15m", -2.22],
+    ["1h", 0.87],
+  ] as const)(
+    "ticks the analytics z chart from live market data on %s",
+    async (targetTimeframe, liveZ) => {
+      api.fetchStrategyLiveZ.mockImplementation(
+        async (timeframe: Timeframe, _pairId: string, points?: number) => {
+          const response = buildLiveZResponse(timeframe);
+          if (points === 2) {
+            return {
+              ...response,
+              points: [
+                {
+                  ts: "2026-02-20T00:24:30Z",
+                  z: liveZ,
+                },
+              ],
+              markers: [],
+            };
+          }
+          return response;
+        }
+      );
+
+      render(<App />);
+
+      if (targetTimeframe !== "1m") {
+        selectTimeframe(targetTimeframe);
+      }
+      fireEvent.click(screen.getByRole("button", { name: "Analytics" }));
+
+      await waitFor(() => {
+        expect(screen.getByText("Historical Z-Score (Entries / Exits / Stops)")).toBeInTheDocument();
+      });
+      await waitFor(() => {
+        expect(api.fetchStrategyLiveZ).toHaveBeenCalledWith(
+          targetTimeframe,
+          PAIR_ID,
+          2,
+          expectedChartBars(targetTimeframe),
+          undefined,
+          "mean_revert"
+        );
+      });
+      await waitFor(() => {
+        expect(screen.getByText(`Z ${liveZ.toFixed(2)}`)).toBeInTheDocument();
+      });
+    }
+  );
 
   it("threads taker commission override to strategy queries when configured", async () => {
     render(<App />);

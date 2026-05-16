@@ -1089,7 +1089,7 @@ function App(): JSX.Element {
     () => new Set((openTradesResponse?.trades ?? []).map((trade) => trade.pair_id)),
     [openTradesResponse]
   );
-  const tradeZSeries = useMemo(() => {
+  const liveTickedZSeries = useMemo(() => {
     if (!zSeries.length) {
       return zSeries;
     }
@@ -1100,7 +1100,7 @@ function App(): JSX.Element {
     next[next.length - 1] = liveZTick.z;
     return next;
   }, [zSeries, liveZTick, currentPairId]);
-  const tradeZTimestamps = useMemo(() => {
+  const liveTickedZTimestamps = useMemo(() => {
     if (!zTimestamps.length) {
       return zTimestamps;
     }
@@ -1112,22 +1112,22 @@ function App(): JSX.Element {
     return next;
   }, [zTimestamps, liveZTick, currentPairId]);
   const currentLiveZ = useMemo(() => {
-    if (tradeZSeries.length && analyticsSeriesPairId === currentPairId) {
-      return tradeZSeries[tradeZSeries.length - 1];
+    if (liveTickedZSeries.length && analyticsSeriesPairId === currentPairId) {
+      return liveTickedZSeries[liveTickedZSeries.length - 1];
     }
     const cachedZ = liveZByPair[currentPairId]?.z;
     return Number.isFinite(cachedZ ?? NaN) ? (cachedZ as number) : null;
-  }, [liveZByPair, tradeZSeries, analyticsSeriesPairId, currentPairId]);
+  }, [liveZByPair, liveTickedZSeries, analyticsSeriesPairId, currentPairId]);
   const currentLiveZUpdatedAt = useMemo(() => {
     if (liveZTick && liveZTick.pairId === currentPairId) {
       return liveZTick.ts;
     }
-    if (tradeZTimestamps.length && analyticsSeriesPairId === currentPairId) {
-      return tradeZTimestamps[tradeZTimestamps.length - 1];
+    if (liveTickedZTimestamps.length && analyticsSeriesPairId === currentPairId) {
+      return liveTickedZTimestamps[liveTickedZTimestamps.length - 1];
     }
     const cachedTs = liveZByPair[currentPairId]?.ts;
     return cachedTs?.trim().length ? cachedTs : null;
-  }, [liveZByPair, liveZTick, currentPairId, tradeZTimestamps, analyticsSeriesPairId]);
+  }, [liveZByPair, liveZTick, currentPairId, liveTickedZTimestamps, analyticsSeriesPairId]);
   const currentTimeline = timelineByPair[currentPairId] ?? [];
   const currentIntentHistory = intentHistoryByPair[currentPairId] ?? [];
   useEffect(() => {
@@ -1764,7 +1764,7 @@ function App(): JSX.Element {
   ]);
 
   useEffect(() => {
-    if (!uiAccessGranted || page !== "trade" || !selectedCueRow) {
+    if (!uiAccessGranted || (page !== "trade" && page !== "analytics") || !selectedCueRow) {
       return;
     }
     let cancelled = false;
@@ -2667,8 +2667,8 @@ function App(): JSX.Element {
           cues={cuesResponse}
           selectedPairId={currentPairId}
           onSelectPair={setSelectedPairId}
-          zSeries={tradeZSeries}
-          zTimestamps={tradeZTimestamps}
+          zSeries={liveTickedZSeries}
+          zTimestamps={liveTickedZTimestamps}
           zMarkers={tradeChartMarkers}
           analyticsError={analyticsError}
           currentPosition={currentPosition}
@@ -2721,8 +2721,8 @@ function App(): JSX.Element {
           cues={cuesResponse}
           selectedPairId={currentPairId}
           onSelectPair={setSelectedPairId}
-          zSeries={zSeries}
-          zTimestamps={zTimestamps}
+          zSeries={liveTickedZSeries}
+          zTimestamps={liveTickedZTimestamps}
           zMarkers={zMarkers}
           equitySeries={equitySeries}
           equityTimestamps={equityTimestamps}
@@ -4413,6 +4413,8 @@ function AnalyticsPage({
                 markerRadius={6}
                 valueScaleMode="trimmed"
                 includeThresholdsInDomain
+                showLatestValueLabel
+                latestValueLabelFormatter={(value) => `Z ${value.toFixed(2)}`}
               />
             </SectionCard>
 

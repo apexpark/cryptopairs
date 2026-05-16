@@ -11,6 +11,7 @@ This project follows SemVer as defined in `docs/02-versioning-and-releases.md`.
 - `docs/27` live cue mismatch audit now reads `cue.selection_state` fields for stored champion, evaluated best, source, and validation state instead of legacy cue-selected fields.
 
 ### Added
+- Trade and Analytics z-score charts now consume the selected-pair live-z tick overlay across `1m`, `15m`, and `1h`, with the Analytics chart showing the latest z label from live market data.
 - Strategy service now exposes a read-only Slice D repair-source audit dry-run:
   - New endpoint: `GET /v1/strategy/maintenance/recanonicalized-legacy-row-audit`
   - New contract/example:
@@ -25,6 +26,13 @@ This project follows SemVer as defined in `docs/02-versioning-and-releases.md`.
   - `AGENTS.md` §8 defines Local vs Remote agent roles, the canonical-source rule, work allocation defaults, branch/PR conventions, and a mandatory hydration sequence (`AGENTS.md` → `docs/AGENT_STATE.md` → `docs/playbooks/remote-agent-bootstrap.md` → task brief → code).
   - `docs/AGENT_STATE.md` is a living state file: sprint pin, in-flight work, blocked items, open follow-ups (S4/S6-S8 from Slice A review, B1-B6 from Slice B review including the new B6 Postgres-backed test harness item, X1-X2 cross-cutting), and update protocol. Curated by the local agent; deltas proposed by remote agents in their PRs.
   - New `docs/playbooks/remote-agent-bootstrap.md` is the operational procedure for §8.4: bootstrap prompt, self-preflight (pin match / clean tree / fresh feature branch / base up to date), claim protocol via the open-follow-ups table, verification sequence (calls `scripts/check-rust-ci.sh` so it stays in sync with the pre-push hook, plus tsc and JSON-schema validation), branch/commit/PR templates, design-proposal-first PR variant, blocking protocol, local review checklist.
+- Strategy reoptimize transition accounting diagnostics:
+  - `POST /v1/strategy/pairs/reoptimize` now returns additive `initialize_decisions` and `unchanged_decisions` counters alongside existing champion promotion/lock totals.
+  - Strategy reoptimize observability now logs all four champion decision outcomes and warns if selected rows are written without any accounted transition result.
+- Strategy cue selection-state diagnostics and champion-consistent drift projection:
+  - `GET /v1/strategy/pairs/cues` now includes optional `cue.selection_state` metadata so consumers can compare the evaluated-best variant against the stored champion explicitly.
+  - Drift-state cue responses no longer rewrite only `selected_variant` and `opportunity_score`; they now project a champion-consistent cue or fail closed with explicit rationale.
+  - Trade and Analytics UI surfaces now read selection-state diagnostics instead of treating `cue.selected_variant` as sole ground truth.
 - Execution open-trades API and Trade tab live position view for SIM/manual operations:
   - New endpoint: `GET /v1/execution/portfolio/open-trades` (pair-level spread + per-leg live unrealized PnL using data-service marks).
   - New contracts/examples:
@@ -612,10 +620,3 @@ This project follows SemVer as defined in `docs/02-versioning-and-releases.md`.
   instrument-price-scaled funding distortions in strategy cost-gate calculations.
 - Strategy cues now force cost-gate `pass=false` when `actionable=false`, preventing
   Gate/Edge PASS presentation on non-actionable rows (including champion-drift blocked cues).
-- Strategy reoptimize transition accounting diagnostics:
-  - `POST /v1/strategy/pairs/reoptimize` now returns additive `initialize_decisions` and `unchanged_decisions` counters alongside existing champion promotion/lock totals.
-  - Strategy reoptimize observability now logs all four champion decision outcomes and warns if selected rows are written without any accounted transition result.
-- Strategy cue selection-state diagnostics and champion-consistent drift projection:
-  - `GET /v1/strategy/pairs/cues` now includes optional `cue.selection_state` metadata so consumers can compare the evaluated-best variant against the stored champion explicitly.
-  - Drift-state cue responses no longer rewrite only `selected_variant` and `opportunity_score`; they now project a champion-consistent cue or fail closed with explicit rationale.
-  - Trade and Analytics UI surfaces now read selection-state diagnostics instead of treating `cue.selected_variant` as sole ground truth.
