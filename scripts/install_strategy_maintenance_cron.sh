@@ -12,9 +12,9 @@ Options:
   --repo-root <path>            Repo root on host (default: /opt/cryptopairs)
   --python-bin <path>           Python binary (default: /usr/bin/python3)
   --env-file <path>             Hosted env file (default: /opt/cryptopairs/.env.hosted)
-  --timeout-seconds <seconds>   Per-step timeout (default: 420)
+  --timeout-seconds <seconds>   Per-step timeout (default: 900)
   --report-timeout-seconds <seconds>
-                               Per-request reporter timeout (default: 120)
+                               Per-request reporter timeout (default: 300)
   --deploy-health-retries <n>   Deploy health retries (default: 90)
   --deploy-health-sleep-secs <n>
                                Seconds between deploy health retries (default: 2)
@@ -31,8 +31,8 @@ TIMEZONE=""
 REPO_ROOT="/opt/cryptopairs"
 PYTHON_BIN="/usr/bin/python3"
 ENV_FILE="/opt/cryptopairs/.env.hosted"
-TIMEOUT_SECONDS="420"
-REPORT_TIMEOUT_SECONDS="120"
+TIMEOUT_SECONDS="900"
+REPORT_TIMEOUT_SECONDS="300"
 DEPLOY_HEALTH_RETRIES="90"
 DEPLOY_HEALTH_SLEEP_SECS="2"
 MODE="install"
