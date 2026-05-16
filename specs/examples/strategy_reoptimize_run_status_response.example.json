@@ -1,0 +1,145 @@
+{
+  "schema_version": "1.0.0",
+  "generated_at": "2026-05-17T02:21:08Z",
+  "run_id": "reopt_2026-05-17T02-15-00Z_000001",
+  "status": "DEGRADED",
+  "trigger_source": "SCHEDULED",
+  "requested_timeframes": ["1h"],
+  "created_at": "2026-05-17T02:15:00Z",
+  "started_at": "2026-05-17T02:15:02Z",
+  "finished_at": "2026-05-17T02:21:06Z",
+  "lease_owner": "strategy-service:worker-1",
+  "lease_generation": 1,
+  "lease_acquired_at": "2026-05-17T02:15:02Z",
+  "lease_expires_at": null,
+  "heartbeat_at": "2026-05-17T02:20:52Z",
+  "operator_action_required": true,
+  "progress": {
+    "phase": "TERMINAL",
+    "requested_timeframes": ["1h"],
+    "active_timeframe": null,
+    "planned_timeframe_count": 1,
+    "completed_timeframe_count": 1,
+    "failed_timeframe_count": 0,
+    "total_pairs_planned": 16,
+    "pairs_completed": 14,
+    "pairs_skipped": 2,
+    "pairs_failed": 0,
+    "selected_rows_written": 14,
+    "drift_rows_written": 3,
+    "transition_counts": {
+      "initialize_decisions": 2,
+      "unchanged_decisions": 9,
+      "champion_locks": 2,
+      "champion_promotions": 1
+    },
+    "critical_error_count": 1,
+    "non_critical_error_count": 0,
+    "percent_complete": 100,
+    "last_heartbeat_at": "2026-05-17T02:20:52Z"
+  },
+  "budgets": {
+    "budget_state": "EXHAUSTED",
+    "max_run_seconds": 900,
+    "max_timeframe_seconds": 300,
+    "max_pairs_per_run": 96,
+    "max_pairs_per_timeframe": 32,
+    "max_in_flight_pair_evaluations": 1,
+    "max_db_write_batch_size": 25,
+    "max_artifact_bytes": 10485760,
+    "min_cooldown_seconds": 3600,
+    "lease_ttl_seconds": 120,
+    "heartbeat_interval_seconds": 15,
+    "exhausted_budget": "TIMEFRAME_WALL_CLOCK"
+  },
+  "recommendation": {
+    "decision": "HOLD",
+    "reason_codes": ["BUDGET_EXHAUSTED"],
+    "summary": "The 1h run exceeded its timeframe budget. Treat results as degraded and do not promote automatically."
+  },
+  "fail_closed_reasons": ["BUDGET_EXHAUSTED"],
+  "artifact_manifest": {
+    "schema_version": "1.0.0",
+    "generated_at": "2026-05-17T02:21:07Z",
+    "run_id": "reopt_2026-05-17T02-15-00Z_000001",
+    "status": "DEGRADED",
+    "trigger_source": "SCHEDULED",
+    "artifact_root": "artifacts/strategy_reoptimize",
+    "run_artifact_dir": "runs/reopt_2026-05-17T02-15-00Z_000001",
+    "artifact_download_route": "/v1/strategy/reoptimize/artifact?path=",
+    "complete": true,
+    "total_bytes": 29696,
+    "artifacts": [
+      {
+        "kind": "REQUEST",
+        "path": "runs/reopt_2026-05-17T02-15-00Z_000001/request.json",
+        "content_type": "application/json",
+        "bytes": 512,
+        "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "created_at": "2026-05-17T02:15:00Z",
+        "required": true
+      },
+      {
+        "kind": "PROGRESS",
+        "path": "runs/reopt_2026-05-17T02-15-00Z_000001/progress.json",
+        "content_type": "application/json",
+        "bytes": 4096,
+        "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "created_at": "2026-05-17T02:21:06Z",
+        "required": true
+      },
+      {
+        "kind": "SUMMARY",
+        "path": "runs/reopt_2026-05-17T02-15-00Z_000001/summary.json",
+        "content_type": "application/json",
+        "bytes": 16384,
+        "sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "created_at": "2026-05-17T02:21:06Z",
+        "required": true
+      },
+      {
+        "kind": "ERRORS",
+        "path": "runs/reopt_2026-05-17T02-15-00Z_000001/errors.json",
+        "content_type": "application/json",
+        "bytes": 1024,
+        "sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+        "created_at": "2026-05-17T02:21:06Z",
+        "required": true
+      },
+      {
+        "kind": "OPERATOR_SUMMARY",
+        "path": "runs/reopt_2026-05-17T02-15-00Z_000001/operator_summary.md",
+        "content_type": "text/markdown",
+        "bytes": 7680,
+        "sha256": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+        "created_at": "2026-05-17T02:21:07Z",
+        "required": false
+      }
+    ],
+    "fail_closed_reasons": ["BUDGET_EXHAUSTED"],
+    "errors": [
+      {
+        "code": "BUDGET_EXHAUSTED",
+        "severity": "CRITICAL",
+        "message": "max_timeframe_seconds exhausted before all planned 1h pair work completed",
+        "phase": "PAIR_EVALUATION",
+        "timeframe": "1h",
+        "pair_id": null,
+        "retryable": true,
+        "occurred_at": "2026-05-17T02:20:59Z"
+      }
+    ]
+  },
+  "errors": [
+    {
+      "code": "BUDGET_EXHAUSTED",
+      "severity": "CRITICAL",
+      "message": "max_timeframe_seconds exhausted before all planned 1h pair work completed",
+      "phase": "PAIR_EVALUATION",
+      "timeframe": "1h",
+      "pair_id": null,
+      "retryable": true,
+      "occurred_at": "2026-05-17T02:20:59Z"
+    }
+  ]
+}

@@ -1,0 +1,59 @@
+{
+  "schema_version": "1.0.0",
+  "generated_at": "2026-05-17T02:17:30Z",
+  "accepted": true,
+  "cancel_result": "ACCEPTED",
+  "run_id": "reopt_2026-05-17T02-15-00Z_000001",
+  "status": "CANCEL_REQUESTED",
+  "previous_status": "RUNNING",
+  "trigger_source": "MAINTENANCE_REPORT",
+  "cancel_requested_at": "2026-05-17T02:17:30Z",
+  "cancelable": true,
+  "operator_action_required": false,
+  "progress": {
+    "phase": "PAIR_EVALUATION",
+    "requested_timeframes": ["1m", "15m", "1h"],
+    "active_timeframe": "15m",
+    "planned_timeframe_count": 3,
+    "completed_timeframe_count": 1,
+    "failed_timeframe_count": 0,
+    "total_pairs_planned": 48,
+    "pairs_completed": 19,
+    "pairs_skipped": 0,
+    "pairs_failed": 0,
+    "selected_rows_written": 16,
+    "drift_rows_written": 2,
+    "transition_counts": {
+      "initialize_decisions": 3,
+      "unchanged_decisions": 10,
+      "champion_locks": 5,
+      "champion_promotions": 1
+    },
+    "critical_error_count": 0,
+    "non_critical_error_count": 0,
+    "percent_complete": 39.58,
+    "last_heartbeat_at": "2026-05-17T02:17:24Z"
+  },
+  "budgets": {
+    "budget_state": "WITHIN_BUDGET",
+    "max_run_seconds": 900,
+    "max_timeframe_seconds": 300,
+    "max_pairs_per_run": 96,
+    "max_pairs_per_timeframe": 32,
+    "max_in_flight_pair_evaluations": 1,
+    "max_db_write_batch_size": 25,
+    "max_artifact_bytes": 10485760,
+    "min_cooldown_seconds": 3600,
+    "lease_ttl_seconds": 120,
+    "heartbeat_interval_seconds": 15,
+    "exhausted_budget": null
+  },
+  "recommendation": {
+    "decision": "HOLD",
+    "reason_codes": ["CANCELED", "UNKNOWN_STATUS"],
+    "summary": "Cancellation was accepted and will be honored at the next safe checkpoint."
+  },
+  "fail_closed_reasons": ["CANCELED", "UNKNOWN_STATUS"],
+  "artifact_manifest": null,
+  "errors": []
+}

@@ -1,0 +1,163 @@
+{
+  "$id": "https://cryptopairs/specs/contracts/strategy_reoptimize_run_artifact_manifest.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "StrategyReoptimizeRunArtifactManifest",
+  "type": "object",
+  "additionalProperties": false,
+  "$comment": "Manifest for bounded async reoptimization run artifacts. Artifact paths are relative to the configured artifact root and must not contain parent traversal. This manifest records evidence only; it does not authorize automatic promotion or repair-provenance graduation.",
+  "required": [
+    "schema_version",
+    "generated_at",
+    "run_id",
+    "status",
+    "trigger_source",
+    "artifact_root",
+    "run_artifact_dir",
+    "artifact_download_route",
+    "complete",
+    "total_bytes",
+    "artifacts",
+    "fail_closed_reasons",
+    "errors"
+  ],
+  "properties": {
+    "schema_version": { "type": "string", "const": "1.0.0" },
+    "generated_at": { "type": "string", "format": "date-time" },
+    "run_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$"
+    },
+    "status": { "$ref": "#/$defs/run_status" },
+    "trigger_source": { "$ref": "#/$defs/trigger_source" },
+    "artifact_root": { "type": "string", "minLength": 1 },
+    "run_artifact_dir": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^(?!/)(?!.*\\.\\.)[A-Za-z0-9._/-]+$"
+    },
+    "artifact_download_route": { "type": "string", "minLength": 1 },
+    "complete": { "type": "boolean" },
+    "total_bytes": { "type": "integer", "minimum": 0 },
+    "artifacts": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/artifact" }
+    },
+    "fail_closed_reasons": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/fail_closed_reason" },
+      "uniqueItems": true
+    },
+    "errors": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/error" }
+    }
+  },
+  "$defs": {
+    "run_status": {
+      "type": "string",
+      "$comment": "Bounded runner states. Unknown or invalid states are schema failures and must be treated fail-closed by consumers.",
+      "enum": [
+        "QUEUED",
+        "LEASED",
+        "RUNNING",
+        "CANCEL_REQUESTED",
+        "CANCELED",
+        "SUCCEEDED",
+        "DEGRADED",
+        "FAILED",
+        "EXPIRED"
+      ]
+    },
+    "trigger_source": {
+      "type": "string",
+      "enum": ["SCHEDULED", "MANUAL_API", "MAINTENANCE_REPORT", "RECOVERY"]
+    },
+    "timeframe_nullable": {
+      "type": ["string", "null"],
+      "enum": ["1m", "15m", "1h", null]
+    },
+    "phase": {
+      "type": "string",
+      "enum": [
+        "QUEUED",
+        "PRECHECK",
+        "TIMEFRAME_PRECHECK",
+        "PAIR_EVALUATION",
+        "PERSIST_SELECTED_ROWS",
+        "PERSIST_SHADOW_MODEL",
+        "TIMEFRAME_SUMMARY",
+        "RUN_SUMMARY",
+        "ARTIFACT_WRITE",
+        "TERMINAL"
+      ]
+    },
+    "artifact": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "path", "content_type", "bytes", "sha256", "created_at", "required"],
+      "properties": {
+        "kind": {
+          "type": "string",
+          "enum": [
+            "REQUEST",
+            "PROGRESS",
+            "SUMMARY",
+            "ERRORS",
+            "TIMEFRAME_DETAIL",
+            "OPERATOR_SUMMARY"
+          ]
+        },
+        "path": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "^(?!/)(?!.*\\.\\.)[A-Za-z0-9._/-]+$"
+        },
+        "content_type": {
+          "type": "string",
+          "enum": ["application/json", "text/markdown"]
+        },
+        "bytes": { "type": "integer", "minimum": 0 },
+        "sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+        "created_at": { "type": "string", "format": "date-time" },
+        "required": { "type": "boolean" }
+      }
+    },
+    "fail_closed_reason": {
+      "type": "string",
+      "enum": [
+        "MISSING_TELEMETRY",
+        "UNKNOWN_STATUS",
+        "STALE_STATUS",
+        "LEASE_LOST",
+        "BUDGET_EXHAUSTED",
+        "CANCELED",
+        "ARTIFACT_FAILED",
+        "INTEGRITY_UNKNOWN",
+        "RISK_UNKNOWN",
+        "ACCOUNTING_ANOMALY",
+        "SCHEDULE_MISSED",
+        "UNSAFE_PROMOTION_ATTEMPT",
+        "CONFIG_INVALID",
+        "REPAIR_PROVENANCE_ACTIVE"
+      ]
+    },
+    "error": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["code", "severity", "message", "phase", "timeframe", "pair_id", "retryable", "occurred_at"],
+      "properties": {
+        "code": { "type": "string", "minLength": 1 },
+        "severity": { "type": "string", "enum": ["CRITICAL", "NON_CRITICAL"] },
+        "message": { "type": "string", "minLength": 1 },
+        "phase": { "$ref": "#/$defs/phase" },
+        "timeframe": { "$ref": "#/$defs/timeframe_nullable" },
+        "pair_id": { "type": ["string", "null"] },
+        "retryable": { "type": "boolean" },
+        "occurred_at": { "type": "string", "format": "date-time" }
+      }
+    }
+  },
+  "version": "1.0.0"
+}

@@ -1,0 +1,372 @@
+{
+  "$id": "https://cryptopairs/specs/contracts/strategy_reoptimize_run_cancel_response.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "StrategyReoptimizeRunCancelResponse",
+  "type": "object",
+  "additionalProperties": false,
+  "$comment": "Additive async reoptimization cancellation contract. Cancellation is a state transition; accepted cancellation never marks a run successful, resets budgets, extends leases, or changes terminal recommendations.",
+  "required": [
+    "schema_version",
+    "generated_at",
+    "accepted",
+    "cancel_result",
+    "run_id",
+    "status",
+    "previous_status",
+    "trigger_source",
+    "cancel_requested_at",
+    "cancelable",
+    "operator_action_required",
+    "progress",
+    "budgets",
+    "recommendation",
+    "fail_closed_reasons",
+    "artifact_manifest",
+    "errors"
+  ],
+  "properties": {
+    "schema_version": { "type": "string", "const": "1.0.0" },
+    "generated_at": { "type": "string", "format": "date-time" },
+    "accepted": { "type": "boolean" },
+    "cancel_result": { "$ref": "#/$defs/cancel_result" },
+    "run_id": { "$ref": "#/$defs/run_id" },
+    "status": { "$ref": "#/$defs/run_status" },
+    "previous_status": { "$ref": "#/$defs/run_status" },
+    "trigger_source": { "$ref": "#/$defs/trigger_source" },
+    "cancel_requested_at": { "type": ["string", "null"], "format": "date-time" },
+    "cancelable": { "type": "boolean" },
+    "operator_action_required": { "type": "boolean" },
+    "progress": { "$ref": "#/$defs/progress" },
+    "budgets": { "$ref": "#/$defs/budgets" },
+    "recommendation": { "$ref": "#/$defs/recommendation" },
+    "fail_closed_reasons": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/fail_closed_reason" },
+      "uniqueItems": true
+    },
+    "artifact_manifest": { "$ref": "#/$defs/artifact_manifest_nullable" },
+    "errors": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/error" }
+    }
+  },
+  "$defs": {
+    "run_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$"
+    },
+    "run_status": {
+      "type": "string",
+      "$comment": "Bounded runner states. Unknown or invalid states are schema failures and must be treated fail-closed by consumers.",
+      "enum": [
+        "QUEUED",
+        "LEASED",
+        "RUNNING",
+        "CANCEL_REQUESTED",
+        "CANCELED",
+        "SUCCEEDED",
+        "DEGRADED",
+        "FAILED",
+        "EXPIRED"
+      ]
+    },
+    "trigger_source": {
+      "type": "string",
+      "enum": ["SCHEDULED", "MANUAL_API", "MAINTENANCE_REPORT", "RECOVERY"]
+    },
+    "cancel_result": {
+      "type": "string",
+      "enum": [
+        "REQUESTED",
+        "ACCEPTED",
+        "COMPLETED",
+        "REJECTED_TERMINAL",
+        "REJECTED_NOT_FOUND",
+        "FAILED",
+        "TIMED_OUT"
+      ]
+    },
+    "timeframe": {
+      "type": "string",
+      "enum": ["1m", "15m", "1h"]
+    },
+    "phase": {
+      "type": "string",
+      "enum": [
+        "QUEUED",
+        "PRECHECK",
+        "TIMEFRAME_PRECHECK",
+        "PAIR_EVALUATION",
+        "PERSIST_SELECTED_ROWS",
+        "PERSIST_SHADOW_MODEL",
+        "TIMEFRAME_SUMMARY",
+        "RUN_SUMMARY",
+        "ARTIFACT_WRITE",
+        "TERMINAL"
+      ]
+    },
+    "progress": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "phase",
+        "requested_timeframes",
+        "active_timeframe",
+        "planned_timeframe_count",
+        "completed_timeframe_count",
+        "failed_timeframe_count",
+        "total_pairs_planned",
+        "pairs_completed",
+        "pairs_skipped",
+        "pairs_failed",
+        "selected_rows_written",
+        "drift_rows_written",
+        "transition_counts",
+        "critical_error_count",
+        "non_critical_error_count",
+        "percent_complete",
+        "last_heartbeat_at"
+      ],
+      "properties": {
+        "phase": { "$ref": "#/$defs/phase" },
+        "requested_timeframes": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/timeframe" },
+          "minItems": 1,
+          "uniqueItems": true
+        },
+        "active_timeframe": {
+          "type": ["string", "null"],
+          "enum": ["1m", "15m", "1h", null]
+        },
+        "planned_timeframe_count": { "type": "integer", "minimum": 0 },
+        "completed_timeframe_count": { "type": "integer", "minimum": 0 },
+        "failed_timeframe_count": { "type": "integer", "minimum": 0 },
+        "total_pairs_planned": { "type": "integer", "minimum": 0 },
+        "pairs_completed": { "type": "integer", "minimum": 0 },
+        "pairs_skipped": { "type": "integer", "minimum": 0 },
+        "pairs_failed": { "type": "integer", "minimum": 0 },
+        "selected_rows_written": { "type": "integer", "minimum": 0 },
+        "drift_rows_written": { "type": "integer", "minimum": 0 },
+        "transition_counts": { "$ref": "#/$defs/transition_counts" },
+        "critical_error_count": { "type": "integer", "minimum": 0 },
+        "non_critical_error_count": { "type": "integer", "minimum": 0 },
+        "percent_complete": { "type": "number", "minimum": 0, "maximum": 100 },
+        "last_heartbeat_at": { "type": ["string", "null"], "format": "date-time" }
+      }
+    },
+    "transition_counts": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "initialize_decisions",
+        "unchanged_decisions",
+        "champion_locks",
+        "champion_promotions"
+      ],
+      "properties": {
+        "initialize_decisions": { "type": "integer", "minimum": 0 },
+        "unchanged_decisions": { "type": "integer", "minimum": 0 },
+        "champion_locks": { "type": "integer", "minimum": 0 },
+        "champion_promotions": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "budgets": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "budget_state",
+        "max_run_seconds",
+        "max_timeframe_seconds",
+        "max_pairs_per_run",
+        "max_pairs_per_timeframe",
+        "max_in_flight_pair_evaluations",
+        "max_db_write_batch_size",
+        "max_artifact_bytes",
+        "min_cooldown_seconds",
+        "lease_ttl_seconds",
+        "heartbeat_interval_seconds",
+        "exhausted_budget"
+      ],
+      "properties": {
+        "budget_state": {
+          "type": "string",
+          "enum": ["WITHIN_BUDGET", "EXHAUSTED", "UNKNOWN"]
+        },
+        "max_run_seconds": { "type": ["integer", "null"], "minimum": 1 },
+        "max_timeframe_seconds": { "type": ["integer", "null"], "minimum": 1 },
+        "max_pairs_per_run": { "type": ["integer", "null"], "minimum": 1 },
+        "max_pairs_per_timeframe": { "type": ["integer", "null"], "minimum": 1 },
+        "max_in_flight_pair_evaluations": { "type": ["integer", "null"], "minimum": 1 },
+        "max_db_write_batch_size": { "type": ["integer", "null"], "minimum": 1 },
+        "max_artifact_bytes": { "type": ["integer", "null"], "minimum": 1 },
+        "min_cooldown_seconds": { "type": ["integer", "null"], "minimum": 0 },
+        "lease_ttl_seconds": { "type": ["integer", "null"], "minimum": 1 },
+        "heartbeat_interval_seconds": { "type": ["integer", "null"], "minimum": 1 },
+        "exhausted_budget": {
+          "type": ["string", "null"],
+          "enum": [
+            "RUN_WALL_CLOCK",
+            "TIMEFRAME_WALL_CLOCK",
+            "PAIR_EVALUATIONS_RUN",
+            "PAIR_EVALUATIONS_TIMEFRAME",
+            "PAIR_CONCURRENCY",
+            "DB_WRITE_BATCH",
+            "ARTIFACT_BYTES",
+            "COOLDOWN",
+            "LEASE_TTL",
+            null
+          ]
+        }
+      }
+    },
+    "recommendation": {
+      "type": "object",
+      "additionalProperties": false,
+      "$comment": "PROMOTION_CANDIDATE_AVAILABLE is not an action and must never enqueue promotion. Repair-only provenance such as RECANONICALIZED_LEGACY_ROW must remain fail-closed unless an explicit operator-approved transition exists. Unknown recommendation values must be treated as HOLD by consumers.",
+      "required": ["decision", "reason_codes", "summary"],
+      "properties": {
+        "decision": {
+          "type": "string",
+          "enum": [
+            "HOLD",
+            "OPERATOR_REVIEW_REQUIRED",
+            "PROMOTION_CANDIDATE_AVAILABLE",
+            "REVERT_REVIEW_REQUIRED"
+          ]
+        },
+        "reason_codes": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/fail_closed_reason" },
+          "uniqueItems": true
+        },
+        "summary": { "type": "string", "minLength": 1 }
+      }
+    },
+    "fail_closed_reason": {
+      "type": "string",
+      "enum": [
+        "MISSING_TELEMETRY",
+        "UNKNOWN_STATUS",
+        "STALE_STATUS",
+        "LEASE_LOST",
+        "BUDGET_EXHAUSTED",
+        "CANCELED",
+        "ARTIFACT_FAILED",
+        "INTEGRITY_UNKNOWN",
+        "RISK_UNKNOWN",
+        "ACCOUNTING_ANOMALY",
+        "SCHEDULE_MISSED",
+        "UNSAFE_PROMOTION_ATTEMPT",
+        "CONFIG_INVALID",
+        "REPAIR_PROVENANCE_ACTIVE"
+      ]
+    },
+    "artifact_manifest_nullable": {
+      "oneOf": [
+        { "type": "null" },
+        { "$ref": "#/$defs/artifact_manifest" }
+      ]
+    },
+    "artifact_manifest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "generated_at",
+        "run_id",
+        "status",
+        "trigger_source",
+        "artifact_root",
+        "run_artifact_dir",
+        "artifact_download_route",
+        "complete",
+        "total_bytes",
+        "artifacts",
+        "fail_closed_reasons",
+        "errors"
+      ],
+      "properties": {
+        "schema_version": { "type": "string", "const": "1.0.0" },
+        "generated_at": { "type": "string", "format": "date-time" },
+        "run_id": { "$ref": "#/$defs/run_id" },
+        "status": { "$ref": "#/$defs/run_status" },
+        "trigger_source": { "$ref": "#/$defs/trigger_source" },
+        "artifact_root": { "type": "string", "minLength": 1 },
+        "run_artifact_dir": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "^(?!/)(?!.*\\.\\.)[A-Za-z0-9._/-]+$"
+        },
+        "artifact_download_route": { "type": "string", "minLength": 1 },
+        "complete": { "type": "boolean" },
+        "total_bytes": { "type": "integer", "minimum": 0 },
+        "artifacts": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/artifact" }
+        },
+        "fail_closed_reasons": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/fail_closed_reason" },
+          "uniqueItems": true
+        },
+        "errors": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/error" }
+        }
+      }
+    },
+    "artifact": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "path", "content_type", "bytes", "sha256", "created_at", "required"],
+      "properties": {
+        "kind": {
+          "type": "string",
+          "enum": [
+            "REQUEST",
+            "PROGRESS",
+            "SUMMARY",
+            "ERRORS",
+            "TIMEFRAME_DETAIL",
+            "OPERATOR_SUMMARY"
+          ]
+        },
+        "path": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "^(?!/)(?!.*\\.\\.)[A-Za-z0-9._/-]+$"
+        },
+        "content_type": {
+          "type": "string",
+          "enum": ["application/json", "text/markdown"]
+        },
+        "bytes": { "type": "integer", "minimum": 0 },
+        "sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+        "created_at": { "type": "string", "format": "date-time" },
+        "required": { "type": "boolean" }
+      }
+    },
+    "error": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["code", "severity", "message", "phase", "timeframe", "pair_id", "retryable", "occurred_at"],
+      "properties": {
+        "code": { "type": "string", "minLength": 1 },
+        "severity": { "type": "string", "enum": ["CRITICAL", "NON_CRITICAL"] },
+        "message": { "type": "string", "minLength": 1 },
+        "phase": { "$ref": "#/$defs/phase" },
+        "timeframe": {
+          "type": ["string", "null"],
+          "enum": ["1m", "15m", "1h", null]
+        },
+        "pair_id": { "type": ["string", "null"] },
+        "retryable": { "type": "boolean" },
+        "occurred_at": { "type": "string", "format": "date-time" }
+      }
+    }
+  },
+  "version": "1.0.0"
+}
