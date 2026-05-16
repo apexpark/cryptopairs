@@ -86,6 +86,7 @@ struct StrategySettings {
     funding_drag_bps: f64,
     min_samples_target: usize,
     reopt_interval_secs: u64,
+    reopt_worker_enabled: bool,
     shadow_ml_min_rows: usize,
     shadow_ml_training_limit: usize,
     trading_fee_bps: f64,
@@ -211,6 +212,7 @@ impl StrategySettings {
         let funding_drag_bps = parse_env_f64("STRATEGY_FUNDING_DRAG_BPS", 0.6);
         let min_samples_target = parse_env_usize("STRATEGY_MIN_SAMPLES_TARGET", 8);
         let reopt_interval_secs = parse_env_u64("STRATEGY_REOPT_INTERVAL_SECS", 3600);
+        let reopt_worker_enabled = parse_env_bool("STRATEGY_REOPT_WORKER_ENABLED", true);
         let shadow_ml_min_rows = parse_env_usize("STRATEGY_SHADOW_ML_MIN_ROWS", 64);
         let shadow_ml_training_limit = parse_env_usize("STRATEGY_SHADOW_ML_TRAINING_LIMIT", 1200);
         let trading_fee_bps = parse_env_f64("STRATEGY_TRADING_FEE_BPS", 1.2);
@@ -347,6 +349,7 @@ impl StrategySettings {
             funding_drag_bps,
             min_samples_target,
             reopt_interval_secs,
+            reopt_worker_enabled,
             shadow_ml_min_rows,
             shadow_ml_training_limit,
             trading_fee_bps,
@@ -5167,7 +5170,12 @@ async fn main() -> anyhow::Result<()> {
 
     let _slippage_worker = spawn_sampled_slippage_worker(state.clone());
     let _history_retention_worker = spawn_history_retention_worker(state.clone());
-    let _worker = spawn_reoptimize_worker(state.clone());
+    let _reoptimize_worker = if settings.reopt_worker_enabled {
+        Some(spawn_reoptimize_worker(state.clone()))
+    } else {
+        info!("strategy reoptimize worker disabled");
+        None
+    };
     let cors = CorsLayer::new()
         .allow_origin(Any)
         .allow_methods(Any)
@@ -5246,6 +5254,7 @@ async fn main() -> anyhow::Result<()> {
         exit_band = settings.exit_band,
         stop_band = settings.stop_band,
         reopt_interval_secs = settings.reopt_interval_secs,
+        reopt_worker_enabled = settings.reopt_worker_enabled,
         shadow_ml_min_rows = settings.shadow_ml_min_rows,
         shadow_ml_training_limit = settings.shadow_ml_training_limit,
         trading_fee_bps = settings.trading_fee_bps,
@@ -5597,8 +5606,14 @@ async fn maybe_apply_live_mark_override(
 
 fn spawn_reoptimize_worker(state: AppState) -> tokio::task::JoinHandle<()> {
     tokio::spawn(async move {
-        let interval_secs = state.settings.reopt_interval_secs.max(60);
+        let interval_secs = effective_reopt_interval_secs(state.settings.reopt_interval_secs);
         let mut interval = tokio::time::interval(std::time::Duration::from_secs(interval_secs));
+        interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+        interval.tick().await;
+        info!(
+            reopt_interval_secs = interval_secs,
+            "strategy reoptimize worker scheduled"
+        );
         loop {
             interval.tick().await;
             let mut pairs_processed = 0usize;
@@ -10650,11 +10665,17 @@ fn parse_env_i64(key: &str, default: i64) -> i64 {
 fn parse_env_bool(key: &str, default: bool) -> bool {
     std::env::var(key)
         .ok()
-        .map(|value| {
-            let normalized = value.trim().to_ascii_lowercase();
-            matches!(normalized.as_str(), "1" | "true" | "yes" | "on")
-        })
+        .map(|value| parse_bool_token(&value))
         .unwrap_or(default)
+}
+
+fn parse_bool_token(value: &str) -> bool {
+    let normalized = value.trim().to_ascii_lowercase();
+    matches!(normalized.as_str(), "1" | "true" | "yes" | "on")
+}
+
+fn effective_reopt_interval_secs(configured: u64) -> u64 {
+    configured.max(60)
 }
 
 #[cfg(test)]
@@ -10668,10 +10689,11 @@ mod tests {
         compute_walk_forward_summary, cue_for_pairs_response, days_covered,
         decide_candidate_probation_transition, decide_champion_transition,
         derive_paper_trades_from_series, derive_replay_trades_from_series,
-        estimate_research_combinations, evaluate_recent_performance_gate,
-        expectancy_objective_score, expected_funding_events_crossed, fetch_open_live_trade_pairs,
-        finalize_trade_gate, group_trade_now_rows, load_latest_learning_overlay,
-        normalize_funding_rate, parse_backtest_exit_mode, parse_candidate_inbox_query,
+        effective_reopt_interval_secs, estimate_research_combinations,
+        evaluate_recent_performance_gate, expectancy_objective_score,
+        expected_funding_events_crossed, fetch_open_live_trade_pairs, finalize_trade_gate,
+        group_trade_now_rows, load_latest_learning_overlay, normalize_funding_rate,
+        parse_backtest_exit_mode, parse_bool_token, parse_candidate_inbox_query,
         parse_expectancy_query, parse_opportunity_history_stats_timeframe,
         parse_opportunity_history_window, parse_paper_trades_window, parse_replay_trades_query,
         parse_trade_now_query, percentile, project_continuous_funding_bps, refresh_setup_gate,
@@ -10722,6 +10744,23 @@ mod tests {
             validation_bars: 30_240,
             source: "TEST".to_string(),
             updated_at: Utc::now(),
+        }
+    }
+
+    #[test]
+    fn reoptimize_worker_interval_clamps_to_minimum() {
+        assert_eq!(effective_reopt_interval_secs(0), 60);
+        assert_eq!(effective_reopt_interval_secs(30), 60);
+        assert_eq!(effective_reopt_interval_secs(3600), 3600);
+    }
+
+    #[test]
+    fn boolean_env_tokens_are_explicitly_enabled() {
+        for value in ["1", "true", "TRUE", "yes", "on", " On "] {
+            assert!(parse_bool_token(value), "{value} should enable");
+        }
+        for value in ["0", "false", "no", "off", "", "maybe"] {
+            assert!(!parse_bool_token(value), "{value} should disable");
         }
     }
 

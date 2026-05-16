@@ -686,6 +686,9 @@ This project follows SemVer as defined in `docs/02-versioning-and-releases.md`.
   - preview quantities now reflect actual executable submit size.
 
 ### Fixed
+- Strategy reoptimize worker no longer runs a full optimizer tick immediately on service boot, and
+  can be disabled with `STRATEGY_REOPT_WORKER_ENABLED=false` while keeping manual reoptimize
+  available.
 - Strategy selected-signal transitions now self-heal `RECANONICALIZED_LEGACY_ROW` provenance to
   `AUTO_CHAMPION` only when the current evaluated-best variant matches the stored champion,
   allowing repair rows to clear without relaxing Trade Now gates.
