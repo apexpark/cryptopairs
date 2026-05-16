@@ -13,6 +13,7 @@ This project follows SemVer as defined in `docs/02-versioning-and-releases.md`.
 - `docs/27` live cue mismatch audit now reads `cue.selection_state` fields for stored champion, evaluated best, source, and validation state instead of legacy cue-selected fields.
 
 ### Added
+- Trade Now rows now include an additive `z_score` alias that mirrors `spread_z` for operator diagnostics and live-z comparisons.
 - Execution service now exposes `POST /v1/execution/paper/order-intent`, persists `execution_mode=PAPER` order lifecycle rows, and keeps live risk, live portfolio reads, stale-ack watchdog, and live observability scoped to `execution_mode=LIVE`.
 - Strategy service now exposes Prometheus-style `/metrics` counters for champion-selection observability:
   - `pairs_cue_projection_total{outcome}`

@@ -4247,6 +4247,7 @@ struct TradeNowRow {
     selected_variant: String,
     direction_hint: String,
     spread_z: f64,
+    z_score: f64,
     opportunity_score: f64,
     confidence_band: String,
     expected_hold_bars: i64,
@@ -6684,6 +6685,8 @@ fn build_trade_now_row(
         push_unique_code(&mut rationale_codes, "OUTSIDE_APPROVED_UNIVERSE");
     }
 
+    let spread_z = cue.spread_z;
+
     TradeNowRow {
         pair_id: cue.pair_id.clone(),
         left_instrument: cue.left_instrument.clone(),
@@ -6691,7 +6694,8 @@ fn build_trade_now_row(
         timeframe: cue.timeframe.clone(),
         selected_variant: cue.selected_variant.clone(),
         direction_hint: cue.direction_hint.clone(),
-        spread_z: cue.spread_z,
+        spread_z,
+        z_score: spread_z,
         opportunity_score: cue.opportunity_score,
         confidence_band: cue.confidence_band.clone(),
         expected_hold_bars: cue.expected_hold_bars,
@@ -12366,6 +12370,8 @@ mod tests {
         let row = build_trade_now_row(&cue, &snapshot, &policy, false, None);
 
         assert_eq!(row.decision_bucket, "EXCLUDED");
+        assert!((row.z_score - row.spread_z).abs() < 1e-9);
+        assert!((row.z_score - cue.spread_z).abs() < 1e-9);
         assert_eq!(row.decision_reason_code, "PROVENANCE_POLICY_BLOCKED");
         assert_eq!(
             row.blocked_reason_code.as_deref(),
@@ -12666,6 +12672,19 @@ mod tests {
             vec![tradable_row, override_row, watchlist_row, excluded_row],
         );
         let instance = serde_json::to_value(&response).expect("serialize trade-now response");
+        for bucket in ["tradable_now", "watchlist", "excluded"] {
+            for row in instance
+                .get(bucket)
+                .and_then(serde_json::Value::as_array)
+                .expect("bucket array")
+            {
+                assert_eq!(
+                    row.get("z_score"),
+                    row.get("spread_z"),
+                    "trade-now z_score alias must mirror spread_z in {bucket}"
+                );
+            }
+        }
         let schema_path = trade_now_schema_path();
         let schema_json: serde_json::Value = serde_json::from_slice(
             &fs::read(&schema_path).expect("read trade-now response schema"),

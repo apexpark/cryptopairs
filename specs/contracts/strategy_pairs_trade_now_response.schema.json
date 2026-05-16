@@ -243,6 +243,10 @@
           "enum": ["LONG_SPREAD", "SHORT_SPREAD", "NONE"]
         },
         "spread_z": { "type": "number" },
+        "z_score": {
+          "type": "number",
+          "description": "Operator-facing alias for spread_z. Kept numerically identical to spread_z for live-z diagnostics."
+        },
         "opportunity_score": { "type": "number" },
         "confidence_band": {
           "type": "string",
