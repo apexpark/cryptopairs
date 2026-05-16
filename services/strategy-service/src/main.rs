@@ -93,6 +93,7 @@ struct StrategySettings {
     slippage_base_bps: f64,
     slippage_vol_multiplier: f64,
     slippage_z_multiplier: f64,
+    sampled_slippage_worker_enabled: bool,
     sampled_slippage_interval_ms: u64,
     sampled_slippage_warmup_secs: u64,
     sampled_slippage_stale_secs: u64,
@@ -140,6 +141,7 @@ struct StrategySettings {
     maintenance_action_skip_pull: bool,
     opportunity_history_retention_days: u64,
     paper_trades_history_retention_days: u64,
+    history_retention_worker_enabled: bool,
     history_prune_interval_seconds: u64,
     ui_access_password: String,
 }
@@ -219,6 +221,8 @@ impl StrategySettings {
         let slippage_base_bps = parse_env_f64("STRATEGY_SLIPPAGE_BASE_BPS", 0.8);
         let slippage_vol_multiplier = parse_env_f64("STRATEGY_SLIPPAGE_VOL_MULTIPLIER", 0.45);
         let slippage_z_multiplier = parse_env_f64("STRATEGY_SLIPPAGE_Z_MULTIPLIER", 0.20);
+        let sampled_slippage_worker_enabled =
+            parse_env_bool("STRATEGY_SAMPLED_SLIPPAGE_WORKER_ENABLED", true);
         let sampled_slippage_interval_ms =
             parse_env_u64("STRATEGY_SAMPLED_SLIPPAGE_INTERVAL_MS", 1000);
         let sampled_slippage_warmup_secs =
@@ -313,6 +317,8 @@ impl StrategySettings {
             parse_env_u64("STRATEGY_OPPORTUNITY_HISTORY_RETENTION_DAYS", 3_650).max(1);
         let paper_trades_history_retention_days =
             parse_env_u64("STRATEGY_PAPER_TRADES_HISTORY_RETENTION_DAYS", 3_650).max(1);
+        let history_retention_worker_enabled =
+            parse_env_bool("STRATEGY_HISTORY_RETENTION_WORKER_ENABLED", true);
         let history_prune_interval_seconds =
             parse_env_u64("STRATEGY_HISTORY_PRUNE_INTERVAL_SECONDS", 3_600).max(60);
         let ui_access_password =
@@ -356,6 +362,7 @@ impl StrategySettings {
             slippage_base_bps,
             slippage_vol_multiplier,
             slippage_z_multiplier,
+            sampled_slippage_worker_enabled,
             sampled_slippage_interval_ms,
             sampled_slippage_warmup_secs,
             sampled_slippage_stale_secs,
@@ -403,6 +410,7 @@ impl StrategySettings {
             maintenance_action_skip_pull,
             opportunity_history_retention_days,
             paper_trades_history_retention_days,
+            history_retention_worker_enabled,
             history_prune_interval_seconds,
             ui_access_password,
         }
@@ -3557,7 +3565,8 @@ impl SampledSlippageStore {
             }
         }
 
-        let interval_ms = settings.sampled_slippage_interval_ms.max(250);
+        let interval_ms =
+            effective_sampled_slippage_interval_ms(settings.sampled_slippage_interval_ms);
         let warmup_samples = ((settings.sampled_slippage_warmup_secs.max(1) * 1000)
             .div_ceil(interval_ms))
         .max(1) as usize;
@@ -5168,8 +5177,18 @@ async fn main() -> anyhow::Result<()> {
         trade_now_observability,
     };
 
-    let _slippage_worker = spawn_sampled_slippage_worker(state.clone());
-    let _history_retention_worker = spawn_history_retention_worker(state.clone());
+    let _slippage_worker = if settings.sampled_slippage_worker_enabled {
+        Some(spawn_sampled_slippage_worker(state.clone()))
+    } else {
+        info!("sampled slippage worker disabled");
+        None
+    };
+    let _history_retention_worker = if settings.history_retention_worker_enabled {
+        Some(spawn_history_retention_worker(state.clone()))
+    } else {
+        info!("strategy history retention worker disabled");
+        None
+    };
     let _reoptimize_worker = if settings.reopt_worker_enabled {
         Some(spawn_reoptimize_worker(state.clone()))
     } else {
@@ -5262,6 +5281,7 @@ async fn main() -> anyhow::Result<()> {
         slippage_base_bps = settings.slippage_base_bps,
         slippage_vol_multiplier = settings.slippage_vol_multiplier,
         slippage_z_multiplier = settings.slippage_z_multiplier,
+        sampled_slippage_worker_enabled = settings.sampled_slippage_worker_enabled,
         performance_gate_min_trades = settings.performance_gate_min_trades,
         performance_gate_lookback_trades = settings.performance_gate_lookback_trades,
         performance_gate_exit_mode = %settings.performance_gate_exit_mode,
@@ -5315,6 +5335,7 @@ async fn main() -> anyhow::Result<()> {
         maintenance_action_skip_pull = settings.maintenance_action_skip_pull,
         opportunity_history_retention_days = settings.opportunity_history_retention_days,
         paper_trades_history_retention_days = settings.paper_trades_history_retention_days,
+        history_retention_worker_enabled = settings.history_retention_worker_enabled,
         history_prune_interval_seconds = settings.history_prune_interval_seconds,
         ui_access_enabled = settings.ui_access_enabled(),
         "strategy-service started"
@@ -5326,8 +5347,15 @@ async fn main() -> anyhow::Result<()> {
 
 fn spawn_sampled_slippage_worker(state: AppState) -> tokio::task::JoinHandle<()> {
     tokio::spawn(async move {
-        let interval_ms = state.settings.sampled_slippage_interval_ms.max(250);
+        let interval_ms =
+            effective_sampled_slippage_interval_ms(state.settings.sampled_slippage_interval_ms);
         let mut interval = tokio::time::interval(std::time::Duration::from_millis(interval_ms));
+        interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+        interval.tick().await;
+        info!(
+            sampled_slippage_interval_ms = interval_ms,
+            "sampled slippage worker scheduled"
+        );
         loop {
             interval.tick().await;
             match refresh_sampled_slippage(&state).await {
@@ -5401,8 +5429,15 @@ async fn refresh_sampled_slippage(state: &AppState) -> anyhow::Result<usize> {
 
 fn spawn_history_retention_worker(state: AppState) -> tokio::task::JoinHandle<()> {
     tokio::spawn(async move {
-        let interval_secs = state.settings.history_prune_interval_seconds.max(60);
+        let interval_secs =
+            effective_history_prune_interval_secs(state.settings.history_prune_interval_seconds);
         let mut interval = tokio::time::interval(std::time::Duration::from_secs(interval_secs));
+        interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+        interval.tick().await;
+        info!(
+            history_prune_interval_seconds = interval_secs,
+            "strategy history retention worker scheduled"
+        );
         loop {
             interval.tick().await;
             if let Err(error) = prune_strategy_history(&state).await {
@@ -10678,6 +10713,14 @@ fn effective_reopt_interval_secs(configured: u64) -> u64 {
     configured.max(60)
 }
 
+fn effective_sampled_slippage_interval_ms(configured: u64) -> u64 {
+    configured.max(250)
+}
+
+fn effective_history_prune_interval_secs(configured: u64) -> u64 {
+    configured.max(60)
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
@@ -10689,7 +10732,8 @@ mod tests {
         compute_walk_forward_summary, cue_for_pairs_response, days_covered,
         decide_candidate_probation_transition, decide_champion_transition,
         derive_paper_trades_from_series, derive_replay_trades_from_series,
-        effective_reopt_interval_secs, estimate_research_combinations,
+        effective_history_prune_interval_secs, effective_reopt_interval_secs,
+        effective_sampled_slippage_interval_ms, estimate_research_combinations,
         evaluate_recent_performance_gate, expectancy_objective_score,
         expected_funding_events_crossed, fetch_open_live_trade_pairs, finalize_trade_gate,
         group_trade_now_rows, load_latest_learning_overlay, normalize_funding_rate,
@@ -10752,6 +10796,12 @@ mod tests {
         assert_eq!(effective_reopt_interval_secs(0), 60);
         assert_eq!(effective_reopt_interval_secs(30), 60);
         assert_eq!(effective_reopt_interval_secs(3600), 3600);
+        assert_eq!(effective_sampled_slippage_interval_ms(0), 250);
+        assert_eq!(effective_sampled_slippage_interval_ms(100), 250);
+        assert_eq!(effective_sampled_slippage_interval_ms(60_000), 60_000);
+        assert_eq!(effective_history_prune_interval_secs(0), 60);
+        assert_eq!(effective_history_prune_interval_secs(30), 60);
+        assert_eq!(effective_history_prune_interval_secs(3600), 3600);
     }
 
     #[test]

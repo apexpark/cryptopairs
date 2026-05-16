@@ -14,6 +14,7 @@ This project follows SemVer as defined in `docs/02-versioning-and-releases.md`.
 
 ### Added
 - Trade Now rows now include an additive `z_score` alias that mirrors `spread_z` for operator diagnostics and live-z comparisons.
+- Strategy service background sampled-slippage and history-retention workers can now be disabled with explicit env flags, and their first automatic ticks are delayed until their configured interval instead of running immediately at startup.
 - Execution service now exposes `POST /v1/execution/paper/order-intent`, persists `execution_mode=PAPER` order lifecycle rows, and keeps live risk, live portfolio reads, stale-ack watchdog, and live observability scoped to `execution_mode=LIVE`.
 - Strategy service now exposes Prometheus-style `/metrics` counters for champion-selection observability:
   - `pairs_cue_projection_total{outcome}`
