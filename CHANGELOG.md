@@ -11,6 +11,7 @@ This project follows SemVer as defined in `docs/02-versioning-and-releases.md`.
 - `docs/27` live cue mismatch audit now reads `cue.selection_state` fields for stored champion, evaluated best, source, and validation state instead of legacy cue-selected fields.
 
 ### Added
+- Trade and Analytics z-score charts now consume the selected-pair live-z tick overlay across `1m`, `15m`, and `1h`, with the Analytics chart showing the latest z label from live market data.
 - Strategy service now exposes a read-only Slice D repair-source audit dry-run:
   - New endpoint: `GET /v1/strategy/maintenance/recanonicalized-legacy-row-audit`
   - New contract/example:
