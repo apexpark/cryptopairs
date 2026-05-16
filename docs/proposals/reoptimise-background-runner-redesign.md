@@ -146,7 +146,11 @@ Any implementation that follows this proposal must preserve these invariants:
    marked successful;
 6. only one mutation-producing reoptimization run can be active at a time;
 7. promotion remains a separate operator action with explicit confirmation;
-8. live trading behavior is not liberalized by this redesign.
+8. live trading behavior is not liberalized by this redesign;
+9. reoptimization must not automatically graduate
+   `RECANONICALIZED_LEGACY_ROW` provenance to `AUTO_CHAMPION`;
+10. repair-only provenance can become non-repair provenance only through an
+    explicit operator-approved transition.
 
 ## 7. Options Considered
 
@@ -368,6 +372,29 @@ PROPOSAL: cancellation is a state transition, not a process kill.
 5. The recommendation is `HOLD`.
 6. Artifacts record which units completed before cancellation.
 
+Minimum cancellation state/response semantics:
+
+| Current state | Cancelable? | PROPOSAL response behavior | Resulting state |
+|---|---:|---|---|
+| `QUEUED` | yes | accept cancellation and record the operator/request context | `CANCEL_REQUESTED`, or directly `CANCELED` if no runner has claimed the run |
+| `LEASED` | yes | accept cancellation, preserve the lease owner/generation, and require the runner to observe cancellation before new work | `CANCEL_REQUESTED` |
+| `RUNNING` | yes | accept cancellation and stop new pair/timeframe work at the next safe checkpoint | `CANCEL_REQUESTED` |
+| `CANCEL_REQUESTED` | idempotent | return the existing cancel request/status without creating a duplicate event or changing recommendation | `CANCEL_REQUESTED` until the runner reaches terminal `CANCELED`, `FAILED`, or `EXPIRED` |
+| `CANCELED` | no, terminal | return the terminal status and artifact manifest if available; do not treat as success | `CANCELED` |
+| `SUCCEEDED` | no, terminal | return the terminal status; cancellation is rejected as already complete | `SUCCEEDED` |
+| `DEGRADED` | no, terminal | return the terminal status; cancellation is rejected as already complete | `DEGRADED` |
+| `FAILED` | no, terminal | return the terminal status; cancellation is rejected as already complete | `FAILED` |
+| `EXPIRED` | no, terminal | return the terminal status; cancellation is rejected as already complete | `EXPIRED` |
+| unknown or missing status | no | fail closed; do not mutate status until recovery can prove the current state | unchanged or recovered to a bounded state |
+
+Repeated cancel requests are idempotent after the first accepted request. They
+must not reset budgets, extend leases, erase the original cancellation request
+time, or change a terminal recommendation.
+
+Cancellation endpoint authorization is deliberately left for operator approval.
+No implementation should expose cancellation without an approved auth boundary
+and an audit trail that records the operator or caller context.
+
 ### Artifacts
 
 PROPOSAL: every run writes an artifact bundle under a configured artifact root:
@@ -405,7 +432,9 @@ Fail-closed mappings:
 - budget exhausted -> `HOLD` or `OPERATOR_REVIEW_REQUIRED`;
 - cancellation -> `HOLD`;
 - partial artifact write -> `HOLD`;
-- projection/accounting anomaly -> `HOLD`.
+- projection/accounting anomaly -> `HOLD`;
+- repair-only provenance such as `RECANONICALIZED_LEGACY_ROW` without explicit
+  operator-approved transition -> `HOLD`.
 
 ## 9. Interfaces and Contracts
 
@@ -451,7 +480,9 @@ route in place:
 
 Compatibility choice for the existing route:
 
-1. keep `POST /v1/strategy/pairs/reoptimize` as synchronous during Slice A/B;
+1. keep `POST /v1/strategy/pairs/reoptimize` as synchronous during Slice A/B
+   only when it is disabled for automated production flows or guarded by the
+   same durable lease, single-flight, and budget protections;
 2. add explicit async endpoints first;
 3. migrate scripts/UI to async endpoints;
 4. only then decide whether the old route becomes a compatibility wrapper,
@@ -460,6 +491,21 @@ Compatibility choice for the existing route:
 Changing `POST /v1/strategy/pairs/reoptimize` from synchronous results to
 enqueue-only semantics in place would be a contract meaning change and needs a
 separate compatibility review.
+
+Compatibility guard for existing mutation paths:
+
+1. the legacy interval worker must remain disabled by default and must not be
+   re-enabled in production until durable leases, global single-flight, and
+   runtime budgets exist;
+2. manual or maintenance-triggered calls to the current synchronous mutation
+   route must remain operator-controlled, disabled for automation, or protected
+   by the same lease/single-flight/budget gate;
+3. if the guard cannot prove lease state, budget validity, and current runner
+   status, the safe response is to refuse mutation and return `HOLD` or
+   `OPERATOR_REVIEW_REQUIRED`;
+4. scripts that cannot use the guarded async path should continue to skip
+   mutation-producing reoptimization rather than recreate the unbounded hot
+   request path.
 
 ### Proposed status response fields
 
@@ -539,7 +585,7 @@ interval and back off after terminal states.
 Future implementation should add bounded metrics:
 
 - `strategy_reoptimize_run_total{trigger,status}`;
-- `strategy_reoptimize_active_runs`;
+- `strategy_reoptimize_active_runs{status}`;
 - `strategy_reoptimize_lease_acquire_total{result}`;
 - `strategy_reoptimize_lease_lost_total`;
 - `strategy_reoptimize_duration_seconds{status}`;
@@ -549,6 +595,33 @@ Future implementation should add bounded metrics:
 - `strategy_reoptimize_artifact_write_total{result}`;
 - `strategy_reoptimize_fail_closed_total{reason}`;
 - `strategy_reoptimize_recommendation_total{recommendation}`.
+
+Metric labels must stay bounded. The following values are the proposal-level
+contract for any future implementation.
+
+Common label values:
+
+| Label | Allowed values |
+|---|---|
+| `trigger` | `SCHEDULED`, `MANUAL_API`, `MAINTENANCE_REPORT`, `RECOVERY` |
+| `status` | `QUEUED`, `LEASED`, `RUNNING`, `CANCEL_REQUESTED`, `CANCELED`, `SUCCEEDED`, `DEGRADED`, `FAILED`, `EXPIRED` |
+| `timeframe` | `1m`, `15m`, `1h` |
+| `budget` | `RUN_WALL_CLOCK`, `TIMEFRAME_WALL_CLOCK`, `PAIR_EVALUATIONS_RUN`, `PAIR_EVALUATIONS_TIMEFRAME`, `PAIR_CONCURRENCY`, `DB_WRITE_BATCH`, `ARTIFACT_BYTES`, `COOLDOWN`, `LEASE_TTL` |
+| `recommendation` | `HOLD`, `OPERATOR_REVIEW_REQUIRED`, `PROMOTION_CANDIDATE_AVAILABLE`, `REVERT_REVIEW_REQUIRED` |
+| `reason` | `MISSING_TELEMETRY`, `UNKNOWN_STATUS`, `STALE_STATUS`, `LEASE_LOST`, `BUDGET_EXHAUSTED`, `CANCELED`, `ARTIFACT_FAILED`, `INTEGRITY_UNKNOWN`, `RISK_UNKNOWN`, `ACCOUNTING_ANOMALY`, `SCHEDULE_MISSED`, `UNSAFE_PROMOTION_ATTEMPT`, `CONFIG_INVALID`, `REPAIR_PROVENANCE_ACTIVE` |
+
+Metric-specific `result` label values:
+
+| Metric | Allowed `result` values |
+|---|---|
+| `strategy_reoptimize_lease_acquire_total` | `ACQUIRED`, `BUSY`, `STALE_RECOVERED`, `FAILED` |
+| `strategy_reoptimize_cancel_total` | `REQUESTED`, `ACCEPTED`, `COMPLETED`, `REJECTED_TERMINAL`, `REJECTED_NOT_FOUND`, `FAILED`, `TIMED_OUT` |
+| `strategy_reoptimize_progress_pairs_total` | `COMPLETED`, `SKIPPED`, `FAILED`, `CANCELED` |
+| `strategy_reoptimize_artifact_write_total` | `SUCCEEDED`, `FAILED`, `PARTIAL`, `BUDGET_EXHAUSTED`, `CONTAINMENT_REJECTED` |
+
+Metrics must not use `run_id`, `pair_id`, `operator_id`, `lease_owner`,
+artifact paths, hostnames, free-form errors, or request URLs as labels. Those
+belong in structured logs, status responses, and artifacts.
 
 Structured logs should include:
 
