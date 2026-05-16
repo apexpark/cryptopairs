@@ -117,7 +117,7 @@ const NAV_ITEMS: Array<{ id: PageId; label: string }> = [
 
 const TIMEFRAMES: Timeframe[] = ["1m", "15m", "1h"];
 const TRADE_PAIR_STATUS_CUE_LIMIT = 80;
-const TRADE_CHART_PRELOAD_LIMIT = 16;
+const TRADE_CHART_PRELOAD_LIMIT = 3;
 const RESEARCH_Z_METHODS: StrategyZMethod[] = [
   "ROBUST_Z",
   "COINTEGRATION_Z",
@@ -1651,12 +1651,18 @@ function App(): JSX.Element {
       for (const entry of cuesResponse.cues) {
         const pairId = entry.cue.pair_id;
         const existing = prev[pairId];
-        next[pairId] =
-          existing ??
-          {
+        if (
+          existing &&
+          Number.isFinite(Date.parse(existing.ts)) &&
+          Date.parse(existing.ts) > Date.parse(entry.cue.evaluated_at)
+        ) {
+          next[pairId] = existing;
+        } else {
+          next[pairId] = {
             z: entry.cue.spread_z,
             ts: entry.cue.evaluated_at,
           };
+        }
       }
       return next;
     });
@@ -2161,7 +2167,7 @@ function App(): JSX.Element {
     };
 
     void runCoreRefresh(true);
-    const coreRefreshIntervalMs = page === "trade" ? 3_000 : analyticsRefreshMs(timeframe);
+    const coreRefreshIntervalMs = analyticsRefreshMs(timeframe);
     const intervalId = window.setInterval(() => {
       void runCoreRefresh(false);
     }, coreRefreshIntervalMs);
@@ -2506,74 +2512,6 @@ function App(): JSX.Element {
   ]);
 
   useEffect(() => {
-    if (!uiAccessGranted || page !== "trade" || !cuesResponse?.cues.length) {
-      return;
-    }
-    let cancelled = false;
-    let inFlight = false;
-    const pairIds = cuesResponse.cues.map((entry) => entry.cue.pair_id);
-    const intervalMs = timeframe === "1m" ? 5_000 : 10_000;
-
-    const refreshOpportunityLiveZ = async (): Promise<void> => {
-      if (cancelled || inFlight || !pairIds.length) {
-        return;
-      }
-      inFlight = true;
-      try {
-        const tickerWindowBars = clampAnalyticsChartBars(analyticsChartBars);
-        const responses = await Promise.allSettled(
-          pairIds.map((pairId) =>
-            takerFeeBpsOverride == null
-              ? fetchStrategyLiveZ(timeframe, pairId, 2, tickerWindowBars, undefined, backtestExitMode)
-              : fetchStrategyLiveZ(
-                  timeframe,
-                  pairId,
-                  2,
-                  tickerWindowBars,
-                  takerFeeBpsOverride,
-                  backtestExitMode
-                )
-          )
-        );
-        if (cancelled) {
-          return;
-        }
-        setLiveZByPair((prev) => {
-          const next = { ...prev };
-          for (let i = 0; i < responses.length; i += 1) {
-            const response = responses[i];
-            if (response.status !== "fulfilled" || !response.value.points.length) {
-              continue;
-            }
-            const point = response.value.points[response.value.points.length - 1];
-            next[pairIds[i]] = { z: point.z, ts: point.ts };
-          }
-          return next;
-        });
-      } finally {
-        inFlight = false;
-      }
-    };
-
-    void refreshOpportunityLiveZ();
-    const intervalId = window.setInterval(() => {
-      void refreshOpportunityLiveZ();
-    }, intervalMs);
-    return () => {
-      cancelled = true;
-      window.clearInterval(intervalId);
-    };
-  }, [
-    uiAccessGranted,
-    page,
-    cuesResponse,
-    timeframe,
-    takerFeeBpsOverride,
-    backtestExitMode,
-    analyticsChartBars,
-  ]);
-
-  useEffect(() => {
     if (!uiAccessGranted || page !== "trade" || !selectedCueRow) {
       return;
     }
@@ -2587,7 +2525,7 @@ function App(): JSX.Element {
       }
       inFlight = true;
       try {
-        const tickerWindowBars = clampAnalyticsChartBars(analyticsChartBars);
+        const tickerWindowBars = Math.min(clampAnalyticsChartBars(analyticsChartBars), 240);
         const response =
           takerFeeBpsOverride == null
             ? await fetchStrategyLiveZ(
@@ -2625,7 +2563,7 @@ function App(): JSX.Element {
     void tickLiveZ();
     const intervalId = window.setInterval(() => {
       void tickLiveZ();
-    }, 1500);
+    }, 5000);
     return () => {
       cancelled = true;
       window.clearInterval(intervalId);
