@@ -127,6 +127,7 @@ def run_report_step(
     python_bin: str,
     repo_root: Path,
     timeout_seconds: int,
+    report_timeout_seconds: int,
     strategy_service_url: str,
     execution_service_url: str,
     exchange: str,
@@ -153,6 +154,8 @@ def run_report_step(
         account_id,
         "--window-minutes",
         str(window_minutes),
+        "--timeout-seconds",
+        str(report_timeout_seconds),
         "--policy-json",
         str(policy_json),
         "--profile",
@@ -443,9 +446,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--limit", type=int, default=20)
     parser.add_argument("--health-timeout-seconds", type=float, default=4.0)
     parser.add_argument("--timeout-seconds", type=int, default=420)
+    parser.add_argument("--report-timeout-seconds", type=apply_script.positive_int, default=120)
     parser.add_argument("--deploy-health-retries", type=apply_script.positive_int, default=90)
     parser.add_argument("--deploy-health-sleep-secs", type=apply_script.positive_int, default=2)
     parser.add_argument("--public-health-url", default="")
+    parser.add_argument("--print-summary", action="store_true")
     parser.add_argument("--restore-original", dest="restore_original", action="store_true")
     parser.add_argument("--no-restore-original", dest="restore_original", action="store_false")
     parser.set_defaults(skip_pull=True, restore_original=True)
@@ -526,6 +531,7 @@ def main() -> int:
                 python_bin=args.python_bin,
                 repo_root=repo_root,
                 timeout_seconds=args.timeout_seconds,
+                report_timeout_seconds=args.report_timeout_seconds,
                 strategy_service_url=args.strategy_service_url,
                 execution_service_url=args.execution_service_url,
                 exchange=args.exchange,
@@ -596,6 +602,7 @@ def main() -> int:
                 python_bin=args.python_bin,
                 repo_root=repo_root,
                 timeout_seconds=args.timeout_seconds,
+                report_timeout_seconds=args.report_timeout_seconds,
                 strategy_service_url=args.strategy_service_url,
                 execution_service_url=args.execution_service_url,
                 exchange=args.exchange,
@@ -749,7 +756,8 @@ def main() -> int:
         latest_report_path.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(cycle_report_path, latest_report_path)
 
-        print(json.dumps(cycle_report, indent=2))
+        console_report = decision_report if args.print_summary else cycle_report
+        print(json.dumps(console_report, indent=2))
         return 0 if status == "PASS" else 2
     finally:
         try:

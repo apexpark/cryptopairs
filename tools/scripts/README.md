@@ -144,8 +144,10 @@ python3 tools/scripts/strategy_maintenance_cycle.py \
   --output-root artifacts/strategy_tuning/runs \
   --latest-report artifacts/strategy_tuning/latest_maintenance_report.json \
   --timeout-seconds 420 \
+  --report-timeout-seconds 120 \
   --deploy-health-retries 90 \
-  --deploy-health-sleep-secs 2
+  --deploy-health-sleep-secs 2 \
+  --print-summary
 ```
 
 Install/update cron automation on hosted server:

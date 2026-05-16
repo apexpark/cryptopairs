@@ -173,6 +173,53 @@ def test_cycle_apply_step_forwards_deploy_health_window(tmp_path, monkeypatch) -
     assert command[command.index("--deploy-health-sleep-secs") + 1] == "2"
 
 
+def test_cycle_report_step_forwards_report_timeout(tmp_path, monkeypatch) -> None:
+    captured: dict[str, list[str]] = {}
+
+    def fake_run_subprocess(
+        command: list[str],
+        cwd: pathlib.Path,
+        timeout_seconds: int,
+    ) -> dict[str, object]:
+        captured["command"] = command
+        assert cwd == tmp_path
+        assert timeout_seconds == 420
+        output_path = pathlib.Path(command[command.index("--output-json") + 1])
+        output_path.write_text('{"decision": "HOLD"}\n', encoding="utf-8")
+        return {
+            "command": command,
+            "exit_code": 0,
+            "stdout_tail": "",
+            "stderr_tail": "",
+        }
+
+    monkeypatch.setattr(cycle_script, "run_subprocess", fake_run_subprocess)
+
+    output_json = tmp_path / "report.json"
+    step = cycle_script.run_report_step(
+        python_bin="python3",
+        repo_root=tmp_path,
+        timeout_seconds=420,
+        report_timeout_seconds=120,
+        strategy_service_url="http://127.0.0.1:8083",
+        execution_service_url="http://127.0.0.1:8082",
+        exchange="kraken_futures",
+        account_id="primary",
+        window_minutes=60,
+        policy_json=tmp_path / "policy.json",
+        profile="candidate",
+        output_json=output_json,
+        compare_report=tmp_path / "baseline.json",
+        skip_reoptimize=False,
+        timeframes="1m,15m,1h",
+        limit=20,
+    )
+
+    command = captured["command"]
+    assert step["pass"] is True
+    assert command[command.index("--timeout-seconds") + 1] == "120"
+
+
 def test_action_worker_forwards_default_deploy_health_window(tmp_path, monkeypatch) -> None:
     captured: dict[str, list[str]] = {}
 
