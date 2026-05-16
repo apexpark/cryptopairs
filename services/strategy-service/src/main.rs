@@ -40,6 +40,82 @@ struct AppState {
     sampled_slippage: Arc<SampledSlippageStore>,
     metrics: Arc<StrategyMetrics>,
     trade_now_observability: Arc<TradeNowObservabilityStore>,
+    response_cache: Arc<StrategyResponseCache>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+struct TimeframeEvaluationCacheKey {
+    timeframe: Timeframe,
+    advisory_enabled: bool,
+    taker_fee_micro_bps: i64,
+}
+
+impl TimeframeEvaluationCacheKey {
+    fn new(timeframe: Timeframe, advisory_enabled: bool, taker_fee_bps: f64) -> Self {
+        Self {
+            timeframe,
+            advisory_enabled,
+            taker_fee_micro_bps: fee_cache_key(taker_fee_bps),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+struct LiveZCacheKey {
+    timeframe: Timeframe,
+    pair_id: String,
+    points: usize,
+    window_bars: usize,
+    taker_fee_micro_bps: i64,
+    exit_mode: &'static str,
+}
+
+impl LiveZCacheKey {
+    fn new(
+        timeframe: Timeframe,
+        pair_id: &str,
+        points: usize,
+        window_bars: usize,
+        taker_fee_bps: f64,
+        exit_mode: BacktestExitMode,
+    ) -> Self {
+        Self {
+            timeframe,
+            pair_id: pair_id.to_string(),
+            points,
+            window_bars,
+            taker_fee_micro_bps: fee_cache_key(taker_fee_bps),
+            exit_mode: exit_mode.as_str(),
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+struct CachedTimeframeEvaluation {
+    cached_at: DateTime<Utc>,
+    outputs: Vec<PairEvaluationOutput>,
+    skipped: Vec<SkippedPair>,
+    portfolio_plan: PortfolioPlan,
+}
+
+#[derive(Debug, Clone)]
+struct CachedLiveZResponse {
+    cached_at: DateTime<Utc>,
+    response: LiveZResponse,
+}
+
+struct StrategyResponseCache {
+    timeframe_outputs: RwLock<HashMap<TimeframeEvaluationCacheKey, CachedTimeframeEvaluation>>,
+    live_z: RwLock<HashMap<LiveZCacheKey, CachedLiveZResponse>>,
+}
+
+impl StrategyResponseCache {
+    fn new() -> Self {
+        Self {
+            timeframe_outputs: RwLock::new(HashMap::new()),
+            live_z: RwLock::new(HashMap::new()),
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -143,6 +219,8 @@ struct StrategySettings {
     paper_trades_history_retention_days: u64,
     history_retention_worker_enabled: bool,
     history_prune_interval_seconds: u64,
+    response_cache_ttl_ms: u64,
+    live_z_ticker_max_window_bars: usize,
     ui_access_password: String,
 }
 
@@ -321,6 +399,14 @@ impl StrategySettings {
             parse_env_bool("STRATEGY_HISTORY_RETENTION_WORKER_ENABLED", true);
         let history_prune_interval_seconds =
             parse_env_u64("STRATEGY_HISTORY_PRUNE_INTERVAL_SECONDS", 3_600).max(60);
+        let response_cache_ttl_ms = effective_strategy_response_cache_ttl_ms(parse_env_u64(
+            "STRATEGY_RESPONSE_CACHE_TTL_MS",
+            10_000,
+        ));
+        let live_z_ticker_max_window_bars = effective_live_z_ticker_window_bars(parse_env_usize(
+            "STRATEGY_LIVE_Z_TICKER_MAX_WINDOW_BARS",
+            240,
+        ));
         let ui_access_password =
             std::env::var("STRATEGY_UI_ACCESS_PASSWORD").unwrap_or_else(|_| "".to_string());
 
@@ -412,6 +498,8 @@ impl StrategySettings {
             paper_trades_history_retention_days,
             history_retention_worker_enabled,
             history_prune_interval_seconds,
+            response_cache_ttl_ms,
+            live_z_ticker_max_window_bars,
             ui_access_password,
         }
     }
@@ -4519,7 +4607,7 @@ struct BacktestPointResponse {
     equity: f64,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 struct BacktestMarkerResponse {
     index: usize,
     kind: String,
@@ -4544,13 +4632,13 @@ struct BacktestResponse {
     rationale_codes: Vec<String>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 struct LiveZPointResponse {
     ts: DateTime<Utc>,
     z: f64,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 struct LiveZResponse {
     timeframe: String,
     pair_id: String,
@@ -4565,7 +4653,7 @@ struct LiveZResponse {
     rationale_codes: Vec<String>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 struct SkippedPair {
     pair_id: String,
     reason: String,
@@ -5154,6 +5242,7 @@ async fn main() -> anyhow::Result<()> {
     let http_client = reqwest::Client::new();
     let sampled_slippage = Arc::new(SampledSlippageStore::new(&settings));
     let metrics = Arc::new(StrategyMetrics::new());
+    let response_cache = Arc::new(StrategyResponseCache::new());
     match sampled_slippage.hydrate_from_disk().await {
         Ok(hydrated) => info!(
             hydrated_pairs = hydrated,
@@ -5175,6 +5264,7 @@ async fn main() -> anyhow::Result<()> {
         sampled_slippage,
         metrics,
         trade_now_observability,
+        response_cache,
     };
 
     let _slippage_worker = if settings.sampled_slippage_worker_enabled {
@@ -5337,6 +5427,8 @@ async fn main() -> anyhow::Result<()> {
         paper_trades_history_retention_days = settings.paper_trades_history_retention_days,
         history_retention_worker_enabled = settings.history_retention_worker_enabled,
         history_prune_interval_seconds = settings.history_prune_interval_seconds,
+        response_cache_ttl_ms = settings.response_cache_ttl_ms,
+        live_z_ticker_max_window_bars = settings.live_z_ticker_max_window_bars,
         ui_access_enabled = settings.ui_access_enabled(),
         "strategy-service started"
     );
@@ -9339,16 +9431,93 @@ async fn pairs_live_z(
     })?;
     let exit_mode = parse_backtest_exit_mode(query.exit_mode.as_deref())?;
     let points = query.points.unwrap_or(300).clamp(2, 2_000);
-    let window_bars = query.window_bars.unwrap_or(points).clamp(120, 2_000);
+    let window_bars = live_z_effective_window_bars(
+        points,
+        query.window_bars,
+        state.settings.live_z_ticker_max_window_bars,
+    );
+    let taker_fee_bps = resolve_taker_fee_bps(query.taker_fee_bps, state.settings.trading_fee_bps)?;
+    Ok(Json(
+        live_z_response_cached(
+            &state,
+            &query.pair_id,
+            timeframe,
+            exit_mode,
+            points,
+            window_bars,
+            taker_fee_bps,
+        )
+        .await?,
+    ))
+}
+
+async fn live_z_response_cached(
+    state: &AppState,
+    pair_id: &str,
+    timeframe: Timeframe,
+    exit_mode: BacktestExitMode,
+    points: usize,
+    window_bars: usize,
+    taker_fee_bps: f64,
+) -> Result<LiveZResponse, ApiError> {
+    let ttl_ms = state.settings.response_cache_ttl_ms;
+    let key = LiveZCacheKey::new(
+        timeframe,
+        pair_id,
+        points,
+        window_bars,
+        taker_fee_bps,
+        exit_mode,
+    );
+    if ttl_ms > 0 {
+        let now = Utc::now();
+        if let Some(cached) = state.response_cache.live_z.read().await.get(&key) {
+            if cache_entry_is_fresh(now, cached.cached_at, ttl_ms) {
+                return Ok(cached.response.clone());
+            }
+        }
+    }
+
+    let response = compute_live_z_response(
+        state,
+        pair_id,
+        timeframe,
+        exit_mode,
+        points,
+        window_bars,
+        taker_fee_bps,
+    )
+    .await?;
+    if ttl_ms > 0 {
+        state.response_cache.live_z.write().await.insert(
+            key,
+            CachedLiveZResponse {
+                cached_at: Utc::now(),
+                response: response.clone(),
+            },
+        );
+    }
+    Ok(response)
+}
+
+async fn compute_live_z_response(
+    state: &AppState,
+    pair_id: &str,
+    timeframe: Timeframe,
+    exit_mode: BacktestExitMode,
+    points: usize,
+    window_bars: usize,
+    taker_fee_bps: f64,
+) -> Result<LiveZResponse, ApiError> {
     let Some(pair) = state
         .settings
         .pairs
         .iter()
-        .find(|candidate| candidate.pair_id() == query.pair_id)
+        .find(|candidate| candidate.pair_id() == pair_id)
     else {
         return Err(ApiError::BadRequest(format!(
             "pair_id '{}' is not configured",
-            query.pair_id
+            pair_id
         )));
     };
 
@@ -9379,13 +9548,13 @@ async fn pairs_live_z(
     if timestamps.len() < 120 {
         return Err(ApiError::Upstream(format!(
             "insufficient aligned candles for pair={} timeframe={} bars={}",
-            query.pair_id,
+            pair_id,
             timeframe.as_str(),
             timestamps.len()
         )));
     }
     let _ = maybe_apply_live_mark_override(
-        &state,
+        state,
         pair,
         timeframe,
         &mut timestamps,
@@ -9396,9 +9565,8 @@ async fn pairs_live_z(
     )
     .await;
 
-    let taker_fee_bps = resolve_taker_fee_bps(query.taker_fee_bps, state.settings.trading_fee_bps)?;
     let output = evaluate_pair_from_snapshot(
-        &state,
+        state,
         pair,
         timeframe,
         state.settings.advisory_enabled,
@@ -9430,13 +9598,13 @@ async fn pairs_live_z(
     if series.points.is_empty() {
         return Err(ApiError::Upstream(format!(
             "unable to compute live z-series for pair={} timeframe={}",
-            query.pair_id,
+            pair_id,
             timeframe.as_str()
         )));
     }
 
     tracing::info!(
-        pair_id = %query.pair_id,
+        pair_id = %pair_id,
         timeframe = %timeframe.as_str(),
         exit_mode = %exit_mode.as_str(),
         points_requested = points,
@@ -9474,9 +9642,9 @@ async fn pairs_live_z(
         })
         .collect::<Vec<_>>();
 
-    Ok(Json(LiveZResponse {
+    Ok(LiveZResponse {
         timeframe: timeframe.as_str().to_string(),
-        pair_id: query.pair_id,
+        pair_id: pair_id.to_string(),
         generated_at: Utc::now(),
         exit_mode: exit_mode.as_str().to_string(),
         entry_band: output.cue.entry_band,
@@ -9486,7 +9654,7 @@ async fn pairs_live_z(
         points: response_points,
         markers: response_markers,
         rationale_codes: output.cue.rationale_codes,
-    }))
+    })
 }
 
 async fn pairs_portfolio_plan(
@@ -10524,6 +10692,49 @@ async fn evaluate_timeframe_outputs(
     advisory_enabled: bool,
     taker_fee_bps: f64,
 ) -> (Vec<PairEvaluationOutput>, Vec<SkippedPair>, PortfolioPlan) {
+    let ttl_ms = state.settings.response_cache_ttl_ms;
+    if ttl_ms == 0 {
+        return compute_timeframe_outputs(state, timeframe, advisory_enabled, taker_fee_bps).await;
+    }
+
+    let key = TimeframeEvaluationCacheKey::new(timeframe, advisory_enabled, taker_fee_bps);
+    let now = Utc::now();
+    if let Some(cached) = state
+        .response_cache
+        .timeframe_outputs
+        .read()
+        .await
+        .get(&key)
+    {
+        if cache_entry_is_fresh(now, cached.cached_at, ttl_ms) {
+            return (
+                cached.outputs.clone(),
+                cached.skipped.clone(),
+                cached.portfolio_plan.clone(),
+            );
+        }
+    }
+
+    let (outputs, skipped, portfolio_plan) =
+        compute_timeframe_outputs(state, timeframe, advisory_enabled, taker_fee_bps).await;
+    state.response_cache.timeframe_outputs.write().await.insert(
+        key,
+        CachedTimeframeEvaluation {
+            cached_at: Utc::now(),
+            outputs: outputs.clone(),
+            skipped: skipped.clone(),
+            portfolio_plan: portfolio_plan.clone(),
+        },
+    );
+    (outputs, skipped, portfolio_plan)
+}
+
+async fn compute_timeframe_outputs(
+    state: &AppState,
+    timeframe: Timeframe,
+    advisory_enabled: bool,
+    taker_fee_bps: f64,
+) -> (Vec<PairEvaluationOutput>, Vec<SkippedPair>, PortfolioPlan) {
     let mut outputs = vec![];
     let mut skipped = vec![];
     let mut handles = Vec::with_capacity(state.settings.pairs.len());
@@ -10721,6 +10932,42 @@ fn effective_history_prune_interval_secs(configured: u64) -> u64 {
     configured.max(60)
 }
 
+fn effective_strategy_response_cache_ttl_ms(configured: u64) -> u64 {
+    if configured == 0 {
+        0
+    } else {
+        configured.clamp(500, 60_000)
+    }
+}
+
+fn effective_live_z_ticker_window_bars(configured: usize) -> usize {
+    configured.clamp(120, 2_000)
+}
+
+fn live_z_effective_window_bars(
+    points: usize,
+    requested_window_bars: Option<usize>,
+    ticker_max_window_bars: usize,
+) -> usize {
+    let requested = requested_window_bars.unwrap_or(points).clamp(120, 2_000);
+    if points <= 2 {
+        requested.min(effective_live_z_ticker_window_bars(ticker_max_window_bars))
+    } else {
+        requested
+    }
+}
+
+fn fee_cache_key(taker_fee_bps: f64) -> i64 {
+    (taker_fee_bps.max(0.0) * 1_000_000.0).round() as i64
+}
+
+fn cache_entry_is_fresh(now: DateTime<Utc>, cached_at: DateTime<Utc>, ttl_ms: u64) -> bool {
+    if ttl_ms == 0 {
+        return false;
+    }
+    now.signed_duration_since(cached_at).num_milliseconds() <= ttl_ms as i64
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
@@ -10732,31 +10979,32 @@ mod tests {
         compute_walk_forward_summary, cue_for_pairs_response, days_covered,
         decide_candidate_probation_transition, decide_champion_transition,
         derive_paper_trades_from_series, derive_replay_trades_from_series,
-        effective_history_prune_interval_secs, effective_reopt_interval_secs,
-        effective_sampled_slippage_interval_ms, estimate_research_combinations,
+        effective_history_prune_interval_secs, effective_live_z_ticker_window_bars,
+        effective_reopt_interval_secs, effective_sampled_slippage_interval_ms,
+        effective_strategy_response_cache_ttl_ms, estimate_research_combinations,
         evaluate_recent_performance_gate, expectancy_objective_score,
         expected_funding_events_crossed, fetch_open_live_trade_pairs, finalize_trade_gate,
-        group_trade_now_rows, load_latest_learning_overlay, normalize_funding_rate,
-        parse_backtest_exit_mode, parse_bool_token, parse_candidate_inbox_query,
-        parse_expectancy_query, parse_opportunity_history_stats_timeframe,
-        parse_opportunity_history_window, parse_paper_trades_window, parse_replay_trades_query,
-        parse_trade_now_query, percentile, project_continuous_funding_bps, refresh_setup_gate,
-        resolve_artifact_path, resolve_learning_overlay_policy, resolve_reoptimize_status,
-        resolve_selected_signal_config, resolve_taker_fee_bps, retention_cutoff_ts,
-        selected_signal_config_from_expectancy, summarize_recent_performance,
-        update_persist_summary_for_transition, CandidateInboxQuery, CandidateLifecycleState,
-        CandidateOperatorAction, CandidateProbationInputs, CandidateProbationRow, ChampionDecision,
-        CueProjectionOutcome, ExpectancyConfig, ExpectancyMetrics, ExpectancyQuery,
-        FundingCostEstimate, FundingRateInputMode, LearningOverlayApprovalSource,
-        LearningOverlayBlockedReason, LearningOverlayEntry, LearningOverlaySnapshot,
-        LearningOverlayUniverseBucket, LearningOverlayWatchReason, LearningRecommendation,
-        MaintenanceAction, OpportunityHistoryQuery, OpportunityHistoryStatsQuery, PaperTradesQuery,
-        PersistSummary, ReoptError, ReoptErrorSeverity, ReoptimizeResponse, ReoptimizeRunStatus,
-        ReplayTradeEntry, ReplayTradePathSummary, ReplayTradesQuery, ResearchSweepRequest,
-        SampledSlippageStatus, SelectedSignalRow, SelectionTransitionCounts,
-        StrategyMarketMetricsResponse, StrategyMetrics, StrategySettings,
-        TradeNowHistoricalQuality, TradeNowObservabilityStore, TradeNowQuery,
-        LEARNING_OVERLAY_TTL_SECS, SELECTED_CONFIG_SOURCE_AUTO_CHAMPION,
+        group_trade_now_rows, live_z_effective_window_bars, load_latest_learning_overlay,
+        normalize_funding_rate, parse_backtest_exit_mode, parse_bool_token,
+        parse_candidate_inbox_query, parse_expectancy_query,
+        parse_opportunity_history_stats_timeframe, parse_opportunity_history_window,
+        parse_paper_trades_window, parse_replay_trades_query, parse_trade_now_query, percentile,
+        project_continuous_funding_bps, refresh_setup_gate, resolve_artifact_path,
+        resolve_learning_overlay_policy, resolve_reoptimize_status, resolve_selected_signal_config,
+        resolve_taker_fee_bps, retention_cutoff_ts, selected_signal_config_from_expectancy,
+        summarize_recent_performance, update_persist_summary_for_transition, CandidateInboxQuery,
+        CandidateLifecycleState, CandidateOperatorAction, CandidateProbationInputs,
+        CandidateProbationRow, ChampionDecision, CueProjectionOutcome, ExpectancyConfig,
+        ExpectancyMetrics, ExpectancyQuery, FundingCostEstimate, FundingRateInputMode,
+        LearningOverlayApprovalSource, LearningOverlayBlockedReason, LearningOverlayEntry,
+        LearningOverlaySnapshot, LearningOverlayUniverseBucket, LearningOverlayWatchReason,
+        LearningRecommendation, MaintenanceAction, OpportunityHistoryQuery,
+        OpportunityHistoryStatsQuery, PaperTradesQuery, PersistSummary, ReoptError,
+        ReoptErrorSeverity, ReoptimizeResponse, ReoptimizeRunStatus, ReplayTradeEntry,
+        ReplayTradePathSummary, ReplayTradesQuery, ResearchSweepRequest, SampledSlippageStatus,
+        SelectedSignalRow, SelectionTransitionCounts, StrategyMarketMetricsResponse,
+        StrategyMetrics, StrategySettings, TradeNowHistoricalQuality, TradeNowObservabilityStore,
+        TradeNowQuery, LEARNING_OVERLAY_TTL_SECS, SELECTED_CONFIG_SOURCE_AUTO_CHAMPION,
         SELECTED_CONFIG_SOURCE_LEGACY_FALLBACK, SELECTED_CONFIG_SOURCE_OPERATOR_PROMOTION,
         SELECTED_CONFIG_SOURCE_RECANONICALIZED_LEGACY_ROW,
     };
@@ -10802,6 +11050,19 @@ mod tests {
         assert_eq!(effective_history_prune_interval_secs(0), 60);
         assert_eq!(effective_history_prune_interval_secs(30), 60);
         assert_eq!(effective_history_prune_interval_secs(3600), 3600);
+    }
+
+    #[test]
+    fn response_cache_settings_clamp_to_safe_bounds() {
+        assert_eq!(effective_strategy_response_cache_ttl_ms(0), 0);
+        assert_eq!(effective_strategy_response_cache_ttl_ms(1), 500);
+        assert_eq!(effective_strategy_response_cache_ttl_ms(10_000), 10_000);
+        assert_eq!(effective_strategy_response_cache_ttl_ms(120_000), 60_000);
+        assert_eq!(effective_live_z_ticker_window_bars(1), 120);
+        assert_eq!(effective_live_z_ticker_window_bars(240), 240);
+        assert_eq!(effective_live_z_ticker_window_bars(3_000), 2_000);
+        assert_eq!(live_z_effective_window_bars(2, Some(2_000), 240), 240);
+        assert_eq!(live_z_effective_window_bars(300, Some(2_000), 240), 2_000);
     }
 
     #[test]
