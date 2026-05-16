@@ -56,6 +56,13 @@ def profile_values(policy: dict[str, Any], profile: str) -> dict[str, int]:
     return resolved
 
 
+def positive_int(value: str) -> int:
+    parsed = int(value)
+    if parsed <= 0:
+        raise argparse.ArgumentTypeError(f"expected positive integer, got {value}")
+    return parsed
+
+
 def extract_existing_values(lines: list[str]) -> dict[str, str | None]:
     pattern = re.compile(r"^([A-Za-z_][A-Za-z0-9_]*)=(.*)$")
     existing: dict[str, str | None] = {key: None for key in LOOKBACK_KEYS}
@@ -101,6 +108,8 @@ def run_deploy(
     services: str,
     skip_pull: bool,
     dry_run: bool,
+    deploy_health_retries: int | None = None,
+    deploy_health_sleep_secs: int | None = None,
 ) -> subprocess.CompletedProcess[str]:
     cmd = [
         "bash",
@@ -114,6 +123,10 @@ def run_deploy(
         cmd.append("--skip-pull")
     if dry_run:
         cmd.append("--dry-run")
+    if deploy_health_retries is not None:
+        cmd.extend(["--health-retries", str(deploy_health_retries)])
+    if deploy_health_sleep_secs is not None:
+        cmd.extend(["--health-sleep-secs", str(deploy_health_sleep_secs)])
 
     return subprocess.run(cmd, text=True, capture_output=True, check=False)
 
@@ -129,6 +142,8 @@ def main() -> int:
     parser.add_argument("--skip-pull", dest="skip_pull", action="store_true")
     parser.add_argument("--no-skip-pull", dest="skip_pull", action="store_false")
     parser.add_argument("--dry-run", action="store_true")
+    parser.add_argument("--deploy-health-retries", type=positive_int)
+    parser.add_argument("--deploy-health-sleep-secs", type=positive_int)
     parser.add_argument("--output-json", default="artifacts/strategy_tuning/apply_report.json")
     parser.set_defaults(skip_pull=True)
     args = parser.parse_args()
@@ -162,6 +177,8 @@ def main() -> int:
         report["deploy_script"] = str(deploy_script)
         report["skip_pull"] = bool(args.skip_pull)
         report["dry_run"] = bool(args.dry_run)
+        report["deploy_health_retries"] = args.deploy_health_retries
+        report["deploy_health_sleep_secs"] = args.deploy_health_sleep_secs
         report["target_values"] = updates
 
         if not env_file.exists():
@@ -190,6 +207,8 @@ def main() -> int:
             services=args.services,
             skip_pull=args.skip_pull,
             dry_run=args.dry_run,
+            deploy_health_retries=args.deploy_health_retries,
+            deploy_health_sleep_secs=args.deploy_health_sleep_secs,
         )
 
         report["deploy_exit_code"] = deploy_result.returncode
