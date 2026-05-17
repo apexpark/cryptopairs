@@ -9,14 +9,14 @@
 
 | Field | Value |
 |---|---|
-| Last updated (UTC) | 2026-05-11 |
+| Last updated (UTC) | 2026-05-17 |
 | Updated by | codex |
-| Repo HEAD pin (committed) | `21286c6b2cf3bce5d951e621ca341ba73d175103` |
+| Repo HEAD pin (committed) | `3751ee56f059138e9a11c7238e0e68bc4bea7a71` |
 | Pin branch | `main` |
 | Sprint base branch | `main` |
-| Pin notes | Post-PR #177 squash-merge state on `main`. The pin is the reachable merge commit that reconciles the reviewed live-trial lineage, applies the host-only historical-quality cast hotfix, restores `/metrics` projection/transition observability, and adds the fail-closed recanonicalized-legacy provenance guard. |
+| Pin notes | Post-Slice B curation. The pin is the PR #193 squash merge on main at 3751ee56f059138e9a11c7238e0e68bc4bea7a71, produced from reviewed head 52fb6f8. This curation commit records Slice B as done and intentionally leaves host verification operator-only. |
 | Origin | `https://github.com/apexpark/cryptopairs.git` |
-| Working-tree state | **CLEAN on `main` after PR #177** — host is deployed from `origin/main` at `21286c6b2cf3bce5d951e621ca341ba73d175103`; host-runtime verification remains operator-only. |
+| Working-tree state | Reoptimise runner Slice B is merged on `main`; local curation is recording the final merge identity. Host-runtime verification remains operator-only and is not claimed by agents. |
 
 If the pin above is not reachable from `HEAD` via fast-forward, this file is stale; if `HEAD` is ahead of the pin, see §"Pin Convention".
 
@@ -43,6 +43,75 @@ Per `docs/26` §"Immediate Safety Action":
 - Cues are research-visible but NOT execution-trustworthy.
 
 Do not relax these during the 72-hour observation window.
+
+### Project: Bounded Async Reoptimization Runner
+
+Canonical design sources:
+
+- `docs/playbooks/reoptimise-runner-agent-brief.md`
+- `docs/proposals/reoptimise-background-runner-redesign.md`
+- `specs/contracts/strategy_reoptimize_run_*`
+- `specs/examples/strategy_reoptimize_run_*`
+- `docs/proposals/reoptimise-observability-runbook-plan.md`
+- `docs/proposals/reoptimise-api-script-migration-plan.md`
+
+Project objective: replace the unsafe extremes of disabled manual-only
+reoptimization and unbounded background work with a durable, bounded,
+observable, cancelable, fail-closed async reoptimization system.
+
+Hard invariants for every slice:
+
+- Default disabled; no production scheduler enablement without explicit
+  operator approval.
+- Existing `POST /v1/strategy/pairs/reoptimize` remains synchronous and
+  compatible until a separately approved versioned migration.
+- Unknown, stale, invalid, expired, canceled, degraded, or contradictory run
+  state maps to `HOLD` or `OPERATOR_REVIEW_REQUIRED`.
+- Lease loss, budget exhaustion, artifact failure, and missing telemetry fail
+  closed.
+- No automatic `PROMOTE`, no automatic `REVERT`, and no live `ENTRY` / `EXIT`
+  enablement.
+- No automatic graduation of repair-only provenance such as
+  `RECANONICALIZED_LEGACY_ROW`.
+- Host verification remains operator-only; agents must not claim SSH/runtime
+  evidence unless the operator provides it.
+- Heavy workers stay fail-closed by default until leases, budgets,
+  single-flight, observability, and canary evidence are implemented and
+  approved.
+
+Slice tracker:
+
+| Slice | Status | Owner | Notes |
+|---|---|---|---|
+| Slice A — async contracts and examples | **Committed on main** | remote/local | PR #192 / commit c94740e added enqueue, status, cancel, and artifact-manifest contracts and examples without changing runtime behavior. |
+| Slice B — durable run state and lease state machine | **Committed on main** | remote/local | PR #193 squash-merged at 3751ee56f059138e9a11c7238e0e68bc4bea7a71 from head 52fb6f8. Local verification passed: `cargo fmt --all -- --check`, `cargo clippy --workspace --all-targets -- -D warnings`, and `cargo test --workspace`. Explicit local Postgres-backed reoptimize tests were invoked with `--nocapture` and skipped per harness policy because `STRATEGY_TEST_DATABASE_URL` was unset; GitHub CI rust checks were green on the PR head. Scope stayed limited to canonical schema/init path, isolated strategy-service persistence/state-machine helpers, focused unit/Postgres tests, and `CHANGELOG.md`. No routes, scheduler loop, UI, scripts, or synchronous reoptimize behavior changed. |
+| Slice C — bounded runner loop | **Not started** | unclaimed | Future implementation only after Slice B lands. Must be disabled by default and implement budgets, checkpointed work units, heartbeats, progress writes, cancellation checks, fail-closed terminal completion, and no automatic promotion. |
+| Slice D — async API and script migration | **Not started** | unclaimed | Follow `docs/proposals/reoptimise-api-script-migration-plan.md`. Add async endpoints and script opt-in migration only after Slice C foundations are approved; keep synchronous compatibility route behavior unless separately versioned. |
+| Slice E — observability and runbooks | **Not started** | unclaimed | Follow `docs/proposals/reoptimise-observability-runbook-plan.md`. Add bounded metrics, structured logs, alerts, dashboards/runbook procedures, artifact/status guidance, and missing-telemetry fail-closed handling. |
+| Slice F — production canary | **Not started; operator-only** | operator | Requires explicit operator approval after C-E. Must capture host identity, flags, budgets, metrics, status progression, artifacts, CPU/hot-path baseline comparison, live ENTRY/EXIT disabled evidence, and no automatic promotion. |
+
+Open operator decisions before production enablement:
+
+1. Initial runtime budgets: run wall-clock, timeframe wall-clock, pair counts,
+   pair concurrency, DB batch size, artifact bytes, cooldown, lease TTL, and
+   heartbeat interval.
+2. First canary timeframe and success thresholds.
+3. Cancellation authority and auth/audit boundary.
+4. Artifact root, retention period, and download/access policy.
+5. Canonical request/config fingerprint fields.
+6. Script migration defaults: stay sync, async opt-in, latest-successful, or
+   skip for each maintenance path.
+7. Long-term fate of `POST /v1/strategy/pairs/reoptimize`: compatibility
+   route, admin-only route, async wrapper, or deprecated route.
+
+Next safe sequence:
+
+1. Claim exactly one future slice at a time. Slice C is next for runner
+   implementation and must remain disabled by default.
+2. Do not start async API/script migration until Slice C foundations are
+   approved.
+3. If implementation needs files
+   outside the slice boundary, stop and escalate per `AGENTS.md` §7.
 
 ---
 
@@ -73,6 +142,8 @@ Source of truth for shipped behavior is `CHANGELOG.md` `## Unreleased` section. 
 - **Committed (`38ccc01`)**: Slice D recanonicalization design proposal (PR #174) — `docs/proposals/SLICE-D-recanonicalize-legacy-rows.md` recommends a dry-run-first, operator-confirmed maintenance action for legacy selected rows, gated on Slice C neutral-selection observation evidence, with row-level eligibility reasons, repair-only provenance, pre-image rollback artifacts, additive/versioned contracts, bounded metrics/logs, and operator-only host verification.
 - **Committed (`2d66495`)**: X3 reporting diagnostics design proposal (PR #175) — `docs/proposals/X3-reporting-alignment-diagnostics.md` recommends optional additive `selection_diagnostics` for backtest, live-z, paper-trades, and opportunity-history surfaces after Slice C observation, while preserving legacy `selected_variant` compatibility and deferring implementation/schema changes to a later PR.
 - **Committed (`21286c6`)**: Live-trial lineage reconciliation (PR #177) — `main` now contains the reviewed selection/Trade Now lineage, the host-deployed historical-quality cast hotfix, `/metrics` projection/transition observability, and the fail-closed `RECANONICALIZED_LEGACY_ROW_ACTIVE` Trade Now provenance block. Rust, Python, contracts, docs, and Vercel checks were green before merge; operator deployed the exact commit to host and verified safety gates stayed fail-closed.
+- **Committed (`d1a3eb9`)**: Reoptimise runner design/contract stack — PR #188 safety base, PR #189 bounded async runner proposal, PR #192 async reoptimization contracts/examples, PR #190 observability/runbook plan, and PR #191 API/script migration plan landed on `main` before Slice B implementation. Heavy workers remained fail-closed by default and host verification remained operator-only.
+- **Committed (`3751ee5`)**: Reoptimise runner Slice B (PR #193) — disabled-by-default durable async reoptimization run-state persistence scaffolding, `strategy_reoptimize_runs` lease/single-flight state, fail-closed expiry/cancellation helpers, artifact-manifest path containment, focused unit coverage, and Postgres-backed repository tests. Local verification passed fmt, clippy, and full workspace tests; local Postgres DB was unavailable, so explicit Postgres-backed tests skipped per harness policy while GitHub CI rust checks were green.
 
 ---
 
@@ -484,11 +555,15 @@ Follow-ups carried forward from prior reviews. Ordered by source review then sev
 
 Pickable items, in priority order:
 
-1. **Operator/local agent: continue T+48 and T+72 observation capture** — preserve fail-closed runtime settings and compare Trade Now buckets, blocked reasons, opportunity history, paper trades, and drift events against T0/T+24.
-2. **Remote/UI agent: Trade Now observation UI** — improve the web UI for the current observation window using existing Trade Now and observability contracts; do not add controls that mutate runtime state.
-3. **Remote/local agent: Slice D hardening follow-up** — if needed after observation, implement a dry-run-first recanonicalization maintenance path without making legacy or repair-only provenance trade-eligible.
-4. **Remote/local agent: X3 implementation** — only after reconciled deployment is observed; implement PR #175's optional/additive reporting diagnostics while preserving legacy `selected_variant`.
-5. **Remote/local agent: blocker-specific strategy follow-up** — only after T+72, target the blocker shown by evidence (learning hold/not eligible, live setup/cost gates, or approved-universe policy) rather than weakening Trade Now safety gates.
+1. **Remote/local agent: reoptimise runner Slice C bounded runner loop** — keep disabled by default and implement budgets, checkpointed work units, heartbeats, cancellation checks, fail-closed completion, and no automatic promotion.
+2. **Remote/local agent: reoptimise runner Slice D async API and script migration** — only after Slice C foundations are approved; keep the existing synchronous route compatible unless a separate versioned migration is approved.
+3. **Remote/local agent: reoptimise runner Slice E observability and runbooks** — add bounded metrics/logs/alerts/dashboard/runbook guidance without production scheduler enablement.
+4. **Operator-only: reoptimise runner Slice F production canary** — only after C-E and explicit operator approval; host verification remains operator-only.
+5. **Operator/local agent: continue any remaining Champion-Selection observation capture** — preserve fail-closed runtime settings and compare Trade Now buckets, blocked reasons, opportunity history, paper trades, and drift events against prior captures.
+6. **Remote/UI agent: Trade Now observation UI** — improve the web UI for the current observation window using existing Trade Now and observability contracts; do not add controls that mutate runtime state.
+7. **Remote/local agent: Slice D hardening follow-up** — if needed after observation, implement a dry-run-first recanonicalization maintenance path without making legacy or repair-only provenance trade-eligible.
+8. **Remote/local agent: X3 implementation** — only after reconciled deployment is observed; implement PR #175's optional/additive reporting diagnostics while preserving legacy `selected_variant`.
+9. **Remote/local agent: blocker-specific strategy follow-up** — only after T+72, target the blocker shown by evidence (learning hold/not eligible, live setup/cost gates, or approved-universe policy) rather than weakening Trade Now safety gates.
 
 ---
 
