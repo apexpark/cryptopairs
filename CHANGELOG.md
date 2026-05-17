@@ -12,7 +12,15 @@ This project follows SemVer as defined in `docs/02-versioning-and-releases.md`.
 - `.githooks/pre-push` now autostashes unstaged and untracked work before running the Rust preflight so pushes check the staged tree, with `scripts/test-pre-push.sh` covering the restore paths.
 - `docs/27` live cue mismatch audit now reads `cue.selection_state` fields for stored champion, evaluated best, source, and validation state instead of legacy cue-selected fields.
 
+### Changed
+- Heavy strategy-service background workers now default disabled (`STRATEGY_REOPT_WORKER_ENABLED`, `STRATEGY_SAMPLED_SLIPPAGE_WORKER_ENABLED`, `STRATEGY_HISTORY_RETENTION_WORKER_ENABLED`) until the reoptimization path has explicit leases, budgets, and single-flight protection.
+- Recanonicalized legacy selected-signal rows remain repair-only on same-variant reevaluation; reoptimization no longer automatically graduates `RECANONICALIZED_LEGACY_ROW` provenance to `AUTO_CHAMPION`.
+
 ### Added
+- Trade Now rows now include an additive `z_score` alias that mirrors `spread_z` for operator diagnostics and live-z comparisons.
+- Strategy service background sampled-slippage and history-retention workers can now be disabled with explicit env flags, and their first automatic ticks are delayed until their configured interval instead of running immediately at startup.
+- Strategy service now short-caches expensive cue/trade-now/live-z response computations and caps ticker-style live-z windows to reduce CPU under repeated polling or stale browser bundles.
+- Trade page polling now avoids all-row live-z fan-out and uses timeframe-aware refresh cadence to reduce strategy-service CPU and network load while keeping the selected pair ticking.
 - Execution service now exposes `POST /v1/execution/paper/order-intent`, persists `execution_mode=PAPER` order lifecycle rows, and keeps live risk, live portfolio reads, stale-ack watchdog, and live observability scoped to `execution_mode=LIVE`.
 - Strategy service now exposes Prometheus-style `/metrics` counters for champion-selection observability:
   - `pairs_cue_projection_total{outcome}`
@@ -685,6 +693,9 @@ This project follows SemVer as defined in `docs/02-versioning-and-releases.md`.
   - preview quantities now reflect actual executable submit size.
 
 ### Fixed
+- Strategy reoptimize worker no longer runs a full optimizer tick immediately on service boot, and
+  can be disabled with `STRATEGY_REOPT_WORKER_ENABLED=false` while keeping manual reoptimize
+  available.
 - Trade Now Pairs table columns now stay inside the Pairs frame at narrow window widths.
 - Trade and Analytics now render champion projection failures as `BLOCKED`
   instead of displaying an untrustworthy stored champion variant.
