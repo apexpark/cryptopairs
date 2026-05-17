@@ -34,6 +34,14 @@ Provide operator-facing SLO checks and alert response flow for execution and acc
 - `strategy_selection_transition_total{decision,timeframe}` (P3/P2 trend): should show steady-state `INITIALIZE`, `UNCHANGED`, `KEEP_CHAMPION`, or `PROMOTE_CHALLENGER` activity during reoptimization windows.
 - `pairs_cue_projection_total{outcome="PROJECTION_FAILED"}` (P2 trend): increases mean stored champion projection could not be materialized; inspect affected cue logs before trusting operator-facing champion state.
 
+5. Async reoptimization runner (future gated)
+- `strategy_reoptimize_lease_heartbeat_age_seconds` (P2/P1 if promotion path is open): active lease heartbeat age must stay below lease TTL plus grace.
+- `strategy_reoptimize_budget_exhausted_total{budget}` (P2): any increase means the run must be treated as `DEGRADED` or `FAILED` and recommendation must stay fail-closed.
+- `strategy_reoptimize_artifact_write_total{artifact,result}` and `strategy_reoptimize_artifact_read_total{artifact,result}` (P2): `FAILED`, `PARTIAL`, `NOT_FOUND`, or `CONTAINMENT_REJECTED` means terminal recommendations are not trustworthy.
+- `strategy_reoptimize_cancel_total{result}` (P2): `FAILED` or `TIMED_OUT` means new runs stay disabled until lease and active run state are inspected.
+- `strategy_reoptimize_unsafe_promotion_attempt_total{attempt_type,result}` (P1): any increase requires blocked action, preserved audit logs, and operator review.
+- `strategy_reoptimize_telemetry_missing_total{reason}` and `strategy_reoptimize_status_unknown_total{reason}` (P2): any increase means scheduler stays disabled and latest recommendation is `HOLD`.
+
 ## Alert Actions
 
 1. If any P1 is triggered:
@@ -46,6 +54,12 @@ Provide operator-facing SLO checks and alert response flow for execution and acc
 - Continue with reduced manual risk.
 - Investigate root cause within the same operator session.
 - Re-check alert status after remediation before restoring normal size.
+
+3. If async reoptimization telemetry is missing, stale, or contradictory:
+- Keep or set async scheduler disabled.
+- Do not enqueue a new mutation-producing run.
+- Treat latest recommendation as `HOLD` or `OPERATOR_REVIEW_REQUIRED`.
+- Follow `docs/playbooks/async-reoptimization-runner-runbook.md`.
 
 ## Operator Loop (every 5-15 minutes in alpha)
 

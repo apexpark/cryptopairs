@@ -205,6 +205,9 @@ Keep these paths for auditability:
 1. Reporter script fails: treat as fail-closed and mark decision `HOLD`.
 2. Deploy fails: do not force trading; restore safe profile and re-check health.
 3. Integrity/risk gate failures: no new entries until checks are healthy again.
+4. Future async reoptimization status or telemetry is missing, stale, or
+   unhealthy: keep decision `HOLD`, do not promote automatically, and use
+   `docs/playbooks/async-reoptimization-runner-runbook.md`.
 
 ## Related References
 

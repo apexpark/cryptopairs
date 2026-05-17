@@ -91,6 +91,21 @@ Current gate families:
 
 Missing baseline or runtime errors force `HOLD`.
 
+## Async Reoptimization Runner (Future Gated)
+
+The future bounded async reoptimization runner provides evidence only. Until an
+approved implementation and script migration land, this runbook does not enable
+the scheduler or change the synchronous `POST /v1/strategy/pairs/reoptimize`
+compatibility path.
+
+Fail closed to `HOLD` when async runner status, telemetry, request/config
+fingerprint, service version, artifacts, or recommendations are missing,
+stale, invalid, canceled, degraded, failed, expired, or contradictory.
+
+Use `docs/playbooks/async-reoptimization-runner-runbook.md` for operator
+enable, disable, cancel, artifact inspection, rollback, and host-verification
+boundaries after the approved implementation lands.
+
 ## Git Cadence (Anti-scope-drift)
 
 1. One slice at a time.

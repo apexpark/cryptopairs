@@ -158,6 +158,31 @@ Expected result:
 1. Inbox endpoint returns `200` with rows array (possibly empty).
 2. Action endpoint returns `400` with `confirm=true is required ...` when confirmation is omitted.
 
+## Async Reoptimization Runner Host Boundary (Future Gated)
+
+Do not enable the async reoptimization scheduler during ordinary hosted
+deployment. Enablement requires a separately approved implementation, bounded
+metrics, conservative budgets, and operator-captured canary evidence.
+
+Before any future scheduler enablement, the operator must capture:
+1. host branch, commit, and dirty status;
+2. deployed image or service identity;
+3. scheduler, lease, budget, cache, and worker flag values;
+4. proof live `ENTRY` and `EXIT` remain disabled;
+5. proof promotion remains manual;
+6. pre-enable CPU and hot endpoint latency baseline;
+7. `/metrics` output for async runner metrics;
+8. status endpoint output for the canary run;
+9. artifact manifest and artifacts;
+10. post-run CPU and hot endpoint latency comparison;
+11. active alerts before and after the run.
+
+If any host evidence is missing, stale, or contradictory, keep the scheduler
+disabled and keep recommendations at `HOLD`.
+
+Operator flows for enable, disable, cancel, artifact inspection, and rollback
+are in `docs/playbooks/async-reoptimization-runner-runbook.md`.
+
 ## Validation Commands
 
 ```bash

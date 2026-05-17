@@ -42,7 +42,28 @@ Define required telemetry, health signals, and alert policies.
 - Optimizer rejected-candidate count by timeframe/reason (`optimizer_candidate_rejected_total`)
 - Candidate probation pass/fail counts by timeframe/reason (`candidate_probation_pass_total`, `candidate_probation_fail_total`)
 
-4. Execution and risk:
+4. Bounded async reoptimization runner (future gated):
+- Required before scheduler enablement: runner lifecycle, scheduler, lease,
+  budget, progress, artifact, cancellation, fail-closed, recommendation, unsafe
+  promotion, and missing-telemetry metrics.
+- Metric labels must be bounded. Allowed label families are `trigger`,
+  `status`, `result`, `timeframe`, `phase`, `budget`, `artifact`,
+  `recommendation`, `reason`, and `attempt_type`, using only the enums defined
+  in `docs/proposals/reoptimise-observability-runbook-plan.md` and the async
+  runner contracts.
+- Metrics must not label by `run_id`, `pair_id`, `operator_id`,
+  `lease_owner`, hostname, container id, artifact path, request URL, stack
+  trace, or free-form error text. Those values belong in structured logs,
+  status responses, or artifacts.
+- Missing, stale, unreadable, schema-invalid, or contradictory async runner
+  telemetry fails closed: no new scheduled mutation-producing run, latest
+  recommendation `HOLD` or `OPERATOR_REVIEW_REQUIRED`, and no automatic
+  `PROMOTE`, `REVERT`, `ENTRY`, or `EXIT`.
+- Alert on stuck leases, unknown status, missing telemetry, repeated failed or
+  degraded runs, missed schedules, budget exhaustion, artifact failures,
+  cancellation failures/timeouts, and unsafe promotion attempts.
+
+5. Execution and risk:
 - Order ack latency
 - Reject/cancel rates
 - Risk check fail counts
@@ -50,7 +71,7 @@ Define required telemetry, health signals, and alert policies.
 - Reconcile gate fail counts on order intents
 - Order lifecycle transition counts by state
 
-5. Account:
+6. Account:
 - Reconciliation drift
 - Margin utilization
 - PnL update lag
@@ -70,6 +91,47 @@ Define required telemetry, health signals, and alert policies.
 - `request_id`, `timeframe`, `pair_id`
 - probation transition state before/after
 - rejection reasons and promotable counts per timeframe
+5. Async reoptimization logs include:
+- `request_id`, `run_id`, `trigger_source`
+- bounded `status_before`, `status_after`, and `phase`
+- lease generation and heartbeat timestamps where applicable
+- bounded budget, artifact, recommendation, and fail-closed reason fields
+- sanitized error text only in logs, never in metric labels
+
+## Async Reoptimization Alert Response
+
+Async reoptimization alerts are fail-closed by default:
+
+1. Stuck lease or heartbeat age beyond lease TTL plus grace:
+- Keep the scheduler disabled or refuse new runs.
+- Inspect latest run status and recover or mark `EXPIRED` through an approved
+  path before any enablement.
+
+2. Budget exhaustion:
+- Treat the run as `DEGRADED` or `FAILED`.
+- Keep recommendation at `HOLD` or `OPERATOR_REVIEW_REQUIRED`.
+- Review runtime budget and host load before re-enable.
+
+3. Artifact failure:
+- Do not trust terminal recommendations.
+- Inspect artifact manifest, root containment, and required artifact files.
+
+4. Cancellation failure or timeout:
+- Keep new runs disabled.
+- Inspect lease and active run state before recovery.
+
+5. Unsafe promotion attempt:
+- Block the action and preserve audit logs.
+- Verify live `ENTRY` and `EXIT` remain disabled.
+- Require explicit operator review.
+
+6. Missing telemetry or unknown status:
+- Keep scheduler disabled.
+- Treat latest recommendation as `HOLD`.
+- Restore telemetry and verify a fresh successful run before trusting evidence.
+
+Detailed operator flows are in
+`docs/playbooks/async-reoptimization-runner-runbook.md`.
 
 ## Out Of Scope
 

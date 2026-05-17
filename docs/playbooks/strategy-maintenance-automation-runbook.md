@@ -123,6 +123,25 @@ python3 tools/scripts/strategy_maintenance_action_worker.py \
 2. Any failed cycle step marks cycle status `FAIL`.
 3. Candidate apply failure keeps decision `HOLD`.
 4. Restore failure is reported and marks cycle status `FAIL`.
+5. Missing, stale, unknown, canceled, degraded, failed, expired, or
+   contradictory async reoptimization state keeps decision `HOLD`.
+6. Missing async runner telemetry or missing artifacts must not be interpreted
+   as empty successful evidence.
+
+## Async Reoptimization Runner (Future Gated)
+
+The bounded async reoptimization runner is not enabled by this runbook. Use it
+only after the implementation, contracts, metrics, and operator approval land.
+
+Operator rules:
+1. Keep the existing synchronous `POST /v1/strategy/pairs/reoptimize`
+   compatibility behavior unless a separate versioned migration is approved.
+2. Do not enable the async scheduler when required telemetry is missing.
+3. Do not treat `PROMOTION_CANDIDATE_AVAILABLE` as a maintenance action.
+4. Do not automatically `PROMOTE`, `REVERT`, enable live `ENTRY` / `EXIT`, or
+   graduate repair-only provenance.
+5. Use `docs/playbooks/async-reoptimization-runner-runbook.md` for future
+   enable, disable, cancel, artifact inspection, and rollback flows.
 
 ## Manual Decision Actions (Operator-Controlled)
 
