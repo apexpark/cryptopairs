@@ -31,9 +31,9 @@ It does not:
 6. make `PROMOTE` automatic;
 7. deprecate the existing synchronous route.
 
-The async contracts proposed by Slice A are not present in
-`specs/contracts/` in this checkout. Until those contracts are merged and
-approved, script migration remains design-only.
+PR #192 proposes the Slice A async contracts that this plan expects later
+script work to consume. Until those contracts are merged, validated, and
+operator-approved, script migration remains design-only.
 
 ## 2. Verified Current Repo Facts
 
@@ -64,16 +64,63 @@ Verified before writing this plan:
   - `specs/contracts/strategy_pairs_reoptimize_response.schema.json`;
   - `specs/contracts/strategy_maintenance_latest_response.schema.json`;
   - `specs/contracts/strategy_maintenance_action_response.schema.json`.
-- Proposed async run contracts named in
-  `docs/proposals/reoptimise-background-runner-redesign.md` are not present
-  in `specs/contracts/`.
+- PR #192 proposes draft Slice A async run contracts under `specs/contracts/`:
+  - `strategy_reoptimize_run_enqueue_response.schema.json`;
+  - `strategy_reoptimize_run_status_response.schema.json`;
+  - `strategy_reoptimize_run_cancel_response.schema.json`;
+  - `strategy_reoptimize_run_artifact_manifest.schema.json`.
 
-## 3. Migration Principles
+The PR #192 contract files are draft contracts, not merged baseline contracts
+for this PR. This plan references their names and semantics without changing
+schemas, examples, service code, or script code.
+
+## 3. Draft Slice A Contract Alignment
+
+PR #192's draft async contracts define the first concrete contract surface for
+the script migration plan:
+
+1. `strategy_reoptimize_run_enqueue_response.schema.json` defines accepted
+   enqueue responses, `run_id`, `status_route`, `cancel_route`, active-run
+   attachment, progress, budgets, recommendation, fail-closed reasons,
+   artifact manifest, and errors.
+2. `strategy_reoptimize_run_status_response.schema.json` defines durable run
+   status, lease fields, progress, budgets, recommendation, fail-closed
+   reasons, artifact manifest, and errors.
+3. `strategy_reoptimize_run_cancel_response.schema.json` defines cancellation
+   as a state transition with `cancel_result`, `previous_status`,
+   `cancel_requested_at`, `cancelable`, and the same fail-closed evidence
+   fields.
+4. `strategy_reoptimize_run_artifact_manifest.schema.json` defines artifact
+   evidence with path containment, required artifact metadata, total bytes,
+   fail-closed reasons, and errors.
+
+The draft contracts also define bounded shared enums that scripts should treat
+as the allowed contract vocabulary once merged:
+
+1. run statuses: `QUEUED`, `LEASED`, `RUNNING`, `CANCEL_REQUESTED`,
+   `CANCELED`, `SUCCEEDED`, `DEGRADED`, `FAILED`, `EXPIRED`;
+2. trigger sources: `SCHEDULED`, `MANUAL_API`, `MAINTENANCE_REPORT`,
+   `RECOVERY`;
+3. recommendations: `HOLD`, `OPERATOR_REVIEW_REQUIRED`,
+   `PROMOTION_CANDIDATE_AVAILABLE`, `REVERT_REVIEW_REQUIRED`;
+4. fail-closed reasons including `UNKNOWN_STATUS`, `STALE_STATUS`,
+   `LEASE_LOST`, `BUDGET_EXHAUSTED`, `CANCELED`, `ARTIFACT_FAILED`,
+   `INTEGRITY_UNKNOWN`, `RISK_UNKNOWN`, `ACCOUNTING_ANOMALY`,
+   `UNSAFE_PROMOTION_ATTEMPT`, `CONFIG_INVALID`, and
+   `REPAIR_PROVENANCE_ACTIVE`;
+5. cancellation results: `REQUESTED`, `ACCEPTED`, `COMPLETED`,
+   `REJECTED_TERMINAL`, `REJECTED_NOT_FOUND`, `FAILED`, `TIMED_OUT`.
+
+Script implementation must validate against the merged versions of these
+contracts, not against this proposal text. If PR #192 changes before merge,
+the implementation plan must follow the merged contract files.
+
+## 4. Migration Principles
 
 1. Add async APIs beside the synchronous route. Do not change the meaning of
    the synchronous route in place.
-2. Make async behavior opt-in for scripts until the new contracts and examples
-   are merged, validated, and approved.
+2. Make async behavior opt-in for scripts until the PR #192 Slice A contracts
+   and examples are merged, validated, and approved.
 3. Treat async reoptimization output as evidence, not as an action.
 4. Unknown, stale, timed out, failed, degraded, expired, canceled, or
    contradictory runner state maps to `HOLD`.
@@ -86,8 +133,10 @@ Verified before writing this plan:
    run must never be treated as successful.
 8. Promotion remains a separate manual operator decision through existing or
    future confirmed controls.
+9. Repair-only provenance such as `RECANONICALIZED_LEGACY_ROW` remains
+   fail-closed unless an explicit operator-approved transition exists.
 
-## 4. API Compatibility Plan
+## 5. API Compatibility Plan
 
 ### Existing route
 
@@ -108,7 +157,8 @@ route, or deprecated route requires a separate versioned migration proposal.
 
 ### Proposed async routes
 
-**PROPOSAL**: after Slice A contracts are approved, add these routes:
+**PROPOSAL**: after the PR #192 Slice A contracts are merged and approved, add
+these routes:
 
 1. `POST /v1/strategy/reoptimize/runs`;
 2. `GET /v1/strategy/reoptimize/runs/latest`;
@@ -117,11 +167,14 @@ route, or deprecated route requires a separate versioned migration proposal.
 5. `GET /v1/strategy/reoptimize/runs/{run_id}/artifacts` or a versioned
    artifact manifest/download route.
 
-The enqueue route should return a durable `run_id`, accepted/queued status,
-the effective request, and whether the service created a new run or attached
-the caller to an already-compatible active run.
+The enqueue route should return a payload compatible with the merged
+`strategy_reoptimize_run_enqueue_response.schema.json`: durable `run_id`,
+accepted/queued status, status/cancel routes, the effective request, and
+whether the service created a new run or attached the caller to an
+already-compatible active run.
 
-The status route should include:
+The status route should return a payload compatible with the merged
+`strategy_reoptimize_run_status_response.schema.json`, including:
 
 1. `schema_version`;
 2. `run_id`;
@@ -150,13 +203,20 @@ Terminal status handling for scripts:
 | `CANCELED` | `HOLD`. |
 | `CANCEL_REQUESTED` | Keep polling until terminal or deadline; deadline maps to `HOLD`. |
 | `QUEUED` / `LEASED` / `RUNNING` | Continue bounded polling until terminal or deadline. |
-| unknown status | `HOLD`. |
+| unknown status or schema-invalid payload | `HOLD`. |
 
-## 5. `strategy_tuning_report.py` Migration
+The artifact route should use the merged
+`strategy_reoptimize_run_artifact_manifest.schema.json` semantics: artifact
+paths must be relative to the configured artifact root, must not contain parent
+traversal, and must be evidence-only. Artifact evidence must not authorize
+promotion or repair-provenance graduation.
+
+## 6. `strategy_tuning_report.py` Migration
 
 ### CLI mode
 
-**PROPOSAL**: add an explicit mode flag only after async contracts are merged:
+**PROPOSAL**: add an explicit mode flag only after the PR #192 Slice A async
+contracts are merged:
 
 ```text
 --reoptimize-mode sync|async|latest-successful|skip
@@ -191,8 +251,9 @@ All values must be clamped to safe minimums and maximums in the script.
 3. `POST /v1/strategy/reoptimize/runs`.
 4. If the service returns an existing compatible active run, record that in
    `reoptimize_summary` and poll it.
-5. If enqueue fails, returns an incompatible active run, or returns an unknown
-   payload shape, write a report with `decision: "HOLD"`.
+5. If enqueue fails, returns an incompatible active run, fails schema
+   validation, or returns an unknown payload shape, write a report with
+   `decision: "HOLD"`.
 
 ### Polling and backoff
 
@@ -250,13 +311,16 @@ unboundedly.
 8. missing required artifact manifest;
 9. non-empty critical errors;
 10. `fail_closed_reasons` present;
-11. terminal state other than `SUCCEEDED`.
+11. terminal state other than `SUCCEEDED`;
+12. recommendation decision outside the merged contract enum;
+13. `REPAIR_PROVENANCE_ACTIVE` or equivalent repair-provenance fail-closed
+    reason.
 
 The script may still collect non-decisional diagnostics after a failed async
 run, but it must mark them as non-decisional in the report and keep the final
 decision at `HOLD`.
 
-## 6. `strategy_maintenance_cycle.py` Migration
+## 7. `strategy_maintenance_cycle.py` Migration
 
 ### Decision rule: latest successful versus fresh run
 
@@ -275,6 +339,8 @@ Compatibility checks for consuming latest successful run:
 6. artifact manifest is present and path-contained;
 7. no fail-closed reasons are present;
 8. progress counts show the expected timeframes reached terminal summary.
+9. recommendation and status values validate against the merged Slice A
+   contracts.
 
 If any check is unknown or false, the latest run is not eligible.
 
@@ -308,7 +374,8 @@ Default **PROPOSAL** for candidate mode:
    restore original settings as today where applicable and keep decision
    `HOLD`;
 5. do not translate async runner `PROMOTION_CANDIDATE_AVAILABLE` into an
-   automatic `PROMOTE` action.
+   automatic `PROMOTE` action;
+6. do not translate async runner success into repair-provenance graduation.
 
 ### Active run collision behavior
 
@@ -339,7 +406,7 @@ The existing `GET /v1/strategy/maintenance/latest` contract can continue to
 return the latest report payload as an opaque object until a future contract
 slice makes this structure explicit.
 
-## 7. Manual Actions and Promotion Safety
+## 8. Manual Actions and Promotion Safety
 
 `tools/scripts/strategy_maintenance_action_worker.py` should remain scoped to
 manual maintenance actions.
@@ -353,13 +420,17 @@ Required invariants:
    `operator_id` and `confirm=true`;
 4. candidate actions remain manual and auditable;
 5. live `ENTRY` / `EXIT` remain disabled unless separately approved by risk
-   and execution policy.
+   and execution policy;
+6. repair-only provenance cannot be converted to non-repair provenance by an
+   async run or script decision.
 
 No migration step may weaken `docs/12-risk-and-execution-policy.md`.
 
-## 8. Timeout and Cancellation Contract Requirements
+## 9. Timeout and Cancellation Contract Requirements
 
-Before scripts can migrate to async mode, the approved contracts must define:
+PR #192's draft cancellation contract defines the starting point for this
+surface. Before scripts can migrate to async mode, the merged contracts must
+define:
 
 1. which states are terminal;
 2. whether cancellation is allowed for each non-terminal state;
@@ -374,13 +445,16 @@ Script-side safe defaults:
 1. cancel only caller-owned runs;
 2. never cancel latest successful evidence;
 3. never treat cancel acceptance as a terminal result;
-4. map cancellation uncertainty to `HOLD`.
+4. map cancellation uncertainty to `HOLD`;
+5. map `CANCEL_REQUESTED`, `CANCELED`, `FAILED`, `TIMED_OUT`, or schema-invalid
+   cancel responses to `HOLD`.
 
-## 9. Rollout Slices
+## 10. Rollout Slices
 
 ### Slice D1 - contract approval gate
 
-Add and approve async run contracts and examples before script code changes.
+Merge and approve the PR #192 async run contracts and examples before script
+code changes.
 
 Acceptance:
 
@@ -399,7 +473,8 @@ Acceptance:
 
 1. no script default behavior changes;
 2. helper unit tests cover timeout, unknown status, HTTP failures, and
-   terminal state mapping.
+   terminal state mapping;
+3. helpers validate response payloads against the merged Slice A contracts.
 
 ### Slice D3 - `strategy_tuning_report.py` opt-in async mode
 
@@ -435,13 +510,13 @@ Acceptance:
 3. old synchronous route remains supported or is deprecated through a
    separate approved process.
 
-## 10. Testing Plan Notes
+## 11. Testing Plan Notes
 
 Docs-only PR verification:
 
 1. `git diff --check`.
 
-Future contract PR:
+PR #192 / future contract PR:
 
 1. validate each new async example against its schema;
 2. validate existing synchronous examples still pass;
@@ -453,14 +528,16 @@ Future script PR:
 1. unit-test poll sequence caps and total-deadline behavior;
 2. unit-test status mapping to `HOLD`;
 3. unit-test latest-successful compatibility checks;
-4. integration-test script behavior against a mocked HTTP server:
+4. schema-validate mocked async responses against the merged Slice A
+   contracts;
+5. integration-test script behavior against a mocked HTTP server:
    - enqueue succeeds then `SUCCEEDED`;
    - enqueue succeeds then `FAILED`;
    - run stays `RUNNING` until timeout;
    - cancel accepted after timeout;
    - latest run stale;
    - latest run fingerprint mismatch;
-5. replay/regression-test that deterministic fixtures still produce stable
+6. replay/regression-test that deterministic fixtures still produce stable
    report decisions when async run evidence is successful.
 
 Future service PR:
@@ -470,11 +547,12 @@ Future service PR:
 3. artifact manifest path containment tests;
 4. single-flight collision tests.
 
-## 11. Observability Plan
+## 12. Observability Plan
 
 This docs-only plan adds no metrics or logs.
 
-Future implementation should expose bounded metrics:
+Future implementation should expose the bounded metrics and labels from patched
+`docs/proposals/reoptimise-background-runner-redesign.md`:
 
 1. `strategy_reoptimize_run_total{trigger,status}`;
 2. `strategy_reoptimize_active_runs`;
@@ -503,7 +581,7 @@ Script logs and reports should include:
 Alerts should cover stuck runs, repeated timeouts, repeated budget exhaustion,
 artifact write failures, and repeated fail-closed recommendations.
 
-## 12. Host and Operator-Only Verification
+## 13. Host and Operator-Only Verification
 
 Remote and local agents must not claim host runtime verification without
 operator-provided evidence.
@@ -526,12 +604,14 @@ Operator-only checks before enabling async script mode on host:
 12. run `strategy_maintenance_cycle.py` in the approved mode and verify no
     automatic `PROMOTE` / `REVERT` action occurs;
 13. confirm sync route still responds to old callers;
-14. document rollback to sync mode and disabled async scheduler.
+14. confirm repair-only provenance remains fail-closed unless explicitly
+    operator-approved through a separate transition;
+15. document rollback to sync mode and disabled async scheduler.
 
 If any host check is missing or contradictory, keep async script mode disabled
 and keep recommendations at `HOLD`.
 
-## 13. Rollback and Disable Path
+## 14. Rollback and Disable Path
 
 Safe rollback must be available before production enablement:
 
@@ -541,18 +621,21 @@ Safe rollback must be available before production enablement:
 4. keep status/artifacts readable;
 5. preserve the synchronous route;
 6. keep maintenance latest report available;
-7. keep decisions fail-closed until a fresh successful run exists.
+7. keep decisions fail-closed until a fresh successful run exists;
+8. keep repair-provenance decisions fail-closed until explicit operator
+   approval exists.
 
 Rollback must not delete run history or artifacts.
 
-## 14. Versioning
+## 15. Versioning
 
 This plan is docs-only. It changes no public behavior, contracts, config, or
 runtime defaults. No version bump and no `CHANGELOG.md` entry are required.
 
 Future work:
 
-1. additive async contracts and examples require a `MINOR` version update;
+1. the additive async contracts and examples proposed by PR #192 require a
+   `MINOR` version update when merged;
 2. new script flags and operator workflow defaults require `CHANGELOG.md`;
 3. changing the meaning or default response shape of
    `POST /v1/strategy/pairs/reoptimize` requires a separate versioned
@@ -560,7 +643,7 @@ Future work:
 4. metrics and label sets are contracts under
    `docs/03-contracts-and-compatibility.md` and must stay bounded.
 
-## 15. Open Approval Questions
+## 16. Open Approval Questions
 
 1. Should first async script rollout default to `sync` with an opt-in async
    flag, or should host-only automation opt into async immediately after
