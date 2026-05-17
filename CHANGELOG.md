@@ -696,9 +696,6 @@ This project follows SemVer as defined in `docs/02-versioning-and-releases.md`.
 - Strategy reoptimize worker no longer runs a full optimizer tick immediately on service boot, and
   can be disabled with `STRATEGY_REOPT_WORKER_ENABLED=false` while keeping manual reoptimize
   available.
-- Strategy selected-signal transitions now self-heal `RECANONICALIZED_LEGACY_ROW` provenance to
-  `AUTO_CHAMPION` only when the current evaluated-best variant matches the stored champion,
-  allowing repair rows to clear without relaxing Trade Now gates.
 - Trade Now Pairs table columns now stay inside the Pairs frame at narrow window widths.
 - Trade and Analytics now render champion projection failures as `BLOCKED`
   instead of displaying an untrustworthy stored champion variant.
