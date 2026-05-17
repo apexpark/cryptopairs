@@ -17,6 +17,7 @@ This project follows SemVer as defined in `docs/02-versioning-and-releases.md`.
 - Recanonicalized legacy selected-signal rows remain repair-only on same-variant reevaluation; reoptimization no longer automatically graduates `RECANONICALIZED_LEGACY_ROW` provenance to `AUTO_CHAMPION`.
 
 ### Added
+- Added strict Slice A async reoptimization run contracts and examples for enqueue, status, cancel, and artifact manifest responses, including nullable request fingerprint/build identity evidence fields, without changing existing `/v1/strategy/pairs/reoptimize` semantics.
 - Trade Now rows now include an additive `z_score` alias that mirrors `spread_z` for operator diagnostics and live-z comparisons.
 - Strategy service background sampled-slippage and history-retention workers can now be disabled with explicit env flags, and their first automatic ticks are delayed until their configured interval instead of running immediately at startup.
 - Strategy service now short-caches expensive cue/trade-now/live-z response computations and caps ticker-style live-z windows to reduce CPU under repeated polling or stale browser bundles.
