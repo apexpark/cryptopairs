@@ -74,7 +74,7 @@
     },
     "run_status": {
       "type": "string",
-      "$comment": "Bounded runner states. Unknown or invalid states are schema failures and must be treated fail-closed by consumers.",
+      "$comment": "Canonical run-status vocabulary for async reoptimization. Future observability labels that report run status must use this enum exactly. Unknown or invalid states are schema failures and must be treated fail-closed by consumers.",
       "enum": [
         "QUEUED",
         "LEASED",
@@ -89,10 +89,12 @@
     },
     "trigger_source": {
       "type": "string",
+      "$comment": "Canonical trigger-source vocabulary for async reoptimization. Future observability trigger labels must use this enum exactly. Trigger source is metadata and does not change risk or promotion gates.",
       "enum": ["SCHEDULED", "MANUAL_API", "MAINTENANCE_REPORT", "RECOVERY"]
     },
     "cancel_result": {
       "type": "string",
+      "$comment": "Canonical cancellation result vocabulary for async reoptimization. Future observability cancel-result labels must use this enum exactly; cancel acceptance is not terminal success.",
       "enum": [
         "REQUESTED",
         "ACCEPTED",
@@ -109,6 +111,7 @@
     },
     "phase": {
       "type": "string",
+      "$comment": "Canonical progress phase vocabulary for async reoptimization status and artifact records. Future observability phase labels must use this enum exactly.",
       "enum": [
         "QUEUED",
         "PRECHECK",
@@ -245,6 +248,7 @@
       "properties": {
         "decision": {
           "type": "string",
+          "$comment": "Canonical recommendation.decision vocabulary for async reoptimization. Future observability recommendation labels must use this enum exactly. PROMOTION_CANDIDATE_AVAILABLE is evidence only, not an action.",
           "enum": [
             "HOLD",
             "OPERATOR_REVIEW_REQUIRED",
@@ -262,6 +266,7 @@
     },
     "fail_closed_reason": {
       "type": "string",
+      "$comment": "Canonical fail-closed reason vocabulary for async reoptimization. Future observability reason labels must use this enum exactly; unenumerated detail belongs in structured logs or artifacts.",
       "enum": [
         "MISSING_TELEMETRY",
         "UNKNOWN_STATUS",
@@ -355,6 +360,7 @@
       "properties": {
         "kind": {
           "type": "string",
+          "$comment": "Canonical artifact kind vocabulary for async reoptimization artifact records. Future observability artifact labels must use this enum exactly; do not infer an additional MANIFEST kind from manifest availability.",
           "enum": [
             "REQUEST",
             "PROGRESS",
