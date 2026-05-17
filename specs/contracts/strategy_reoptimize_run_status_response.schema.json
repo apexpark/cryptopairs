@@ -12,9 +12,12 @@
     "status",
     "trigger_source",
     "requested_timeframes",
+    "request_fingerprint",
+    "service_version",
     "created_at",
     "started_at",
     "finished_at",
+    "cancel_requested_at",
     "lease_owner",
     "lease_generation",
     "lease_acquired_at",
@@ -40,9 +43,23 @@
       "minItems": 1,
       "uniqueItems": true
     },
+    "request_fingerprint": {
+      "type": ["string", "null"],
+      "description": "Opaque deterministic request/config fingerprint. Null means the implementation has not emitted an approved fingerprint, so consumers that require compatibility evidence must fail closed.",
+      "minLength": 1,
+      "maxLength": 256,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$"
+    },
+    "service_version": {
+      "type": ["string", "null"],
+      "description": "Service version, commit, or build identity that produced this response. Null means unavailable and must not be treated as compatibility proof.",
+      "minLength": 1,
+      "maxLength": 128
+    },
     "created_at": { "type": "string", "format": "date-time" },
     "started_at": { "type": ["string", "null"], "format": "date-time" },
     "finished_at": { "type": ["string", "null"], "format": "date-time" },
+    "cancel_requested_at": { "type": ["string", "null"], "format": "date-time" },
     "lease_owner": { "type": ["string", "null"] },
     "lease_generation": { "type": "integer", "minimum": 0 },
     "lease_acquired_at": { "type": ["string", "null"], "format": "date-time" },
@@ -280,6 +297,8 @@
         "run_id",
         "status",
         "trigger_source",
+        "request_fingerprint",
+        "service_version",
         "artifact_root",
         "run_artifact_dir",
         "artifact_download_route",
@@ -295,6 +314,19 @@
         "run_id": { "$ref": "#/$defs/run_id" },
         "status": { "$ref": "#/$defs/run_status" },
         "trigger_source": { "$ref": "#/$defs/trigger_source" },
+        "request_fingerprint": {
+          "type": ["string", "null"],
+          "description": "Opaque deterministic request/config fingerprint. Null means the implementation has not emitted an approved fingerprint, so consumers that require compatibility evidence must fail closed.",
+          "minLength": 1,
+          "maxLength": 256,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$"
+        },
+        "service_version": {
+          "type": ["string", "null"],
+          "description": "Service version, commit, or build identity that produced this manifest. Null means unavailable and must not be treated as compatibility proof.",
+          "minLength": 1,
+          "maxLength": 128
+        },
         "artifact_root": { "type": "string", "minLength": 1 },
         "run_artifact_dir": {
           "type": "string",

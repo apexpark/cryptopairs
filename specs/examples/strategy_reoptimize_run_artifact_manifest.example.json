@@ -4,6 +4,8 @@
   "run_id": "reopt_2026-05-17T02-15-00Z_000001",
   "status": "DEGRADED",
   "trigger_source": "SCHEDULED",
+  "request_fingerprint": null,
+  "service_version": null,
   "artifact_root": "artifacts/strategy_reoptimize",
   "run_artifact_dir": "runs/reopt_2026-05-17T02-15-00Z_000001",
   "artifact_download_route": "/v1/strategy/reoptimize/artifact?path=",

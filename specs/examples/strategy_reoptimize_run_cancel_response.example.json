@@ -7,6 +7,8 @@
   "status": "CANCEL_REQUESTED",
   "previous_status": "RUNNING",
   "trigger_source": "MAINTENANCE_REPORT",
+  "request_fingerprint": null,
+  "service_version": null,
   "cancel_requested_at": "2026-05-17T02:17:30Z",
   "cancelable": true,
   "operator_action_required": false,
