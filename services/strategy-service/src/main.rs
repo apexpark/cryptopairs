@@ -6,7 +6,7 @@ use axum::{
     routing::{get, post},
     Json, Router,
 };
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, TimeDelta, Utc};
 use common_types::{
     kraken_perp_constraints, quantize_price_to_tick, InstrumentTradingConstraints, Timeframe,
 };
@@ -1844,10 +1844,389 @@ impl StrategyRepository {
                     reason TEXT NOT NULL DEFAULT '',
                     operator_id TEXT NOT NULL,
                     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-                 );",
+                 );
+                 CREATE TABLE IF NOT EXISTS strategy_reoptimize_runs (
+                    run_id TEXT PRIMARY KEY,
+                    status TEXT NOT NULL CHECK (status IN (
+                        'QUEUED',
+                        'LEASED',
+                        'RUNNING',
+                        'CANCEL_REQUESTED',
+                        'CANCELED',
+                        'SUCCEEDED',
+                        'DEGRADED',
+                        'FAILED',
+                        'EXPIRED'
+                    )),
+                    trigger_source TEXT NOT NULL CHECK (trigger_source IN (
+                        'SCHEDULED',
+                        'MANUAL_API',
+                        'MAINTENANCE_REPORT',
+                        'RECOVERY'
+                    )),
+                    requested_timeframes TEXT NOT NULL DEFAULT '',
+                    lease_owner TEXT,
+                    lease_generation BIGINT NOT NULL DEFAULT 0,
+                    lease_acquired_at TIMESTAMPTZ,
+                    lease_expires_at TIMESTAMPTZ,
+                    heartbeat_at TIMESTAMPTZ,
+                    progress_json JSONB NOT NULL DEFAULT '{}'::jsonb
+                        CHECK (jsonb_typeof(progress_json) = 'object'),
+                    summary_json JSONB NOT NULL DEFAULT '{}'::jsonb
+                        CHECK (jsonb_typeof(summary_json) = 'object'),
+                    recommendation TEXT NOT NULL DEFAULT 'HOLD' CHECK (recommendation IN (
+                        'HOLD',
+                        'OPERATOR_REVIEW_REQUIRED',
+                        'PROMOTION_CANDIDATE_AVAILABLE',
+                        'REVERT_REVIEW_REQUIRED'
+                    )),
+                    fail_closed_reasons_json JSONB NOT NULL DEFAULT '[\"UNKNOWN_STATUS\"]'::jsonb
+                        CHECK (jsonb_typeof(fail_closed_reasons_json) = 'array'),
+                    artifact_manifest_json JSONB NOT NULL DEFAULT '{}'::jsonb
+                        CHECK (jsonb_typeof(artifact_manifest_json) = 'object'),
+                    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                    started_at TIMESTAMPTZ,
+                    finished_at TIMESTAMPTZ,
+                    cancel_requested_at TIMESTAMPTZ,
+                    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                 );
+                 CREATE UNIQUE INDEX IF NOT EXISTS idx_strategy_reoptimize_runs_single_active
+                 ON strategy_reoptimize_runs ((true))
+                 WHERE status IN ('QUEUED', 'LEASED', 'RUNNING', 'CANCEL_REQUESTED');
+                 CREATE INDEX IF NOT EXISTS idx_strategy_reoptimize_runs_status_created
+                 ON strategy_reoptimize_runs (status, created_at DESC);",
             )
             .await?;
         Ok(())
+    }
+
+    #[allow(dead_code)]
+    async fn enqueue_reoptimize_run_state(
+        &self,
+        run_id: &str,
+        trigger_source: AsyncReoptimizeTriggerSource,
+        requested_timeframes: &[Timeframe],
+        now: DateTime<Utc>,
+    ) -> anyhow::Result<bool> {
+        let status = AsyncReoptimizeRunStatus::Queued.as_str();
+        let trigger_source = trigger_source.as_str();
+        let requested_timeframes = requested_timeframes
+            .iter()
+            .map(|timeframe| timeframe.as_str())
+            .collect::<Vec<_>>()
+            .join(",");
+        let progress_json = "{}";
+        let summary_json = "{}";
+        let fail_closed_reasons_json =
+            async_fail_closed_reasons_json(&[AsyncReoptimizeFailClosedReason::UnknownStatus])?;
+        let artifact_manifest_json = "{}";
+        let rows = self
+            .client
+            .execute(
+                "INSERT INTO strategy_reoptimize_runs
+                 (run_id, status, trigger_source, requested_timeframes, progress_json,
+                  summary_json, recommendation, fail_closed_reasons_json,
+                  artifact_manifest_json, created_at, updated_at)
+                 VALUES ($1, $2, $3, $4, ($5::text)::jsonb, ($6::text)::jsonb, $7,
+                         ($8::text)::jsonb, ($9::text)::jsonb, $10, $10)
+                 ON CONFLICT DO NOTHING",
+                &[
+                    &run_id,
+                    &status,
+                    &trigger_source,
+                    &requested_timeframes,
+                    &progress_json,
+                    &summary_json,
+                    &AsyncReoptimizeRecommendation::Hold.as_str(),
+                    &fail_closed_reasons_json,
+                    &artifact_manifest_json,
+                    &now,
+                ],
+            )
+            .await?;
+        Ok(rows == 1)
+    }
+
+    #[allow(dead_code)]
+    async fn fetch_reoptimize_run_state(
+        &self,
+        run_id: &str,
+    ) -> anyhow::Result<Option<AsyncReoptimizeRunState>> {
+        let Some(row) = self
+            .client
+            .query_opt(
+                "SELECT run_id, status, trigger_source, lease_owner, lease_generation,
+                        lease_acquired_at, lease_expires_at, heartbeat_at, recommendation,
+                        fail_closed_reasons_json::text, artifact_manifest_json::text,
+                        cancel_requested_at
+                 FROM strategy_reoptimize_runs
+                 WHERE run_id=$1",
+                &[&run_id],
+            )
+            .await?
+        else {
+            return Ok(None);
+        };
+        Self::async_reoptimize_run_state_from_row(&row).map(Some)
+    }
+
+    #[allow(dead_code)]
+    async fn acquire_reoptimize_run_lease(
+        &self,
+        run_id: &str,
+        lease_owner: &str,
+        lease_ttl_seconds: i64,
+        now: DateTime<Utc>,
+    ) -> anyhow::Result<Option<AsyncReoptimizeLease>> {
+        let ttl = TimeDelta::seconds(lease_ttl_seconds.max(1));
+        let lease_expires_at = now + ttl;
+        let fail_closed_reasons_json =
+            async_fail_closed_reasons_json(&[AsyncReoptimizeFailClosedReason::UnknownStatus])?;
+        let Some(row) = self
+            .client
+            .query_opt(
+                "UPDATE strategy_reoptimize_runs
+                 SET status='LEASED',
+                     lease_owner=$2,
+                     lease_generation=lease_generation + 1,
+                     lease_acquired_at=$3,
+                     lease_expires_at=$4,
+                     heartbeat_at=$3,
+                     started_at=COALESCE(started_at, $3),
+                     updated_at=$3,
+                     recommendation='HOLD',
+                     fail_closed_reasons_json=($5::text)::jsonb
+                 WHERE run_id=$1
+                   AND status='QUEUED'
+                   AND lease_owner IS NULL
+                 RETURNING run_id, lease_owner, lease_generation,
+                           lease_acquired_at, lease_expires_at, heartbeat_at",
+                &[
+                    &run_id,
+                    &lease_owner,
+                    &now,
+                    &lease_expires_at,
+                    &fail_closed_reasons_json,
+                ],
+            )
+            .await?
+        else {
+            return Ok(None);
+        };
+        Ok(Some(AsyncReoptimizeLease {
+            run_id: row.get(0),
+            lease_owner: row.get(1),
+            lease_generation: row.get(2),
+            lease_acquired_at: row.get(3),
+            lease_expires_at: row.get(4),
+            heartbeat_at: row.get(5),
+        }))
+    }
+
+    #[allow(dead_code)]
+    async fn heartbeat_reoptimize_run_lease(
+        &self,
+        run_id: &str,
+        lease_owner: &str,
+        lease_generation: i64,
+        lease_ttl_seconds: i64,
+        now: DateTime<Utc>,
+    ) -> anyhow::Result<bool> {
+        let lease_expires_at = now + TimeDelta::seconds(lease_ttl_seconds.max(1));
+        let rows = self
+            .client
+            .execute(
+                "UPDATE strategy_reoptimize_runs
+                 SET heartbeat_at=$4,
+                     lease_expires_at=$5,
+                     updated_at=$4
+                 WHERE run_id=$1
+                   AND lease_owner=$2
+                   AND lease_generation=$3
+                   AND status IN ('LEASED', 'RUNNING', 'CANCEL_REQUESTED')
+                   AND lease_expires_at > $4",
+                &[
+                    &run_id,
+                    &lease_owner,
+                    &lease_generation,
+                    &now,
+                    &lease_expires_at,
+                ],
+            )
+            .await?;
+        Ok(rows == 1)
+    }
+
+    #[allow(dead_code)]
+    async fn expire_reoptimize_leases(
+        &self,
+        now: DateTime<Utc>,
+    ) -> anyhow::Result<Vec<AsyncReoptimizeRunState>> {
+        let fail_closed_reasons_json = async_fail_closed_reasons_json(&[
+            AsyncReoptimizeFailClosedReason::LeaseLost,
+            AsyncReoptimizeFailClosedReason::StaleStatus,
+        ])?;
+        let rows = self
+            .client
+            .query(
+                "UPDATE strategy_reoptimize_runs
+                 SET status='EXPIRED',
+                     finished_at=COALESCE(finished_at, $1),
+                     updated_at=$1,
+                     recommendation='HOLD',
+                     fail_closed_reasons_json=($2::text)::jsonb
+                 WHERE status IN ('LEASED', 'RUNNING', 'CANCEL_REQUESTED')
+                   AND lease_expires_at IS NOT NULL
+                   AND lease_expires_at <= $1
+                 RETURNING run_id, status, trigger_source, lease_owner, lease_generation,
+                           lease_acquired_at, lease_expires_at, heartbeat_at, recommendation,
+                           fail_closed_reasons_json::text, artifact_manifest_json::text,
+                           cancel_requested_at",
+                &[&now, &fail_closed_reasons_json],
+            )
+            .await?;
+        rows.iter()
+            .map(Self::async_reoptimize_run_state_from_row)
+            .collect()
+    }
+
+    #[allow(dead_code)]
+    async fn request_reoptimize_run_cancel(
+        &self,
+        run_id: &str,
+        now: DateTime<Utc>,
+    ) -> anyhow::Result<Option<AsyncReoptimizeRunState>> {
+        let fail_closed_reasons_json = async_fail_closed_reasons_json(&[
+            AsyncReoptimizeFailClosedReason::Canceled,
+            AsyncReoptimizeFailClosedReason::UnknownStatus,
+        ])?;
+        let Some(row) = self
+            .client
+            .query_opt(
+                "UPDATE strategy_reoptimize_runs
+                 SET status=CASE WHEN status='QUEUED' THEN 'CANCELED'
+                                 ELSE 'CANCEL_REQUESTED'
+                            END,
+                     cancel_requested_at=COALESCE(cancel_requested_at, $2),
+                     finished_at=CASE WHEN status='QUEUED' THEN COALESCE(finished_at, $2)
+                                      ELSE finished_at
+                                 END,
+                     updated_at=$2,
+                     recommendation='HOLD',
+                     fail_closed_reasons_json=($3::text)::jsonb
+                 WHERE run_id=$1
+                   AND status IN ('QUEUED', 'LEASED', 'RUNNING', 'CANCEL_REQUESTED')
+                 RETURNING run_id, status, trigger_source, lease_owner, lease_generation,
+                           lease_acquired_at, lease_expires_at, heartbeat_at, recommendation,
+                           fail_closed_reasons_json::text, artifact_manifest_json::text,
+                           cancel_requested_at",
+                &[&run_id, &now, &fail_closed_reasons_json],
+            )
+            .await?
+        else {
+            return Ok(None);
+        };
+        Self::async_reoptimize_run_state_from_row(&row).map(Some)
+    }
+
+    #[allow(dead_code)]
+    async fn complete_reoptimize_run(
+        &self,
+        completion: AsyncReoptimizeCompletion<'_>,
+    ) -> anyhow::Result<Option<AsyncReoptimizeRunState>> {
+        if !completion.requested_status.is_terminal() {
+            anyhow::bail!(
+                "async reoptimize terminal completion cannot use active status {}",
+                completion.requested_status.as_str()
+            );
+        }
+        if !async_reoptimize_manifest_paths_are_contained(completion.artifact_manifest_json) {
+            anyhow::bail!("async reoptimize artifact manifest path escapes artifact root");
+        }
+        let artifact_manifest_json = serde_json::to_string(completion.artifact_manifest_json)?;
+        let mut recommendation = completion.recommendation;
+        if completion.requested_status != AsyncReoptimizeRunStatus::Succeeded
+            && recommendation == AsyncReoptimizeRecommendation::PromotionCandidateAvailable
+        {
+            recommendation = AsyncReoptimizeRecommendation::Hold;
+        }
+        let fail_closed_reasons_json =
+            async_fail_closed_reasons_json(completion.fail_closed_reasons)?;
+        let canceled_reasons_json =
+            async_fail_closed_reasons_json(&[AsyncReoptimizeFailClosedReason::Canceled])?;
+        let requested_status = completion.requested_status.as_str();
+        let recommendation = recommendation.as_str();
+        let Some(row) = self
+            .client
+            .query_opt(
+                "UPDATE strategy_reoptimize_runs
+                 SET status=CASE WHEN cancel_requested_at IS NOT NULL
+                                      OR status='CANCEL_REQUESTED'
+                                  THEN 'CANCELED'
+                                  ELSE $4
+                             END,
+                     finished_at=COALESCE(finished_at, $8),
+                     updated_at=$8,
+                     lease_expires_at=NULL,
+                     recommendation=CASE WHEN cancel_requested_at IS NOT NULL
+                                               OR status='CANCEL_REQUESTED'
+                                          THEN 'HOLD'
+                                          ELSE $5
+                                     END,
+                     fail_closed_reasons_json=CASE WHEN cancel_requested_at IS NOT NULL
+                                                        OR status='CANCEL_REQUESTED'
+                                                   THEN ($7::text)::jsonb
+                                                   ELSE ($6::text)::jsonb
+                                              END,
+                     artifact_manifest_json=($9::text)::jsonb
+                 WHERE run_id=$1
+                   AND lease_owner=$2
+                   AND lease_generation=$3
+                   AND status IN ('LEASED', 'RUNNING', 'CANCEL_REQUESTED')
+                   AND lease_expires_at > $8
+                 RETURNING run_id, status, trigger_source, lease_owner, lease_generation,
+                           lease_acquired_at, lease_expires_at, heartbeat_at, recommendation,
+                           fail_closed_reasons_json::text, artifact_manifest_json::text,
+                           cancel_requested_at",
+                &[
+                    &completion.run_id,
+                    &completion.lease_owner,
+                    &completion.lease_generation,
+                    &requested_status,
+                    &recommendation,
+                    &fail_closed_reasons_json,
+                    &canceled_reasons_json,
+                    &completion.now,
+                    &artifact_manifest_json,
+                ],
+            )
+            .await?
+        else {
+            return Ok(None);
+        };
+        Self::async_reoptimize_run_state_from_row(&row).map(Some)
+    }
+
+    #[allow(dead_code)]
+    fn async_reoptimize_run_state_from_row(row: &Row) -> anyhow::Result<AsyncReoptimizeRunState> {
+        let status_raw: String = row.get(1);
+        let status = AsyncReoptimizeRunStatus::parse(&status_raw).ok_or_else(|| {
+            anyhow::anyhow!("unknown async reoptimize run status '{}'", status_raw)
+        })?;
+        Ok(AsyncReoptimizeRunState {
+            run_id: row.get(0),
+            status,
+            trigger_source: row.get(2),
+            lease_owner: row.get(3),
+            lease_generation: row.get(4),
+            lease_acquired_at: row.get(5),
+            lease_expires_at: row.get(6),
+            heartbeat_at: row.get(7),
+            recommendation: row.get(8),
+            fail_closed_reasons_json: row.get(9),
+            artifact_manifest_json: row.get(10),
+            cancel_requested_at: row.get(11),
+        })
     }
 
     async fn fetch_recent_closes(
@@ -5187,6 +5566,292 @@ impl ReoptimizeRunStatus {
             Self::Failed => "FAILED",
         }
     }
+}
+
+#[allow(dead_code)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum AsyncReoptimizeRunStatus {
+    Queued,
+    Leased,
+    Running,
+    CancelRequested,
+    Canceled,
+    Succeeded,
+    Degraded,
+    Failed,
+    Expired,
+}
+
+impl AsyncReoptimizeRunStatus {
+    const ACTIVE: [Self; 4] = [
+        Self::Queued,
+        Self::Leased,
+        Self::Running,
+        Self::CancelRequested,
+    ];
+
+    fn parse(value: &str) -> Option<Self> {
+        match value.trim() {
+            "QUEUED" => Some(Self::Queued),
+            "LEASED" => Some(Self::Leased),
+            "RUNNING" => Some(Self::Running),
+            "CANCEL_REQUESTED" => Some(Self::CancelRequested),
+            "CANCELED" => Some(Self::Canceled),
+            "SUCCEEDED" => Some(Self::Succeeded),
+            "DEGRADED" => Some(Self::Degraded),
+            "FAILED" => Some(Self::Failed),
+            "EXPIRED" => Some(Self::Expired),
+            _ => None,
+        }
+    }
+
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Queued => "QUEUED",
+            Self::Leased => "LEASED",
+            Self::Running => "RUNNING",
+            Self::CancelRequested => "CANCEL_REQUESTED",
+            Self::Canceled => "CANCELED",
+            Self::Succeeded => "SUCCEEDED",
+            Self::Degraded => "DEGRADED",
+            Self::Failed => "FAILED",
+            Self::Expired => "EXPIRED",
+        }
+    }
+
+    fn is_active(self) -> bool {
+        Self::ACTIVE.contains(&self)
+    }
+
+    fn is_terminal(self) -> bool {
+        !self.is_active()
+    }
+}
+
+#[allow(dead_code)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum AsyncReoptimizeTriggerSource {
+    Scheduled,
+    ManualApi,
+    MaintenanceReport,
+    Recovery,
+}
+
+impl AsyncReoptimizeTriggerSource {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Scheduled => "SCHEDULED",
+            Self::ManualApi => "MANUAL_API",
+            Self::MaintenanceReport => "MAINTENANCE_REPORT",
+            Self::Recovery => "RECOVERY",
+        }
+    }
+}
+
+#[allow(dead_code)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum AsyncReoptimizeRecommendation {
+    Hold,
+    OperatorReviewRequired,
+    PromotionCandidateAvailable,
+    RevertReviewRequired,
+}
+
+impl AsyncReoptimizeRecommendation {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Hold => "HOLD",
+            Self::OperatorReviewRequired => "OPERATOR_REVIEW_REQUIRED",
+            Self::PromotionCandidateAvailable => "PROMOTION_CANDIDATE_AVAILABLE",
+            Self::RevertReviewRequired => "REVERT_REVIEW_REQUIRED",
+        }
+    }
+}
+
+#[allow(dead_code)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum AsyncReoptimizeFailClosedReason {
+    MissingTelemetry,
+    UnknownStatus,
+    StaleStatus,
+    LeaseLost,
+    BudgetExhausted,
+    Canceled,
+    ArtifactFailed,
+    IntegrityUnknown,
+    RiskUnknown,
+    AccountingAnomaly,
+    ScheduleMissed,
+    UnsafePromotionAttempt,
+    ConfigInvalid,
+    RepairProvenanceActive,
+}
+
+impl AsyncReoptimizeFailClosedReason {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::MissingTelemetry => "MISSING_TELEMETRY",
+            Self::UnknownStatus => "UNKNOWN_STATUS",
+            Self::StaleStatus => "STALE_STATUS",
+            Self::LeaseLost => "LEASE_LOST",
+            Self::BudgetExhausted => "BUDGET_EXHAUSTED",
+            Self::Canceled => "CANCELED",
+            Self::ArtifactFailed => "ARTIFACT_FAILED",
+            Self::IntegrityUnknown => "INTEGRITY_UNKNOWN",
+            Self::RiskUnknown => "RISK_UNKNOWN",
+            Self::AccountingAnomaly => "ACCOUNTING_ANOMALY",
+            Self::ScheduleMissed => "SCHEDULE_MISSED",
+            Self::UnsafePromotionAttempt => "UNSAFE_PROMOTION_ATTEMPT",
+            Self::ConfigInvalid => "CONFIG_INVALID",
+            Self::RepairProvenanceActive => "REPAIR_PROVENANCE_ACTIVE",
+        }
+    }
+}
+
+#[allow(dead_code)]
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct AsyncReoptimizeFailClosedMapping {
+    status: Option<AsyncReoptimizeRunStatus>,
+    recommendation: AsyncReoptimizeRecommendation,
+    fail_closed_reasons: Vec<AsyncReoptimizeFailClosedReason>,
+}
+
+#[allow(dead_code)]
+struct AsyncReoptimizeCompletion<'a> {
+    run_id: &'a str,
+    lease_owner: &'a str,
+    lease_generation: i64,
+    requested_status: AsyncReoptimizeRunStatus,
+    recommendation: AsyncReoptimizeRecommendation,
+    fail_closed_reasons: &'a [AsyncReoptimizeFailClosedReason],
+    artifact_manifest_json: &'a serde_json::Value,
+    now: DateTime<Utc>,
+}
+
+#[allow(dead_code)]
+fn map_async_reoptimize_status_to_fail_closed(value: &str) -> AsyncReoptimizeFailClosedMapping {
+    let status = AsyncReoptimizeRunStatus::parse(value);
+    let mut fail_closed_reasons = vec![];
+    let recommendation = match status {
+        Some(AsyncReoptimizeRunStatus::Succeeded) => {
+            AsyncReoptimizeRecommendation::PromotionCandidateAvailable
+        }
+        Some(AsyncReoptimizeRunStatus::Canceled) => {
+            fail_closed_reasons.push(AsyncReoptimizeFailClosedReason::Canceled);
+            AsyncReoptimizeRecommendation::Hold
+        }
+        Some(AsyncReoptimizeRunStatus::Expired) => {
+            fail_closed_reasons.push(AsyncReoptimizeFailClosedReason::LeaseLost);
+            fail_closed_reasons.push(AsyncReoptimizeFailClosedReason::StaleStatus);
+            AsyncReoptimizeRecommendation::Hold
+        }
+        Some(AsyncReoptimizeRunStatus::Failed | AsyncReoptimizeRunStatus::Degraded) => {
+            fail_closed_reasons.push(AsyncReoptimizeFailClosedReason::MissingTelemetry);
+            AsyncReoptimizeRecommendation::Hold
+        }
+        Some(AsyncReoptimizeRunStatus::Queued)
+        | Some(AsyncReoptimizeRunStatus::Leased)
+        | Some(AsyncReoptimizeRunStatus::Running)
+        | Some(AsyncReoptimizeRunStatus::CancelRequested) => {
+            fail_closed_reasons.push(AsyncReoptimizeFailClosedReason::UnknownStatus);
+            AsyncReoptimizeRecommendation::Hold
+        }
+        None => {
+            fail_closed_reasons.push(AsyncReoptimizeFailClosedReason::UnknownStatus);
+            AsyncReoptimizeRecommendation::Hold
+        }
+    };
+    AsyncReoptimizeFailClosedMapping {
+        status,
+        recommendation,
+        fail_closed_reasons,
+    }
+}
+
+#[allow(dead_code)]
+#[derive(Debug, Clone, PartialEq)]
+struct AsyncReoptimizeRunState {
+    run_id: String,
+    status: AsyncReoptimizeRunStatus,
+    trigger_source: String,
+    lease_owner: Option<String>,
+    lease_generation: i64,
+    lease_acquired_at: Option<DateTime<Utc>>,
+    lease_expires_at: Option<DateTime<Utc>>,
+    heartbeat_at: Option<DateTime<Utc>>,
+    recommendation: String,
+    fail_closed_reasons_json: String,
+    artifact_manifest_json: String,
+    cancel_requested_at: Option<DateTime<Utc>>,
+}
+
+#[allow(dead_code)]
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct AsyncReoptimizeLease {
+    run_id: String,
+    lease_owner: String,
+    lease_generation: i64,
+    lease_acquired_at: DateTime<Utc>,
+    lease_expires_at: DateTime<Utc>,
+    heartbeat_at: DateTime<Utc>,
+}
+
+#[allow(dead_code)]
+fn async_fail_closed_reasons_json(
+    reasons: &[AsyncReoptimizeFailClosedReason],
+) -> anyhow::Result<String> {
+    let values: Vec<&str> = reasons.iter().map(|reason| reason.as_str()).collect();
+    Ok(serde_json::to_string(&values)?)
+}
+
+#[allow(dead_code)]
+fn async_reoptimize_manifest_paths_are_contained(manifest: &serde_json::Value) -> bool {
+    let Some(object) = manifest.as_object() else {
+        return manifest.is_null();
+    };
+    if object.is_empty() {
+        return true;
+    }
+    if let Some(path) = object
+        .get("run_artifact_dir")
+        .and_then(serde_json::Value::as_str)
+    {
+        if !is_safe_relative_artifact_path(path) {
+            return false;
+        }
+    }
+    if let Some(artifacts) = object
+        .get("artifacts")
+        .and_then(serde_json::Value::as_array)
+    {
+        for artifact in artifacts {
+            let Some(path) = artifact.get("path").and_then(serde_json::Value::as_str) else {
+                continue;
+            };
+            if !is_safe_relative_artifact_path(path) {
+                return false;
+            }
+        }
+    }
+    true
+}
+
+#[allow(dead_code)]
+fn is_safe_relative_artifact_path(raw: &str) -> bool {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return false;
+    }
+    let path = Path::new(trimmed);
+    if path.is_absolute() {
+        return false;
+    }
+    path.components().all(|component| {
+        matches!(
+            component,
+            std::path::Component::Normal(_) | std::path::Component::CurDir
+        )
+    })
 }
 
 #[derive(Debug)]
@@ -10963,12 +11628,12 @@ fn cache_entry_is_fresh(now: DateTime<Utc>, cached_at: DateTime<Utc>, ttl_ms: u6
 mod tests {
     use super::{
         apply_data_freshness_gate, apply_live_mark_override_to_snapshot, artifact_download_path,
-        bootstrap_deviation_exceeds_threshold, bootstrap_snapshot_is_fresh, build_trade_now_row,
-        canonical_metric_instrument, classify_cue_projection_outcome, classify_expectancy_result,
-        classify_reopt_error_severity, compute_candle_age_seconds, compute_expectancy_metrics,
-        compute_pair_funding_bps_per_event, compute_pair_slippage_sample_bps,
-        compute_walk_forward_summary, cue_for_pairs_response, days_covered,
-        decide_candidate_probation_transition, decide_champion_transition,
+        async_reoptimize_manifest_paths_are_contained, bootstrap_deviation_exceeds_threshold,
+        bootstrap_snapshot_is_fresh, build_trade_now_row, canonical_metric_instrument,
+        classify_cue_projection_outcome, classify_expectancy_result, classify_reopt_error_severity,
+        compute_candle_age_seconds, compute_expectancy_metrics, compute_pair_funding_bps_per_event,
+        compute_pair_slippage_sample_bps, compute_walk_forward_summary, cue_for_pairs_response,
+        days_covered, decide_candidate_probation_transition, decide_champion_transition,
         derive_paper_trades_from_series, derive_replay_trades_from_series,
         effective_history_prune_interval_secs, effective_live_z_ticker_window_bars,
         effective_reopt_interval_secs, effective_sampled_slippage_interval_ms,
@@ -10976,26 +11641,28 @@ mod tests {
         evaluate_recent_performance_gate, expectancy_objective_score,
         expected_funding_events_crossed, fetch_open_live_trade_pairs, finalize_trade_gate,
         group_trade_now_rows, live_z_effective_window_bars, load_latest_learning_overlay,
-        normalize_funding_rate, parse_backtest_exit_mode, parse_bool_token,
-        parse_candidate_inbox_query, parse_expectancy_query,
-        parse_opportunity_history_stats_timeframe, parse_opportunity_history_window,
-        parse_paper_trades_window, parse_replay_trades_query, parse_trade_now_query, percentile,
-        project_continuous_funding_bps, refresh_setup_gate, resolve_artifact_path,
-        resolve_learning_overlay_policy, resolve_reoptimize_status, resolve_selected_signal_config,
-        resolve_taker_fee_bps, retention_cutoff_ts, selected_signal_config_from_expectancy,
-        summarize_recent_performance, update_persist_summary_for_transition, CandidateInboxQuery,
-        CandidateLifecycleState, CandidateOperatorAction, CandidateProbationInputs,
-        CandidateProbationRow, ChampionDecision, CueProjectionOutcome, ExpectancyConfig,
-        ExpectancyMetrics, ExpectancyQuery, FundingCostEstimate, FundingRateInputMode,
-        LearningOverlayApprovalSource, LearningOverlayBlockedReason, LearningOverlayEntry,
-        LearningOverlaySnapshot, LearningOverlayUniverseBucket, LearningOverlayWatchReason,
-        LearningRecommendation, MaintenanceAction, OpportunityHistoryQuery,
-        OpportunityHistoryStatsQuery, PaperTradesQuery, PersistSummary, ReoptError,
-        ReoptErrorSeverity, ReoptimizeResponse, ReoptimizeRunStatus, ReplayTradeEntry,
-        ReplayTradePathSummary, ReplayTradesQuery, ResearchSweepRequest, SampledSlippageStatus,
-        SelectedSignalRow, SelectionTransitionCounts, StrategyMarketMetricsResponse,
-        StrategyMetrics, StrategySettings, TradeNowHistoricalQuality, TradeNowObservabilityStore,
-        TradeNowQuery, DEFAULT_HISTORY_RETENTION_WORKER_ENABLED, DEFAULT_REOPT_WORKER_ENABLED,
+        map_async_reoptimize_status_to_fail_closed, normalize_funding_rate,
+        parse_backtest_exit_mode, parse_bool_token, parse_candidate_inbox_query,
+        parse_expectancy_query, parse_opportunity_history_stats_timeframe,
+        parse_opportunity_history_window, parse_paper_trades_window, parse_replay_trades_query,
+        parse_trade_now_query, percentile, project_continuous_funding_bps, refresh_setup_gate,
+        resolve_artifact_path, resolve_learning_overlay_policy, resolve_reoptimize_status,
+        resolve_selected_signal_config, resolve_taker_fee_bps, retention_cutoff_ts,
+        selected_signal_config_from_expectancy, summarize_recent_performance,
+        update_persist_summary_for_transition, AsyncReoptimizeFailClosedReason,
+        AsyncReoptimizeRecommendation, CandidateInboxQuery, CandidateLifecycleState,
+        CandidateOperatorAction, CandidateProbationInputs, CandidateProbationRow, ChampionDecision,
+        CueProjectionOutcome, ExpectancyConfig, ExpectancyMetrics, ExpectancyQuery,
+        FundingCostEstimate, FundingRateInputMode, LearningOverlayApprovalSource,
+        LearningOverlayBlockedReason, LearningOverlayEntry, LearningOverlaySnapshot,
+        LearningOverlayUniverseBucket, LearningOverlayWatchReason, LearningRecommendation,
+        MaintenanceAction, OpportunityHistoryQuery, OpportunityHistoryStatsQuery, PaperTradesQuery,
+        PersistSummary, ReoptError, ReoptErrorSeverity, ReoptimizeResponse, ReoptimizeRunStatus,
+        ReplayTradeEntry, ReplayTradePathSummary, ReplayTradesQuery, ResearchSweepRequest,
+        SampledSlippageStatus, SelectedSignalRow, SelectionTransitionCounts,
+        StrategyMarketMetricsResponse, StrategyMetrics, StrategySettings,
+        TradeNowHistoricalQuality, TradeNowObservabilityStore, TradeNowQuery,
+        DEFAULT_HISTORY_RETENTION_WORKER_ENABLED, DEFAULT_REOPT_WORKER_ENABLED,
         DEFAULT_SAMPLED_SLIPPAGE_WORKER_ENABLED, LEARNING_OVERLAY_TTL_SECS,
         SELECTED_CONFIG_SOURCE_LEGACY_FALLBACK, SELECTED_CONFIG_SOURCE_OPERATOR_PROMOTION,
         SELECTED_CONFIG_SOURCE_RECANONICALIZED_LEGACY_ROW,
@@ -11029,6 +11696,49 @@ mod tests {
             source: "TEST".to_string(),
             updated_at: Utc::now(),
         }
+    }
+
+    #[test]
+    fn unknown_async_reoptimize_status_maps_to_hold() {
+        let mapping = map_async_reoptimize_status_to_fail_closed("SURPRISE");
+
+        assert_eq!(mapping.status, None);
+        assert_eq!(mapping.recommendation, AsyncReoptimizeRecommendation::Hold);
+        assert_eq!(
+            mapping.fail_closed_reasons,
+            vec![AsyncReoptimizeFailClosedReason::UnknownStatus]
+        );
+    }
+
+    #[test]
+    fn async_reoptimize_artifact_manifest_rejects_escape_paths() {
+        let safe_manifest = serde_json::json!({
+            "run_artifact_dir": "runs/reopt_2026-05-17T02-15-00Z_000001",
+            "artifacts": [
+                { "path": "runs/reopt_2026-05-17T02-15-00Z_000001/summary.json" }
+            ]
+        });
+        assert!(async_reoptimize_manifest_paths_are_contained(
+            &safe_manifest
+        ));
+
+        let parent_escape_manifest = serde_json::json!({
+            "run_artifact_dir": "runs/reopt_2026-05-17T02-15-00Z_000001",
+            "artifacts": [
+                { "path": "runs/reopt_2026-05-17T02-15-00Z_000001/../../secret.json" }
+            ]
+        });
+        assert!(!async_reoptimize_manifest_paths_are_contained(
+            &parent_escape_manifest
+        ));
+
+        let absolute_escape_manifest = serde_json::json!({
+            "run_artifact_dir": "/tmp/reoptimize",
+            "artifacts": []
+        });
+        assert!(!async_reoptimize_manifest_paths_are_contained(
+            &absolute_escape_manifest
+        ));
     }
 
     #[test]

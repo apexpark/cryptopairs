@@ -336,6 +336,303 @@ mod strategy_service_bin {
             Ok(())
         }
 
+        #[tokio::test]
+        async fn reoptimize_lease_acquire_succeeds_once() -> anyhow::Result<()> {
+            let Some(fixture) =
+                PgFixture::connect("reoptimize_lease_acquire_succeeds_once").await?
+            else {
+                return Ok(());
+            };
+            let run_id = "reopt_state_lease_once";
+            let now = test_time(1_779_000_001)?;
+
+            assert!(
+                fixture
+                    .repository
+                    .enqueue_reoptimize_run_state(
+                        run_id,
+                        AsyncReoptimizeTriggerSource::ManualApi,
+                        &[Timeframe::OneMinute],
+                        now,
+                    )
+                    .await?
+            );
+
+            let lease = fixture
+                .repository
+                .acquire_reoptimize_run_lease(run_id, "owner-a", 60, now)
+                .await?
+                .expect("first owner acquires lease");
+            assert_eq!(lease.lease_owner, "owner-a");
+            assert_eq!(lease.lease_generation, 1);
+
+            let second = fixture
+                .repository
+                .acquire_reoptimize_run_lease(run_id, "owner-b", 60, now)
+                .await?;
+            assert!(second.is_none());
+
+            Ok(())
+        }
+
+        #[tokio::test]
+        async fn reoptimize_concurrent_lease_acquire_refuses_second_owner() -> anyhow::Result<()> {
+            let Some(fixture) =
+                PgFixture::connect("reoptimize_concurrent_lease_acquire_refuses_second_owner")
+                    .await?
+            else {
+                return Ok(());
+            };
+            let run_id = "reopt_state_concurrent_lease";
+            let now = test_time(1_779_000_101)?;
+
+            assert!(
+                fixture
+                    .repository
+                    .enqueue_reoptimize_run_state(
+                        run_id,
+                        AsyncReoptimizeTriggerSource::ManualApi,
+                        &[Timeframe::OneMinute],
+                        now,
+                    )
+                    .await?
+            );
+
+            let (owner_a, owner_b) = tokio::join!(
+                fixture
+                    .repository
+                    .acquire_reoptimize_run_lease(run_id, "owner-a", 60, now),
+                fixture
+                    .repository
+                    .acquire_reoptimize_run_lease(run_id, "owner-b", 60, now),
+            );
+            let acquired = [owner_a?, owner_b?]
+                .into_iter()
+                .filter(Option::is_some)
+                .count();
+            assert_eq!(acquired, 1);
+
+            Ok(())
+        }
+
+        #[tokio::test]
+        async fn reoptimize_heartbeat_requires_matching_owner_generation() -> anyhow::Result<()> {
+            let Some(fixture) =
+                PgFixture::connect("reoptimize_heartbeat_requires_matching_owner_generation")
+                    .await?
+            else {
+                return Ok(());
+            };
+            let run_id = "reopt_state_heartbeat_owner_generation";
+            let now = test_time(1_779_000_201)?;
+
+            assert!(
+                fixture
+                    .repository
+                    .enqueue_reoptimize_run_state(
+                        run_id,
+                        AsyncReoptimizeTriggerSource::Scheduled,
+                        &[Timeframe::FifteenMinutes],
+                        now,
+                    )
+                    .await?
+            );
+            let lease = fixture
+                .repository
+                .acquire_reoptimize_run_lease(run_id, "owner-a", 60, now)
+                .await?
+                .expect("lease acquired");
+
+            assert!(
+                !fixture
+                    .repository
+                    .heartbeat_reoptimize_run_lease(
+                        run_id,
+                        "owner-b",
+                        lease.lease_generation,
+                        60,
+                        test_time(1_779_000_211)?,
+                    )
+                    .await?
+            );
+            assert!(
+                !fixture
+                    .repository
+                    .heartbeat_reoptimize_run_lease(
+                        run_id,
+                        "owner-a",
+                        lease.lease_generation + 1,
+                        60,
+                        test_time(1_779_000_212)?,
+                    )
+                    .await?
+            );
+            assert!(
+                fixture
+                    .repository
+                    .heartbeat_reoptimize_run_lease(
+                        run_id,
+                        "owner-a",
+                        lease.lease_generation,
+                        60,
+                        test_time(1_779_000_213)?,
+                    )
+                    .await?
+            );
+
+            let state = fixture
+                .repository
+                .fetch_reoptimize_run_state(run_id)
+                .await?
+                .expect("run state");
+            assert_eq!(state.heartbeat_at, Some(test_time(1_779_000_213)?));
+
+            Ok(())
+        }
+
+        #[tokio::test]
+        async fn reoptimize_expired_lease_moves_to_expired_fail_closed() -> anyhow::Result<()> {
+            let Some(fixture) =
+                PgFixture::connect("reoptimize_expired_lease_moves_to_expired_fail_closed").await?
+            else {
+                return Ok(());
+            };
+            let run_id = "reopt_state_expired_lease";
+            let now = test_time(1_779_000_301)?;
+
+            assert!(
+                fixture
+                    .repository
+                    .enqueue_reoptimize_run_state(
+                        run_id,
+                        AsyncReoptimizeTriggerSource::Recovery,
+                        &[Timeframe::OneHour],
+                        now,
+                    )
+                    .await?
+            );
+            fixture
+                .repository
+                .acquire_reoptimize_run_lease(run_id, "owner-a", 5, now)
+                .await?
+                .expect("lease acquired");
+
+            let expired = fixture
+                .repository
+                .expire_reoptimize_leases(test_time(1_779_000_307)?)
+                .await?;
+            assert_eq!(expired.len(), 1);
+            assert_eq!(expired[0].run_id, run_id);
+            assert_eq!(expired[0].status, AsyncReoptimizeRunStatus::Expired);
+            assert_eq!(
+                expired[0].recommendation,
+                AsyncReoptimizeRecommendation::Hold.as_str()
+            );
+            assert!(expired[0]
+                .fail_closed_reasons_json
+                .contains(AsyncReoptimizeFailClosedReason::LeaseLost.as_str()));
+
+            Ok(())
+        }
+
+        #[tokio::test]
+        async fn reoptimize_cancellation_transition_cannot_become_succeeded() -> anyhow::Result<()>
+        {
+            let Some(fixture) =
+                PgFixture::connect("reoptimize_cancellation_transition_cannot_become_succeeded")
+                    .await?
+            else {
+                return Ok(());
+            };
+            let run_id = "reopt_state_cancel_not_success";
+            let now = test_time(1_779_000_401)?;
+
+            assert!(
+                fixture
+                    .repository
+                    .enqueue_reoptimize_run_state(
+                        run_id,
+                        AsyncReoptimizeTriggerSource::MaintenanceReport,
+                        &[Timeframe::OneMinute],
+                        now,
+                    )
+                    .await?
+            );
+            let lease = fixture
+                .repository
+                .acquire_reoptimize_run_lease(run_id, "owner-a", 60, now)
+                .await?
+                .expect("lease acquired");
+            let canceled = fixture
+                .repository
+                .request_reoptimize_run_cancel(run_id, test_time(1_779_000_410)?)
+                .await?
+                .expect("cancel accepted");
+            assert_eq!(canceled.status, AsyncReoptimizeRunStatus::CancelRequested);
+
+            let artifact_manifest = serde_json::json!({});
+            let finalized = fixture
+                .repository
+                .complete_reoptimize_run(AsyncReoptimizeCompletion {
+                    run_id,
+                    lease_owner: "owner-a",
+                    lease_generation: lease.lease_generation,
+                    requested_status: AsyncReoptimizeRunStatus::Succeeded,
+                    recommendation: AsyncReoptimizeRecommendation::PromotionCandidateAvailable,
+                    fail_closed_reasons: &[],
+                    artifact_manifest_json: &artifact_manifest,
+                    now: test_time(1_779_000_420)?,
+                })
+                .await?
+                .expect("completion observed cancellation");
+            assert_eq!(finalized.status, AsyncReoptimizeRunStatus::Canceled);
+            assert_eq!(
+                finalized.recommendation,
+                AsyncReoptimizeRecommendation::Hold.as_str()
+            );
+            assert!(finalized
+                .fail_closed_reasons_json
+                .contains(AsyncReoptimizeFailClosedReason::Canceled.as_str()));
+
+            Ok(())
+        }
+
+        #[tokio::test]
+        async fn reoptimize_active_run_single_flight_refuses_second_queue() -> anyhow::Result<()> {
+            let Some(fixture) =
+                PgFixture::connect("reoptimize_active_run_single_flight_refuses_second_queue")
+                    .await?
+            else {
+                return Ok(());
+            };
+            let now = test_time(1_779_000_501)?;
+
+            assert!(
+                fixture
+                    .repository
+                    .enqueue_reoptimize_run_state(
+                        "reopt_state_single_flight_a",
+                        AsyncReoptimizeTriggerSource::Scheduled,
+                        &[Timeframe::OneMinute],
+                        now,
+                    )
+                    .await?
+            );
+            assert!(
+                !fixture
+                    .repository
+                    .enqueue_reoptimize_run_state(
+                        "reopt_state_single_flight_b",
+                        AsyncReoptimizeTriggerSource::ManualApi,
+                        &[Timeframe::FifteenMinutes],
+                        test_time(1_779_000_502)?,
+                    )
+                    .await?
+            );
+
+            Ok(())
+        }
+
         fn assert_transition_counts(
             summary: &PersistSummary,
             initialize: usize,
