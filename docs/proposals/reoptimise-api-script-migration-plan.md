@@ -551,8 +551,10 @@ Future service PR:
 
 This docs-only plan adds no metrics or logs.
 
-Future implementation should expose the bounded metrics and labels from patched
-`docs/proposals/reoptimise-background-runner-redesign.md`:
+Future implementation should follow the merged/patched #190 observability plan
+for metric names, help text, label names, alert details, dashboards, and
+runbook procedures. This migration plan keeps only the script-facing
+requirements that must align with the async contracts.
 
 1. `strategy_reoptimize_run_total{trigger,status}`;
 2. `strategy_reoptimize_active_runs`;
@@ -565,6 +567,14 @@ Future implementation should expose the bounded metrics and labels from patched
 9. `strategy_reoptimize_artifact_write_total{result}`;
 10. `strategy_reoptimize_fail_closed_total{reason}`;
 11. `strategy_reoptimize_recommendation_total{recommendation}`.
+
+Metric labels must keep `status` as the status label. Terminal-only metrics use
+the same `status` label, but emit only terminal values: `CANCELED`,
+`SUCCEEDED`, `DEGRADED`, `FAILED`, and `EXPIRED`.
+
+Scripts should validate `status`, `recommendation`, `fail_closed_reason` /
+`fail_closed_reasons`, and `cancel_result` values against the merged PR #192
+schemas rather than accepting free-form strings.
 
 Script logs and reports should include:
 
