@@ -2263,6 +2263,17 @@ impl StrategyRepository {
             anyhow::bail!("async reoptimize artifact manifest path escapes artifact root");
         }
         let artifact_manifest_json = serde_json::to_string(completion.artifact_manifest_json)?;
+        let canceled_artifact_manifest_json =
+            serde_json::to_string(&async_reoptimize_json_with_status(
+                completion.artifact_manifest_json,
+                AsyncReoptimizeRunStatus::Canceled,
+            ))?;
+        let progress_json = serde_json::to_string(completion.progress_json)?;
+        let summary_json = serde_json::to_string(completion.summary_json)?;
+        let canceled_summary_json = serde_json::to_string(&async_reoptimize_json_with_status(
+            completion.summary_json,
+            AsyncReoptimizeRunStatus::Canceled,
+        ))?;
         let mut recommendation = completion.recommendation;
         if completion.requested_status != AsyncReoptimizeRunStatus::Succeeded
             && recommendation == AsyncReoptimizeRecommendation::PromotionCandidateAvailable
@@ -2297,9 +2308,17 @@ impl StrategyRepository {
                                                    THEN ($7::text)::jsonb
                                                    ELSE ($6::text)::jsonb
                                               END,
-                     artifact_manifest_json=($9::text)::jsonb,
+                     artifact_manifest_json=CASE WHEN cancel_requested_at IS NOT NULL
+                                                       OR status='CANCEL_REQUESTED'
+                                                  THEN ($12::text)::jsonb
+                                                  ELSE ($9::text)::jsonb
+                                             END,
                      progress_json=($10::text)::jsonb,
-                     summary_json=($11::text)::jsonb
+                     summary_json=CASE WHEN cancel_requested_at IS NOT NULL
+                                             OR status='CANCEL_REQUESTED'
+                                        THEN ($13::text)::jsonb
+                                        ELSE ($11::text)::jsonb
+                                   END
                  WHERE run_id=$1
                    AND lease_owner=$2
                    AND lease_generation=$3
@@ -2320,8 +2339,10 @@ impl StrategyRepository {
                     &canceled_reasons_json,
                     &completion.now,
                     &artifact_manifest_json,
-                    &serde_json::to_string(completion.progress_json)?,
-                    &serde_json::to_string(completion.summary_json)?,
+                    &progress_json,
+                    &summary_json,
+                    &canceled_artifact_manifest_json,
+                    &canceled_summary_json,
                 ],
             )
             .await?
@@ -6160,6 +6181,21 @@ fn async_reoptimize_manifest_paths_are_contained(manifest: &serde_json::Value) -
     true
 }
 
+fn async_reoptimize_json_with_status(
+    value: &serde_json::Value,
+    status: AsyncReoptimizeRunStatus,
+) -> serde_json::Value {
+    let mut value = value.clone();
+    let serde_json::Value::Object(ref mut object) = value else {
+        return serde_json::json!({ "status": status.as_str() });
+    };
+    object.insert(
+        "status".to_string(),
+        serde_json::Value::String(status.as_str().to_string()),
+    );
+    value
+}
+
 #[allow(dead_code)]
 fn is_safe_relative_artifact_path(raw: &str) -> bool {
     let trimmed = raw.trim();
@@ -6767,6 +6803,7 @@ fn async_reoptimize_budget_exhausted(
     timeframe_started_at: Option<Instant>,
     run_pair_evaluations: usize,
     timeframe_pair_evaluations: usize,
+    include_pair_evaluation_limits: bool,
 ) -> Option<AsyncReoptimizeBudgetName> {
     if run_started_at.elapsed().as_secs() >= settings.reopt_max_run_seconds {
         return Some(AsyncReoptimizeBudgetName::RunWallClock);
@@ -6776,6 +6813,9 @@ fn async_reoptimize_budget_exhausted(
             return Some(AsyncReoptimizeBudgetName::TimeframeWallClock);
         }
     }
+    if !include_pair_evaluation_limits {
+        return None;
+    }
     if run_pair_evaluations >= settings.reopt_max_pairs_per_run {
         return Some(AsyncReoptimizeBudgetName::PairEvaluationsRun);
     }
@@ -6783,6 +6823,60 @@ fn async_reoptimize_budget_exhausted(
         return Some(AsyncReoptimizeBudgetName::PairEvaluationsTimeframe);
     }
     None
+}
+
+#[derive(Clone, Copy)]
+struct AsyncReoptimizeBudgetCheck {
+    timeframe: Option<Timeframe>,
+    timeframe_index: usize,
+    pair_index: usize,
+    pair_count: usize,
+    run_started_at: Instant,
+    timeframe_started_at: Option<Instant>,
+    run_pair_evaluations: usize,
+    timeframe_pair_evaluations: usize,
+    include_pair_evaluation_limits: bool,
+    context: &'static str,
+}
+
+fn async_reoptimize_stop_if_budget_exhausted(
+    settings: &StrategySettings,
+    progress: &mut AsyncReoptimizeRunnerProgress,
+    errors: &mut Vec<ReoptError>,
+    error_counts: &mut ReoptErrorCounts,
+    exhausted_budget: &mut Option<AsyncReoptimizeBudgetName>,
+    check: AsyncReoptimizeBudgetCheck,
+) -> bool {
+    if exhausted_budget.is_some() {
+        return true;
+    }
+    let Some(budget) = async_reoptimize_budget_exhausted(
+        settings,
+        check.run_started_at,
+        check.timeframe_started_at,
+        check.run_pair_evaluations,
+        check.timeframe_pair_evaluations,
+        check.include_pair_evaluation_limits,
+    ) else {
+        return false;
+    };
+    *exhausted_budget = Some(budget);
+    push_reopt_error(
+        errors,
+        "SYSTEM".to_string(),
+        check
+            .timeframe
+            .map(|timeframe| timeframe.as_str().to_string())
+            .unwrap_or_else(|| "SYSTEM".to_string()),
+        "ASYNC_REOPTIMIZE_BUDGET_EXHAUSTED",
+        format!("{} exhausted {}", budget.as_str(), check.context),
+        error_counts,
+    );
+    progress.absorb_error_counts(*error_counts);
+    if check.timeframe.is_some() {
+        progress.mark_remaining_skipped(check.timeframe_index, check.pair_index, check.pair_count);
+    }
+    true
 }
 
 async fn checkpoint_async_reoptimize_run(
@@ -6954,27 +7048,25 @@ async fn process_async_reoptimize_run(state: AppState, lease: AsyncReoptimizeLea
         let mut timeframe_failed = false;
 
         for (pair_index, pair) in state.settings.pairs.iter().cloned().enumerate() {
-            if let Some(budget) = async_reoptimize_budget_exhausted(
+            if async_reoptimize_stop_if_budget_exhausted(
                 &state.settings,
-                run_started_at,
-                Some(timeframe_started_at),
-                run_pair_evaluations,
-                timeframe_pair_evaluations,
+                &mut progress,
+                &mut errors,
+                &mut error_counts,
+                &mut exhausted_budget,
+                AsyncReoptimizeBudgetCheck {
+                    timeframe: Some(timeframe),
+                    timeframe_index,
+                    pair_index,
+                    pair_count,
+                    run_started_at,
+                    timeframe_started_at: Some(timeframe_started_at),
+                    run_pair_evaluations,
+                    timeframe_pair_evaluations,
+                    include_pair_evaluation_limits: true,
+                    context: "before starting new pair work",
+                },
             ) {
-                exhausted_budget = Some(budget);
-                push_reopt_error(
-                    &mut errors,
-                    "SYSTEM".to_string(),
-                    timeframe.as_str().to_string(),
-                    "ASYNC_REOPTIMIZE_BUDGET_EXHAUSTED",
-                    format!(
-                        "{} exhausted before starting new pair work",
-                        budget.as_str()
-                    ),
-                    &mut error_counts,
-                );
-                progress.absorb_error_counts(error_counts);
-                progress.mark_remaining_skipped(timeframe_index, pair_index, pair_count);
                 break 'timeframes;
             }
 
@@ -7052,6 +7144,28 @@ async fn process_async_reoptimize_run(state: AppState, lease: AsyncReoptimizeLea
             continue;
         }
 
+        if async_reoptimize_stop_if_budget_exhausted(
+            &state.settings,
+            &mut progress,
+            &mut errors,
+            &mut error_counts,
+            &mut exhausted_budget,
+            AsyncReoptimizeBudgetCheck {
+                timeframe: Some(timeframe),
+                timeframe_index,
+                pair_index: 0,
+                pair_count,
+                run_started_at,
+                timeframe_started_at: Some(timeframe_started_at),
+                run_pair_evaluations,
+                timeframe_pair_evaluations,
+                include_pair_evaluation_limits: false,
+                context: "after pair evaluation before persistence",
+            },
+        ) {
+            break 'timeframes;
+        }
+
         let plan = build_and_apply_portfolio_plan_to_outputs(
             &mut timeframe_outputs,
             &state.settings,
@@ -7098,6 +7212,28 @@ async fn process_async_reoptimize_run(state: AppState, lease: AsyncReoptimizeLea
                 }
             }
 
+            if async_reoptimize_stop_if_budget_exhausted(
+                &state.settings,
+                &mut progress,
+                &mut errors,
+                &mut error_counts,
+                &mut exhausted_budget,
+                AsyncReoptimizeBudgetCheck {
+                    timeframe: Some(timeframe),
+                    timeframe_index,
+                    pair_index: output_index,
+                    pair_count,
+                    run_started_at,
+                    timeframe_started_at: Some(timeframe_started_at),
+                    run_pair_evaluations,
+                    timeframe_pair_evaluations,
+                    include_pair_evaluation_limits: false,
+                    context: "before selected-row persistence",
+                },
+            ) {
+                break 'timeframes;
+            }
+
             match state
                 .repository
                 .record_evaluation(timeframe, &output, &state.settings)
@@ -7137,6 +7273,28 @@ async fn process_async_reoptimize_run(state: AppState, lease: AsyncReoptimizeLea
                 }
             }
 
+            if async_reoptimize_stop_if_budget_exhausted(
+                &state.settings,
+                &mut progress,
+                &mut errors,
+                &mut error_counts,
+                &mut exhausted_budget,
+                AsyncReoptimizeBudgetCheck {
+                    timeframe: Some(timeframe),
+                    timeframe_index,
+                    pair_index: output_index,
+                    pair_count,
+                    run_started_at,
+                    timeframe_started_at: Some(timeframe_started_at),
+                    run_pair_evaluations,
+                    timeframe_pair_evaluations,
+                    include_pair_evaluation_limits: false,
+                    context: "before shadow-model persistence",
+                },
+            ) {
+                break 'timeframes;
+            }
+
             progress.phase = AsyncReoptimizePhase::PersistShadowModel;
             if let Err(error) = state
                 .repository
@@ -7152,6 +7310,27 @@ async fn process_async_reoptimize_run(state: AppState, lease: AsyncReoptimizeLea
                     &mut error_counts,
                 );
             }
+            if async_reoptimize_stop_if_budget_exhausted(
+                &state.settings,
+                &mut progress,
+                &mut errors,
+                &mut error_counts,
+                &mut exhausted_budget,
+                AsyncReoptimizeBudgetCheck {
+                    timeframe: Some(timeframe),
+                    timeframe_index,
+                    pair_index: output_index,
+                    pair_count,
+                    run_started_at,
+                    timeframe_started_at: Some(timeframe_started_at),
+                    run_pair_evaluations,
+                    timeframe_pair_evaluations,
+                    include_pair_evaluation_limits: false,
+                    context: "before opportunity-history persistence",
+                },
+            ) {
+                break 'timeframes;
+            }
             if let Err(error) = state
                 .repository
                 .record_opportunity_history(timeframe, &output)
@@ -7165,6 +7344,27 @@ async fn process_async_reoptimize_run(state: AppState, lease: AsyncReoptimizeLea
                     format!("opportunity history persist failed: {error}"),
                     &mut error_counts,
                 );
+            }
+            if async_reoptimize_stop_if_budget_exhausted(
+                &state.settings,
+                &mut progress,
+                &mut errors,
+                &mut error_counts,
+                &mut exhausted_budget,
+                AsyncReoptimizeBudgetCheck {
+                    timeframe: Some(timeframe),
+                    timeframe_index,
+                    pair_index: output_index,
+                    pair_count,
+                    run_started_at,
+                    timeframe_started_at: Some(timeframe_started_at),
+                    run_pair_evaluations,
+                    timeframe_pair_evaluations,
+                    include_pair_evaluation_limits: false,
+                    context: "before paper-trade persistence",
+                },
+            ) {
+                break 'timeframes;
             }
             let pair_spec = PairSpec {
                 left: output.cue.left_instrument.clone(),
@@ -7182,6 +7382,27 @@ async fn process_async_reoptimize_run(state: AppState, lease: AsyncReoptimizeLea
                     format!("paper trade history persist failed: {error}"),
                     &mut error_counts,
                 );
+            }
+            if async_reoptimize_stop_if_budget_exhausted(
+                &state.settings,
+                &mut progress,
+                &mut errors,
+                &mut error_counts,
+                &mut exhausted_budget,
+                AsyncReoptimizeBudgetCheck {
+                    timeframe: Some(timeframe),
+                    timeframe_index,
+                    pair_index: output_index,
+                    pair_count,
+                    run_started_at,
+                    timeframe_started_at: Some(timeframe_started_at),
+                    run_pair_evaluations,
+                    timeframe_pair_evaluations,
+                    include_pair_evaluation_limits: false,
+                    context: "before candidate-probation persistence",
+                },
+            ) {
+                break 'timeframes;
             }
             match advance_candidate_probation_for_output(&state, timeframe, &output).await {
                 Ok(result) => {
@@ -7218,6 +7439,28 @@ async fn process_async_reoptimize_run(state: AppState, lease: AsyncReoptimizeLea
             }
             progress.pairs_completed = progress.pairs_completed.saturating_add(1);
             progress.absorb_error_counts(error_counts);
+        }
+
+        if async_reoptimize_stop_if_budget_exhausted(
+            &state.settings,
+            &mut progress,
+            &mut errors,
+            &mut error_counts,
+            &mut exhausted_budget,
+            AsyncReoptimizeBudgetCheck {
+                timeframe: Some(timeframe),
+                timeframe_index,
+                pair_index: pair_count,
+                pair_count,
+                run_started_at,
+                timeframe_started_at: Some(timeframe_started_at),
+                run_pair_evaluations,
+                timeframe_pair_evaluations,
+                include_pair_evaluation_limits: false,
+                context: "after persistence before timeframe summary",
+            },
+        ) {
+            break 'timeframes;
         }
 
         progress.phase = AsyncReoptimizePhase::TimeframeSummary;
@@ -7304,6 +7547,26 @@ async fn process_async_reoptimize_run(state: AppState, lease: AsyncReoptimizeLea
         None,
     );
     progress.phase = AsyncReoptimizePhase::RunSummary;
+    let planned_timeframe_count = progress.planned_timeframe_count;
+    let _ = async_reoptimize_stop_if_budget_exhausted(
+        &state.settings,
+        &mut progress,
+        &mut errors,
+        &mut error_counts,
+        &mut exhausted_budget,
+        AsyncReoptimizeBudgetCheck {
+            timeframe: None,
+            timeframe_index: planned_timeframe_count,
+            pair_index: 0,
+            pair_count: 0,
+            run_started_at,
+            timeframe_started_at: None,
+            run_pair_evaluations,
+            timeframe_pair_evaluations: 0,
+            include_pair_evaluation_limits: false,
+            context: "before terminal completion",
+        },
+    );
     let terminal = if canceled {
         AsyncReoptimizeTerminalDecision {
             requested_status: AsyncReoptimizeRunStatus::Canceled,
@@ -12688,6 +12951,68 @@ mod tests {
         assert_eq!(effective_history_prune_interval_secs(0), 60);
         assert_eq!(effective_history_prune_interval_secs(30), 60);
         assert_eq!(effective_history_prune_interval_secs(3600), 3600);
+    }
+
+    #[test]
+    fn async_reoptimize_budget_exhaustion_before_persistence_fails_closed() {
+        let mut settings = StrategySettings::from_env();
+        settings.timeframes = vec![Timeframe::OneMinute];
+        settings.pairs = vec![
+            super::PairSpec {
+                left: "PF_XBTUSD".to_string(),
+                right: "PF_ETHUSD".to_string(),
+            },
+            super::PairSpec {
+                left: "PF_SOLUSD".to_string(),
+                right: "PF_AVAXUSD".to_string(),
+            },
+        ];
+        settings.reopt_max_run_seconds = 1;
+        settings.reopt_max_timeframe_seconds = 300;
+        settings.reopt_max_pairs_per_run = 96;
+        settings.reopt_max_pairs_per_timeframe = 32;
+
+        let pair_count = settings.pairs.len();
+        let now = std::time::Instant::now();
+        let run_started_at = now - std::time::Duration::from_secs(2);
+        let mut progress =
+            super::AsyncReoptimizeRunnerProgress::new(settings.timeframes.clone(), pair_count);
+        progress.phase = super::AsyncReoptimizePhase::PersistSelectedRows;
+        let mut errors = Vec::<ReoptError>::new();
+        let mut error_counts = super::ReoptErrorCounts::default();
+        let mut exhausted_budget = None;
+
+        let stopped = super::async_reoptimize_stop_if_budget_exhausted(
+            &settings,
+            &mut progress,
+            &mut errors,
+            &mut error_counts,
+            &mut exhausted_budget,
+            super::AsyncReoptimizeBudgetCheck {
+                timeframe: Some(Timeframe::OneMinute),
+                timeframe_index: 0,
+                pair_index: 0,
+                pair_count,
+                run_started_at,
+                timeframe_started_at: Some(now),
+                run_pair_evaluations: 1,
+                timeframe_pair_evaluations: 1,
+                include_pair_evaluation_limits: false,
+                context: "before selected-row persistence",
+            },
+        );
+
+        assert!(stopped);
+        assert_eq!(
+            exhausted_budget,
+            Some(super::AsyncReoptimizeBudgetName::RunWallClock)
+        );
+        assert_eq!(progress.pairs_skipped, pair_count);
+        assert_eq!(progress.critical_error_count, 1);
+        assert_eq!(error_counts.critical, 1);
+        assert_eq!(errors.len(), 1);
+        assert_eq!(errors[0].code, "ASYNC_REOPTIMIZE_BUDGET_EXHAUSTED");
+        assert!(errors[0].error.contains("before selected-row persistence"));
     }
 
     #[test]

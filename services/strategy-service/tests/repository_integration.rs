@@ -650,9 +650,15 @@ mod strategy_service_bin {
                 .expect("cancel accepted");
             assert_eq!(canceled.status, AsyncReoptimizeRunStatus::CancelRequested);
 
-            let artifact_manifest = serde_json::json!({});
+            let artifact_manifest = serde_json::json!({
+                "status": "SUCCEEDED",
+                "artifacts": []
+            });
             let progress_json = serde_json::json!({});
-            let summary_json = serde_json::json!({});
+            let summary_json = serde_json::json!({
+                "status": "SUCCEEDED",
+                "budgets": { "budget_state": "WITHIN_BUDGET" }
+            });
             let finalized = fixture
                 .repository
                 .complete_reoptimize_run(AsyncReoptimizeCompletion {
@@ -677,6 +683,12 @@ mod strategy_service_bin {
             assert!(finalized
                 .fail_closed_reasons_json
                 .contains(AsyncReoptimizeFailClosedReason::Canceled.as_str()));
+            let persisted_summary: serde_json::Value =
+                serde_json::from_str(&finalized.summary_json)?;
+            assert_eq!(persisted_summary["status"], "CANCELED");
+            let persisted_manifest: serde_json::Value =
+                serde_json::from_str(&finalized.artifact_manifest_json)?;
+            assert_eq!(persisted_manifest["status"], "CANCELED");
 
             Ok(())
         }
