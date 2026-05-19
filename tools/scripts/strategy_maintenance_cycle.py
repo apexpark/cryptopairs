@@ -127,6 +127,7 @@ def run_report_step(
     python_bin: str,
     repo_root: Path,
     timeout_seconds: int,
+    report_timeout_seconds: int,
     strategy_service_url: str,
     execution_service_url: str,
     exchange: str,
@@ -153,6 +154,8 @@ def run_report_step(
         account_id,
         "--window-minutes",
         str(window_minutes),
+        "--timeout-seconds",
+        str(report_timeout_seconds),
         "--policy-json",
         str(policy_json),
         "--profile",
@@ -197,6 +200,8 @@ def run_apply_step(
     services: str,
     skip_pull: bool,
     dry_run: bool,
+    deploy_health_retries: int | None,
+    deploy_health_sleep_secs: int | None,
 ) -> dict[str, Any]:
     command = [
         python_bin,
@@ -220,6 +225,10 @@ def run_apply_step(
         command.append("--no-skip-pull")
     if dry_run:
         command.append("--dry-run")
+    if deploy_health_retries is not None:
+        command.extend(["--deploy-health-retries", str(deploy_health_retries)])
+    if deploy_health_sleep_secs is not None:
+        command.extend(["--deploy-health-sleep-secs", str(deploy_health_sleep_secs)])
 
     run = run_subprocess(command, repo_root, timeout_seconds)
     step: dict[str, Any] = {
@@ -246,6 +255,8 @@ def restore_original_values(
     original_values: dict[str, int],
     skip_pull: bool,
     dry_run: bool,
+    deploy_health_retries: int | None,
+    deploy_health_sleep_secs: int | None,
     timeout_seconds: int,
     repo_root: Path,
 ) -> dict[str, Any]:
@@ -273,6 +284,8 @@ def restore_original_values(
         services=services,
         skip_pull=skip_pull,
         dry_run=dry_run,
+        deploy_health_retries=deploy_health_retries,
+        deploy_health_sleep_secs=deploy_health_sleep_secs,
     )
     step["deploy_exit_code"] = int(deploy_result.returncode)
     step["deploy_stdout"] = trunc(deploy_result.stdout)
@@ -432,8 +445,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--timeframes", default="1m,15m,1h")
     parser.add_argument("--limit", type=int, default=20)
     parser.add_argument("--health-timeout-seconds", type=float, default=4.0)
-    parser.add_argument("--timeout-seconds", type=int, default=240)
+    parser.add_argument("--timeout-seconds", type=int, default=900)
+    parser.add_argument("--report-timeout-seconds", type=apply_script.positive_int, default=300)
+    parser.add_argument("--deploy-health-retries", type=apply_script.positive_int, default=90)
+    parser.add_argument("--deploy-health-sleep-secs", type=apply_script.positive_int, default=2)
     parser.add_argument("--public-health-url", default="")
+    parser.add_argument("--print-summary", action="store_true")
     parser.add_argument("--restore-original", dest="restore_original", action="store_true")
     parser.add_argument("--no-restore-original", dest="restore_original", action="store_false")
     parser.set_defaults(skip_pull=True, restore_original=True)
@@ -514,6 +531,7 @@ def main() -> int:
                 python_bin=args.python_bin,
                 repo_root=repo_root,
                 timeout_seconds=args.timeout_seconds,
+                report_timeout_seconds=args.report_timeout_seconds,
                 strategy_service_url=args.strategy_service_url,
                 execution_service_url=args.execution_service_url,
                 exchange=args.exchange,
@@ -546,6 +564,8 @@ def main() -> int:
                 services=args.services,
                 skip_pull=args.skip_pull,
                 dry_run=True,
+                deploy_health_retries=args.deploy_health_retries,
+                deploy_health_sleep_secs=args.deploy_health_sleep_secs,
             )
             if not steps["candidate_apply_dry_run"]["pass"]:
                 status = "FAIL"
@@ -567,6 +587,8 @@ def main() -> int:
                 services=args.services,
                 skip_pull=args.skip_pull,
                 dry_run=args.dry_run,
+                deploy_health_retries=args.deploy_health_retries,
+                deploy_health_sleep_secs=args.deploy_health_sleep_secs,
             )
             if not steps["candidate_apply_live"]["pass"]:
                 status = "FAIL"
@@ -580,6 +602,7 @@ def main() -> int:
                 python_bin=args.python_bin,
                 repo_root=repo_root,
                 timeout_seconds=args.timeout_seconds,
+                report_timeout_seconds=args.report_timeout_seconds,
                 strategy_service_url=args.strategy_service_url,
                 execution_service_url=args.execution_service_url,
                 exchange=args.exchange,
@@ -626,6 +649,8 @@ def main() -> int:
                     original_values=original_values,
                     skip_pull=args.skip_pull,
                     dry_run=False,
+                    deploy_health_retries=args.deploy_health_retries,
+                    deploy_health_sleep_secs=args.deploy_health_sleep_secs,
                     timeout_seconds=args.timeout_seconds,
                     repo_root=repo_root,
                 )
@@ -642,6 +667,8 @@ def main() -> int:
                     services=args.services,
                     skip_pull=args.skip_pull,
                     dry_run=False,
+                    deploy_health_retries=args.deploy_health_retries,
+                    deploy_health_sleep_secs=args.deploy_health_sleep_secs,
                 )
                 steps["restore_original"]["mode"] = restore_mode
             if not steps["restore_original"]["pass"]:
@@ -729,7 +756,8 @@ def main() -> int:
         latest_report_path.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(cycle_report_path, latest_report_path)
 
-        print(json.dumps(cycle_report, indent=2))
+        console_report = decision_report if args.print_summary else cycle_report
+        print(json.dumps(console_report, indent=2))
         return 0 if status == "PASS" else 2
     finally:
         try:

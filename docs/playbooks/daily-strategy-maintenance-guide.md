@@ -64,6 +64,8 @@ STAMP_DRY=$(date -u +%Y-%m-%dT%H-%M-%SZ)
 python3 tools/scripts/strategy_tuning_apply.py \
   --mode promote \
   --dry-run \
+  --deploy-health-retries 90 \
+  --deploy-health-sleep-secs 2 \
   --output-json "artifacts/strategy_tuning/${STAMP_DRY}-apply-promote-dryrun.json"
 ```
 
@@ -73,6 +75,8 @@ Live apply:
 STAMP_PROMOTE=$(date -u +%Y-%m-%dT%H-%M-%SZ)
 python3 tools/scripts/strategy_tuning_apply.py \
   --mode promote \
+  --deploy-health-retries 90 \
+  --deploy-health-sleep-secs 2 \
   --output-json "artifacts/strategy_tuning/${STAMP_PROMOTE}-apply-promote.json"
 ```
 
@@ -122,6 +126,8 @@ Action:
 STAMP_REVERT=$(date -u +%Y-%m-%dT%H-%M-%SZ)
 python3 tools/scripts/strategy_tuning_apply.py \
   --mode revert \
+  --deploy-health-retries 90 \
+  --deploy-health-sleep-secs 2 \
   --output-json "artifacts/strategy_tuning/${STAMP_REVERT}-apply-revert.json"
 ```
 
