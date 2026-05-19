@@ -729,6 +729,128 @@ mod strategy_service_bin {
             Ok(())
         }
 
+        #[tokio::test]
+        async fn reoptimize_latest_and_active_state_reads_support_api_status() -> anyhow::Result<()>
+        {
+            let Some(fixture) =
+                PgFixture::connect("reoptimize_latest_and_active_state_reads_support_api_status")
+                    .await?
+            else {
+                return Ok(());
+            };
+            let first_run_id = "reopt_state_api_latest_a";
+            let second_run_id = "reopt_state_api_latest_b";
+            let now = test_time(1_779_000_601)?;
+
+            assert!(
+                fixture
+                    .repository
+                    .enqueue_reoptimize_run_state(
+                        first_run_id,
+                        AsyncReoptimizeTriggerSource::ManualApi,
+                        &[Timeframe::OneMinute],
+                        now,
+                    )
+                    .await?
+            );
+            let latest = fixture
+                .repository
+                .fetch_latest_reoptimize_run_state()
+                .await?
+                .expect("latest run state");
+            assert_eq!(latest.run_id, first_run_id);
+            assert_eq!(latest.requested_timeframes, "1m");
+
+            let canceled = fixture
+                .repository
+                .request_reoptimize_run_cancel(first_run_id, test_time(1_779_000_602)?)
+                .await?
+                .expect("queued run canceled");
+            assert_eq!(canceled.status, AsyncReoptimizeRunStatus::Canceled);
+
+            assert!(
+                fixture
+                    .repository
+                    .enqueue_reoptimize_run_state(
+                        second_run_id,
+                        AsyncReoptimizeTriggerSource::ManualApi,
+                        &[Timeframe::OneMinute, Timeframe::FifteenMinutes],
+                        test_time(1_779_000_603)?,
+                    )
+                    .await?
+            );
+
+            let latest = fixture
+                .repository
+                .fetch_latest_reoptimize_run_state()
+                .await?
+                .expect("latest run state after second enqueue");
+            assert_eq!(latest.run_id, second_run_id);
+            assert_eq!(latest.requested_timeframes, "1m,15m");
+
+            let active = fixture
+                .repository
+                .fetch_active_reoptimize_run_state()
+                .await?
+                .expect("active run state");
+            assert_eq!(active.run_id, second_run_id);
+            assert_eq!(active.status, AsyncReoptimizeRunStatus::Queued);
+
+            Ok(())
+        }
+
+        #[tokio::test]
+        async fn reoptimize_worker_can_discover_api_queued_run_for_lease() -> anyhow::Result<()> {
+            let Some(fixture) =
+                PgFixture::connect("reoptimize_worker_can_discover_api_queued_run_for_lease")
+                    .await?
+            else {
+                return Ok(());
+            };
+            let run_id = "reopt_state_api_worker_pickup";
+            let now = test_time(1_779_000_701)?;
+
+            assert!(
+                fixture
+                    .repository
+                    .enqueue_reoptimize_run_state(
+                        run_id,
+                        AsyncReoptimizeTriggerSource::ManualApi,
+                        &[Timeframe::OneMinute],
+                        now,
+                    )
+                    .await?
+            );
+
+            let queued = fixture
+                .repository
+                .fetch_next_queued_reoptimize_run_state()
+                .await?
+                .expect("worker can find API-created queued run");
+            assert_eq!(queued.run_id, run_id);
+            assert_eq!(queued.trigger_source, "MANUAL_API");
+
+            let lease = fixture
+                .repository
+                .acquire_reoptimize_run_lease(
+                    &queued.run_id,
+                    "strategy-service:reoptimize-worker",
+                    60,
+                    test_time(1_779_000_702)?,
+                )
+                .await?
+                .expect("worker can lease queued run");
+            assert_eq!(lease.run_id, run_id);
+
+            assert!(fixture
+                .repository
+                .fetch_next_queued_reoptimize_run_state()
+                .await?
+                .is_none());
+
+            Ok(())
+        }
+
         fn assert_transition_counts(
             summary: &PersistSummary,
             initialize: usize,

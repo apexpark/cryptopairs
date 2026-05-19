@@ -5,6 +5,12 @@ This project follows SemVer as defined in `docs/02-versioning-and-releases.md`.
 
 ## Unreleased
 ### Operator Tooling
+- Added read/enqueue-only async reoptimization API endpoints for durable run
+  state (`POST /v1/strategy/reoptimize/runs`,
+  `GET /v1/strategy/reoptimize/runs/latest`, and
+  `GET /v1/strategy/reoptimize/runs/{run_id}`), while leaving cancellation
+  unexposed until an operator-approved auth/audit boundary exists; enqueue
+  fails closed while the disabled-by-default async worker is off.
 - Practice Mode Close Spread now records server-side paper close orders with operator audit fields, so paper positions can be closed without calling live execution submit/dispatch endpoints.
 - Trade page Spread Execution now uses operator-facing Practice Mode wording, keeps live trading separate, and records Practice Mode entries as server-side paper trades without calling live execution submit/dispatch endpoints.
 - Rotated the pre-push Rust preflight bypass from legacy `SKIP_RUST_CHECKS=1` to reason-bearing `RUST_PREFLIGHT_OVERRIDE=<reason>`, with boolean-ish override values rejected fail-closed.
