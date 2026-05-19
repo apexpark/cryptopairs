@@ -18,7 +18,7 @@ use std::sync::{
     atomic::{AtomicU64, Ordering},
     Arc,
 };
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Instant, SystemTime, UNIX_EPOCH};
 use strategy_service::{
     annotate_with_shadow_model, apply_portfolio_plan_to_cues, build_portfolio_plan,
     compute_backtest_series, evaluate_pair, train_shadow_model, BacktestConfig, BacktestExitMode,
@@ -163,6 +163,16 @@ struct StrategySettings {
     min_samples_target: usize,
     reopt_interval_secs: u64,
     reopt_worker_enabled: bool,
+    reopt_max_run_seconds: u64,
+    reopt_max_timeframe_seconds: u64,
+    reopt_max_pairs_per_run: usize,
+    reopt_max_pairs_per_timeframe: usize,
+    reopt_max_in_flight_pair_evaluations: usize,
+    reopt_max_db_write_batch_size: usize,
+    reopt_max_artifact_bytes: u64,
+    reopt_min_cooldown_seconds: u64,
+    reopt_lease_ttl_seconds: u64,
+    reopt_heartbeat_interval_seconds: u64,
     shadow_ml_min_rows: usize,
     shadow_ml_training_limit: usize,
     trading_fee_bps: f64,
@@ -227,6 +237,7 @@ struct StrategySettings {
 const DEFAULT_REOPT_WORKER_ENABLED: bool = false;
 const DEFAULT_SAMPLED_SLIPPAGE_WORKER_ENABLED: bool = false;
 const DEFAULT_HISTORY_RETENTION_WORKER_ENABLED: bool = false;
+static ASYNC_REOPTIMIZE_RUN_COUNTER: AtomicU64 = AtomicU64::new(0);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum FundingRateInputMode {
@@ -299,6 +310,44 @@ impl StrategySettings {
         let reopt_worker_enabled = parse_env_bool(
             "STRATEGY_REOPT_WORKER_ENABLED",
             DEFAULT_REOPT_WORKER_ENABLED,
+        );
+        let reopt_max_run_seconds = effective_async_reopt_max_run_seconds(parse_env_u64(
+            "STRATEGY_REOPT_MAX_RUN_SECONDS",
+            900,
+        ));
+        let reopt_max_timeframe_seconds = effective_async_reopt_max_timeframe_seconds(
+            parse_env_u64("STRATEGY_REOPT_MAX_TIMEFRAME_SECONDS", 300),
+        );
+        let reopt_max_pairs_per_run = effective_async_reopt_max_pairs_per_run(parse_env_usize(
+            "STRATEGY_REOPT_MAX_PAIRS_PER_RUN",
+            96,
+        ));
+        let reopt_max_pairs_per_timeframe = effective_async_reopt_max_pairs_per_timeframe(
+            parse_env_usize("STRATEGY_REOPT_MAX_PAIRS_PER_TIMEFRAME", 32),
+        );
+        let reopt_max_in_flight_pair_evaluations =
+            effective_async_reopt_max_in_flight_pair_evaluations(parse_env_usize(
+                "STRATEGY_REOPT_MAX_IN_FLIGHT_PAIR_EVALUATIONS",
+                1,
+            ));
+        let reopt_max_db_write_batch_size = effective_async_reopt_max_db_write_batch_size(
+            parse_env_usize("STRATEGY_REOPT_MAX_DB_WRITE_BATCH_SIZE", 25),
+        );
+        let reopt_max_artifact_bytes = effective_async_reopt_max_artifact_bytes(parse_env_u64(
+            "STRATEGY_REOPT_MAX_ARTIFACT_BYTES",
+            10_485_760,
+        ));
+        let reopt_min_cooldown_seconds = effective_async_reopt_min_cooldown_seconds(parse_env_u64(
+            "STRATEGY_REOPT_MIN_COOLDOWN_SECONDS",
+            3_600,
+        ));
+        let reopt_lease_ttl_seconds = effective_async_reopt_lease_ttl_seconds(parse_env_u64(
+            "STRATEGY_REOPT_LEASE_TTL_SECONDS",
+            120,
+        ));
+        let reopt_heartbeat_interval_seconds = effective_async_reopt_heartbeat_interval_seconds(
+            parse_env_u64("STRATEGY_REOPT_HEARTBEAT_INTERVAL_SECONDS", 15),
+            reopt_lease_ttl_seconds,
         );
         let shadow_ml_min_rows = parse_env_usize("STRATEGY_SHADOW_ML_MIN_ROWS", 64);
         let shadow_ml_training_limit = parse_env_usize("STRATEGY_SHADOW_ML_TRAINING_LIMIT", 1200);
@@ -453,6 +502,16 @@ impl StrategySettings {
             min_samples_target,
             reopt_interval_secs,
             reopt_worker_enabled,
+            reopt_max_run_seconds,
+            reopt_max_timeframe_seconds,
+            reopt_max_pairs_per_run,
+            reopt_max_pairs_per_timeframe,
+            reopt_max_in_flight_pair_evaluations,
+            reopt_max_db_write_batch_size,
+            reopt_max_artifact_bytes,
+            reopt_min_cooldown_seconds,
+            reopt_lease_ttl_seconds,
+            reopt_heartbeat_interval_seconds,
             shadow_ml_min_rows,
             shadow_ml_training_limit,
             trading_fee_bps,
@@ -1956,7 +2015,8 @@ impl StrategyRepository {
             .client
             .query_opt(
                 "SELECT run_id, status, trigger_source, lease_owner, lease_generation,
-                        lease_acquired_at, lease_expires_at, heartbeat_at, recommendation,
+                        lease_acquired_at, lease_expires_at, heartbeat_at,
+                        progress_json::text, summary_json::text, recommendation,
                         fail_closed_reasons_json::text, artifact_manifest_json::text,
                         cancel_requested_at
                  FROM strategy_reoptimize_runs
@@ -2024,6 +2084,63 @@ impl StrategyRepository {
     }
 
     #[allow(dead_code)]
+    async fn checkpoint_reoptimize_run(
+        &self,
+        checkpoint: AsyncReoptimizeCheckpoint<'_>,
+    ) -> anyhow::Result<Option<AsyncReoptimizeRunState>> {
+        if checkpoint.status.is_terminal() {
+            anyhow::bail!(
+                "async reoptimize checkpoint cannot use terminal status {}",
+                checkpoint.status.as_str()
+            );
+        }
+        let progress_json = serde_json::to_string(checkpoint.progress_json)?;
+        let summary_json = serde_json::to_string(checkpoint.summary_json)?;
+        let lease_expires_at =
+            checkpoint.now + TimeDelta::seconds(checkpoint.lease_ttl_seconds.max(1));
+        let requested_status = checkpoint.status.as_str();
+        let Some(row) = self
+            .client
+            .query_opt(
+                "UPDATE strategy_reoptimize_runs
+                 SET status=CASE WHEN status='CANCEL_REQUESTED'
+                                  THEN 'CANCEL_REQUESTED'
+                                  ELSE $4
+                             END,
+                     progress_json=($5::text)::jsonb,
+                     summary_json=($6::text)::jsonb,
+                     heartbeat_at=$7,
+                     lease_expires_at=$8,
+                     updated_at=$7
+                 WHERE run_id=$1
+                   AND lease_owner=$2
+                   AND lease_generation=$3
+                   AND status IN ('LEASED', 'RUNNING', 'CANCEL_REQUESTED')
+                   AND lease_expires_at > $7
+                 RETURNING run_id, status, trigger_source, lease_owner, lease_generation,
+                           lease_acquired_at, lease_expires_at, heartbeat_at,
+                           progress_json::text, summary_json::text, recommendation,
+                           fail_closed_reasons_json::text, artifact_manifest_json::text,
+                           cancel_requested_at",
+                &[
+                    &checkpoint.run_id,
+                    &checkpoint.lease_owner,
+                    &checkpoint.lease_generation,
+                    &requested_status,
+                    &progress_json,
+                    &summary_json,
+                    &checkpoint.now,
+                    &lease_expires_at,
+                ],
+            )
+            .await?
+        else {
+            return Ok(None);
+        };
+        Self::async_reoptimize_run_state_from_row(&row).map(Some)
+    }
+
+    #[allow(dead_code)]
     async fn heartbeat_reoptimize_run_lease(
         &self,
         run_id: &str,
@@ -2079,7 +2196,8 @@ impl StrategyRepository {
                    AND lease_expires_at IS NOT NULL
                    AND lease_expires_at <= $1
                  RETURNING run_id, status, trigger_source, lease_owner, lease_generation,
-                           lease_acquired_at, lease_expires_at, heartbeat_at, recommendation,
+                           lease_acquired_at, lease_expires_at, heartbeat_at,
+                           progress_json::text, summary_json::text, recommendation,
                            fail_closed_reasons_json::text, artifact_manifest_json::text,
                            cancel_requested_at",
                 &[&now, &fail_closed_reasons_json],
@@ -2117,7 +2235,8 @@ impl StrategyRepository {
                  WHERE run_id=$1
                    AND status IN ('QUEUED', 'LEASED', 'RUNNING', 'CANCEL_REQUESTED')
                  RETURNING run_id, status, trigger_source, lease_owner, lease_generation,
-                           lease_acquired_at, lease_expires_at, heartbeat_at, recommendation,
+                           lease_acquired_at, lease_expires_at, heartbeat_at,
+                           progress_json::text, summary_json::text, recommendation,
                            fail_closed_reasons_json::text, artifact_manifest_json::text,
                            cancel_requested_at",
                 &[&run_id, &now, &fail_closed_reasons_json],
@@ -2144,6 +2263,17 @@ impl StrategyRepository {
             anyhow::bail!("async reoptimize artifact manifest path escapes artifact root");
         }
         let artifact_manifest_json = serde_json::to_string(completion.artifact_manifest_json)?;
+        let canceled_artifact_manifest_json =
+            serde_json::to_string(&async_reoptimize_json_with_status(
+                completion.artifact_manifest_json,
+                AsyncReoptimizeRunStatus::Canceled,
+            ))?;
+        let progress_json = serde_json::to_string(completion.progress_json)?;
+        let summary_json = serde_json::to_string(completion.summary_json)?;
+        let canceled_summary_json = serde_json::to_string(&async_reoptimize_json_with_status(
+            completion.summary_json,
+            AsyncReoptimizeRunStatus::Canceled,
+        ))?;
         let mut recommendation = completion.recommendation;
         if completion.requested_status != AsyncReoptimizeRunStatus::Succeeded
             && recommendation == AsyncReoptimizeRecommendation::PromotionCandidateAvailable
@@ -2178,14 +2308,25 @@ impl StrategyRepository {
                                                    THEN ($7::text)::jsonb
                                                    ELSE ($6::text)::jsonb
                                               END,
-                     artifact_manifest_json=($9::text)::jsonb
+                     artifact_manifest_json=CASE WHEN cancel_requested_at IS NOT NULL
+                                                       OR status='CANCEL_REQUESTED'
+                                                  THEN ($12::text)::jsonb
+                                                  ELSE ($9::text)::jsonb
+                                             END,
+                     progress_json=($10::text)::jsonb,
+                     summary_json=CASE WHEN cancel_requested_at IS NOT NULL
+                                             OR status='CANCEL_REQUESTED'
+                                        THEN ($13::text)::jsonb
+                                        ELSE ($11::text)::jsonb
+                                   END
                  WHERE run_id=$1
                    AND lease_owner=$2
                    AND lease_generation=$3
                    AND status IN ('LEASED', 'RUNNING', 'CANCEL_REQUESTED')
                    AND lease_expires_at > $8
                  RETURNING run_id, status, trigger_source, lease_owner, lease_generation,
-                           lease_acquired_at, lease_expires_at, heartbeat_at, recommendation,
+                           lease_acquired_at, lease_expires_at, heartbeat_at,
+                           progress_json::text, summary_json::text, recommendation,
                            fail_closed_reasons_json::text, artifact_manifest_json::text,
                            cancel_requested_at",
                 &[
@@ -2198,6 +2339,10 @@ impl StrategyRepository {
                     &canceled_reasons_json,
                     &completion.now,
                     &artifact_manifest_json,
+                    &progress_json,
+                    &summary_json,
+                    &canceled_artifact_manifest_json,
+                    &canceled_summary_json,
                 ],
             )
             .await?
@@ -2222,10 +2367,12 @@ impl StrategyRepository {
             lease_acquired_at: row.get(5),
             lease_expires_at: row.get(6),
             heartbeat_at: row.get(7),
-            recommendation: row.get(8),
-            fail_closed_reasons_json: row.get(9),
-            artifact_manifest_json: row.get(10),
-            cancel_requested_at: row.get(11),
+            progress_json: row.get(8),
+            summary_json: row.get(9),
+            recommendation: row.get(10),
+            fail_closed_reasons_json: row.get(11),
+            artifact_manifest_json: row.get(12),
+            cancel_requested_at: row.get(13),
         })
     }
 
@@ -5708,6 +5855,181 @@ impl AsyncReoptimizeFailClosedReason {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum AsyncReoptimizePhase {
+    Queued,
+    Precheck,
+    TimeframePrecheck,
+    PairEvaluation,
+    PersistSelectedRows,
+    PersistShadowModel,
+    TimeframeSummary,
+    RunSummary,
+    ArtifactWrite,
+    Terminal,
+}
+
+impl AsyncReoptimizePhase {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Queued => "QUEUED",
+            Self::Precheck => "PRECHECK",
+            Self::TimeframePrecheck => "TIMEFRAME_PRECHECK",
+            Self::PairEvaluation => "PAIR_EVALUATION",
+            Self::PersistSelectedRows => "PERSIST_SELECTED_ROWS",
+            Self::PersistShadowModel => "PERSIST_SHADOW_MODEL",
+            Self::TimeframeSummary => "TIMEFRAME_SUMMARY",
+            Self::RunSummary => "RUN_SUMMARY",
+            Self::ArtifactWrite => "ARTIFACT_WRITE",
+            Self::Terminal => "TERMINAL",
+        }
+    }
+}
+
+#[allow(dead_code)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum AsyncReoptimizeBudgetName {
+    RunWallClock,
+    TimeframeWallClock,
+    PairEvaluationsRun,
+    PairEvaluationsTimeframe,
+    PairConcurrency,
+    DbWriteBatch,
+    ArtifactBytes,
+    Cooldown,
+    LeaseTtl,
+}
+
+impl AsyncReoptimizeBudgetName {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::RunWallClock => "RUN_WALL_CLOCK",
+            Self::TimeframeWallClock => "TIMEFRAME_WALL_CLOCK",
+            Self::PairEvaluationsRun => "PAIR_EVALUATIONS_RUN",
+            Self::PairEvaluationsTimeframe => "PAIR_EVALUATIONS_TIMEFRAME",
+            Self::PairConcurrency => "PAIR_CONCURRENCY",
+            Self::DbWriteBatch => "DB_WRITE_BATCH",
+            Self::ArtifactBytes => "ARTIFACT_BYTES",
+            Self::Cooldown => "COOLDOWN",
+            Self::LeaseTtl => "LEASE_TTL",
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+struct AsyncReoptimizeRunnerProgress {
+    requested_timeframes: Vec<Timeframe>,
+    phase: AsyncReoptimizePhase,
+    active_timeframe: Option<Timeframe>,
+    planned_timeframe_count: usize,
+    completed_timeframe_count: usize,
+    failed_timeframe_count: usize,
+    total_pairs_planned: usize,
+    pairs_completed: usize,
+    pairs_skipped: usize,
+    pairs_failed: usize,
+    selected_rows_written: usize,
+    drift_rows_written: usize,
+    transition_counts: SelectionTransitionCounts,
+    critical_error_count: usize,
+    non_critical_error_count: usize,
+    last_heartbeat_at: Option<DateTime<Utc>>,
+}
+
+impl AsyncReoptimizeRunnerProgress {
+    fn new(requested_timeframes: Vec<Timeframe>, pair_count: usize) -> Self {
+        let planned_timeframe_count = requested_timeframes.len();
+        Self {
+            requested_timeframes,
+            phase: AsyncReoptimizePhase::Queued,
+            active_timeframe: None,
+            planned_timeframe_count,
+            completed_timeframe_count: 0,
+            failed_timeframe_count: 0,
+            total_pairs_planned: planned_timeframe_count.saturating_mul(pair_count),
+            pairs_completed: 0,
+            pairs_skipped: 0,
+            pairs_failed: 0,
+            selected_rows_written: 0,
+            drift_rows_written: 0,
+            transition_counts: SelectionTransitionCounts::default(),
+            critical_error_count: 0,
+            non_critical_error_count: 0,
+            last_heartbeat_at: None,
+        }
+    }
+
+    fn to_json(&self) -> serde_json::Value {
+        let processed_pairs = self
+            .pairs_completed
+            .saturating_add(self.pairs_skipped)
+            .saturating_add(self.pairs_failed)
+            .min(self.total_pairs_planned);
+        let percent_complete = if self.total_pairs_planned == 0 {
+            if self.phase == AsyncReoptimizePhase::Terminal {
+                100.0
+            } else {
+                0.0
+            }
+        } else {
+            ((processed_pairs as f64 / self.total_pairs_planned as f64) * 10_000.0).round() / 100.0
+        };
+        serde_json::json!({
+            "phase": self.phase.as_str(),
+            "requested_timeframes": self
+                .requested_timeframes
+                .iter()
+                .map(|timeframe| timeframe.as_str())
+                .collect::<Vec<_>>(),
+            "active_timeframe": self.active_timeframe.map(|timeframe| timeframe.as_str()),
+            "planned_timeframe_count": self.planned_timeframe_count,
+            "completed_timeframe_count": self.completed_timeframe_count,
+            "failed_timeframe_count": self.failed_timeframe_count,
+            "total_pairs_planned": self.total_pairs_planned,
+            "pairs_completed": self.pairs_completed,
+            "pairs_skipped": self.pairs_skipped,
+            "pairs_failed": self.pairs_failed,
+            "selected_rows_written": self.selected_rows_written,
+            "drift_rows_written": self.drift_rows_written,
+            "transition_counts": self.transition_counts,
+            "critical_error_count": self.critical_error_count,
+            "non_critical_error_count": self.non_critical_error_count,
+            "percent_complete": percent_complete,
+            "last_heartbeat_at": self.last_heartbeat_at.map(|value| value.to_rfc3339()),
+        })
+    }
+
+    fn absorb_error_counts(&mut self, counts: ReoptErrorCounts) {
+        self.critical_error_count = counts.critical;
+        self.non_critical_error_count = counts.non_critical;
+    }
+
+    fn mark_remaining_skipped(
+        &mut self,
+        current_timeframe_index: usize,
+        current_pair_index: usize,
+        pair_count: usize,
+    ) {
+        if current_timeframe_index >= self.planned_timeframe_count {
+            return;
+        }
+        let current_remaining = pair_count.saturating_sub(current_pair_index);
+        let later_timeframes = self
+            .planned_timeframe_count
+            .saturating_sub(current_timeframe_index.saturating_add(1));
+        let later_remaining = later_timeframes.saturating_mul(pair_count);
+        self.pairs_skipped = self
+            .pairs_skipped
+            .saturating_add(current_remaining)
+            .saturating_add(later_remaining)
+            .min(self.total_pairs_planned);
+        self.failed_timeframe_count = self
+            .failed_timeframe_count
+            .saturating_add(later_timeframes.saturating_add(1));
+        self.active_timeframe = None;
+    }
+}
+
 #[allow(dead_code)]
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct AsyncReoptimizeFailClosedMapping {
@@ -5725,7 +6047,28 @@ struct AsyncReoptimizeCompletion<'a> {
     recommendation: AsyncReoptimizeRecommendation,
     fail_closed_reasons: &'a [AsyncReoptimizeFailClosedReason],
     artifact_manifest_json: &'a serde_json::Value,
+    progress_json: &'a serde_json::Value,
+    summary_json: &'a serde_json::Value,
     now: DateTime<Utc>,
+}
+
+#[allow(dead_code)]
+struct AsyncReoptimizeCheckpoint<'a> {
+    run_id: &'a str,
+    lease_owner: &'a str,
+    lease_generation: i64,
+    lease_ttl_seconds: i64,
+    status: AsyncReoptimizeRunStatus,
+    progress_json: &'a serde_json::Value,
+    summary_json: &'a serde_json::Value,
+    now: DateTime<Utc>,
+}
+
+struct AsyncReoptimizeTerminalDecision {
+    requested_status: AsyncReoptimizeRunStatus,
+    recommendation: AsyncReoptimizeRecommendation,
+    fail_closed_reasons: Vec<AsyncReoptimizeFailClosedReason>,
+    exhausted_budget: Option<AsyncReoptimizeBudgetName>,
 }
 
 #[allow(dead_code)]
@@ -5779,6 +6122,8 @@ struct AsyncReoptimizeRunState {
     lease_acquired_at: Option<DateTime<Utc>>,
     lease_expires_at: Option<DateTime<Utc>>,
     heartbeat_at: Option<DateTime<Utc>>,
+    progress_json: String,
+    summary_json: String,
     recommendation: String,
     fail_closed_reasons_json: String,
     artifact_manifest_json: String,
@@ -5834,6 +6179,21 @@ fn async_reoptimize_manifest_paths_are_contained(manifest: &serde_json::Value) -
         }
     }
     true
+}
+
+fn async_reoptimize_json_with_status(
+    value: &serde_json::Value,
+    status: AsyncReoptimizeRunStatus,
+) -> serde_json::Value {
+    let mut value = value.clone();
+    let serde_json::Value::Object(ref mut object) = value else {
+        return serde_json::json!({ "status": status.as_str() });
+    };
+    object.insert(
+        "status".to_string(),
+        serde_json::Value::String(status.as_str().to_string()),
+    );
+    value
 }
 
 #[allow(dead_code)]
@@ -6387,227 +6747,997 @@ async fn maybe_apply_live_mark_override(
     }
 }
 
+fn next_async_reoptimize_run_id(now: DateTime<Utc>) -> String {
+    let sequence = ASYNC_REOPTIMIZE_RUN_COUNTER.fetch_add(1, Ordering::Relaxed) % 1_000_000;
+    format!("reopt_{}_{:06}", now.format("%Y-%m-%dT%H-%M-%SZ"), sequence)
+}
+
+fn async_reoptimize_budget_snapshot_json(
+    settings: &StrategySettings,
+    exhausted_budget: Option<AsyncReoptimizeBudgetName>,
+) -> serde_json::Value {
+    serde_json::json!({
+        "budget_state": if exhausted_budget.is_some() { "EXHAUSTED" } else { "WITHIN_BUDGET" },
+        "max_run_seconds": settings.reopt_max_run_seconds,
+        "max_timeframe_seconds": settings.reopt_max_timeframe_seconds,
+        "max_pairs_per_run": settings.reopt_max_pairs_per_run,
+        "max_pairs_per_timeframe": settings.reopt_max_pairs_per_timeframe,
+        "max_in_flight_pair_evaluations": settings.reopt_max_in_flight_pair_evaluations,
+        "max_db_write_batch_size": settings.reopt_max_db_write_batch_size,
+        "max_artifact_bytes": settings.reopt_max_artifact_bytes,
+        "min_cooldown_seconds": settings.reopt_min_cooldown_seconds,
+        "lease_ttl_seconds": settings.reopt_lease_ttl_seconds,
+        "heartbeat_interval_seconds": settings.reopt_heartbeat_interval_seconds,
+        "exhausted_budget": exhausted_budget.map(|budget| budget.as_str()),
+    })
+}
+
+fn async_reoptimize_summary_json(
+    run_id: &str,
+    status: AsyncReoptimizeRunStatus,
+    trigger_source: AsyncReoptimizeTriggerSource,
+    settings: &StrategySettings,
+    progress_json: &serde_json::Value,
+    errors: &[ReoptError],
+    exhausted_budget: Option<AsyncReoptimizeBudgetName>,
+) -> serde_json::Value {
+    serde_json::json!({
+        "run_id": run_id,
+        "status": status.as_str(),
+        "trigger_source": trigger_source.as_str(),
+        "requested_timeframes": settings
+            .timeframes
+            .iter()
+            .map(|timeframe| timeframe.as_str())
+            .collect::<Vec<_>>(),
+        "generated_at": Utc::now().to_rfc3339(),
+        "budgets": async_reoptimize_budget_snapshot_json(settings, exhausted_budget),
+        "progress": progress_json,
+        "errors": errors,
+    })
+}
+
+fn async_reoptimize_budget_exhausted(
+    settings: &StrategySettings,
+    run_started_at: Instant,
+    timeframe_started_at: Option<Instant>,
+    run_pair_evaluations: usize,
+    timeframe_pair_evaluations: usize,
+    include_pair_evaluation_limits: bool,
+) -> Option<AsyncReoptimizeBudgetName> {
+    if run_started_at.elapsed().as_secs() >= settings.reopt_max_run_seconds {
+        return Some(AsyncReoptimizeBudgetName::RunWallClock);
+    }
+    if let Some(timeframe_started_at) = timeframe_started_at {
+        if timeframe_started_at.elapsed().as_secs() >= settings.reopt_max_timeframe_seconds {
+            return Some(AsyncReoptimizeBudgetName::TimeframeWallClock);
+        }
+    }
+    if !include_pair_evaluation_limits {
+        return None;
+    }
+    if run_pair_evaluations >= settings.reopt_max_pairs_per_run {
+        return Some(AsyncReoptimizeBudgetName::PairEvaluationsRun);
+    }
+    if timeframe_pair_evaluations >= settings.reopt_max_pairs_per_timeframe {
+        return Some(AsyncReoptimizeBudgetName::PairEvaluationsTimeframe);
+    }
+    None
+}
+
+#[derive(Clone, Copy)]
+struct AsyncReoptimizeBudgetCheck {
+    timeframe: Option<Timeframe>,
+    timeframe_index: usize,
+    pair_index: usize,
+    pair_count: usize,
+    run_started_at: Instant,
+    timeframe_started_at: Option<Instant>,
+    run_pair_evaluations: usize,
+    timeframe_pair_evaluations: usize,
+    include_pair_evaluation_limits: bool,
+    context: &'static str,
+}
+
+fn async_reoptimize_stop_if_budget_exhausted(
+    settings: &StrategySettings,
+    progress: &mut AsyncReoptimizeRunnerProgress,
+    errors: &mut Vec<ReoptError>,
+    error_counts: &mut ReoptErrorCounts,
+    exhausted_budget: &mut Option<AsyncReoptimizeBudgetName>,
+    check: AsyncReoptimizeBudgetCheck,
+) -> bool {
+    if exhausted_budget.is_some() {
+        return true;
+    }
+    let Some(budget) = async_reoptimize_budget_exhausted(
+        settings,
+        check.run_started_at,
+        check.timeframe_started_at,
+        check.run_pair_evaluations,
+        check.timeframe_pair_evaluations,
+        check.include_pair_evaluation_limits,
+    ) else {
+        return false;
+    };
+    *exhausted_budget = Some(budget);
+    push_reopt_error(
+        errors,
+        "SYSTEM".to_string(),
+        check
+            .timeframe
+            .map(|timeframe| timeframe.as_str().to_string())
+            .unwrap_or_else(|| "SYSTEM".to_string()),
+        "ASYNC_REOPTIMIZE_BUDGET_EXHAUSTED",
+        format!("{} exhausted {}", budget.as_str(), check.context),
+        error_counts,
+    );
+    progress.absorb_error_counts(*error_counts);
+    if check.timeframe.is_some() {
+        progress.mark_remaining_skipped(check.timeframe_index, check.pair_index, check.pair_count);
+    }
+    true
+}
+
+async fn checkpoint_async_reoptimize_run(
+    state: &AppState,
+    lease: &AsyncReoptimizeLease,
+    progress: &mut AsyncReoptimizeRunnerProgress,
+    errors: &[ReoptError],
+    exhausted_budget: Option<AsyncReoptimizeBudgetName>,
+) -> anyhow::Result<Option<AsyncReoptimizeRunState>> {
+    let now = Utc::now();
+    progress.last_heartbeat_at = Some(now);
+    let progress_json = progress.to_json();
+    let summary_json = async_reoptimize_summary_json(
+        &lease.run_id,
+        AsyncReoptimizeRunStatus::Running,
+        AsyncReoptimizeTriggerSource::Scheduled,
+        &state.settings,
+        &progress_json,
+        errors,
+        exhausted_budget,
+    );
+    state
+        .repository
+        .checkpoint_reoptimize_run(AsyncReoptimizeCheckpoint {
+            run_id: &lease.run_id,
+            lease_owner: &lease.lease_owner,
+            lease_generation: lease.lease_generation,
+            lease_ttl_seconds: state.settings.reopt_lease_ttl_seconds as i64,
+            status: AsyncReoptimizeRunStatus::Running,
+            progress_json: &progress_json,
+            summary_json: &summary_json,
+            now,
+        })
+        .await
+}
+
+async fn complete_async_reoptimize_run(
+    state: &AppState,
+    lease: &AsyncReoptimizeLease,
+    progress: &mut AsyncReoptimizeRunnerProgress,
+    errors: &[ReoptError],
+    terminal: &AsyncReoptimizeTerminalDecision,
+) -> anyhow::Result<Option<AsyncReoptimizeRunState>> {
+    let now = Utc::now();
+    let _artifact_phase = AsyncReoptimizePhase::ArtifactWrite;
+    progress.phase = AsyncReoptimizePhase::Terminal;
+    progress.active_timeframe = None;
+    progress.last_heartbeat_at = Some(now);
+    let progress_json = progress.to_json();
+    let summary_json = async_reoptimize_summary_json(
+        &lease.run_id,
+        terminal.requested_status,
+        AsyncReoptimizeTriggerSource::Scheduled,
+        &state.settings,
+        &progress_json,
+        errors,
+        terminal.exhausted_budget,
+    );
+    let artifact_manifest = serde_json::json!({});
+    state
+        .repository
+        .complete_reoptimize_run(AsyncReoptimizeCompletion {
+            run_id: &lease.run_id,
+            lease_owner: &lease.lease_owner,
+            lease_generation: lease.lease_generation,
+            requested_status: terminal.requested_status,
+            recommendation: terminal.recommendation,
+            fail_closed_reasons: &terminal.fail_closed_reasons,
+            artifact_manifest_json: &artifact_manifest,
+            progress_json: &progress_json,
+            summary_json: &summary_json,
+            now,
+        })
+        .await
+}
+
+async fn checkpoint_or_stop_async_reoptimize_run(
+    state: &AppState,
+    lease: &AsyncReoptimizeLease,
+    progress: &mut AsyncReoptimizeRunnerProgress,
+    errors: &[ReoptError],
+    exhausted_budget: Option<AsyncReoptimizeBudgetName>,
+) -> anyhow::Result<Option<bool>> {
+    let Some(state_row) =
+        checkpoint_async_reoptimize_run(state, lease, progress, errors, exhausted_budget).await?
+    else {
+        return Ok(None);
+    };
+    Ok(Some(
+        state_row.status == AsyncReoptimizeRunStatus::CancelRequested
+            || state_row.cancel_requested_at.is_some(),
+    ))
+}
+
+async fn process_async_reoptimize_run(state: AppState, lease: AsyncReoptimizeLease) {
+    let run_started_at = Instant::now();
+    let pair_count = state.settings.pairs.len();
+    let mut progress =
+        AsyncReoptimizeRunnerProgress::new(state.settings.timeframes.clone(), pair_count);
+    let mut errors = vec![];
+    let mut error_counts = ReoptErrorCounts::default();
+    let mut exhausted_budget: Option<AsyncReoptimizeBudgetName> = None;
+    let mut canceled = false;
+    let mut lease_lost = false;
+    let mut run_pair_evaluations = 0usize;
+
+    progress.phase = AsyncReoptimizePhase::Precheck;
+    match checkpoint_or_stop_async_reoptimize_run(&state, &lease, &mut progress, &errors, None)
+        .await
+    {
+        Ok(Some(cancel_requested)) => {
+            canceled = cancel_requested;
+            if canceled {
+                progress.mark_remaining_skipped(0, 0, pair_count);
+            }
+        }
+        Ok(None) => lease_lost = true,
+        Err(error) => {
+            tracing::warn!(
+                run_id = %lease.run_id,
+                error = %error,
+                "async reoptimize checkpoint failed during precheck"
+            );
+            lease_lost = true;
+        }
+    }
+
+    'timeframes: for (timeframe_index, timeframe) in
+        state.settings.timeframes.iter().copied().enumerate()
+    {
+        if canceled || lease_lost || exhausted_budget.is_some() {
+            break;
+        }
+        progress.phase = AsyncReoptimizePhase::TimeframePrecheck;
+        progress.active_timeframe = Some(timeframe);
+        match checkpoint_or_stop_async_reoptimize_run(&state, &lease, &mut progress, &errors, None)
+            .await
+        {
+            Ok(Some(cancel_requested)) if cancel_requested => {
+                canceled = true;
+                progress.mark_remaining_skipped(timeframe_index, 0, pair_count);
+                break;
+            }
+            Ok(Some(_)) => {}
+            Ok(None) => {
+                lease_lost = true;
+                break;
+            }
+            Err(error) => {
+                tracing::warn!(
+                    run_id = %lease.run_id,
+                    timeframe = %timeframe.as_str(),
+                    error = %error,
+                    "async reoptimize checkpoint failed before timeframe"
+                );
+                lease_lost = true;
+                break;
+            }
+        }
+
+        let timeframe_started_at = Instant::now();
+        let mut timeframe_pair_evaluations = 0usize;
+        let mut timeframe_outputs = vec![];
+        let mut timeframe_transition_counts = SelectionTransitionCounts::default();
+        let mut timeframe_selected_rows_written = 0usize;
+        let mut candidate_probation_pass_total = 0usize;
+        let mut candidate_probation_fail_total = 0usize;
+        let mut candidate_probation_fail_reasons: HashMap<String, usize> = HashMap::new();
+        let mut timeframe_failed = false;
+
+        for (pair_index, pair) in state.settings.pairs.iter().cloned().enumerate() {
+            if async_reoptimize_stop_if_budget_exhausted(
+                &state.settings,
+                &mut progress,
+                &mut errors,
+                &mut error_counts,
+                &mut exhausted_budget,
+                AsyncReoptimizeBudgetCheck {
+                    timeframe: Some(timeframe),
+                    timeframe_index,
+                    pair_index,
+                    pair_count,
+                    run_started_at,
+                    timeframe_started_at: Some(timeframe_started_at),
+                    run_pair_evaluations,
+                    timeframe_pair_evaluations,
+                    include_pair_evaluation_limits: true,
+                    context: "before starting new pair work",
+                },
+            ) {
+                break 'timeframes;
+            }
+
+            progress.phase = AsyncReoptimizePhase::PairEvaluation;
+            match checkpoint_or_stop_async_reoptimize_run(
+                &state,
+                &lease,
+                &mut progress,
+                &errors,
+                exhausted_budget,
+            )
+            .await
+            {
+                Ok(Some(cancel_requested)) if cancel_requested => {
+                    canceled = true;
+                    progress.mark_remaining_skipped(timeframe_index, pair_index, pair_count);
+                    break 'timeframes;
+                }
+                Ok(Some(_)) => {}
+                Ok(None) => {
+                    lease_lost = true;
+                    break 'timeframes;
+                }
+                Err(error) => {
+                    tracing::warn!(
+                        run_id = %lease.run_id,
+                        timeframe = %timeframe.as_str(),
+                        pair_id = %pair.pair_id(),
+                        error = %error,
+                        "async reoptimize checkpoint failed before pair evaluation"
+                    );
+                    lease_lost = true;
+                    break 'timeframes;
+                }
+            }
+
+            let pair_id = pair.pair_id();
+            match evaluate_pair_for_timeframe(
+                &state,
+                &pair,
+                timeframe,
+                state.settings.advisory_enabled,
+                state.settings.trading_fee_bps,
+                None,
+            )
+            .await
+            {
+                Ok(output) => timeframe_outputs.push(output),
+                Err(error) => {
+                    run_pair_evaluations = run_pair_evaluations.saturating_add(1);
+                    progress.pairs_failed = progress.pairs_failed.saturating_add(1);
+                    push_reopt_error(
+                        &mut errors,
+                        pair_id,
+                        timeframe.as_str().to_string(),
+                        "CUE_EVAL_FAILED",
+                        error.to_string(),
+                        &mut error_counts,
+                    );
+                    progress.absorb_error_counts(error_counts);
+                    let remaining = pair_count.saturating_sub(pair_index.saturating_add(1));
+                    progress.pairs_skipped = progress.pairs_skipped.saturating_add(remaining);
+                    progress.failed_timeframe_count =
+                        progress.failed_timeframe_count.saturating_add(1);
+                    timeframe_failed = true;
+                    break;
+                }
+            }
+            run_pair_evaluations = run_pair_evaluations.saturating_add(1);
+            timeframe_pair_evaluations = timeframe_pair_evaluations.saturating_add(1);
+        }
+
+        if timeframe_failed {
+            progress.active_timeframe = None;
+            continue;
+        }
+
+        if async_reoptimize_stop_if_budget_exhausted(
+            &state.settings,
+            &mut progress,
+            &mut errors,
+            &mut error_counts,
+            &mut exhausted_budget,
+            AsyncReoptimizeBudgetCheck {
+                timeframe: Some(timeframe),
+                timeframe_index,
+                pair_index: 0,
+                pair_count,
+                run_started_at,
+                timeframe_started_at: Some(timeframe_started_at),
+                run_pair_evaluations,
+                timeframe_pair_evaluations,
+                include_pair_evaluation_limits: false,
+                context: "after pair evaluation before persistence",
+            },
+        ) {
+            break 'timeframes;
+        }
+
+        let plan = build_and_apply_portfolio_plan_to_outputs(
+            &mut timeframe_outputs,
+            &state.settings,
+            state.settings.advisory_enabled,
+        );
+        info!(
+            run_id = %lease.run_id,
+            timeframe = %timeframe.as_str(),
+            portfolio_plan_status = %plan.status,
+            "async reoptimize timeframe evaluation complete"
+        );
+
+        for (output_index, output) in timeframe_outputs.into_iter().enumerate() {
+            progress.phase = AsyncReoptimizePhase::PersistSelectedRows;
+            match checkpoint_or_stop_async_reoptimize_run(
+                &state,
+                &lease,
+                &mut progress,
+                &errors,
+                exhausted_budget,
+            )
+            .await
+            {
+                Ok(Some(cancel_requested)) if cancel_requested => {
+                    canceled = true;
+                    progress.mark_remaining_skipped(timeframe_index, output_index, pair_count);
+                    break 'timeframes;
+                }
+                Ok(Some(_)) => {}
+                Ok(None) => {
+                    lease_lost = true;
+                    break 'timeframes;
+                }
+                Err(error) => {
+                    tracing::warn!(
+                        run_id = %lease.run_id,
+                        pair_id = %output.cue.pair_id,
+                        timeframe = %timeframe.as_str(),
+                        error = %error,
+                        "async reoptimize checkpoint failed before persistence"
+                    );
+                    lease_lost = true;
+                    break 'timeframes;
+                }
+            }
+
+            if async_reoptimize_stop_if_budget_exhausted(
+                &state.settings,
+                &mut progress,
+                &mut errors,
+                &mut error_counts,
+                &mut exhausted_budget,
+                AsyncReoptimizeBudgetCheck {
+                    timeframe: Some(timeframe),
+                    timeframe_index,
+                    pair_index: output_index,
+                    pair_count,
+                    run_started_at,
+                    timeframe_started_at: Some(timeframe_started_at),
+                    run_pair_evaluations,
+                    timeframe_pair_evaluations,
+                    include_pair_evaluation_limits: false,
+                    context: "before selected-row persistence",
+                },
+            ) {
+                break 'timeframes;
+            }
+
+            match state
+                .repository
+                .record_evaluation(timeframe, &output, &state.settings)
+                .await
+            {
+                Ok(summary) => {
+                    progress.selected_rows_written = progress
+                        .selected_rows_written
+                        .saturating_add(summary.selected_rows_written);
+                    progress.drift_rows_written = progress
+                        .drift_rows_written
+                        .saturating_add(summary.drift_rows_written);
+                    progress
+                        .transition_counts
+                        .accumulate(summary.transition_counts);
+                    timeframe_selected_rows_written = timeframe_selected_rows_written
+                        .saturating_add(summary.selected_rows_written);
+                    timeframe_transition_counts.accumulate(summary.transition_counts);
+                }
+                Err(error) => {
+                    progress.pairs_failed = progress.pairs_failed.saturating_add(1);
+                    push_reopt_error(
+                        &mut errors,
+                        output.cue.pair_id.clone(),
+                        timeframe.as_str().to_string(),
+                        "RECORD_EVALUATION_FAILED",
+                        error.to_string(),
+                        &mut error_counts,
+                    );
+                    progress.absorb_error_counts(error_counts);
+                    progress.mark_remaining_skipped(
+                        timeframe_index,
+                        output_index.saturating_add(1),
+                        pair_count,
+                    );
+                    break 'timeframes;
+                }
+            }
+
+            if async_reoptimize_stop_if_budget_exhausted(
+                &state.settings,
+                &mut progress,
+                &mut errors,
+                &mut error_counts,
+                &mut exhausted_budget,
+                AsyncReoptimizeBudgetCheck {
+                    timeframe: Some(timeframe),
+                    timeframe_index,
+                    pair_index: output_index,
+                    pair_count,
+                    run_started_at,
+                    timeframe_started_at: Some(timeframe_started_at),
+                    run_pair_evaluations,
+                    timeframe_pair_evaluations,
+                    include_pair_evaluation_limits: false,
+                    context: "before shadow-model persistence",
+                },
+            ) {
+                break 'timeframes;
+            }
+
+            progress.phase = AsyncReoptimizePhase::PersistShadowModel;
+            if let Err(error) = state
+                .repository
+                .record_shadow_model_run(timeframe, &output)
+                .await
+            {
+                push_reopt_error(
+                    &mut errors,
+                    output.cue.pair_id.clone(),
+                    timeframe.as_str().to_string(),
+                    "SHADOW_MODEL_RUN_PERSIST_FAILED",
+                    format!("shadow model run persist failed: {error}"),
+                    &mut error_counts,
+                );
+            }
+            if async_reoptimize_stop_if_budget_exhausted(
+                &state.settings,
+                &mut progress,
+                &mut errors,
+                &mut error_counts,
+                &mut exhausted_budget,
+                AsyncReoptimizeBudgetCheck {
+                    timeframe: Some(timeframe),
+                    timeframe_index,
+                    pair_index: output_index,
+                    pair_count,
+                    run_started_at,
+                    timeframe_started_at: Some(timeframe_started_at),
+                    run_pair_evaluations,
+                    timeframe_pair_evaluations,
+                    include_pair_evaluation_limits: false,
+                    context: "before opportunity-history persistence",
+                },
+            ) {
+                break 'timeframes;
+            }
+            if let Err(error) = state
+                .repository
+                .record_opportunity_history(timeframe, &output)
+                .await
+            {
+                push_reopt_error(
+                    &mut errors,
+                    output.cue.pair_id.clone(),
+                    timeframe.as_str().to_string(),
+                    "OPPORTUNITY_HISTORY_PERSIST_FAILED",
+                    format!("opportunity history persist failed: {error}"),
+                    &mut error_counts,
+                );
+            }
+            if async_reoptimize_stop_if_budget_exhausted(
+                &state.settings,
+                &mut progress,
+                &mut errors,
+                &mut error_counts,
+                &mut exhausted_budget,
+                AsyncReoptimizeBudgetCheck {
+                    timeframe: Some(timeframe),
+                    timeframe_index,
+                    pair_index: output_index,
+                    pair_count,
+                    run_started_at,
+                    timeframe_started_at: Some(timeframe_started_at),
+                    run_pair_evaluations,
+                    timeframe_pair_evaluations,
+                    include_pair_evaluation_limits: false,
+                    context: "before paper-trade persistence",
+                },
+            ) {
+                break 'timeframes;
+            }
+            let pair_spec = PairSpec {
+                left: output.cue.left_instrument.clone(),
+                right: output.cue.right_instrument.clone(),
+            };
+            if let Err(error) =
+                compute_and_record_paper_trades_for_output(&state, &pair_spec, timeframe, &output)
+                    .await
+            {
+                push_reopt_error(
+                    &mut errors,
+                    output.cue.pair_id.clone(),
+                    timeframe.as_str().to_string(),
+                    "PAPER_TRADE_HISTORY_PERSIST_FAILED",
+                    format!("paper trade history persist failed: {error}"),
+                    &mut error_counts,
+                );
+            }
+            if async_reoptimize_stop_if_budget_exhausted(
+                &state.settings,
+                &mut progress,
+                &mut errors,
+                &mut error_counts,
+                &mut exhausted_budget,
+                AsyncReoptimizeBudgetCheck {
+                    timeframe: Some(timeframe),
+                    timeframe_index,
+                    pair_index: output_index,
+                    pair_count,
+                    run_started_at,
+                    timeframe_started_at: Some(timeframe_started_at),
+                    run_pair_evaluations,
+                    timeframe_pair_evaluations,
+                    include_pair_evaluation_limits: false,
+                    context: "before candidate-probation persistence",
+                },
+            ) {
+                break 'timeframes;
+            }
+            match advance_candidate_probation_for_output(&state, timeframe, &output).await {
+                Ok(result) => {
+                    if result.transitioned_to_ready {
+                        candidate_probation_pass_total =
+                            candidate_probation_pass_total.saturating_add(1);
+                    }
+                    if result.transitioned_to_failed {
+                        candidate_probation_fail_total =
+                            candidate_probation_fail_total.saturating_add(1);
+                        if let Some(reason) = result.fail_reason {
+                            *candidate_probation_fail_reasons.entry(reason).or_insert(0) += 1;
+                        }
+                    }
+                }
+                Err(error) => {
+                    progress.pairs_failed = progress.pairs_failed.saturating_add(1);
+                    push_reopt_error(
+                        &mut errors,
+                        output.cue.pair_id.clone(),
+                        timeframe.as_str().to_string(),
+                        "CANDIDATE_PROBATION_UPDATE_FAILED",
+                        format!("candidate probation update failed: {error}"),
+                        &mut error_counts,
+                    );
+                    progress.absorb_error_counts(error_counts);
+                    progress.mark_remaining_skipped(
+                        timeframe_index,
+                        output_index.saturating_add(1),
+                        pair_count,
+                    );
+                    break 'timeframes;
+                }
+            }
+            progress.pairs_completed = progress.pairs_completed.saturating_add(1);
+            progress.absorb_error_counts(error_counts);
+        }
+
+        if async_reoptimize_stop_if_budget_exhausted(
+            &state.settings,
+            &mut progress,
+            &mut errors,
+            &mut error_counts,
+            &mut exhausted_budget,
+            AsyncReoptimizeBudgetCheck {
+                timeframe: Some(timeframe),
+                timeframe_index,
+                pair_index: pair_count,
+                pair_count,
+                run_started_at,
+                timeframe_started_at: Some(timeframe_started_at),
+                run_pair_evaluations,
+                timeframe_pair_evaluations,
+                include_pair_evaluation_limits: false,
+                context: "after persistence before timeframe summary",
+            },
+        ) {
+            break 'timeframes;
+        }
+
+        progress.phase = AsyncReoptimizePhase::TimeframeSummary;
+        progress.completed_timeframe_count = progress.completed_timeframe_count.saturating_add(1);
+        progress.active_timeframe = None;
+        emit_selection_transition_observability(
+            "async_reoptimize_runner_timeframe",
+            Some(timeframe),
+            timeframe_selected_rows_written,
+            timeframe_transition_counts,
+            Some(state.metrics.as_ref()),
+        );
+        info!(
+            run_id = %lease.run_id,
+            timeframe = %timeframe.as_str(),
+            candidate_probation_pass_total,
+            candidate_probation_fail_total,
+            candidate_probation_fail_reasons = ?candidate_probation_fail_reasons,
+            "async reoptimize timeframe complete"
+        );
+        match checkpoint_or_stop_async_reoptimize_run(
+            &state,
+            &lease,
+            &mut progress,
+            &errors,
+            exhausted_budget,
+        )
+        .await
+        {
+            Ok(Some(cancel_requested)) if cancel_requested => {
+                canceled = true;
+                let next_timeframe_index = timeframe_index.saturating_add(1);
+                if next_timeframe_index < progress.planned_timeframe_count {
+                    progress.mark_remaining_skipped(next_timeframe_index, 0, pair_count);
+                }
+                break;
+            }
+            Ok(Some(_)) => {}
+            Ok(None) => {
+                lease_lost = true;
+                break;
+            }
+            Err(error) => {
+                tracing::warn!(
+                    run_id = %lease.run_id,
+                    timeframe = %timeframe.as_str(),
+                    error = %error,
+                    "async reoptimize checkpoint failed after timeframe"
+                );
+                lease_lost = true;
+                break;
+            }
+        }
+    }
+
+    if lease_lost {
+        push_reopt_error(
+            &mut errors,
+            "SYSTEM".to_string(),
+            progress
+                .active_timeframe
+                .map(|timeframe| timeframe.as_str().to_string())
+                .unwrap_or_else(|| "SYSTEM".to_string()),
+            "ASYNC_REOPTIMIZE_LEASE_LOST",
+            "async reoptimize runner lost lease before terminal completion".to_string(),
+            &mut error_counts,
+        );
+        progress.absorb_error_counts(error_counts);
+        if let Err(error) = state.repository.expire_reoptimize_leases(Utc::now()).await {
+            tracing::warn!(
+                run_id = %lease.run_id,
+                error = %error,
+                "failed to expire async reoptimize lease after lease loss"
+            );
+        }
+        return;
+    }
+
+    emit_selection_transition_observability(
+        "async_reoptimize_runner_total",
+        None,
+        progress.selected_rows_written,
+        progress.transition_counts,
+        None,
+    );
+    progress.phase = AsyncReoptimizePhase::RunSummary;
+    let planned_timeframe_count = progress.planned_timeframe_count;
+    let _ = async_reoptimize_stop_if_budget_exhausted(
+        &state.settings,
+        &mut progress,
+        &mut errors,
+        &mut error_counts,
+        &mut exhausted_budget,
+        AsyncReoptimizeBudgetCheck {
+            timeframe: None,
+            timeframe_index: planned_timeframe_count,
+            pair_index: 0,
+            pair_count: 0,
+            run_started_at,
+            timeframe_started_at: None,
+            run_pair_evaluations,
+            timeframe_pair_evaluations: 0,
+            include_pair_evaluation_limits: false,
+            context: "before terminal completion",
+        },
+    );
+    let terminal = if canceled {
+        AsyncReoptimizeTerminalDecision {
+            requested_status: AsyncReoptimizeRunStatus::Canceled,
+            recommendation: AsyncReoptimizeRecommendation::Hold,
+            fail_closed_reasons: vec![AsyncReoptimizeFailClosedReason::Canceled],
+            exhausted_budget,
+        }
+    } else if exhausted_budget.is_some() {
+        AsyncReoptimizeTerminalDecision {
+            requested_status: AsyncReoptimizeRunStatus::Degraded,
+            recommendation: AsyncReoptimizeRecommendation::Hold,
+            fail_closed_reasons: vec![AsyncReoptimizeFailClosedReason::BudgetExhausted],
+            exhausted_budget,
+        }
+    } else if error_counts.critical > 0 {
+        AsyncReoptimizeTerminalDecision {
+            requested_status: AsyncReoptimizeRunStatus::Failed,
+            recommendation: AsyncReoptimizeRecommendation::Hold,
+            fail_closed_reasons: vec![AsyncReoptimizeFailClosedReason::MissingTelemetry],
+            exhausted_budget,
+        }
+    } else if error_counts.non_critical > 0 {
+        AsyncReoptimizeTerminalDecision {
+            requested_status: AsyncReoptimizeRunStatus::Degraded,
+            recommendation: AsyncReoptimizeRecommendation::Hold,
+            fail_closed_reasons: vec![AsyncReoptimizeFailClosedReason::MissingTelemetry],
+            exhausted_budget,
+        }
+    } else {
+        AsyncReoptimizeTerminalDecision {
+            requested_status: AsyncReoptimizeRunStatus::Succeeded,
+            recommendation: AsyncReoptimizeRecommendation::PromotionCandidateAvailable,
+            fail_closed_reasons: vec![],
+            exhausted_budget,
+        }
+    };
+
+    match complete_async_reoptimize_run(&state, &lease, &mut progress, &errors, &terminal).await {
+        Ok(Some(final_state)) => info!(
+            run_id = %final_state.run_id,
+            status = %final_state.status.as_str(),
+            recommendation = %final_state.recommendation,
+            critical_error_count = progress.critical_error_count,
+            non_critical_error_count = progress.non_critical_error_count,
+            pairs_completed = progress.pairs_completed,
+            pairs_skipped = progress.pairs_skipped,
+            pairs_failed = progress.pairs_failed,
+            "async reoptimize run complete"
+        ),
+        Ok(None) => {
+            tracing::warn!(
+                run_id = %lease.run_id,
+                "async reoptimize terminal completion refused by lease/state guard"
+            );
+            if let Err(error) = state.repository.expire_reoptimize_leases(Utc::now()).await {
+                tracing::warn!(
+                    run_id = %lease.run_id,
+                    error = %error,
+                    "failed to expire async reoptimize lease after completion refusal"
+                );
+            }
+        }
+        Err(error) => tracing::warn!(
+            run_id = %lease.run_id,
+            error = %error,
+            "async reoptimize terminal completion failed"
+        ),
+    }
+}
+
 fn spawn_reoptimize_worker(state: AppState) -> tokio::task::JoinHandle<()> {
     tokio::spawn(async move {
-        let interval_secs = effective_reopt_interval_secs(state.settings.reopt_interval_secs);
+        let interval_secs = effective_reopt_interval_secs(
+            state
+                .settings
+                .reopt_interval_secs
+                .max(state.settings.reopt_min_cooldown_seconds),
+        );
         let mut interval = tokio::time::interval(std::time::Duration::from_secs(interval_secs));
         interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
         interval.tick().await;
         info!(
             reopt_interval_secs = interval_secs,
-            "strategy reoptimize worker scheduled"
+            reopt_max_run_seconds = state.settings.reopt_max_run_seconds,
+            reopt_max_timeframe_seconds = state.settings.reopt_max_timeframe_seconds,
+            reopt_max_pairs_per_run = state.settings.reopt_max_pairs_per_run,
+            reopt_max_pairs_per_timeframe = state.settings.reopt_max_pairs_per_timeframe,
+            reopt_lease_ttl_seconds = state.settings.reopt_lease_ttl_seconds,
+            reopt_heartbeat_interval_seconds = state.settings.reopt_heartbeat_interval_seconds,
+            "bounded async strategy reoptimize runner scheduled"
         );
         loop {
             interval.tick().await;
-            let mut pairs_processed = 0usize;
-            let mut cues_generated = 0usize;
-            let mut performance_rows_written = 0usize;
-            let mut selected_rows_written = 0usize;
-            let mut drift_rows_written = 0usize;
-            let mut transition_counts = SelectionTransitionCounts::default();
-            let mut shadow_model_runs_written = 0usize;
-            let mut shadow_model_available = 0usize;
-            let mut shadow_model_unavailable = 0usize;
-            let mut cost_gate_pass = 0usize;
-            let mut cost_gate_fail = 0usize;
-            let mut portfolio_advice_available = 0usize;
-            let mut portfolio_advice_unavailable = 0usize;
-
-            for timeframe in &state.settings.timeframes {
-                let mut timeframe_selected_rows_written = 0usize;
-                let mut timeframe_transition_counts = SelectionTransitionCounts::default();
-                let mut candidate_probation_pass_total = 0usize;
-                let mut candidate_probation_fail_total = 0usize;
-                let mut candidate_probation_fail_reasons: HashMap<String, usize> = HashMap::new();
-                let (outputs, skipped, plan) = evaluate_timeframe_outputs(
-                    &state,
-                    *timeframe,
-                    state.settings.advisory_enabled,
-                    state.settings.trading_fee_bps,
-                )
-                .await;
-                pairs_processed += state.settings.pairs.len();
-                if plan.status == "AVAILABLE" {
-                    portfolio_advice_available += 1;
-                } else {
-                    portfolio_advice_unavailable += 1;
+            let now = Utc::now();
+            match state.repository.expire_reoptimize_leases(now).await {
+                Ok(expired) if !expired.is_empty() => {
+                    for expired_run in expired {
+                        tracing::warn!(
+                            run_id = %expired_run.run_id,
+                            "expired stale async reoptimize run lease"
+                        );
+                    }
                 }
-                for skipped_pair in skipped {
+                Ok(_) => {}
+                Err(error) => {
                     tracing::warn!(
-                        pair_id = %skipped_pair.pair_id,
-                        timeframe = %timeframe.as_str(),
-                        reason = %skipped_pair.reason,
-                        "strategy evaluation skipped"
+                        error = %error,
+                        "failed to expire stale async reoptimize leases before scheduler tick"
                     );
+                    continue;
                 }
-
-                for output in outputs {
-                    cues_generated += usize::from(output.cue.actionable);
-                    match output.cue.shadow_ml.status.as_str() {
-                        "AVAILABLE" => shadow_model_available += 1,
-                        _ => shadow_model_unavailable += 1,
-                    }
-                    if output.cue.cost_gate.status == "AVAILABLE" {
-                        if output.cue.cost_gate.pass {
-                            cost_gate_pass += 1;
-                        } else {
-                            cost_gate_fail += 1;
-                        }
-                    }
-
-                    match state
-                        .repository
-                        .record_evaluation(*timeframe, &output, &state.settings)
-                        .await
-                    {
-                        Ok(summary) => {
-                            performance_rows_written += summary.performance_rows_written;
-                            selected_rows_written += summary.selected_rows_written;
-                            timeframe_selected_rows_written += summary.selected_rows_written;
-                            drift_rows_written += summary.drift_rows_written;
-                            timeframe_transition_counts.accumulate(summary.transition_counts);
-                        }
-                        Err(error) => {
-                            tracing::warn!(
-                                pair_id = %output.cue.pair_id,
-                                timeframe = %timeframe.as_str(),
-                                error = %error,
-                                "failed to persist strategy evaluation"
-                            );
-                        }
-                    }
-                    match state
-                        .repository
-                        .record_shadow_model_run(*timeframe, &output)
-                        .await
-                    {
-                        Ok(written) => shadow_model_runs_written += written,
-                        Err(error) => {
-                            tracing::warn!(
-                                pair_id = %output.cue.pair_id,
-                                timeframe = %timeframe.as_str(),
-                                error = %error,
-                                "failed to persist shadow model run"
-                            );
-                        }
-                    }
-                    if let Err(error) = state
-                        .repository
-                        .record_opportunity_history(*timeframe, &output)
-                        .await
-                    {
-                        tracing::warn!(
-                            pair_id = %output.cue.pair_id,
-                            timeframe = %timeframe.as_str(),
-                            error = %error,
-                            "failed to persist opportunity history row"
-                        );
-                    }
-                    let pair_spec = PairSpec {
-                        left: output.cue.left_instrument.clone(),
-                        right: output.cue.right_instrument.clone(),
-                    };
-                    if let Err(error) = compute_and_record_paper_trades_for_output(
-                        &state, &pair_spec, *timeframe, &output,
-                    )
-                    .await
-                    {
-                        tracing::warn!(
-                            pair_id = %output.cue.pair_id,
-                            timeframe = %timeframe.as_str(),
-                            error = %error,
-                            "failed to persist paper trade rows"
-                        );
-                    }
-                    match advance_candidate_probation_for_output(&state, *timeframe, &output).await
-                    {
-                        Ok(result) => {
-                            if result.transitioned_to_ready {
-                                candidate_probation_pass_total =
-                                    candidate_probation_pass_total.saturating_add(1);
-                            }
-                            if result.transitioned_to_failed {
-                                candidate_probation_fail_total =
-                                    candidate_probation_fail_total.saturating_add(1);
-                                if let Some(reason) = result.fail_reason {
-                                    *candidate_probation_fail_reasons.entry(reason).or_insert(0) +=
-                                        1;
-                                }
-                            }
-                        }
-                        Err(error) => {
-                            tracing::warn!(
-                                pair_id = %output.cue.pair_id,
-                                timeframe = %timeframe.as_str(),
-                                error = %error,
-                                "failed to advance candidate probation"
-                            );
-                        }
-                    }
-                }
-                let promotable_total = match state
-                    .repository
-                    .count_promotable_candidates(*timeframe)
-                    .await
-                {
-                    Ok(value) => value,
-                    Err(error) => {
-                        tracing::warn!(
-                            timeframe = %timeframe.as_str(),
-                            error = %error,
-                            "failed to count promotable candidates"
-                        );
-                        0
-                    }
-                };
-                let rejected_total: usize = candidate_probation_fail_reasons.values().sum();
-                info!(
-                    timeframe = %timeframe.as_str(),
-                    optimizer_cycle_total = 1usize,
-                    optimizer_cycle_status = "success",
-                    optimizer_candidate_promotable_total = promotable_total,
-                    optimizer_candidate_rejected_total = rejected_total,
-                    candidate_probation_pass_total,
-                    candidate_probation_fail_total,
-                    candidate_probation_fail_reasons = ?candidate_probation_fail_reasons,
-                    "optimizer timeframe cycle observability"
-                );
-                emit_selection_transition_observability(
-                    "reoptimize_worker_timeframe",
-                    Some(*timeframe),
-                    timeframe_selected_rows_written,
-                    timeframe_transition_counts,
-                    Some(state.metrics.as_ref()),
-                );
-                transition_counts.accumulate(timeframe_transition_counts);
             }
-            emit_selection_transition_observability(
-                "reoptimize_worker_total",
-                None,
-                selected_rows_written,
-                transition_counts,
-                None,
-            );
 
-            info!(
-                pairs_processed,
-                cues_generated,
-                performance_rows_written,
-                selected_rows_written,
-                drift_rows_written,
-                initialize_decisions = transition_counts.initialize_decisions,
-                unchanged_decisions = transition_counts.unchanged_decisions,
-                champion_promotions = transition_counts.champion_promotions,
-                champion_locks = transition_counts.champion_locks,
-                shadow_model_runs_written,
-                shadow_model_available,
-                shadow_model_unavailable,
-                cost_gate_pass,
-                cost_gate_fail,
-                portfolio_advice_available,
-                portfolio_advice_unavailable,
-                "strategy reoptimize tick complete"
-            );
+            let run_id = next_async_reoptimize_run_id(now);
+            let enqueued = match state
+                .repository
+                .enqueue_reoptimize_run_state(
+                    &run_id,
+                    AsyncReoptimizeTriggerSource::Scheduled,
+                    &state.settings.timeframes,
+                    now,
+                )
+                .await
+            {
+                Ok(enqueued) => enqueued,
+                Err(error) => {
+                    tracing::warn!(
+                        run_id = %run_id,
+                        error = %error,
+                        "failed to enqueue async reoptimize run"
+                    );
+                    continue;
+                }
+            };
+            if !enqueued {
+                info!(
+                    run_id = %run_id,
+                    "async reoptimize enqueue skipped because an active run already exists"
+                );
+                continue;
+            }
+
+            let lease = match state
+                .repository
+                .acquire_reoptimize_run_lease(
+                    &run_id,
+                    "strategy-service:reoptimize-worker",
+                    state.settings.reopt_lease_ttl_seconds as i64,
+                    now,
+                )
+                .await
+            {
+                Ok(Some(lease)) => lease,
+                Ok(None) => {
+                    tracing::warn!(
+                        run_id = %run_id,
+                        "async reoptimize lease acquisition refused after enqueue"
+                    );
+                    continue;
+                }
+                Err(error) => {
+                    tracing::warn!(
+                        run_id = %run_id,
+                        error = %error,
+                        "async reoptimize lease acquisition failed"
+                    );
+                    continue;
+                }
+            };
+
+            process_async_reoptimize_run(state.clone(), lease).await;
         }
     })
 }
@@ -10346,7 +11476,9 @@ fn classify_reopt_error_severity(code: &str) -> ReoptErrorSeverity {
         "CUE_EVAL_FAILED"
         | "RECORD_EVALUATION_FAILED"
         | "CANDIDATE_PROBATION_UPDATE_FAILED"
-        | "TIMEFRAME_ABORTED_CRITICAL" => ReoptErrorSeverity::Critical,
+        | "TIMEFRAME_ABORTED_CRITICAL"
+        | "ASYNC_REOPTIMIZE_BUDGET_EXHAUSTED"
+        | "ASYNC_REOPTIMIZE_LEASE_LOST" => ReoptErrorSeverity::Critical,
         _ => ReoptErrorSeverity::NonCritical,
     }
 }
@@ -11425,15 +12557,26 @@ async fn compute_timeframe_outputs(
         }
     }
 
-    let portfolio_plan = if advisory_enabled {
+    let portfolio_plan =
+        build_and_apply_portfolio_plan_to_outputs(&mut outputs, &state.settings, advisory_enabled);
+
+    (outputs, skipped, portfolio_plan)
+}
+
+fn build_and_apply_portfolio_plan_to_outputs(
+    outputs: &mut [PairEvaluationOutput],
+    settings: &StrategySettings,
+    advisory_enabled: bool,
+) -> PortfolioPlan {
+    if advisory_enabled {
         let mut cue_snapshot = outputs
             .iter()
             .map(|output| output.cue.clone())
             .collect::<Vec<_>>();
         let plan = build_portfolio_plan(
             &cue_snapshot,
-            state.settings.advisory_gross_cap,
-            state.settings.advisory_per_pair_cap,
+            settings.advisory_gross_cap,
+            settings.advisory_per_pair_cap,
         );
         apply_portfolio_plan_to_cues(&mut cue_snapshot, &plan);
         for (output, cue) in outputs.iter_mut().zip(cue_snapshot) {
@@ -11444,30 +12587,28 @@ async fn compute_timeframe_outputs(
                 stored_champion_projection.portfolio_hint = output.cue.portfolio_hint.clone();
             }
         }
-        plan
-    } else {
-        let plan = PortfolioPlan {
-            status: "UNAVAILABLE".to_string(),
-            weights: vec![],
-            constraints: strategy_service::PortfolioPlanConstraints {
-                dollar_neutral: false,
-                gross_cap: state.settings.advisory_gross_cap.max(0.0),
-                per_pair_cap: state.settings.advisory_per_pair_cap.max(0.0),
-            },
-            rationale_codes: vec!["ADVISORY_DISABLED".to_string()],
-        };
-        for output in &mut outputs {
-            output.cue.portfolio_hint =
-                strategy_service::PortfolioHint::unavailable(vec!["ADVISORY_DISABLED".to_string()]);
-            if let Some(stored_champion_projection) = output.stored_champion_projection.as_mut() {
-                // Keep the projected champion aligned with the same advisory-disabled surface.
-                stored_champion_projection.portfolio_hint = output.cue.portfolio_hint.clone();
-            }
-        }
-        plan
-    };
+        return plan;
+    }
 
-    (outputs, skipped, portfolio_plan)
+    let plan = PortfolioPlan {
+        status: "UNAVAILABLE".to_string(),
+        weights: vec![],
+        constraints: strategy_service::PortfolioPlanConstraints {
+            dollar_neutral: false,
+            gross_cap: settings.advisory_gross_cap.max(0.0),
+            per_pair_cap: settings.advisory_per_pair_cap.max(0.0),
+        },
+        rationale_codes: vec!["ADVISORY_DISABLED".to_string()],
+    };
+    for output in outputs {
+        output.cue.portfolio_hint =
+            strategy_service::PortfolioHint::unavailable(vec!["ADVISORY_DISABLED".to_string()]);
+        if let Some(stored_champion_projection) = output.stored_champion_projection.as_mut() {
+            // Keep the projected champion aligned with the same advisory-disabled surface.
+            stored_champion_projection.portfolio_hint = output.cue.portfolio_hint.clone();
+        }
+    }
+    plan
 }
 
 fn align_closes(
@@ -11580,6 +12721,46 @@ fn effective_reopt_interval_secs(configured: u64) -> u64 {
     configured.max(60)
 }
 
+fn effective_async_reopt_max_run_seconds(configured: u64) -> u64 {
+    configured.max(1)
+}
+
+fn effective_async_reopt_max_timeframe_seconds(configured: u64) -> u64 {
+    configured.max(1)
+}
+
+fn effective_async_reopt_max_pairs_per_run(configured: usize) -> usize {
+    configured.max(1)
+}
+
+fn effective_async_reopt_max_pairs_per_timeframe(configured: usize) -> usize {
+    configured.max(1)
+}
+
+fn effective_async_reopt_max_in_flight_pair_evaluations(configured: usize) -> usize {
+    configured.max(1)
+}
+
+fn effective_async_reopt_max_db_write_batch_size(configured: usize) -> usize {
+    configured.max(1)
+}
+
+fn effective_async_reopt_max_artifact_bytes(configured: u64) -> u64 {
+    configured.max(1)
+}
+
+fn effective_async_reopt_min_cooldown_seconds(configured: u64) -> u64 {
+    configured.max(60)
+}
+
+fn effective_async_reopt_lease_ttl_seconds(configured: u64) -> u64 {
+    configured.max(1)
+}
+
+fn effective_async_reopt_heartbeat_interval_seconds(configured: u64, lease_ttl: u64) -> u64 {
+    configured.max(1).min(lease_ttl.saturating_sub(1).max(1))
+}
+
 fn effective_sampled_slippage_interval_ms(configured: u64) -> u64 {
     configured.max(250)
 }
@@ -11635,34 +12816,39 @@ mod tests {
         compute_pair_slippage_sample_bps, compute_walk_forward_summary, cue_for_pairs_response,
         days_covered, decide_candidate_probation_transition, decide_champion_transition,
         derive_paper_trades_from_series, derive_replay_trades_from_series,
-        effective_history_prune_interval_secs, effective_live_z_ticker_window_bars,
-        effective_reopt_interval_secs, effective_sampled_slippage_interval_ms,
-        effective_strategy_response_cache_ttl_ms, estimate_research_combinations,
-        evaluate_recent_performance_gate, expectancy_objective_score,
-        expected_funding_events_crossed, fetch_open_live_trade_pairs, finalize_trade_gate,
-        group_trade_now_rows, live_z_effective_window_bars, load_latest_learning_overlay,
-        map_async_reoptimize_status_to_fail_closed, normalize_funding_rate,
-        parse_backtest_exit_mode, parse_bool_token, parse_candidate_inbox_query,
-        parse_expectancy_query, parse_opportunity_history_stats_timeframe,
-        parse_opportunity_history_window, parse_paper_trades_window, parse_replay_trades_query,
-        parse_trade_now_query, percentile, project_continuous_funding_bps, refresh_setup_gate,
-        resolve_artifact_path, resolve_learning_overlay_policy, resolve_reoptimize_status,
-        resolve_selected_signal_config, resolve_taker_fee_bps, retention_cutoff_ts,
-        selected_signal_config_from_expectancy, summarize_recent_performance,
-        update_persist_summary_for_transition, AsyncReoptimizeFailClosedReason,
-        AsyncReoptimizeRecommendation, CandidateInboxQuery, CandidateLifecycleState,
-        CandidateOperatorAction, CandidateProbationInputs, CandidateProbationRow, ChampionDecision,
-        CueProjectionOutcome, ExpectancyConfig, ExpectancyMetrics, ExpectancyQuery,
-        FundingCostEstimate, FundingRateInputMode, LearningOverlayApprovalSource,
-        LearningOverlayBlockedReason, LearningOverlayEntry, LearningOverlaySnapshot,
-        LearningOverlayUniverseBucket, LearningOverlayWatchReason, LearningRecommendation,
-        MaintenanceAction, OpportunityHistoryQuery, OpportunityHistoryStatsQuery, PaperTradesQuery,
-        PersistSummary, ReoptError, ReoptErrorSeverity, ReoptimizeResponse, ReoptimizeRunStatus,
-        ReplayTradeEntry, ReplayTradePathSummary, ReplayTradesQuery, ResearchSweepRequest,
-        SampledSlippageStatus, SelectedSignalRow, SelectionTransitionCounts,
-        StrategyMarketMetricsResponse, StrategyMetrics, StrategySettings,
-        TradeNowHistoricalQuality, TradeNowObservabilityStore, TradeNowQuery,
-        DEFAULT_HISTORY_RETENTION_WORKER_ENABLED, DEFAULT_REOPT_WORKER_ENABLED,
+        effective_async_reopt_heartbeat_interval_seconds, effective_async_reopt_lease_ttl_seconds,
+        effective_async_reopt_max_artifact_bytes, effective_async_reopt_max_db_write_batch_size,
+        effective_async_reopt_max_in_flight_pair_evaluations,
+        effective_async_reopt_max_pairs_per_run, effective_async_reopt_max_pairs_per_timeframe,
+        effective_async_reopt_max_run_seconds, effective_async_reopt_max_timeframe_seconds,
+        effective_async_reopt_min_cooldown_seconds, effective_history_prune_interval_secs,
+        effective_live_z_ticker_window_bars, effective_reopt_interval_secs,
+        effective_sampled_slippage_interval_ms, effective_strategy_response_cache_ttl_ms,
+        estimate_research_combinations, evaluate_recent_performance_gate,
+        expectancy_objective_score, expected_funding_events_crossed, fetch_open_live_trade_pairs,
+        finalize_trade_gate, group_trade_now_rows, live_z_effective_window_bars,
+        load_latest_learning_overlay, map_async_reoptimize_status_to_fail_closed,
+        normalize_funding_rate, parse_backtest_exit_mode, parse_bool_token,
+        parse_candidate_inbox_query, parse_expectancy_query,
+        parse_opportunity_history_stats_timeframe, parse_opportunity_history_window,
+        parse_paper_trades_window, parse_replay_trades_query, parse_trade_now_query, percentile,
+        project_continuous_funding_bps, refresh_setup_gate, resolve_artifact_path,
+        resolve_learning_overlay_policy, resolve_reoptimize_status, resolve_selected_signal_config,
+        resolve_taker_fee_bps, retention_cutoff_ts, selected_signal_config_from_expectancy,
+        summarize_recent_performance, update_persist_summary_for_transition,
+        AsyncReoptimizeFailClosedReason, AsyncReoptimizeRecommendation, CandidateInboxQuery,
+        CandidateLifecycleState, CandidateOperatorAction, CandidateProbationInputs,
+        CandidateProbationRow, ChampionDecision, CueProjectionOutcome, ExpectancyConfig,
+        ExpectancyMetrics, ExpectancyQuery, FundingCostEstimate, FundingRateInputMode,
+        LearningOverlayApprovalSource, LearningOverlayBlockedReason, LearningOverlayEntry,
+        LearningOverlaySnapshot, LearningOverlayUniverseBucket, LearningOverlayWatchReason,
+        LearningRecommendation, MaintenanceAction, OpportunityHistoryQuery,
+        OpportunityHistoryStatsQuery, PaperTradesQuery, PersistSummary, ReoptError,
+        ReoptErrorSeverity, ReoptimizeResponse, ReoptimizeRunStatus, ReplayTradeEntry,
+        ReplayTradePathSummary, ReplayTradesQuery, ResearchSweepRequest, SampledSlippageStatus,
+        SelectedSignalRow, SelectionTransitionCounts, StrategyMarketMetricsResponse,
+        StrategyMetrics, StrategySettings, TradeNowHistoricalQuality, TradeNowObservabilityStore,
+        TradeNowQuery, DEFAULT_HISTORY_RETENTION_WORKER_ENABLED, DEFAULT_REOPT_WORKER_ENABLED,
         DEFAULT_SAMPLED_SLIPPAGE_WORKER_ENABLED, LEARNING_OVERLAY_TTL_SECS,
         SELECTED_CONFIG_SOURCE_LEGACY_FALLBACK, SELECTED_CONFIG_SOURCE_OPERATOR_PROMOTION,
         SELECTED_CONFIG_SOURCE_RECANONICALIZED_LEGACY_ROW,
@@ -11746,12 +12932,87 @@ mod tests {
         assert_eq!(effective_reopt_interval_secs(0), 60);
         assert_eq!(effective_reopt_interval_secs(30), 60);
         assert_eq!(effective_reopt_interval_secs(3600), 3600);
+        assert_eq!(effective_async_reopt_max_run_seconds(0), 1);
+        assert_eq!(effective_async_reopt_max_timeframe_seconds(0), 1);
+        assert_eq!(effective_async_reopt_max_pairs_per_run(0), 1);
+        assert_eq!(effective_async_reopt_max_pairs_per_timeframe(0), 1);
+        assert_eq!(effective_async_reopt_max_in_flight_pair_evaluations(0), 1);
+        assert_eq!(effective_async_reopt_max_db_write_batch_size(0), 1);
+        assert_eq!(effective_async_reopt_max_artifact_bytes(0), 1);
+        assert_eq!(effective_async_reopt_min_cooldown_seconds(0), 60);
+        assert_eq!(effective_async_reopt_lease_ttl_seconds(0), 1);
+        assert_eq!(
+            effective_async_reopt_heartbeat_interval_seconds(120, 60),
+            59
+        );
         assert_eq!(effective_sampled_slippage_interval_ms(0), 250);
         assert_eq!(effective_sampled_slippage_interval_ms(100), 250);
         assert_eq!(effective_sampled_slippage_interval_ms(60_000), 60_000);
         assert_eq!(effective_history_prune_interval_secs(0), 60);
         assert_eq!(effective_history_prune_interval_secs(30), 60);
         assert_eq!(effective_history_prune_interval_secs(3600), 3600);
+    }
+
+    #[test]
+    fn async_reoptimize_budget_exhaustion_before_persistence_fails_closed() {
+        let mut settings = StrategySettings::from_env();
+        settings.timeframes = vec![Timeframe::OneMinute];
+        settings.pairs = vec![
+            super::PairSpec {
+                left: "PF_XBTUSD".to_string(),
+                right: "PF_ETHUSD".to_string(),
+            },
+            super::PairSpec {
+                left: "PF_SOLUSD".to_string(),
+                right: "PF_AVAXUSD".to_string(),
+            },
+        ];
+        settings.reopt_max_run_seconds = 1;
+        settings.reopt_max_timeframe_seconds = 300;
+        settings.reopt_max_pairs_per_run = 96;
+        settings.reopt_max_pairs_per_timeframe = 32;
+
+        let pair_count = settings.pairs.len();
+        let now = std::time::Instant::now();
+        let run_started_at = now - std::time::Duration::from_secs(2);
+        let mut progress =
+            super::AsyncReoptimizeRunnerProgress::new(settings.timeframes.clone(), pair_count);
+        progress.phase = super::AsyncReoptimizePhase::PersistSelectedRows;
+        let mut errors = Vec::<ReoptError>::new();
+        let mut error_counts = super::ReoptErrorCounts::default();
+        let mut exhausted_budget = None;
+
+        let stopped = super::async_reoptimize_stop_if_budget_exhausted(
+            &settings,
+            &mut progress,
+            &mut errors,
+            &mut error_counts,
+            &mut exhausted_budget,
+            super::AsyncReoptimizeBudgetCheck {
+                timeframe: Some(Timeframe::OneMinute),
+                timeframe_index: 0,
+                pair_index: 0,
+                pair_count,
+                run_started_at,
+                timeframe_started_at: Some(now),
+                run_pair_evaluations: 1,
+                timeframe_pair_evaluations: 1,
+                include_pair_evaluation_limits: false,
+                context: "before selected-row persistence",
+            },
+        );
+
+        assert!(stopped);
+        assert_eq!(
+            exhausted_budget,
+            Some(super::AsyncReoptimizeBudgetName::RunWallClock)
+        );
+        assert_eq!(progress.pairs_skipped, pair_count);
+        assert_eq!(progress.critical_error_count, 1);
+        assert_eq!(error_counts.critical, 1);
+        assert_eq!(errors.len(), 1);
+        assert_eq!(errors[0].code, "ASYNC_REOPTIMIZE_BUDGET_EXHAUSTED");
+        assert!(errors[0].error.contains("before selected-row persistence"));
     }
 
     #[test]

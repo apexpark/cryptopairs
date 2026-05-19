@@ -491,6 +491,86 @@ mod strategy_service_bin {
         }
 
         #[tokio::test]
+        async fn reoptimize_checkpoint_requires_matching_lease_and_persists_progress(
+        ) -> anyhow::Result<()> {
+            let Some(fixture) = PgFixture::connect(
+                "reoptimize_checkpoint_requires_matching_lease_and_persists_progress",
+            )
+            .await?
+            else {
+                return Ok(());
+            };
+            let run_id = "reopt_state_checkpoint_progress";
+            let now = test_time(1_779_000_251)?;
+
+            assert!(
+                fixture
+                    .repository
+                    .enqueue_reoptimize_run_state(
+                        run_id,
+                        AsyncReoptimizeTriggerSource::Scheduled,
+                        &[Timeframe::OneMinute],
+                        now,
+                    )
+                    .await?
+            );
+            let lease = fixture
+                .repository
+                .acquire_reoptimize_run_lease(run_id, "owner-a", 60, now)
+                .await?
+                .expect("lease acquired");
+            let progress_json = serde_json::json!({
+                "phase": "PAIR_EVALUATION",
+                "pairs_completed": 2
+            });
+            let summary_json = serde_json::json!({
+                "status": "RUNNING",
+                "budgets": { "budget_state": "WITHIN_BUDGET" }
+            });
+
+            let wrong_owner = fixture
+                .repository
+                .checkpoint_reoptimize_run(AsyncReoptimizeCheckpoint {
+                    run_id,
+                    lease_owner: "owner-b",
+                    lease_generation: lease.lease_generation,
+                    lease_ttl_seconds: 60,
+                    status: AsyncReoptimizeRunStatus::Running,
+                    progress_json: &progress_json,
+                    summary_json: &summary_json,
+                    now: test_time(1_779_000_260)?,
+                })
+                .await?;
+            assert!(wrong_owner.is_none());
+
+            let updated = fixture
+                .repository
+                .checkpoint_reoptimize_run(AsyncReoptimizeCheckpoint {
+                    run_id,
+                    lease_owner: "owner-a",
+                    lease_generation: lease.lease_generation,
+                    lease_ttl_seconds: 60,
+                    status: AsyncReoptimizeRunStatus::Running,
+                    progress_json: &progress_json,
+                    summary_json: &summary_json,
+                    now: test_time(1_779_000_261)?,
+                })
+                .await?
+                .expect("matching owner checkpoints progress");
+            assert_eq!(updated.status, AsyncReoptimizeRunStatus::Running);
+            let persisted_progress: serde_json::Value =
+                serde_json::from_str(&updated.progress_json)?;
+            let persisted_summary: serde_json::Value = serde_json::from_str(&updated.summary_json)?;
+            assert_eq!(persisted_progress["pairs_completed"], 2);
+            assert_eq!(
+                persisted_summary["budgets"]["budget_state"],
+                "WITHIN_BUDGET"
+            );
+
+            Ok(())
+        }
+
+        #[tokio::test]
         async fn reoptimize_expired_lease_moves_to_expired_fail_closed() -> anyhow::Result<()> {
             let Some(fixture) =
                 PgFixture::connect("reoptimize_expired_lease_moves_to_expired_fail_closed").await?
@@ -570,7 +650,15 @@ mod strategy_service_bin {
                 .expect("cancel accepted");
             assert_eq!(canceled.status, AsyncReoptimizeRunStatus::CancelRequested);
 
-            let artifact_manifest = serde_json::json!({});
+            let artifact_manifest = serde_json::json!({
+                "status": "SUCCEEDED",
+                "artifacts": []
+            });
+            let progress_json = serde_json::json!({});
+            let summary_json = serde_json::json!({
+                "status": "SUCCEEDED",
+                "budgets": { "budget_state": "WITHIN_BUDGET" }
+            });
             let finalized = fixture
                 .repository
                 .complete_reoptimize_run(AsyncReoptimizeCompletion {
@@ -581,6 +669,8 @@ mod strategy_service_bin {
                     recommendation: AsyncReoptimizeRecommendation::PromotionCandidateAvailable,
                     fail_closed_reasons: &[],
                     artifact_manifest_json: &artifact_manifest,
+                    progress_json: &progress_json,
+                    summary_json: &summary_json,
                     now: test_time(1_779_000_420)?,
                 })
                 .await?
@@ -593,6 +683,12 @@ mod strategy_service_bin {
             assert!(finalized
                 .fail_closed_reasons_json
                 .contains(AsyncReoptimizeFailClosedReason::Canceled.as_str()));
+            let persisted_summary: serde_json::Value =
+                serde_json::from_str(&finalized.summary_json)?;
+            assert_eq!(persisted_summary["status"], "CANCELED");
+            let persisted_manifest: serde_json::Value =
+                serde_json::from_str(&finalized.artifact_manifest_json)?;
+            assert_eq!(persisted_manifest["status"], "CANCELED");
 
             Ok(())
         }

@@ -17,6 +17,7 @@ This project follows SemVer as defined in `docs/02-versioning-and-releases.md`.
 - Recanonicalized legacy selected-signal rows remain repair-only on same-variant reevaluation; reoptimization no longer automatically graduates `RECANONICALIZED_LEGACY_ROW` provenance to `AUTO_CHAMPION`.
 
 ### Added
+- Strategy service reoptimization worker now uses the durable async run-state path when enabled: it enqueues a single-flight `strategy_reoptimize_runs` row, acquires a lease, writes progress/summary checkpoints, honors cancellation, enforces conservative run/timeframe/pair budgets, and completes fail-closed on budget exhaustion or errors while remaining disabled by default.
 - Strategy service now has disabled-by-default durable async reoptimization run-state persistence scaffolding, including `strategy_reoptimize_runs` lease/single-flight state, fail-closed expiry/cancellation helpers, and Postgres-backed repository tests without changing public reoptimize API behavior.
 - Added strict Slice A async reoptimization run contracts and examples for enqueue, status, cancel, and artifact manifest responses, including nullable request fingerprint/build identity evidence fields, without changing existing `/v1/strategy/pairs/reoptimize` semantics.
 - Trade Now rows now include an additive `z_score` alias that mirrors `spread_z` for operator diagnostics and live-z comparisons.
