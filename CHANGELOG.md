@@ -5,6 +5,12 @@ This project follows SemVer as defined in `docs/02-versioning-and-releases.md`.
 
 ## Unreleased
 ### Operator Tooling
+- Added bounded async reoptimization observability for the merged runner/API
+  subset: lifecycle, active-run, enqueue, lease acquire/heartbeat/loss, budget
+  exhaustion, progress, cancellation, fail-closed, missing-telemetry,
+  unknown-status, timeframe-terminal, and recommendation metrics, plus
+  structured runner/API log fields. Artifact read/write metrics remain deferred
+  until artifacts are actually written and served.
 - Added read/enqueue-only async reoptimization API endpoints for durable run
   state (`POST /v1/strategy/reoptimize/runs`,
   `GET /v1/strategy/reoptimize/runs/latest`, and
