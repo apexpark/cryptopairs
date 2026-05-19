@@ -53,6 +53,7 @@ If instructions conflict, use this order:
 - `docs/playbooks/incident-runbook.md`
 - `docs/playbooks/execution-operations-runbook.md`
 - `docs/playbooks/observability-slo-runbook.md`
+- `docs/playbooks/async-reoptimization-runner-runbook.md`
 - `docs/playbooks/strategy-tuning-runbook.md`
 - `docs/playbooks/daily-strategy-maintenance-guide.md`
 - `docs/playbooks/strategy-maintenance-automation-runbook.md`

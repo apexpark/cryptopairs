@@ -941,6 +941,25 @@ struct StrategyMetrics {
     cue_projection: [AtomicU64; CueProjectionOutcome::COUNT],
     selection_transition: [[AtomicU64; ChampionDecision::COUNT]; METRIC_TIMEFRAME_COUNT],
     selection_rows_updated_without_transition: [AtomicU64; METRIC_TIMEFRAME_COUNT],
+    async_reoptimize_run_total: [[AtomicU64; AsyncReoptimizeRunStatus::TERMINAL_COUNT];
+        AsyncReoptimizeTriggerSource::COUNT],
+    async_reoptimize_active_runs: [AtomicU64; AsyncReoptimizeRunStatus::ACTIVE_COUNT],
+    async_reoptimize_scheduler_enqueue_total: [[AtomicU64;
+        AsyncReoptimizeSchedulerEnqueueResult::COUNT];
+        AsyncReoptimizeTriggerSource::COUNT],
+    async_reoptimize_lease_acquire_total: [AtomicU64; AsyncReoptimizeLeaseAcquireResult::COUNT],
+    async_reoptimize_lease_lost_total: [AtomicU64; AsyncReoptimizeLeaseLostReason::COUNT],
+    async_reoptimize_lease_heartbeat_total: [AtomicU64; AsyncReoptimizeLeaseHeartbeatResult::COUNT],
+    async_reoptimize_budget_exhausted_total: [AtomicU64; AsyncReoptimizeBudgetName::COUNT],
+    async_reoptimize_progress_pairs_total:
+        [[AtomicU64; AsyncReoptimizeProgressPairResult::COUNT]; METRIC_TIMEFRAME_COUNT],
+    async_reoptimize_timeframe_total:
+        [[AtomicU64; AsyncReoptimizeRunStatus::TERMINAL_COUNT]; METRIC_TIMEFRAME_COUNT],
+    async_reoptimize_cancel_total: [AtomicU64; AsyncReoptimizeCancelResult::COUNT],
+    async_reoptimize_fail_closed_total: [AtomicU64; AsyncReoptimizeFailClosedReason::COUNT],
+    async_reoptimize_telemetry_missing_total: [AtomicU64; AsyncReoptimizeFailClosedReason::COUNT],
+    async_reoptimize_status_unknown_total: [AtomicU64; AsyncReoptimizeStatusUnknownReason::COUNT],
+    async_reoptimize_recommendation_total: [AtomicU64; AsyncReoptimizeRecommendation::COUNT],
 }
 
 impl StrategyMetrics {
@@ -951,6 +970,28 @@ impl StrategyMetrics {
                 std::array::from_fn(|_| AtomicU64::new(0))
             }),
             selection_rows_updated_without_transition: std::array::from_fn(|_| AtomicU64::new(0)),
+            async_reoptimize_run_total: std::array::from_fn(|_| {
+                std::array::from_fn(|_| AtomicU64::new(0))
+            }),
+            async_reoptimize_active_runs: std::array::from_fn(|_| AtomicU64::new(0)),
+            async_reoptimize_scheduler_enqueue_total: std::array::from_fn(|_| {
+                std::array::from_fn(|_| AtomicU64::new(0))
+            }),
+            async_reoptimize_lease_acquire_total: std::array::from_fn(|_| AtomicU64::new(0)),
+            async_reoptimize_lease_lost_total: std::array::from_fn(|_| AtomicU64::new(0)),
+            async_reoptimize_lease_heartbeat_total: std::array::from_fn(|_| AtomicU64::new(0)),
+            async_reoptimize_budget_exhausted_total: std::array::from_fn(|_| AtomicU64::new(0)),
+            async_reoptimize_progress_pairs_total: std::array::from_fn(|_| {
+                std::array::from_fn(|_| AtomicU64::new(0))
+            }),
+            async_reoptimize_timeframe_total: std::array::from_fn(|_| {
+                std::array::from_fn(|_| AtomicU64::new(0))
+            }),
+            async_reoptimize_cancel_total: std::array::from_fn(|_| AtomicU64::new(0)),
+            async_reoptimize_fail_closed_total: std::array::from_fn(|_| AtomicU64::new(0)),
+            async_reoptimize_telemetry_missing_total: std::array::from_fn(|_| AtomicU64::new(0)),
+            async_reoptimize_status_unknown_total: std::array::from_fn(|_| AtomicU64::new(0)),
+            async_reoptimize_recommendation_total: std::array::from_fn(|_| AtomicU64::new(0)),
         }
     }
 
@@ -975,6 +1016,120 @@ impl StrategyMetrics {
         if counts.has_accounting_gap(selected_rows_written) {
             self.selection_rows_updated_without_transition[timeframe_index]
                 .fetch_add(selected_rows_written as u64, Ordering::Relaxed);
+        }
+    }
+
+    fn record_async_reoptimize_scheduler_enqueue(
+        &self,
+        trigger: AsyncReoptimizeTriggerSource,
+        result: AsyncReoptimizeSchedulerEnqueueResult,
+    ) {
+        self.async_reoptimize_scheduler_enqueue_total[trigger.metric_index()]
+            [result.metric_index()]
+        .fetch_add(1, Ordering::Relaxed);
+    }
+
+    fn record_async_reoptimize_lease_acquire(&self, result: AsyncReoptimizeLeaseAcquireResult) {
+        self.async_reoptimize_lease_acquire_total[result.metric_index()]
+            .fetch_add(1, Ordering::Relaxed);
+    }
+
+    fn record_async_reoptimize_lease_heartbeat(&self, result: AsyncReoptimizeLeaseHeartbeatResult) {
+        self.async_reoptimize_lease_heartbeat_total[result.metric_index()]
+            .fetch_add(1, Ordering::Relaxed);
+    }
+
+    fn record_async_reoptimize_lease_lost(&self, reason: AsyncReoptimizeLeaseLostReason) {
+        self.async_reoptimize_lease_lost_total[reason.metric_index()]
+            .fetch_add(1, Ordering::Relaxed);
+    }
+
+    fn record_async_reoptimize_budget_exhausted(&self, budget: AsyncReoptimizeBudgetName) {
+        self.async_reoptimize_budget_exhausted_total[budget.metric_index()]
+            .fetch_add(1, Ordering::Relaxed);
+    }
+
+    fn record_async_reoptimize_progress_pairs(
+        &self,
+        timeframe: Timeframe,
+        result: AsyncReoptimizeProgressPairResult,
+        count: usize,
+    ) {
+        if count == 0 {
+            return;
+        }
+        self.async_reoptimize_progress_pairs_total[metric_timeframe_index(timeframe)]
+            [result.metric_index()]
+        .fetch_add(count as u64, Ordering::Relaxed);
+    }
+
+    fn record_async_reoptimize_timeframe_terminal(
+        &self,
+        timeframe: Timeframe,
+        status: AsyncReoptimizeRunStatus,
+    ) {
+        if let Some(status_index) = status.terminal_metric_index() {
+            self.async_reoptimize_timeframe_total[metric_timeframe_index(timeframe)][status_index]
+                .fetch_add(1, Ordering::Relaxed);
+        }
+    }
+
+    fn record_async_reoptimize_cancel(&self, result: AsyncReoptimizeCancelResult) {
+        self.async_reoptimize_cancel_total[result.metric_index()].fetch_add(1, Ordering::Relaxed);
+    }
+
+    fn record_async_reoptimize_fail_closed(&self, reason: AsyncReoptimizeFailClosedReason) {
+        self.async_reoptimize_fail_closed_total[reason.metric_index()]
+            .fetch_add(1, Ordering::Relaxed);
+    }
+
+    fn record_async_reoptimize_fail_closed_reasons(
+        &self,
+        reasons: &[AsyncReoptimizeFailClosedReason],
+    ) {
+        for reason in reasons {
+            self.record_async_reoptimize_fail_closed(*reason);
+        }
+    }
+
+    fn record_async_reoptimize_telemetry_missing(&self, reason: AsyncReoptimizeFailClosedReason) {
+        self.async_reoptimize_telemetry_missing_total[reason.metric_index()]
+            .fetch_add(1, Ordering::Relaxed);
+    }
+
+    fn record_async_reoptimize_status_unknown(&self, reason: AsyncReoptimizeStatusUnknownReason) {
+        self.async_reoptimize_status_unknown_total[reason.metric_index()]
+            .fetch_add(1, Ordering::Relaxed);
+    }
+
+    fn record_async_reoptimize_terminal(
+        &self,
+        trigger: AsyncReoptimizeTriggerSource,
+        status: AsyncReoptimizeRunStatus,
+        recommendation: AsyncReoptimizeRecommendation,
+        fail_closed_reasons: &[AsyncReoptimizeFailClosedReason],
+    ) {
+        if let Some(status_index) = status.terminal_metric_index() {
+            self.async_reoptimize_run_total[trigger.metric_index()][status_index]
+                .fetch_add(1, Ordering::Relaxed);
+        }
+        self.async_reoptimize_recommendation_total[recommendation.metric_index()]
+            .fetch_add(1, Ordering::Relaxed);
+        self.record_async_reoptimize_fail_closed_reasons(fail_closed_reasons);
+        self.clear_async_reoptimize_active_runs();
+    }
+
+    fn set_async_reoptimize_active_status(&self, status: AsyncReoptimizeRunStatus) {
+        self.clear_async_reoptimize_active_runs();
+        if let Some(status_index) = status.active_metric_index() {
+            self.async_reoptimize_active_runs[status_index].store(1, Ordering::Relaxed);
+        }
+    }
+
+    fn clear_async_reoptimize_active_runs(&self) {
+        for status in AsyncReoptimizeRunStatus::ACTIVE {
+            self.async_reoptimize_active_runs[status.active_metric_index().unwrap()]
+                .store(0, Ordering::Relaxed);
         }
     }
 
@@ -1019,6 +1174,205 @@ impl StrategyMetrics {
                 "strategy_selection_rows_updated_without_transition_total{{timeframe=\"{}\"}} {}\n",
                 timeframe.as_str(),
                 self.selection_rows_updated_without_transition[timeframe_index]
+                    .load(Ordering::Relaxed)
+            ));
+        }
+
+        body.push_str(
+            "# HELP strategy_reoptimize_run_total Async reoptimization terminal runs by trigger and status.\n\
+             # TYPE strategy_reoptimize_run_total counter\n",
+        );
+        for trigger in AsyncReoptimizeTriggerSource::ALL {
+            for status in AsyncReoptimizeRunStatus::TERMINAL {
+                body.push_str(&format!(
+                    "strategy_reoptimize_run_total{{trigger=\"{}\",status=\"{}\"}} {}\n",
+                    trigger.as_str(),
+                    status.as_str(),
+                    self.async_reoptimize_run_total[trigger.metric_index()]
+                        [status.terminal_metric_index().unwrap()]
+                    .load(Ordering::Relaxed)
+                ));
+            }
+        }
+
+        body.push_str(
+            "# HELP strategy_reoptimize_active_runs Current active async reoptimization runs by status.\n\
+             # TYPE strategy_reoptimize_active_runs gauge\n",
+        );
+        for status in AsyncReoptimizeRunStatus::ACTIVE {
+            body.push_str(&format!(
+                "strategy_reoptimize_active_runs{{status=\"{}\"}} {}\n",
+                status.as_str(),
+                self.async_reoptimize_active_runs[status.active_metric_index().unwrap()]
+                    .load(Ordering::Relaxed)
+            ));
+        }
+
+        body.push_str(
+            "# HELP strategy_reoptimize_scheduler_enqueue_total Async reoptimization enqueue attempts by trigger and result.\n\
+             # TYPE strategy_reoptimize_scheduler_enqueue_total counter\n",
+        );
+        for trigger in AsyncReoptimizeTriggerSource::ALL {
+            for result in AsyncReoptimizeSchedulerEnqueueResult::ALL {
+                body.push_str(&format!(
+                    "strategy_reoptimize_scheduler_enqueue_total{{trigger=\"{}\",result=\"{}\"}} {}\n",
+                    trigger.as_str(),
+                    result.as_str(),
+                    self.async_reoptimize_scheduler_enqueue_total[trigger.metric_index()]
+                        [result.metric_index()]
+                    .load(Ordering::Relaxed)
+                ));
+            }
+        }
+
+        body.push_str(
+            "# HELP strategy_reoptimize_lease_acquire_total Async reoptimization lease acquisition attempts.\n\
+             # TYPE strategy_reoptimize_lease_acquire_total counter\n",
+        );
+        for result in AsyncReoptimizeLeaseAcquireResult::ALL {
+            body.push_str(&format!(
+                "strategy_reoptimize_lease_acquire_total{{result=\"{}\"}} {}\n",
+                result.as_str(),
+                self.async_reoptimize_lease_acquire_total[result.metric_index()]
+                    .load(Ordering::Relaxed)
+            ));
+        }
+
+        body.push_str(
+            "# HELP strategy_reoptimize_lease_lost_total Async reoptimization lease loss events.\n\
+             # TYPE strategy_reoptimize_lease_lost_total counter\n",
+        );
+        for reason in AsyncReoptimizeLeaseLostReason::ALL {
+            body.push_str(&format!(
+                "strategy_reoptimize_lease_lost_total{{reason=\"{}\"}} {}\n",
+                reason.as_str(),
+                self.async_reoptimize_lease_lost_total[reason.metric_index()]
+                    .load(Ordering::Relaxed)
+            ));
+        }
+
+        body.push_str(
+            "# HELP strategy_reoptimize_lease_heartbeat_total Async reoptimization lease heartbeat outcomes.\n\
+             # TYPE strategy_reoptimize_lease_heartbeat_total counter\n",
+        );
+        for result in AsyncReoptimizeLeaseHeartbeatResult::ALL {
+            body.push_str(&format!(
+                "strategy_reoptimize_lease_heartbeat_total{{result=\"{}\"}} {}\n",
+                result.as_str(),
+                self.async_reoptimize_lease_heartbeat_total[result.metric_index()]
+                    .load(Ordering::Relaxed)
+            ));
+        }
+
+        body.push_str(
+            "# HELP strategy_reoptimize_budget_exhausted_total Async reoptimization budget exhaustion events.\n\
+             # TYPE strategy_reoptimize_budget_exhausted_total counter\n",
+        );
+        for budget in AsyncReoptimizeBudgetName::ALL {
+            body.push_str(&format!(
+                "strategy_reoptimize_budget_exhausted_total{{budget=\"{}\"}} {}\n",
+                budget.as_str(),
+                self.async_reoptimize_budget_exhausted_total[budget.metric_index()]
+                    .load(Ordering::Relaxed)
+            ));
+        }
+
+        body.push_str(
+            "# HELP strategy_reoptimize_progress_pairs_total Async reoptimization pair work units by timeframe and result.\n\
+             # TYPE strategy_reoptimize_progress_pairs_total counter\n",
+        );
+        for timeframe in METRIC_TIMEFRAMES {
+            let timeframe_index = metric_timeframe_index(timeframe);
+            for result in AsyncReoptimizeProgressPairResult::ALL {
+                body.push_str(&format!(
+                    "strategy_reoptimize_progress_pairs_total{{timeframe=\"{}\",result=\"{}\"}} {}\n",
+                    timeframe.as_str(),
+                    result.as_str(),
+                    self.async_reoptimize_progress_pairs_total[timeframe_index]
+                        [result.metric_index()]
+                    .load(Ordering::Relaxed)
+                ));
+            }
+        }
+
+        body.push_str(
+            "# HELP strategy_reoptimize_timeframe_total Async reoptimization timeframe terminal statuses.\n\
+             # TYPE strategy_reoptimize_timeframe_total counter\n",
+        );
+        for timeframe in METRIC_TIMEFRAMES {
+            let timeframe_index = metric_timeframe_index(timeframe);
+            for status in AsyncReoptimizeRunStatus::TERMINAL {
+                body.push_str(&format!(
+                    "strategy_reoptimize_timeframe_total{{timeframe=\"{}\",status=\"{}\"}} {}\n",
+                    timeframe.as_str(),
+                    status.as_str(),
+                    self.async_reoptimize_timeframe_total[timeframe_index]
+                        [status.terminal_metric_index().unwrap()]
+                    .load(Ordering::Relaxed)
+                ));
+            }
+        }
+
+        body.push_str(
+            "# HELP strategy_reoptimize_cancel_total Async reoptimization cancellation outcomes.\n\
+             # TYPE strategy_reoptimize_cancel_total counter\n",
+        );
+        for result in AsyncReoptimizeCancelResult::ALL {
+            body.push_str(&format!(
+                "strategy_reoptimize_cancel_total{{result=\"{}\"}} {}\n",
+                result.as_str(),
+                self.async_reoptimize_cancel_total[result.metric_index()].load(Ordering::Relaxed)
+            ));
+        }
+
+        body.push_str(
+            "# HELP strategy_reoptimize_fail_closed_total Async reoptimization fail-closed decisions by reason.\n\
+             # TYPE strategy_reoptimize_fail_closed_total counter\n",
+        );
+        for reason in AsyncReoptimizeFailClosedReason::ALL {
+            body.push_str(&format!(
+                "strategy_reoptimize_fail_closed_total{{reason=\"{}\"}} {}\n",
+                reason.as_str(),
+                self.async_reoptimize_fail_closed_total[reason.metric_index()]
+                    .load(Ordering::Relaxed)
+            ));
+        }
+
+        body.push_str(
+            "# HELP strategy_reoptimize_telemetry_missing_total Async reoptimization missing or stale telemetry events by fail-closed reason.\n\
+             # TYPE strategy_reoptimize_telemetry_missing_total counter\n",
+        );
+        for reason in AsyncReoptimizeFailClosedReason::ALL {
+            body.push_str(&format!(
+                "strategy_reoptimize_telemetry_missing_total{{reason=\"{}\"}} {}\n",
+                reason.as_str(),
+                self.async_reoptimize_telemetry_missing_total[reason.metric_index()]
+                    .load(Ordering::Relaxed)
+            ));
+        }
+
+        body.push_str(
+            "# HELP strategy_reoptimize_status_unknown_total Async reoptimization unknown status telemetry by bounded reason.\n\
+             # TYPE strategy_reoptimize_status_unknown_total counter\n",
+        );
+        for reason in AsyncReoptimizeStatusUnknownReason::ALL {
+            body.push_str(&format!(
+                "strategy_reoptimize_status_unknown_total{{reason=\"{}\"}} {}\n",
+                reason.as_str(),
+                self.async_reoptimize_status_unknown_total[reason.metric_index()]
+                    .load(Ordering::Relaxed)
+            ));
+        }
+
+        body.push_str(
+            "# HELP strategy_reoptimize_recommendation_total Async reoptimization terminal recommendations.\n\
+             # TYPE strategy_reoptimize_recommendation_total counter\n",
+        );
+        for recommendation in AsyncReoptimizeRecommendation::ALL {
+            body.push_str(&format!(
+                "strategy_reoptimize_recommendation_total{{recommendation=\"{}\"}} {}\n",
+                recommendation.as_str(),
+                self.async_reoptimize_recommendation_total[recommendation.metric_index()]
                     .load(Ordering::Relaxed)
             ));
         }
@@ -5889,6 +6243,15 @@ impl AsyncReoptimizeRunStatus {
         Self::Running,
         Self::CancelRequested,
     ];
+    const ACTIVE_COUNT: usize = Self::ACTIVE.len();
+    const TERMINAL: [Self; 5] = [
+        Self::Canceled,
+        Self::Succeeded,
+        Self::Degraded,
+        Self::Failed,
+        Self::Expired,
+    ];
+    const TERMINAL_COUNT: usize = Self::TERMINAL.len();
 
     fn parse(value: &str) -> Option<Self> {
         match value.trim() {
@@ -5926,6 +6289,29 @@ impl AsyncReoptimizeRunStatus {
     fn is_terminal(self) -> bool {
         !self.is_active()
     }
+
+    fn active_metric_index(self) -> Option<usize> {
+        match self {
+            Self::Queued => Some(0),
+            Self::Leased => Some(1),
+            Self::Running => Some(2),
+            Self::CancelRequested => Some(3),
+            Self::Canceled | Self::Succeeded | Self::Degraded | Self::Failed | Self::Expired => {
+                None
+            }
+        }
+    }
+
+    fn terminal_metric_index(self) -> Option<usize> {
+        match self {
+            Self::Canceled => Some(0),
+            Self::Succeeded => Some(1),
+            Self::Degraded => Some(2),
+            Self::Failed => Some(3),
+            Self::Expired => Some(4),
+            Self::Queued | Self::Leased | Self::Running | Self::CancelRequested => None,
+        }
+    }
 }
 
 #[allow(dead_code)]
@@ -5938,6 +6324,14 @@ enum AsyncReoptimizeTriggerSource {
 }
 
 impl AsyncReoptimizeTriggerSource {
+    const ALL: [Self; 4] = [
+        Self::Scheduled,
+        Self::ManualApi,
+        Self::MaintenanceReport,
+        Self::Recovery,
+    ];
+    const COUNT: usize = Self::ALL.len();
+
     fn parse(value: &str) -> Option<Self> {
         match value.trim() {
             "SCHEDULED" => Some(Self::Scheduled),
@@ -5956,6 +6350,15 @@ impl AsyncReoptimizeTriggerSource {
             Self::Recovery => "RECOVERY",
         }
     }
+
+    fn metric_index(self) -> usize {
+        match self {
+            Self::Scheduled => 0,
+            Self::ManualApi => 1,
+            Self::MaintenanceReport => 2,
+            Self::Recovery => 3,
+        }
+    }
 }
 
 #[allow(dead_code)]
@@ -5968,6 +6371,14 @@ enum AsyncReoptimizeRecommendation {
 }
 
 impl AsyncReoptimizeRecommendation {
+    const ALL: [Self; 4] = [
+        Self::Hold,
+        Self::OperatorReviewRequired,
+        Self::PromotionCandidateAvailable,
+        Self::RevertReviewRequired,
+    ];
+    const COUNT: usize = Self::ALL.len();
+
     fn parse(value: &str) -> Option<Self> {
         match value.trim() {
             "HOLD" => Some(Self::Hold),
@@ -5984,6 +6395,15 @@ impl AsyncReoptimizeRecommendation {
             Self::OperatorReviewRequired => "OPERATOR_REVIEW_REQUIRED",
             Self::PromotionCandidateAvailable => "PROMOTION_CANDIDATE_AVAILABLE",
             Self::RevertReviewRequired => "REVERT_REVIEW_REQUIRED",
+        }
+    }
+
+    fn metric_index(self) -> usize {
+        match self {
+            Self::Hold => 0,
+            Self::OperatorReviewRequired => 1,
+            Self::PromotionCandidateAvailable => 2,
+            Self::RevertReviewRequired => 3,
         }
     }
 }
@@ -6008,6 +6428,24 @@ enum AsyncReoptimizeFailClosedReason {
 }
 
 impl AsyncReoptimizeFailClosedReason {
+    const ALL: [Self; 14] = [
+        Self::MissingTelemetry,
+        Self::UnknownStatus,
+        Self::StaleStatus,
+        Self::LeaseLost,
+        Self::BudgetExhausted,
+        Self::Canceled,
+        Self::ArtifactFailed,
+        Self::IntegrityUnknown,
+        Self::RiskUnknown,
+        Self::AccountingAnomaly,
+        Self::ScheduleMissed,
+        Self::UnsafePromotionAttempt,
+        Self::ConfigInvalid,
+        Self::RepairProvenanceActive,
+    ];
+    const COUNT: usize = Self::ALL.len();
+
     fn parse(value: &str) -> Option<Self> {
         match value.trim() {
             "MISSING_TELEMETRY" => Some(Self::MissingTelemetry),
@@ -6044,6 +6482,25 @@ impl AsyncReoptimizeFailClosedReason {
             Self::UnsafePromotionAttempt => "UNSAFE_PROMOTION_ATTEMPT",
             Self::ConfigInvalid => "CONFIG_INVALID",
             Self::RepairProvenanceActive => "REPAIR_PROVENANCE_ACTIVE",
+        }
+    }
+
+    fn metric_index(self) -> usize {
+        match self {
+            Self::MissingTelemetry => 0,
+            Self::UnknownStatus => 1,
+            Self::StaleStatus => 2,
+            Self::LeaseLost => 3,
+            Self::BudgetExhausted => 4,
+            Self::Canceled => 5,
+            Self::ArtifactFailed => 6,
+            Self::IntegrityUnknown => 7,
+            Self::RiskUnknown => 8,
+            Self::AccountingAnomaly => 9,
+            Self::ScheduleMissed => 10,
+            Self::UnsafePromotionAttempt => 11,
+            Self::ConfigInvalid => 12,
+            Self::RepairProvenanceActive => 13,
         }
     }
 }
@@ -6110,6 +6567,19 @@ enum AsyncReoptimizeBudgetName {
 }
 
 impl AsyncReoptimizeBudgetName {
+    const ALL: [Self; 9] = [
+        Self::RunWallClock,
+        Self::TimeframeWallClock,
+        Self::PairEvaluationsRun,
+        Self::PairEvaluationsTimeframe,
+        Self::PairConcurrency,
+        Self::DbWriteBatch,
+        Self::ArtifactBytes,
+        Self::Cooldown,
+        Self::LeaseTtl,
+    ];
+    const COUNT: usize = Self::ALL.len();
+
     fn parse(value: &str) -> Option<Self> {
         match value.trim() {
             "RUN_WALL_CLOCK" => Some(Self::RunWallClock),
@@ -6136,6 +6606,311 @@ impl AsyncReoptimizeBudgetName {
             Self::ArtifactBytes => "ARTIFACT_BYTES",
             Self::Cooldown => "COOLDOWN",
             Self::LeaseTtl => "LEASE_TTL",
+        }
+    }
+
+    fn metric_index(self) -> usize {
+        match self {
+            Self::RunWallClock => 0,
+            Self::TimeframeWallClock => 1,
+            Self::PairEvaluationsRun => 2,
+            Self::PairEvaluationsTimeframe => 3,
+            Self::PairConcurrency => 4,
+            Self::DbWriteBatch => 5,
+            Self::ArtifactBytes => 6,
+            Self::Cooldown => 7,
+            Self::LeaseTtl => 8,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum AsyncReoptimizeSchedulerEnqueueResult {
+    Enqueued,
+    Disabled,
+    ActiveRun,
+    Cooldown,
+    HealthUnavailable,
+    IntegrityUnknown,
+    BudgetInvalid,
+    LeaseUnavailable,
+    UnknownStatus,
+    ConfigInvalid,
+}
+
+impl AsyncReoptimizeSchedulerEnqueueResult {
+    const ALL: [Self; 10] = [
+        Self::Enqueued,
+        Self::Disabled,
+        Self::ActiveRun,
+        Self::Cooldown,
+        Self::HealthUnavailable,
+        Self::IntegrityUnknown,
+        Self::BudgetInvalid,
+        Self::LeaseUnavailable,
+        Self::UnknownStatus,
+        Self::ConfigInvalid,
+    ];
+    const COUNT: usize = Self::ALL.len();
+
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Enqueued => "ENQUEUED",
+            Self::Disabled => "DISABLED",
+            Self::ActiveRun => "ACTIVE_RUN",
+            Self::Cooldown => "COOLDOWN",
+            Self::HealthUnavailable => "HEALTH_UNAVAILABLE",
+            Self::IntegrityUnknown => "INTEGRITY_UNKNOWN",
+            Self::BudgetInvalid => "BUDGET_INVALID",
+            Self::LeaseUnavailable => "LEASE_UNAVAILABLE",
+            Self::UnknownStatus => "UNKNOWN_STATUS",
+            Self::ConfigInvalid => "CONFIG_INVALID",
+        }
+    }
+
+    fn metric_index(self) -> usize {
+        match self {
+            Self::Enqueued => 0,
+            Self::Disabled => 1,
+            Self::ActiveRun => 2,
+            Self::Cooldown => 3,
+            Self::HealthUnavailable => 4,
+            Self::IntegrityUnknown => 5,
+            Self::BudgetInvalid => 6,
+            Self::LeaseUnavailable => 7,
+            Self::UnknownStatus => 8,
+            Self::ConfigInvalid => 9,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum AsyncReoptimizeLeaseAcquireResult {
+    Acquired,
+    Busy,
+    StaleRecovered,
+    Failed,
+}
+
+impl AsyncReoptimizeLeaseAcquireResult {
+    const ALL: [Self; 4] = [
+        Self::Acquired,
+        Self::Busy,
+        Self::StaleRecovered,
+        Self::Failed,
+    ];
+    const COUNT: usize = Self::ALL.len();
+
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Acquired => "ACQUIRED",
+            Self::Busy => "BUSY",
+            Self::StaleRecovered => "STALE_RECOVERED",
+            Self::Failed => "FAILED",
+        }
+    }
+
+    fn metric_index(self) -> usize {
+        match self {
+            Self::Acquired => 0,
+            Self::Busy => 1,
+            Self::StaleRecovered => 2,
+            Self::Failed => 3,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum AsyncReoptimizeLeaseLostReason {
+    Expired,
+    GenerationMismatch,
+    HeartbeatFailed,
+    OwnerMismatch,
+    Unknown,
+}
+
+impl AsyncReoptimizeLeaseLostReason {
+    const ALL: [Self; 5] = [
+        Self::Expired,
+        Self::GenerationMismatch,
+        Self::HeartbeatFailed,
+        Self::OwnerMismatch,
+        Self::Unknown,
+    ];
+    const COUNT: usize = Self::ALL.len();
+
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Expired => "EXPIRED",
+            Self::GenerationMismatch => "GENERATION_MISMATCH",
+            Self::HeartbeatFailed => "HEARTBEAT_FAILED",
+            Self::OwnerMismatch => "OWNER_MISMATCH",
+            Self::Unknown => "UNKNOWN",
+        }
+    }
+
+    fn metric_index(self) -> usize {
+        match self {
+            Self::Expired => 0,
+            Self::GenerationMismatch => 1,
+            Self::HeartbeatFailed => 2,
+            Self::OwnerMismatch => 3,
+            Self::Unknown => 4,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum AsyncReoptimizeLeaseHeartbeatResult {
+    Succeeded,
+    Failed,
+    StaleOwner,
+    GenerationMismatch,
+}
+
+impl AsyncReoptimizeLeaseHeartbeatResult {
+    const ALL: [Self; 4] = [
+        Self::Succeeded,
+        Self::Failed,
+        Self::StaleOwner,
+        Self::GenerationMismatch,
+    ];
+    const COUNT: usize = Self::ALL.len();
+
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Succeeded => "SUCCEEDED",
+            Self::Failed => "FAILED",
+            Self::StaleOwner => "STALE_OWNER",
+            Self::GenerationMismatch => "GENERATION_MISMATCH",
+        }
+    }
+
+    fn metric_index(self) -> usize {
+        match self {
+            Self::Succeeded => 0,
+            Self::Failed => 1,
+            Self::StaleOwner => 2,
+            Self::GenerationMismatch => 3,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum AsyncReoptimizeProgressPairResult {
+    Completed,
+    Skipped,
+    Failed,
+    Canceled,
+}
+
+impl AsyncReoptimizeProgressPairResult {
+    const ALL: [Self; 4] = [Self::Completed, Self::Skipped, Self::Failed, Self::Canceled];
+    const COUNT: usize = Self::ALL.len();
+
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Completed => "COMPLETED",
+            Self::Skipped => "SKIPPED",
+            Self::Failed => "FAILED",
+            Self::Canceled => "CANCELED",
+        }
+    }
+
+    fn metric_index(self) -> usize {
+        match self {
+            Self::Completed => 0,
+            Self::Skipped => 1,
+            Self::Failed => 2,
+            Self::Canceled => 3,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum AsyncReoptimizeCancelResult {
+    Requested,
+    Accepted,
+    Completed,
+    RejectedTerminal,
+    RejectedNotFound,
+    Failed,
+    TimedOut,
+}
+
+impl AsyncReoptimizeCancelResult {
+    const ALL: [Self; 7] = [
+        Self::Requested,
+        Self::Accepted,
+        Self::Completed,
+        Self::RejectedTerminal,
+        Self::RejectedNotFound,
+        Self::Failed,
+        Self::TimedOut,
+    ];
+    const COUNT: usize = Self::ALL.len();
+
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Requested => "REQUESTED",
+            Self::Accepted => "ACCEPTED",
+            Self::Completed => "COMPLETED",
+            Self::RejectedTerminal => "REJECTED_TERMINAL",
+            Self::RejectedNotFound => "REJECTED_NOT_FOUND",
+            Self::Failed => "FAILED",
+            Self::TimedOut => "TIMED_OUT",
+        }
+    }
+
+    fn metric_index(self) -> usize {
+        match self {
+            Self::Requested => 0,
+            Self::Accepted => 1,
+            Self::Completed => 2,
+            Self::RejectedTerminal => 3,
+            Self::RejectedNotFound => 4,
+            Self::Failed => 5,
+            Self::TimedOut => 6,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum AsyncReoptimizeStatusUnknownReason {
+    StatusRowMissing,
+    StatusEnumUnknown,
+    StatusContradictory,
+    StatusStale,
+    TelemetryUnavailable,
+}
+
+impl AsyncReoptimizeStatusUnknownReason {
+    const ALL: [Self; 5] = [
+        Self::StatusRowMissing,
+        Self::StatusEnumUnknown,
+        Self::StatusContradictory,
+        Self::StatusStale,
+        Self::TelemetryUnavailable,
+    ];
+    const COUNT: usize = Self::ALL.len();
+
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::StatusRowMissing => "STATUS_ROW_MISSING",
+            Self::StatusEnumUnknown => "STATUS_ENUM_UNKNOWN",
+            Self::StatusContradictory => "STATUS_CONTRADICTORY",
+            Self::StatusStale => "STATUS_STALE",
+            Self::TelemetryUnavailable => "TELEMETRY_UNAVAILABLE",
+        }
+    }
+
+    fn metric_index(self) -> usize {
+        match self {
+            Self::StatusRowMissing => 0,
+            Self::StatusEnumUnknown => 1,
+            Self::StatusContradictory => 2,
+            Self::StatusStale => 3,
+            Self::TelemetryUnavailable => 4,
         }
     }
 }
@@ -6233,10 +7008,11 @@ impl AsyncReoptimizeRunnerProgress {
         current_timeframe_index: usize,
         current_pair_index: usize,
         pair_count: usize,
-    ) {
+    ) -> usize {
         if current_timeframe_index >= self.planned_timeframe_count {
-            return;
+            return 0;
         }
+        let before = self.pairs_skipped;
         let current_remaining = pair_count.saturating_sub(current_pair_index);
         let later_timeframes = self
             .planned_timeframe_count
@@ -6251,6 +7027,7 @@ impl AsyncReoptimizeRunnerProgress {
             .failed_timeframe_count
             .saturating_add(later_timeframes.saturating_add(1));
         self.active_timeframe = None;
+        self.pairs_skipped.saturating_sub(before)
     }
 }
 
@@ -6518,6 +7295,12 @@ fn async_reoptimize_timeframes_from_state(
     } else {
         (parsed, true)
     }
+}
+
+fn async_reoptimize_trigger_from_state(
+    state: &AsyncReoptimizeRunState,
+) -> Option<AsyncReoptimizeTriggerSource> {
+    AsyncReoptimizeTriggerSource::parse(&state.trigger_source)
 }
 
 fn async_reoptimize_json_non_negative_integer(value: Option<&serde_json::Value>) -> bool {
@@ -8019,7 +8802,8 @@ fn async_reoptimize_budget_exhausted(
 }
 
 #[derive(Clone, Copy)]
-struct AsyncReoptimizeBudgetCheck {
+struct AsyncReoptimizeBudgetCheck<'a> {
+    run_id: &'a str,
     timeframe: Option<Timeframe>,
     timeframe_index: usize,
     pair_index: usize,
@@ -8034,6 +8818,7 @@ struct AsyncReoptimizeBudgetCheck {
 
 fn async_reoptimize_stop_if_budget_exhausted(
     settings: &StrategySettings,
+    metrics: &StrategyMetrics,
     progress: &mut AsyncReoptimizeRunnerProgress,
     errors: &mut Vec<ReoptError>,
     error_counts: &mut ReoptErrorCounts,
@@ -8054,6 +8839,18 @@ fn async_reoptimize_stop_if_budget_exhausted(
         return false;
     };
     *exhausted_budget = Some(budget);
+    metrics.record_async_reoptimize_budget_exhausted(budget);
+    metrics.record_async_reoptimize_fail_closed(AsyncReoptimizeFailClosedReason::BudgetExhausted);
+    tracing::warn!(
+        event = "reoptimize_budget_exhausted",
+        run_id = %check.run_id,
+        timeframe = check.timeframe.map(|timeframe| timeframe.as_str()),
+        budget_name = budget.as_str(),
+        run_pair_evaluations = check.run_pair_evaluations,
+        timeframe_pair_evaluations = check.timeframe_pair_evaluations,
+        context = check.context,
+        "async reoptimize budget exhausted"
+    );
     push_reopt_error(
         errors,
         "SYSTEM".to_string(),
@@ -8067,9 +8864,37 @@ fn async_reoptimize_stop_if_budget_exhausted(
     );
     progress.absorb_error_counts(*error_counts);
     if check.timeframe.is_some() {
-        progress.mark_remaining_skipped(check.timeframe_index, check.pair_index, check.pair_count);
+        let skipped = progress.mark_remaining_skipped(
+            check.timeframe_index,
+            check.pair_index,
+            check.pair_count,
+        );
+        if let Some(timeframe) = check.timeframe {
+            metrics.record_async_reoptimize_progress_pairs(
+                timeframe,
+                AsyncReoptimizeProgressPairResult::Skipped,
+                skipped,
+            );
+        }
     }
     true
+}
+
+fn mark_async_reoptimize_cancel_observed(
+    metrics: &StrategyMetrics,
+    run_id: &str,
+    canceled: &mut bool,
+) {
+    if !*canceled {
+        metrics.record_async_reoptimize_cancel(AsyncReoptimizeCancelResult::Requested);
+        info!(
+            event = "reoptimize_cancel_observed",
+            run_id = %run_id,
+            status_after = AsyncReoptimizeRunStatus::CancelRequested.as_str(),
+            "async reoptimize cancellation observed"
+        );
+    }
+    *canceled = true;
 }
 
 async fn checkpoint_async_reoptimize_run(
@@ -8091,7 +8916,7 @@ async fn checkpoint_async_reoptimize_run(
         errors,
         exhausted_budget,
     );
-    state
+    let checkpoint_result = state
         .repository
         .checkpoint_reoptimize_run(AsyncReoptimizeCheckpoint {
             run_id: &lease.run_id,
@@ -8103,7 +8928,54 @@ async fn checkpoint_async_reoptimize_run(
             summary_json: &summary_json,
             now,
         })
-        .await
+        .await;
+    match checkpoint_result {
+        Ok(Some(state_row)) => {
+            state.metrics.record_async_reoptimize_lease_heartbeat(
+                AsyncReoptimizeLeaseHeartbeatResult::Succeeded,
+            );
+            state
+                .metrics
+                .set_async_reoptimize_active_status(state_row.status);
+            tracing::debug!(
+                event = "reoptimize_lease_heartbeat",
+                run_id = %lease.run_id,
+                lease_owner = %lease.lease_owner,
+                lease_generation = lease.lease_generation,
+                heartbeat_at = %now,
+                status_after = state_row.status.as_str(),
+                phase = progress.phase.as_str(),
+                "async reoptimize lease heartbeat succeeded"
+            );
+            Ok(Some(state_row))
+        }
+        Ok(None) => {
+            state.metrics.record_async_reoptimize_lease_heartbeat(
+                AsyncReoptimizeLeaseHeartbeatResult::StaleOwner,
+            );
+            state
+                .metrics
+                .record_async_reoptimize_lease_lost(AsyncReoptimizeLeaseLostReason::Unknown);
+            tracing::warn!(
+                event = "reoptimize_lease_lost",
+                run_id = %lease.run_id,
+                lease_owner = %lease.lease_owner,
+                lease_generation = lease.lease_generation,
+                reason = AsyncReoptimizeLeaseLostReason::Unknown.as_str(),
+                "async reoptimize checkpoint refused by lease/state guard"
+            );
+            Ok(None)
+        }
+        Err(error) => {
+            state.metrics.record_async_reoptimize_lease_heartbeat(
+                AsyncReoptimizeLeaseHeartbeatResult::Failed,
+            );
+            state.metrics.record_async_reoptimize_lease_lost(
+                AsyncReoptimizeLeaseLostReason::HeartbeatFailed,
+            );
+            Err(error)
+        }
+    }
 }
 
 async fn complete_async_reoptimize_run(
@@ -8181,9 +9053,16 @@ async fn process_async_reoptimize_run(state: AppState, lease: AsyncReoptimizeLea
         .await
     {
         Ok(Some(cancel_requested)) => {
-            canceled = cancel_requested;
-            if canceled {
-                progress.mark_remaining_skipped(0, 0, pair_count);
+            if cancel_requested {
+                mark_async_reoptimize_cancel_observed(&state.metrics, &lease.run_id, &mut canceled);
+                let canceled_count = progress.mark_remaining_skipped(0, 0, pair_count);
+                for timeframe in &state.settings.timeframes {
+                    state.metrics.record_async_reoptimize_progress_pairs(
+                        *timeframe,
+                        AsyncReoptimizeProgressPairResult::Canceled,
+                        canceled_count.min(pair_count),
+                    );
+                }
             }
         }
         Ok(None) => lease_lost = true,
@@ -8209,8 +9088,14 @@ async fn process_async_reoptimize_run(state: AppState, lease: AsyncReoptimizeLea
             .await
         {
             Ok(Some(cancel_requested)) if cancel_requested => {
-                canceled = true;
-                progress.mark_remaining_skipped(timeframe_index, 0, pair_count);
+                mark_async_reoptimize_cancel_observed(&state.metrics, &lease.run_id, &mut canceled);
+                let canceled_count =
+                    progress.mark_remaining_skipped(timeframe_index, 0, pair_count);
+                state.metrics.record_async_reoptimize_progress_pairs(
+                    timeframe,
+                    AsyncReoptimizeProgressPairResult::Canceled,
+                    canceled_count,
+                );
                 break;
             }
             Ok(Some(_)) => {}
@@ -8243,11 +9128,13 @@ async fn process_async_reoptimize_run(state: AppState, lease: AsyncReoptimizeLea
         for (pair_index, pair) in state.settings.pairs.iter().cloned().enumerate() {
             if async_reoptimize_stop_if_budget_exhausted(
                 &state.settings,
+                &state.metrics,
                 &mut progress,
                 &mut errors,
                 &mut error_counts,
                 &mut exhausted_budget,
                 AsyncReoptimizeBudgetCheck {
+                    run_id: &lease.run_id,
                     timeframe: Some(timeframe),
                     timeframe_index,
                     pair_index,
@@ -8274,8 +9161,18 @@ async fn process_async_reoptimize_run(state: AppState, lease: AsyncReoptimizeLea
             .await
             {
                 Ok(Some(cancel_requested)) if cancel_requested => {
-                    canceled = true;
-                    progress.mark_remaining_skipped(timeframe_index, pair_index, pair_count);
+                    mark_async_reoptimize_cancel_observed(
+                        &state.metrics,
+                        &lease.run_id,
+                        &mut canceled,
+                    );
+                    let canceled_count =
+                        progress.mark_remaining_skipped(timeframe_index, pair_index, pair_count);
+                    state.metrics.record_async_reoptimize_progress_pairs(
+                        timeframe,
+                        AsyncReoptimizeProgressPairResult::Canceled,
+                        canceled_count,
+                    );
                     break 'timeframes;
                 }
                 Ok(Some(_)) => {}
@@ -8311,6 +9208,11 @@ async fn process_async_reoptimize_run(state: AppState, lease: AsyncReoptimizeLea
                 Err(error) => {
                     run_pair_evaluations = run_pair_evaluations.saturating_add(1);
                     progress.pairs_failed = progress.pairs_failed.saturating_add(1);
+                    state.metrics.record_async_reoptimize_progress_pairs(
+                        timeframe,
+                        AsyncReoptimizeProgressPairResult::Failed,
+                        1,
+                    );
                     push_reopt_error(
                         &mut errors,
                         pair_id,
@@ -8322,8 +9224,17 @@ async fn process_async_reoptimize_run(state: AppState, lease: AsyncReoptimizeLea
                     progress.absorb_error_counts(error_counts);
                     let remaining = pair_count.saturating_sub(pair_index.saturating_add(1));
                     progress.pairs_skipped = progress.pairs_skipped.saturating_add(remaining);
+                    state.metrics.record_async_reoptimize_progress_pairs(
+                        timeframe,
+                        AsyncReoptimizeProgressPairResult::Skipped,
+                        remaining,
+                    );
                     progress.failed_timeframe_count =
                         progress.failed_timeframe_count.saturating_add(1);
+                    state.metrics.record_async_reoptimize_timeframe_terminal(
+                        timeframe,
+                        AsyncReoptimizeRunStatus::Failed,
+                    );
                     timeframe_failed = true;
                     break;
                 }
@@ -8339,11 +9250,13 @@ async fn process_async_reoptimize_run(state: AppState, lease: AsyncReoptimizeLea
 
         if async_reoptimize_stop_if_budget_exhausted(
             &state.settings,
+            &state.metrics,
             &mut progress,
             &mut errors,
             &mut error_counts,
             &mut exhausted_budget,
             AsyncReoptimizeBudgetCheck {
+                run_id: &lease.run_id,
                 timeframe: Some(timeframe),
                 timeframe_index,
                 pair_index: 0,
@@ -8383,8 +9296,18 @@ async fn process_async_reoptimize_run(state: AppState, lease: AsyncReoptimizeLea
             .await
             {
                 Ok(Some(cancel_requested)) if cancel_requested => {
-                    canceled = true;
-                    progress.mark_remaining_skipped(timeframe_index, output_index, pair_count);
+                    mark_async_reoptimize_cancel_observed(
+                        &state.metrics,
+                        &lease.run_id,
+                        &mut canceled,
+                    );
+                    let canceled_count =
+                        progress.mark_remaining_skipped(timeframe_index, output_index, pair_count);
+                    state.metrics.record_async_reoptimize_progress_pairs(
+                        timeframe,
+                        AsyncReoptimizeProgressPairResult::Canceled,
+                        canceled_count,
+                    );
                     break 'timeframes;
                 }
                 Ok(Some(_)) => {}
@@ -8407,11 +9330,13 @@ async fn process_async_reoptimize_run(state: AppState, lease: AsyncReoptimizeLea
 
             if async_reoptimize_stop_if_budget_exhausted(
                 &state.settings,
+                &state.metrics,
                 &mut progress,
                 &mut errors,
                 &mut error_counts,
                 &mut exhausted_budget,
                 AsyncReoptimizeBudgetCheck {
+                    run_id: &lease.run_id,
                     timeframe: Some(timeframe),
                     timeframe_index,
                     pair_index: output_index,
@@ -8448,6 +9373,11 @@ async fn process_async_reoptimize_run(state: AppState, lease: AsyncReoptimizeLea
                 }
                 Err(error) => {
                     progress.pairs_failed = progress.pairs_failed.saturating_add(1);
+                    state.metrics.record_async_reoptimize_progress_pairs(
+                        timeframe,
+                        AsyncReoptimizeProgressPairResult::Failed,
+                        1,
+                    );
                     push_reopt_error(
                         &mut errors,
                         output.cue.pair_id.clone(),
@@ -8457,10 +9387,19 @@ async fn process_async_reoptimize_run(state: AppState, lease: AsyncReoptimizeLea
                         &mut error_counts,
                     );
                     progress.absorb_error_counts(error_counts);
-                    progress.mark_remaining_skipped(
+                    let skipped = progress.mark_remaining_skipped(
                         timeframe_index,
                         output_index.saturating_add(1),
                         pair_count,
+                    );
+                    state.metrics.record_async_reoptimize_progress_pairs(
+                        timeframe,
+                        AsyncReoptimizeProgressPairResult::Skipped,
+                        skipped,
+                    );
+                    state.metrics.record_async_reoptimize_timeframe_terminal(
+                        timeframe,
+                        AsyncReoptimizeRunStatus::Failed,
                     );
                     break 'timeframes;
                 }
@@ -8468,11 +9407,13 @@ async fn process_async_reoptimize_run(state: AppState, lease: AsyncReoptimizeLea
 
             if async_reoptimize_stop_if_budget_exhausted(
                 &state.settings,
+                &state.metrics,
                 &mut progress,
                 &mut errors,
                 &mut error_counts,
                 &mut exhausted_budget,
                 AsyncReoptimizeBudgetCheck {
+                    run_id: &lease.run_id,
                     timeframe: Some(timeframe),
                     timeframe_index,
                     pair_index: output_index,
@@ -8505,11 +9446,13 @@ async fn process_async_reoptimize_run(state: AppState, lease: AsyncReoptimizeLea
             }
             if async_reoptimize_stop_if_budget_exhausted(
                 &state.settings,
+                &state.metrics,
                 &mut progress,
                 &mut errors,
                 &mut error_counts,
                 &mut exhausted_budget,
                 AsyncReoptimizeBudgetCheck {
+                    run_id: &lease.run_id,
                     timeframe: Some(timeframe),
                     timeframe_index,
                     pair_index: output_index,
@@ -8540,11 +9483,13 @@ async fn process_async_reoptimize_run(state: AppState, lease: AsyncReoptimizeLea
             }
             if async_reoptimize_stop_if_budget_exhausted(
                 &state.settings,
+                &state.metrics,
                 &mut progress,
                 &mut errors,
                 &mut error_counts,
                 &mut exhausted_budget,
                 AsyncReoptimizeBudgetCheck {
+                    run_id: &lease.run_id,
                     timeframe: Some(timeframe),
                     timeframe_index,
                     pair_index: output_index,
@@ -8578,11 +9523,13 @@ async fn process_async_reoptimize_run(state: AppState, lease: AsyncReoptimizeLea
             }
             if async_reoptimize_stop_if_budget_exhausted(
                 &state.settings,
+                &state.metrics,
                 &mut progress,
                 &mut errors,
                 &mut error_counts,
                 &mut exhausted_budget,
                 AsyncReoptimizeBudgetCheck {
+                    run_id: &lease.run_id,
                     timeframe: Some(timeframe),
                     timeframe_index,
                     pair_index: output_index,
@@ -8613,6 +9560,11 @@ async fn process_async_reoptimize_run(state: AppState, lease: AsyncReoptimizeLea
                 }
                 Err(error) => {
                     progress.pairs_failed = progress.pairs_failed.saturating_add(1);
+                    state.metrics.record_async_reoptimize_progress_pairs(
+                        timeframe,
+                        AsyncReoptimizeProgressPairResult::Failed,
+                        1,
+                    );
                     push_reopt_error(
                         &mut errors,
                         output.cue.pair_id.clone(),
@@ -8622,25 +9574,41 @@ async fn process_async_reoptimize_run(state: AppState, lease: AsyncReoptimizeLea
                         &mut error_counts,
                     );
                     progress.absorb_error_counts(error_counts);
-                    progress.mark_remaining_skipped(
+                    let skipped = progress.mark_remaining_skipped(
                         timeframe_index,
                         output_index.saturating_add(1),
                         pair_count,
+                    );
+                    state.metrics.record_async_reoptimize_progress_pairs(
+                        timeframe,
+                        AsyncReoptimizeProgressPairResult::Skipped,
+                        skipped,
+                    );
+                    state.metrics.record_async_reoptimize_timeframe_terminal(
+                        timeframe,
+                        AsyncReoptimizeRunStatus::Failed,
                     );
                     break 'timeframes;
                 }
             }
             progress.pairs_completed = progress.pairs_completed.saturating_add(1);
+            state.metrics.record_async_reoptimize_progress_pairs(
+                timeframe,
+                AsyncReoptimizeProgressPairResult::Completed,
+                1,
+            );
             progress.absorb_error_counts(error_counts);
         }
 
         if async_reoptimize_stop_if_budget_exhausted(
             &state.settings,
+            &state.metrics,
             &mut progress,
             &mut errors,
             &mut error_counts,
             &mut exhausted_budget,
             AsyncReoptimizeBudgetCheck {
+                run_id: &lease.run_id,
                 timeframe: Some(timeframe),
                 timeframe_index,
                 pair_index: pair_count,
@@ -8659,6 +9627,10 @@ async fn process_async_reoptimize_run(state: AppState, lease: AsyncReoptimizeLea
         progress.phase = AsyncReoptimizePhase::TimeframeSummary;
         progress.completed_timeframe_count = progress.completed_timeframe_count.saturating_add(1);
         progress.active_timeframe = None;
+        state.metrics.record_async_reoptimize_timeframe_terminal(
+            timeframe,
+            AsyncReoptimizeRunStatus::Succeeded,
+        );
         emit_selection_transition_observability(
             "async_reoptimize_runner_timeframe",
             Some(timeframe),
@@ -8684,10 +9656,19 @@ async fn process_async_reoptimize_run(state: AppState, lease: AsyncReoptimizeLea
         .await
         {
             Ok(Some(cancel_requested)) if cancel_requested => {
-                canceled = true;
+                mark_async_reoptimize_cancel_observed(&state.metrics, &lease.run_id, &mut canceled);
                 let next_timeframe_index = timeframe_index.saturating_add(1);
                 if next_timeframe_index < progress.planned_timeframe_count {
-                    progress.mark_remaining_skipped(next_timeframe_index, 0, pair_count);
+                    let _ = progress.mark_remaining_skipped(next_timeframe_index, 0, pair_count);
+                    for future_timeframe in
+                        state.settings.timeframes.iter().skip(next_timeframe_index)
+                    {
+                        state.metrics.record_async_reoptimize_progress_pairs(
+                            *future_timeframe,
+                            AsyncReoptimizeProgressPairResult::Canceled,
+                            pair_count,
+                        );
+                    }
                 }
                 break;
             }
@@ -8710,6 +9691,12 @@ async fn process_async_reoptimize_run(state: AppState, lease: AsyncReoptimizeLea
     }
 
     if lease_lost {
+        state
+            .metrics
+            .record_async_reoptimize_lease_lost(AsyncReoptimizeLeaseLostReason::Unknown);
+        state
+            .metrics
+            .record_async_reoptimize_fail_closed(AsyncReoptimizeFailClosedReason::LeaseLost);
         push_reopt_error(
             &mut errors,
             "SYSTEM".to_string(),
@@ -8724,7 +9711,11 @@ async fn process_async_reoptimize_run(state: AppState, lease: AsyncReoptimizeLea
         progress.absorb_error_counts(error_counts);
         if let Err(error) = state.repository.expire_reoptimize_leases(Utc::now()).await {
             tracing::warn!(
+                event = "reoptimize_lease_lost",
                 run_id = %lease.run_id,
+                lease_owner = %lease.lease_owner,
+                lease_generation = lease.lease_generation,
+                reason = AsyncReoptimizeLeaseLostReason::Unknown.as_str(),
                 error = %error,
                 "failed to expire async reoptimize lease after lease loss"
             );
@@ -8743,11 +9734,13 @@ async fn process_async_reoptimize_run(state: AppState, lease: AsyncReoptimizeLea
     let planned_timeframe_count = progress.planned_timeframe_count;
     let _ = async_reoptimize_stop_if_budget_exhausted(
         &state.settings,
+        &state.metrics,
         &mut progress,
         &mut errors,
         &mut error_counts,
         &mut exhausted_budget,
         AsyncReoptimizeBudgetCheck {
+            run_id: &lease.run_id,
             timeframe: None,
             timeframe_index: planned_timeframe_count,
             pair_index: 0,
@@ -8798,20 +9791,56 @@ async fn process_async_reoptimize_run(state: AppState, lease: AsyncReoptimizeLea
     };
 
     match complete_async_reoptimize_run(&state, &lease, &mut progress, &errors, &terminal).await {
-        Ok(Some(final_state)) => info!(
-            run_id = %final_state.run_id,
-            status = %final_state.status.as_str(),
-            recommendation = %final_state.recommendation,
-            critical_error_count = progress.critical_error_count,
-            non_critical_error_count = progress.non_critical_error_count,
-            pairs_completed = progress.pairs_completed,
-            pairs_skipped = progress.pairs_skipped,
-            pairs_failed = progress.pairs_failed,
-            "async reoptimize run complete"
-        ),
+        Ok(Some(final_state)) => {
+            let (fail_closed_reasons, _) =
+                async_reoptimize_fail_closed_reasons_from_state(&final_state);
+            if let Some(trigger_source) = async_reoptimize_trigger_from_state(&final_state) {
+                let recommendation =
+                    AsyncReoptimizeRecommendation::parse(&final_state.recommendation)
+                        .unwrap_or(AsyncReoptimizeRecommendation::Hold);
+                state.metrics.record_async_reoptimize_terminal(
+                    trigger_source,
+                    final_state.status,
+                    recommendation,
+                    &fail_closed_reasons,
+                );
+            } else {
+                state.metrics.record_async_reoptimize_status_unknown(
+                    AsyncReoptimizeStatusUnknownReason::StatusEnumUnknown,
+                );
+            }
+            if final_state.status == AsyncReoptimizeRunStatus::Canceled {
+                state
+                    .metrics
+                    .record_async_reoptimize_cancel(AsyncReoptimizeCancelResult::Completed);
+            }
+            info!(
+                event = "reoptimize_recommendation_finalized",
+                run_id = %final_state.run_id,
+                status_after = %final_state.status.as_str(),
+                recommendation = %final_state.recommendation,
+                fail_closed_reasons = ?async_reoptimize_reason_strings(&fail_closed_reasons),
+                critical_error_count = progress.critical_error_count,
+                non_critical_error_count = progress.non_critical_error_count,
+                pairs_completed = progress.pairs_completed,
+                pairs_skipped = progress.pairs_skipped,
+                pairs_failed = progress.pairs_failed,
+                "async reoptimize run complete"
+            );
+        }
         Ok(None) => {
+            state
+                .metrics
+                .record_async_reoptimize_lease_lost(AsyncReoptimizeLeaseLostReason::Unknown);
+            state
+                .metrics
+                .record_async_reoptimize_fail_closed(AsyncReoptimizeFailClosedReason::LeaseLost);
             tracing::warn!(
+                event = "reoptimize_lease_lost",
                 run_id = %lease.run_id,
+                lease_owner = %lease.lease_owner,
+                lease_generation = lease.lease_generation,
+                reason = AsyncReoptimizeLeaseLostReason::Unknown.as_str(),
                 "async reoptimize terminal completion refused by lease/state guard"
             );
             if let Err(error) = state.repository.expire_reoptimize_leases(Utc::now()).await {
@@ -8822,11 +9851,23 @@ async fn process_async_reoptimize_run(state: AppState, lease: AsyncReoptimizeLea
                 );
             }
         }
-        Err(error) => tracing::warn!(
-            run_id = %lease.run_id,
-            error = %error,
-            "async reoptimize terminal completion failed"
-        ),
+        Err(error) => {
+            state.metrics.record_async_reoptimize_fail_closed(
+                AsyncReoptimizeFailClosedReason::UnknownStatus,
+            );
+            state.metrics.record_async_reoptimize_status_unknown(
+                AsyncReoptimizeStatusUnknownReason::TelemetryUnavailable,
+            );
+            tracing::warn!(
+                event = "reoptimize_fail_closed",
+                run_id = %lease.run_id,
+                lease_owner = %lease.lease_owner,
+                lease_generation = lease.lease_generation,
+                fail_closed_reason = AsyncReoptimizeFailClosedReason::UnknownStatus.as_str(),
+                error = %error,
+                "async reoptimize terminal completion failed"
+            );
+        }
     }
 }
 
@@ -8857,16 +9898,42 @@ fn spawn_reoptimize_worker(state: AppState) -> tokio::task::JoinHandle<()> {
             match state.repository.expire_reoptimize_leases(now).await {
                 Ok(expired) if !expired.is_empty() => {
                     for expired_run in expired {
+                        state.metrics.record_async_reoptimize_lease_lost(
+                            AsyncReoptimizeLeaseLostReason::Expired,
+                        );
+                        state.metrics.record_async_reoptimize_terminal(
+                            async_reoptimize_trigger_from_state(&expired_run)
+                                .unwrap_or(AsyncReoptimizeTriggerSource::Recovery),
+                            AsyncReoptimizeRunStatus::Expired,
+                            AsyncReoptimizeRecommendation::Hold,
+                            &[
+                                AsyncReoptimizeFailClosedReason::LeaseLost,
+                                AsyncReoptimizeFailClosedReason::StaleStatus,
+                            ],
+                        );
                         tracing::warn!(
+                            event = "reoptimize_lease_lost",
                             run_id = %expired_run.run_id,
+                            lease_owner = ?expired_run.lease_owner,
+                            lease_generation = expired_run.lease_generation,
+                            reason = AsyncReoptimizeLeaseLostReason::Expired.as_str(),
                             "expired stale async reoptimize run lease"
                         );
                     }
                 }
                 Ok(_) => {}
                 Err(error) => {
+                    state.metrics.record_async_reoptimize_status_unknown(
+                        AsyncReoptimizeStatusUnknownReason::TelemetryUnavailable,
+                    );
+                    state.metrics.record_async_reoptimize_scheduler_enqueue(
+                        AsyncReoptimizeTriggerSource::Scheduled,
+                        AsyncReoptimizeSchedulerEnqueueResult::UnknownStatus,
+                    );
                     tracing::warn!(
+                        event = "reoptimize_fail_closed",
                         error = %error,
+                        fail_closed_reason = AsyncReoptimizeFailClosedReason::UnknownStatus.as_str(),
                         "failed to expire stale async reoptimize leases before scheduler tick"
                     );
                     continue;
@@ -8880,17 +9947,31 @@ fn spawn_reoptimize_worker(state: AppState) -> tokio::task::JoinHandle<()> {
             {
                 Ok(queued_run) => queued_run,
                 Err(error) => {
+                    state.metrics.record_async_reoptimize_status_unknown(
+                        AsyncReoptimizeStatusUnknownReason::TelemetryUnavailable,
+                    );
+                    state.metrics.record_async_reoptimize_scheduler_enqueue(
+                        AsyncReoptimizeTriggerSource::Scheduled,
+                        AsyncReoptimizeSchedulerEnqueueResult::UnknownStatus,
+                    );
                     tracing::warn!(
+                        event = "reoptimize_fail_closed",
                         error = %error,
+                        fail_closed_reason = AsyncReoptimizeFailClosedReason::UnknownStatus.as_str(),
                         "failed to inspect queued async reoptimize runs before scheduler tick"
                     );
                     continue;
                 }
             };
             let run_id = if let Some(queued_run) = queued_run {
+                state
+                    .metrics
+                    .set_async_reoptimize_active_status(queued_run.status);
                 info!(
+                    event = "reoptimize_run_enqueued",
                     run_id = %queued_run.run_id,
                     trigger_source = %queued_run.trigger_source,
+                    status_after = queued_run.status.as_str(),
                     "bounded async strategy reoptimize runner picked up queued run"
                 );
                 queued_run.run_id
@@ -8908,8 +9989,19 @@ fn spawn_reoptimize_worker(state: AppState) -> tokio::task::JoinHandle<()> {
                 {
                     Ok(enqueued) => enqueued,
                     Err(error) => {
+                        state.metrics.record_async_reoptimize_scheduler_enqueue(
+                            AsyncReoptimizeTriggerSource::Scheduled,
+                            AsyncReoptimizeSchedulerEnqueueResult::UnknownStatus,
+                        );
+                        state.metrics.record_async_reoptimize_status_unknown(
+                            AsyncReoptimizeStatusUnknownReason::TelemetryUnavailable,
+                        );
                         tracing::warn!(
+                            event = "reoptimize_run_enqueue_rejected",
                             run_id = %run_id,
+                            trigger_source = AsyncReoptimizeTriggerSource::Scheduled.as_str(),
+                            status_after = AsyncReoptimizeRunStatus::Failed.as_str(),
+                            fail_closed_reason = AsyncReoptimizeFailClosedReason::UnknownStatus.as_str(),
                             error = %error,
                             "failed to enqueue async reoptimize run"
                         );
@@ -8917,12 +10009,26 @@ fn spawn_reoptimize_worker(state: AppState) -> tokio::task::JoinHandle<()> {
                     }
                 };
                 if !enqueued {
+                    state.metrics.record_async_reoptimize_scheduler_enqueue(
+                        AsyncReoptimizeTriggerSource::Scheduled,
+                        AsyncReoptimizeSchedulerEnqueueResult::ActiveRun,
+                    );
                     info!(
+                        event = "reoptimize_run_enqueue_rejected",
                         run_id = %run_id,
+                        trigger_source = AsyncReoptimizeTriggerSource::Scheduled.as_str(),
+                        status_after = AsyncReoptimizeRunStatus::Queued.as_str(),
                         "async reoptimize enqueue skipped because an active run already exists"
                     );
                     continue;
                 }
+                state.metrics.record_async_reoptimize_scheduler_enqueue(
+                    AsyncReoptimizeTriggerSource::Scheduled,
+                    AsyncReoptimizeSchedulerEnqueueResult::Enqueued,
+                );
+                state
+                    .metrics
+                    .set_async_reoptimize_active_status(AsyncReoptimizeRunStatus::Queued);
                 run_id
             };
 
@@ -8936,18 +10042,45 @@ fn spawn_reoptimize_worker(state: AppState) -> tokio::task::JoinHandle<()> {
                 )
                 .await
             {
-                Ok(Some(lease)) => lease,
+                Ok(Some(lease)) => {
+                    state.metrics.record_async_reoptimize_lease_acquire(
+                        AsyncReoptimizeLeaseAcquireResult::Acquired,
+                    );
+                    state
+                        .metrics
+                        .set_async_reoptimize_active_status(AsyncReoptimizeRunStatus::Leased);
+                    info!(
+                        event = "reoptimize_lease_acquired",
+                        run_id = %lease.run_id,
+                        lease_owner = %lease.lease_owner,
+                        lease_generation = lease.lease_generation,
+                        lease_expires_at = %lease.lease_expires_at,
+                        status_after = AsyncReoptimizeRunStatus::Leased.as_str(),
+                        "async reoptimize lease acquired"
+                    );
+                    lease
+                }
                 Ok(None) => {
+                    state.metrics.record_async_reoptimize_lease_acquire(
+                        AsyncReoptimizeLeaseAcquireResult::Busy,
+                    );
                     tracing::warn!(
+                        event = "reoptimize_lease_lost",
                         run_id = %run_id,
+                        reason = AsyncReoptimizeLeaseLostReason::OwnerMismatch.as_str(),
                         "async reoptimize lease acquisition refused after enqueue"
                     );
                     continue;
                 }
                 Err(error) => {
+                    state.metrics.record_async_reoptimize_lease_acquire(
+                        AsyncReoptimizeLeaseAcquireResult::Failed,
+                    );
                     tracing::warn!(
+                        event = "reoptimize_lease_lost",
                         run_id = %run_id,
                         error = %error,
+                        reason = AsyncReoptimizeLeaseLostReason::Unknown.as_str(),
                         "async reoptimize lease acquisition failed"
                     );
                     continue;
@@ -9271,10 +10404,25 @@ async fn reoptimize_run_enqueue(
     let requested_timeframes =
         parse_async_reoptimize_request_timeframes(&state.settings, request.timeframes)?;
     let trigger_source = parse_async_reoptimize_trigger_source(request.trigger_source)?;
+    info!(
+        event = "reoptimize_run_enqueue_attempted",
+        trigger_source = trigger_source.as_str(),
+        "async reoptimize enqueue attempted"
+    );
 
     if !state.settings.reopt_worker_enabled {
+        state.metrics.record_async_reoptimize_scheduler_enqueue(
+            trigger_source,
+            AsyncReoptimizeSchedulerEnqueueResult::Disabled,
+        );
+        state
+            .metrics
+            .record_async_reoptimize_fail_closed(AsyncReoptimizeFailClosedReason::ConfigInvalid);
         tracing::warn!(
+            event = "reoptimize_run_enqueue_rejected",
             trigger_source = trigger_source.as_str(),
+            status_after = AsyncReoptimizeRunStatus::Failed.as_str(),
+            fail_closed_reason = AsyncReoptimizeFailClosedReason::ConfigInvalid.as_str(),
             "async reoptimize enqueue refused because worker is disabled"
         );
         return Ok(Json(async_reoptimize_fail_closed_enqueue_response(
@@ -9292,8 +10440,21 @@ async fn reoptimize_run_enqueue(
         .expire_reoptimize_leases(generated_at)
         .await
     {
+        state.metrics.record_async_reoptimize_scheduler_enqueue(
+            trigger_source,
+            AsyncReoptimizeSchedulerEnqueueResult::UnknownStatus,
+        );
+        state.metrics.record_async_reoptimize_status_unknown(
+            AsyncReoptimizeStatusUnknownReason::TelemetryUnavailable,
+        );
+        state
+            .metrics
+            .record_async_reoptimize_fail_closed(AsyncReoptimizeFailClosedReason::UnknownStatus);
         tracing::warn!(
+            event = "reoptimize_fail_closed",
             error = %error,
+            trigger_source = trigger_source.as_str(),
+            fail_closed_reason = AsyncReoptimizeFailClosedReason::UnknownStatus.as_str(),
             "async reoptimize enqueue could not verify stale active state"
         );
         return Ok(Json(async_reoptimize_fail_closed_enqueue_response(
@@ -9314,8 +10475,22 @@ async fn reoptimize_run_enqueue(
     {
         Ok(enqueued) => enqueued,
         Err(error) => {
+            state.metrics.record_async_reoptimize_scheduler_enqueue(
+                trigger_source,
+                AsyncReoptimizeSchedulerEnqueueResult::UnknownStatus,
+            );
+            state.metrics.record_async_reoptimize_status_unknown(
+                AsyncReoptimizeStatusUnknownReason::TelemetryUnavailable,
+            );
+            state.metrics.record_async_reoptimize_fail_closed(
+                AsyncReoptimizeFailClosedReason::UnknownStatus,
+            );
             tracing::warn!(
+                event = "reoptimize_run_enqueue_rejected",
                 run_id = %run_id,
+                trigger_source = trigger_source.as_str(),
+                status_after = AsyncReoptimizeRunStatus::Failed.as_str(),
+                fail_closed_reason = AsyncReoptimizeFailClosedReason::UnknownStatus.as_str(),
                 error = %error,
                 "async reoptimize enqueue failed"
             );
@@ -9332,6 +10507,10 @@ async fn reoptimize_run_enqueue(
     };
 
     if enqueued {
+        state.metrics.record_async_reoptimize_scheduler_enqueue(
+            trigger_source,
+            AsyncReoptimizeSchedulerEnqueueResult::Enqueued,
+        );
         let Some(state_row) = state
             .repository
             .fetch_reoptimize_run_state(&run_id)
@@ -9343,6 +10522,12 @@ async fn reoptimize_run_enqueue(
                 ))
             })?
         else {
+            state.metrics.record_async_reoptimize_status_unknown(
+                AsyncReoptimizeStatusUnknownReason::StatusRowMissing,
+            );
+            state.metrics.record_async_reoptimize_fail_closed(
+                AsyncReoptimizeFailClosedReason::UnknownStatus,
+            );
             return Ok(Json(async_reoptimize_fail_closed_enqueue_response(
                 generated_at,
                 &state.settings,
@@ -9358,9 +10543,14 @@ async fn reoptimize_run_enqueue(
             generated_at,
             &[],
         );
+        state
+            .metrics
+            .set_async_reoptimize_active_status(state_row.status);
         info!(
+            event = "reoptimize_run_enqueued",
             run_id = %run_id,
             trigger_source = trigger_source.as_str(),
+            status_after = state_row.status.as_str(),
             "async reoptimize run enqueued through API"
         );
         return Ok(Json(async_reoptimize_enqueue_response_from_status(
@@ -9374,8 +10564,21 @@ async fn reoptimize_run_enqueue(
     let active = match state.repository.fetch_active_reoptimize_run_state().await {
         Ok(active) => active,
         Err(error) => {
+            state.metrics.record_async_reoptimize_scheduler_enqueue(
+                trigger_source,
+                AsyncReoptimizeSchedulerEnqueueResult::UnknownStatus,
+            );
+            state.metrics.record_async_reoptimize_status_unknown(
+                AsyncReoptimizeStatusUnknownReason::TelemetryUnavailable,
+            );
+            state.metrics.record_async_reoptimize_fail_closed(
+                AsyncReoptimizeFailClosedReason::UnknownStatus,
+            );
             tracing::warn!(
+                event = "reoptimize_fail_closed",
                 error = %error,
+                trigger_source = trigger_source.as_str(),
+                fail_closed_reason = AsyncReoptimizeFailClosedReason::UnknownStatus.as_str(),
                 "async reoptimize enqueue single-flight refusal had unreadable active state"
             );
             return Ok(Json(async_reoptimize_fail_closed_enqueue_response(
@@ -9390,6 +10593,16 @@ async fn reoptimize_run_enqueue(
         }
     };
     let Some(active) = active else {
+        state.metrics.record_async_reoptimize_scheduler_enqueue(
+            trigger_source,
+            AsyncReoptimizeSchedulerEnqueueResult::UnknownStatus,
+        );
+        state.metrics.record_async_reoptimize_status_unknown(
+            AsyncReoptimizeStatusUnknownReason::StatusRowMissing,
+        );
+        state
+            .metrics
+            .record_async_reoptimize_fail_closed(AsyncReoptimizeFailClosedReason::UnknownStatus);
         return Ok(Json(async_reoptimize_fail_closed_enqueue_response(
             generated_at,
             &state.settings,
@@ -9403,9 +10616,23 @@ async fn reoptimize_run_enqueue(
     let (active_timeframes, active_timeframes_valid) =
         async_reoptimize_timeframes_from_state(&active, &state.settings);
     let compatible = active_timeframes_valid && active_timeframes == requested_timeframes;
+    state.metrics.record_async_reoptimize_scheduler_enqueue(
+        trigger_source,
+        if compatible {
+            AsyncReoptimizeSchedulerEnqueueResult::ActiveRun
+        } else {
+            AsyncReoptimizeSchedulerEnqueueResult::ConfigInvalid
+        },
+    );
+    state
+        .metrics
+        .set_async_reoptimize_active_status(active.status);
     let force_reasons = if compatible {
         Vec::new()
     } else {
+        state
+            .metrics
+            .record_async_reoptimize_fail_closed(AsyncReoptimizeFailClosedReason::ConfigInvalid);
         vec![AsyncReoptimizeFailClosedReason::ConfigInvalid]
     };
     let status_response = async_reoptimize_status_response_from_state(
@@ -9433,7 +10660,14 @@ async fn reoptimize_run_enqueue(
                 .to_string();
     }
     info!(
+        event = if compatible {
+            "reoptimize_run_enqueued"
+        } else {
+            "reoptimize_run_enqueue_rejected"
+        },
         active_run_id = %active_run_id,
+        trigger_source = trigger_source.as_str(),
+        status_after = active.status.as_str(),
         compatible,
         "async reoptimize enqueue attached to existing single-flight state"
     );
@@ -9449,16 +10683,32 @@ async fn reoptimize_run_latest(
         .expire_reoptimize_leases(generated_at)
         .await
     {
+        state.metrics.record_async_reoptimize_status_unknown(
+            AsyncReoptimizeStatusUnknownReason::TelemetryUnavailable,
+        );
+        state.metrics.record_async_reoptimize_telemetry_missing(
+            AsyncReoptimizeFailClosedReason::UnknownStatus,
+        );
         tracing::warn!(
+            event = "reoptimize_fail_closed",
             error = %error,
+            fail_closed_reason = AsyncReoptimizeFailClosedReason::UnknownStatus.as_str(),
             "async reoptimize latest status could not expire stale leases"
         );
     }
     let latest = match state.repository.fetch_latest_reoptimize_run_state().await {
         Ok(latest) => latest,
         Err(error) => {
+            state.metrics.record_async_reoptimize_status_unknown(
+                AsyncReoptimizeStatusUnknownReason::TelemetryUnavailable,
+            );
+            state.metrics.record_async_reoptimize_telemetry_missing(
+                AsyncReoptimizeFailClosedReason::UnknownStatus,
+            );
             tracing::warn!(
+                event = "reoptimize_fail_closed",
                 error = %error,
+                fail_closed_reason = AsyncReoptimizeFailClosedReason::UnknownStatus.as_str(),
                 "async reoptimize latest status had unreadable durable state"
             );
             return Ok(Json(async_reoptimize_missing_status_response(
@@ -9469,6 +10719,12 @@ async fn reoptimize_run_latest(
         }
     };
     let Some(state_row) = latest else {
+        state.metrics.record_async_reoptimize_status_unknown(
+            AsyncReoptimizeStatusUnknownReason::StatusRowMissing,
+        );
+        state.metrics.record_async_reoptimize_telemetry_missing(
+            AsyncReoptimizeFailClosedReason::UnknownStatus,
+        );
         return Ok(Json(async_reoptimize_missing_status_response(
             "latest_unavailable".to_string(),
             &state.settings,
@@ -9497,18 +10753,34 @@ async fn reoptimize_run_status(
         .expire_reoptimize_leases(generated_at)
         .await
     {
+        state.metrics.record_async_reoptimize_status_unknown(
+            AsyncReoptimizeStatusUnknownReason::TelemetryUnavailable,
+        );
+        state.metrics.record_async_reoptimize_telemetry_missing(
+            AsyncReoptimizeFailClosedReason::UnknownStatus,
+        );
         tracing::warn!(
+            event = "reoptimize_fail_closed",
             run_id = %run_id,
             error = %error,
+            fail_closed_reason = AsyncReoptimizeFailClosedReason::UnknownStatus.as_str(),
             "async reoptimize status could not expire stale leases"
         );
     }
     let run_state = match state.repository.fetch_reoptimize_run_state(&run_id).await {
         Ok(run_state) => run_state,
         Err(error) => {
+            state.metrics.record_async_reoptimize_status_unknown(
+                AsyncReoptimizeStatusUnknownReason::TelemetryUnavailable,
+            );
+            state.metrics.record_async_reoptimize_telemetry_missing(
+                AsyncReoptimizeFailClosedReason::UnknownStatus,
+            );
             tracing::warn!(
+                event = "reoptimize_fail_closed",
                 run_id = %run_id,
                 error = %error,
+                fail_closed_reason = AsyncReoptimizeFailClosedReason::UnknownStatus.as_str(),
                 "async reoptimize status had unreadable durable state"
             );
             return Ok(Json(async_reoptimize_missing_status_response(
@@ -9525,11 +10797,19 @@ async fn reoptimize_run_status(
             generated_at,
             &[],
         ))),
-        None => Ok(Json(async_reoptimize_missing_status_response(
-            run_id,
-            &state.settings,
-            generated_at,
-        ))),
+        None => {
+            state.metrics.record_async_reoptimize_status_unknown(
+                AsyncReoptimizeStatusUnknownReason::StatusRowMissing,
+            );
+            state.metrics.record_async_reoptimize_telemetry_missing(
+                AsyncReoptimizeFailClosedReason::UnknownStatus,
+            );
+            Ok(Json(async_reoptimize_missing_status_response(
+                run_id,
+                &state.settings,
+                generated_at,
+            )))
+        }
     }
 }
 
@@ -14326,16 +15606,20 @@ mod tests {
         resolve_learning_overlay_policy, resolve_reoptimize_status, resolve_selected_signal_config,
         resolve_taker_fee_bps, retention_cutoff_ts, selected_signal_config_from_expectancy,
         summarize_recent_performance, update_persist_summary_for_transition,
-        AsyncReoptimizeFailClosedReason, AsyncReoptimizeRecommendation, AsyncReoptimizeRunState,
-        AsyncReoptimizeRunStatus, AsyncReoptimizeRunnerProgress, AsyncReoptimizeTriggerSource,
-        CandidateInboxQuery, CandidateLifecycleState, CandidateOperatorAction,
-        CandidateProbationInputs, CandidateProbationRow, ChampionDecision, CueProjectionOutcome,
-        ExpectancyConfig, ExpectancyMetrics, ExpectancyQuery, FundingCostEstimate,
-        FundingRateInputMode, LearningOverlayApprovalSource, LearningOverlayBlockedReason,
-        LearningOverlayEntry, LearningOverlaySnapshot, LearningOverlayUniverseBucket,
-        LearningOverlayWatchReason, LearningRecommendation, MaintenanceAction,
-        OpportunityHistoryQuery, OpportunityHistoryStatsQuery, PaperTradesQuery, PersistSummary,
-        ReoptError, ReoptErrorSeverity, ReoptimizeResponse, ReoptimizeRunStatus, ReplayTradeEntry,
+        AsyncReoptimizeBudgetName, AsyncReoptimizeCancelResult, AsyncReoptimizeFailClosedReason,
+        AsyncReoptimizeLeaseAcquireResult, AsyncReoptimizeLeaseHeartbeatResult,
+        AsyncReoptimizeLeaseLostReason, AsyncReoptimizeProgressPairResult,
+        AsyncReoptimizeRecommendation, AsyncReoptimizeRunState, AsyncReoptimizeRunStatus,
+        AsyncReoptimizeRunnerProgress, AsyncReoptimizeSchedulerEnqueueResult,
+        AsyncReoptimizeStatusUnknownReason, AsyncReoptimizeTriggerSource, CandidateInboxQuery,
+        CandidateLifecycleState, CandidateOperatorAction, CandidateProbationInputs,
+        CandidateProbationRow, ChampionDecision, CueProjectionOutcome, ExpectancyConfig,
+        ExpectancyMetrics, ExpectancyQuery, FundingCostEstimate, FundingRateInputMode,
+        LearningOverlayApprovalSource, LearningOverlayBlockedReason, LearningOverlayEntry,
+        LearningOverlaySnapshot, LearningOverlayUniverseBucket, LearningOverlayWatchReason,
+        LearningRecommendation, MaintenanceAction, OpportunityHistoryQuery,
+        OpportunityHistoryStatsQuery, PaperTradesQuery, PersistSummary, ReoptError,
+        ReoptErrorSeverity, ReoptimizeResponse, ReoptimizeRunStatus, ReplayTradeEntry,
         ReplayTradePathSummary, ReplayTradesQuery, ResearchSweepRequest, SampledSlippageStatus,
         SelectedSignalRow, SelectionTransitionCounts, StrategyMarketMetricsResponse,
         StrategyMetrics, StrategySettings, TradeNowHistoricalQuality, TradeNowObservabilityStore,
@@ -14702,14 +15986,17 @@ mod tests {
         let mut errors = Vec::<ReoptError>::new();
         let mut error_counts = super::ReoptErrorCounts::default();
         let mut exhausted_budget = None;
+        let metrics = StrategyMetrics::new();
 
         let stopped = super::async_reoptimize_stop_if_budget_exhausted(
             &settings,
+            &metrics,
             &mut progress,
             &mut errors,
             &mut error_counts,
             &mut exhausted_budget,
             super::AsyncReoptimizeBudgetCheck {
+                run_id: "test_run",
                 timeframe: Some(Timeframe::OneMinute),
                 timeframe_index: 0,
                 pair_index: 0,
@@ -15190,6 +16477,125 @@ mod tests {
         assert!(body.contains(
             "strategy_selection_transition_total{decision=\"UNCHANGED\",timeframe=\"15m\"} 1"
         ));
+    }
+
+    #[test]
+    fn strategy_metrics_render_async_reoptimize_bounded_counters() {
+        let metrics = StrategyMetrics::new();
+
+        metrics.record_async_reoptimize_scheduler_enqueue(
+            AsyncReoptimizeTriggerSource::ManualApi,
+            AsyncReoptimizeSchedulerEnqueueResult::Enqueued,
+        );
+        metrics.set_async_reoptimize_active_status(AsyncReoptimizeRunStatus::Running);
+        metrics.record_async_reoptimize_lease_acquire(AsyncReoptimizeLeaseAcquireResult::Acquired);
+        metrics.record_async_reoptimize_lease_heartbeat(
+            AsyncReoptimizeLeaseHeartbeatResult::Succeeded,
+        );
+        metrics.record_async_reoptimize_lease_lost(AsyncReoptimizeLeaseLostReason::Expired);
+        metrics.record_async_reoptimize_budget_exhausted(
+            AsyncReoptimizeBudgetName::TimeframeWallClock,
+        );
+        metrics.record_async_reoptimize_progress_pairs(
+            Timeframe::OneHour,
+            AsyncReoptimizeProgressPairResult::Completed,
+            2,
+        );
+        metrics.record_async_reoptimize_timeframe_terminal(
+            Timeframe::OneHour,
+            AsyncReoptimizeRunStatus::Degraded,
+        );
+        metrics.record_async_reoptimize_cancel(AsyncReoptimizeCancelResult::Requested);
+        metrics.record_async_reoptimize_status_unknown(
+            AsyncReoptimizeStatusUnknownReason::TelemetryUnavailable,
+        );
+        metrics.record_async_reoptimize_telemetry_missing(
+            AsyncReoptimizeFailClosedReason::UnknownStatus,
+        );
+        metrics.record_async_reoptimize_terminal(
+            AsyncReoptimizeTriggerSource::Scheduled,
+            AsyncReoptimizeRunStatus::Degraded,
+            AsyncReoptimizeRecommendation::Hold,
+            &[AsyncReoptimizeFailClosedReason::BudgetExhausted],
+        );
+
+        let body = metrics.render_prometheus();
+
+        assert!(body.contains(
+            "strategy_reoptimize_scheduler_enqueue_total{trigger=\"MANUAL_API\",result=\"ENQUEUED\"} 1"
+        ));
+        assert!(
+            body.contains("strategy_reoptimize_active_runs{status=\"RUNNING\"} 0"),
+            "terminal recording should clear active gauges"
+        );
+        assert!(body.contains("strategy_reoptimize_lease_acquire_total{result=\"ACQUIRED\"} 1"));
+        assert!(body.contains("strategy_reoptimize_lease_heartbeat_total{result=\"SUCCEEDED\"} 1"));
+        assert!(body.contains("strategy_reoptimize_lease_lost_total{reason=\"EXPIRED\"} 1"));
+        assert!(body.contains(
+            "strategy_reoptimize_budget_exhausted_total{budget=\"TIMEFRAME_WALL_CLOCK\"} 1"
+        ));
+        assert!(body.contains(
+            "strategy_reoptimize_progress_pairs_total{timeframe=\"1h\",result=\"COMPLETED\"} 2"
+        ));
+        assert!(body.contains(
+            "strategy_reoptimize_timeframe_total{timeframe=\"1h\",status=\"DEGRADED\"} 1"
+        ));
+        assert!(body.contains("strategy_reoptimize_cancel_total{result=\"REQUESTED\"} 1"));
+        assert!(body.contains(
+            "strategy_reoptimize_status_unknown_total{reason=\"TELEMETRY_UNAVAILABLE\"} 1"
+        ));
+        assert!(body
+            .contains("strategy_reoptimize_telemetry_missing_total{reason=\"UNKNOWN_STATUS\"} 1"));
+        assert!(body.contains(
+            "strategy_reoptimize_run_total{trigger=\"SCHEDULED\",status=\"DEGRADED\"} 1"
+        ));
+        assert!(
+            body.contains("strategy_reoptimize_recommendation_total{recommendation=\"HOLD\"} 1")
+        );
+        assert!(
+            body.contains("strategy_reoptimize_fail_closed_total{reason=\"BUDGET_EXHAUSTED\"} 1")
+        );
+    }
+
+    #[test]
+    fn strategy_metrics_async_reoptimize_labels_remain_bounded() {
+        let metrics = StrategyMetrics::new();
+        metrics.record_async_reoptimize_scheduler_enqueue(
+            AsyncReoptimizeTriggerSource::MaintenanceReport,
+            AsyncReoptimizeSchedulerEnqueueResult::ActiveRun,
+        );
+
+        let body = metrics.render_prometheus();
+
+        for forbidden in [
+            "run_id=",
+            "pair_id=",
+            "operator_id=",
+            "lease_owner=",
+            "hostname=",
+            "host=",
+            "artifact_path=",
+            "path=",
+            "url=",
+            "error=",
+        ] {
+            assert!(
+                !body.contains(forbidden),
+                "forbidden high-cardinality label rendered: {forbidden}"
+            );
+        }
+        assert!(body.contains(
+            "strategy_reoptimize_scheduler_enqueue_total{trigger=\"MAINTENANCE_REPORT\",result=\"ACTIVE_RUN\"} 1"
+        ));
+        assert!(body.contains("strategy_reoptimize_fail_closed_total{reason=\"UNKNOWN_STATUS\"} 0"));
+        assert!(
+            !body.contains("strategy_reoptimize_artifact_write_total"),
+            "artifact write metrics must wait until artifact writes are implemented"
+        );
+        assert!(
+            !body.contains("strategy_reoptimize_artifact_read_total"),
+            "artifact read metrics must wait until artifact reads are implemented"
+        );
     }
 
     #[test]
