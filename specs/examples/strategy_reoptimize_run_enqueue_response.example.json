@@ -10,7 +10,7 @@
   "service_version": null,
   "queued_at": "2026-05-17T02:15:00Z",
   "status_route": "/v1/strategy/reoptimize/runs/reopt_2026-05-17T02-15-00Z_000001",
-  "cancel_route": "/v1/strategy/reoptimize/runs/reopt_2026-05-17T02-15-00Z_000001/cancel",
+  "cancel_route": null,
   "active_run_id": null,
   "operator_action_required": false,
   "progress": {
