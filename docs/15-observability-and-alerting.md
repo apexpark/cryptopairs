@@ -41,6 +41,25 @@ Define required telemetry, health signals, and alert policies.
 - Optimizer promotable-candidate count by timeframe (`optimizer_candidate_promotable_total`)
 - Optimizer rejected-candidate count by timeframe/reason (`optimizer_candidate_rejected_total`)
 - Candidate probation pass/fail counts by timeframe/reason (`candidate_probation_pass_total`, `candidate_probation_fail_total`)
+- Async reoptimization lifecycle counts by trigger/status (`strategy_reoptimize_run_total{trigger,status}` with bounded triggers `SCHEDULED`, `MANUAL_API`, `MAINTENANCE_REPORT`, `RECOVERY` and terminal statuses `CANCELED`, `SUCCEEDED`, `DEGRADED`, `FAILED`, `EXPIRED`)
+- Async reoptimization active run gauges by status (`strategy_reoptimize_active_runs{status}` with bounded active statuses `QUEUED`, `LEASED`, `RUNNING`, `CANCEL_REQUESTED`)
+- Async reoptimization enqueue, lease, heartbeat, budget, progress, cancellation, fail-closed, missing-telemetry, unknown-status, and terminal-recommendation counters:
+  - `strategy_reoptimize_scheduler_enqueue_total{trigger,result}` where `result` is one of `ENQUEUED`, `DISABLED`, `ACTIVE_RUN`, `COOLDOWN`, `HEALTH_UNAVAILABLE`, `INTEGRITY_UNKNOWN`, `BUDGET_INVALID`, `LEASE_UNAVAILABLE`, `UNKNOWN_STATUS`, `CONFIG_INVALID`
+  - `strategy_reoptimize_lease_acquire_total{result}` where `result` is one of `ACQUIRED`, `BUSY`, `STALE_RECOVERED`, `FAILED`
+  - `strategy_reoptimize_lease_lost_total{reason}` where `reason` is one of `EXPIRED`, `GENERATION_MISMATCH`, `HEARTBEAT_FAILED`, `OWNER_MISMATCH`, `UNKNOWN`
+  - `strategy_reoptimize_lease_heartbeat_total{result}` where `result` is one of `SUCCEEDED`, `FAILED`, `STALE_OWNER`, `GENERATION_MISMATCH`
+  - `strategy_reoptimize_budget_exhausted_total{budget}` where `budget` is one of `RUN_WALL_CLOCK`, `TIMEFRAME_WALL_CLOCK`, `PAIR_EVALUATIONS_RUN`, `PAIR_EVALUATIONS_TIMEFRAME`, `PAIR_CONCURRENCY`, `DB_WRITE_BATCH`, `ARTIFACT_BYTES`, `COOLDOWN`, `LEASE_TTL`
+  - `strategy_reoptimize_progress_pairs_total{timeframe,result}` and `strategy_reoptimize_timeframe_total{timeframe,status}` with bounded timeframes `1m`, `15m`, `1h`
+  - `strategy_reoptimize_cancel_total{result}` where `result` is one of `REQUESTED`, `ACCEPTED`, `COMPLETED`, `REJECTED_TERMINAL`, `REJECTED_NOT_FOUND`, `FAILED`, `TIMED_OUT`
+  - `strategy_reoptimize_fail_closed_total{reason}` and `strategy_reoptimize_telemetry_missing_total{reason}` using bounded fail-closed reasons `MISSING_TELEMETRY`, `UNKNOWN_STATUS`, `STALE_STATUS`, `LEASE_LOST`, `BUDGET_EXHAUSTED`, `CANCELED`, `ARTIFACT_FAILED`, `INTEGRITY_UNKNOWN`, `RISK_UNKNOWN`, `ACCOUNTING_ANOMALY`, `SCHEDULE_MISSED`, `UNSAFE_PROMOTION_ATTEMPT`, `CONFIG_INVALID`, `REPAIR_PROVENANCE_ACTIVE`
+  - `strategy_reoptimize_status_unknown_total{reason}` where `reason` is one of `STATUS_ROW_MISSING`, `STATUS_ENUM_UNKNOWN`, `STATUS_CONTRADICTORY`, `STATUS_STALE`, `TELEMETRY_UNAVAILABLE`
+  - `strategy_reoptimize_recommendation_total{recommendation}` where `recommendation` is one of `HOLD`, `OPERATOR_REVIEW_REQUIRED`, `PROMOTION_CANDIDATE_AVAILABLE`, `REVERT_REVIEW_REQUIRED`
+
+Async reoptimization metric labels must not include `run_id`, `pair_id`,
+`operator_id`, `lease_owner`, hostnames, artifact paths, URLs, free-form
+errors, or stack traces. Those values are allowed only in structured logs,
+status payloads, or artifacts. Reoptimization artifact read/write metrics are
+not emitted until artifact writing and artifact read/download surfaces exist.
 
 4. Execution and risk:
 - Order ack latency
