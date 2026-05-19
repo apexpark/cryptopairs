@@ -26,6 +26,7 @@ HEALTH_CHECKS = (
     ("strategy-service", "http://127.0.0.1:8083/health"),
 )
 KNOWN_DECISIONS = {"PROMOTE", "HOLD", "REVERT"}
+REOPTIMIZE_MODES = ("sync", "async", "latest-successful", "skip")
 
 
 def utc_now_iso() -> str:
@@ -137,6 +138,13 @@ def run_report_step(
     output_json: Path,
     compare_report: Path | None = None,
     skip_reoptimize: bool = False,
+    reoptimize_mode: str = "sync",
+    reoptimize_max_wait_seconds: int = 300,
+    reoptimize_poll_initial_seconds: float = 2.0,
+    reoptimize_poll_max_seconds: float = 30.0,
+    reoptimize_max_age_seconds: int = 3600,
+    reoptimize_cancel_on_timeout: bool = False,
+    reoptimize_trigger_source: str = "MAINTENANCE_REPORT",
     timeframes: str = "1m,15m,1h",
     limit: int = 20,
 ) -> dict[str, Any]:
@@ -161,6 +169,18 @@ def run_report_step(
         timeframes,
         "--limit",
         str(limit),
+        "--reoptimize-mode",
+        reoptimize_mode,
+        "--reoptimize-max-wait-seconds",
+        str(reoptimize_max_wait_seconds),
+        "--reoptimize-poll-initial-seconds",
+        str(reoptimize_poll_initial_seconds),
+        "--reoptimize-poll-max-seconds",
+        str(reoptimize_poll_max_seconds),
+        "--reoptimize-max-age-seconds",
+        str(reoptimize_max_age_seconds),
+        "--reoptimize-trigger-source",
+        reoptimize_trigger_source,
         "--output-json",
         str(output_json),
     ]
@@ -168,6 +188,10 @@ def run_report_step(
         command.extend(["--compare-report", str(compare_report)])
     if skip_reoptimize:
         command.append("--skip-reoptimize")
+    if reoptimize_cancel_on_timeout:
+        command.append("--reoptimize-cancel-on-timeout")
+    else:
+        command.append("--no-reoptimize-cancel-on-timeout")
 
     run = run_subprocess(command, repo_root, timeout_seconds)
     step: dict[str, Any] = {
@@ -431,13 +455,40 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--window-minutes", type=int, default=60)
     parser.add_argument("--timeframes", default="1m,15m,1h")
     parser.add_argument("--limit", type=int, default=20)
+    parser.add_argument("--baseline-reoptimize-mode", choices=REOPTIMIZE_MODES, default="skip")
+    parser.add_argument("--candidate-reoptimize-mode", choices=REOPTIMIZE_MODES, default="sync")
+    parser.add_argument("--reoptimize-max-wait-seconds", type=int, default=300)
+    parser.add_argument("--reoptimize-poll-initial-seconds", type=float, default=2.0)
+    parser.add_argument("--reoptimize-poll-max-seconds", type=float, default=30.0)
+    parser.add_argument("--reoptimize-max-age-seconds", type=int, default=3600)
+    parser.add_argument(
+        "--reoptimize-cancel-on-timeout",
+        dest="reoptimize_cancel_on_timeout",
+        action="store_true",
+    )
+    parser.add_argument(
+        "--no-reoptimize-cancel-on-timeout",
+        dest="reoptimize_cancel_on_timeout",
+        action="store_false",
+    )
     parser.add_argument("--health-timeout-seconds", type=float, default=4.0)
     parser.add_argument("--timeout-seconds", type=int, default=240)
     parser.add_argument("--public-health-url", default="")
     parser.add_argument("--restore-original", dest="restore_original", action="store_true")
     parser.add_argument("--no-restore-original", dest="restore_original", action="store_false")
-    parser.set_defaults(skip_pull=True, restore_original=True)
-    return parser.parse_args()
+    parser.set_defaults(skip_pull=True, restore_original=True, reoptimize_cancel_on_timeout=False)
+    args = parser.parse_args()
+    args.reoptimize_max_wait_seconds = max(1, min(args.reoptimize_max_wait_seconds, 3600))
+    args.reoptimize_poll_initial_seconds = max(
+        0.1,
+        min(args.reoptimize_poll_initial_seconds, 60.0),
+    )
+    args.reoptimize_poll_max_seconds = max(
+        args.reoptimize_poll_initial_seconds,
+        min(args.reoptimize_poll_max_seconds, 120.0),
+    )
+    args.reoptimize_max_age_seconds = max(1, min(args.reoptimize_max_age_seconds, 86_400))
+    return args
 
 
 def main() -> int:
@@ -522,7 +573,13 @@ def main() -> int:
                 policy_json=policy_path,
                 profile="baseline",
                 output_json=baseline_report_path,
-                skip_reoptimize=True,
+                skip_reoptimize=args.baseline_reoptimize_mode == "skip",
+                reoptimize_mode=args.baseline_reoptimize_mode,
+                reoptimize_max_wait_seconds=args.reoptimize_max_wait_seconds,
+                reoptimize_poll_initial_seconds=args.reoptimize_poll_initial_seconds,
+                reoptimize_poll_max_seconds=args.reoptimize_poll_max_seconds,
+                reoptimize_max_age_seconds=args.reoptimize_max_age_seconds,
+                reoptimize_cancel_on_timeout=args.reoptimize_cancel_on_timeout,
                 timeframes=args.timeframes,
                 limit=args.limit,
             )
@@ -589,7 +646,13 @@ def main() -> int:
                 profile="candidate",
                 output_json=candidate_report_path,
                 compare_report=baseline_report_path,
-                skip_reoptimize=False,
+                skip_reoptimize=args.candidate_reoptimize_mode == "skip",
+                reoptimize_mode=args.candidate_reoptimize_mode,
+                reoptimize_max_wait_seconds=args.reoptimize_max_wait_seconds,
+                reoptimize_poll_initial_seconds=args.reoptimize_poll_initial_seconds,
+                reoptimize_poll_max_seconds=args.reoptimize_poll_max_seconds,
+                reoptimize_max_age_seconds=args.reoptimize_max_age_seconds,
+                reoptimize_cancel_on_timeout=args.reoptimize_cancel_on_timeout,
                 timeframes=args.timeframes,
                 limit=args.limit,
             )
@@ -667,6 +730,16 @@ def main() -> int:
             "original_values": original_values,
             "baseline_values": baseline_values,
             "candidate_values": candidate_values,
+            "reoptimize": {
+                "baseline_mode": args.baseline_reoptimize_mode,
+                "candidate_mode": args.candidate_reoptimize_mode,
+                "max_wait_seconds": args.reoptimize_max_wait_seconds,
+                "poll_initial_seconds": args.reoptimize_poll_initial_seconds,
+                "poll_max_seconds": args.reoptimize_poll_max_seconds,
+                "max_age_seconds": args.reoptimize_max_age_seconds,
+                "cancel_on_timeout": bool(args.reoptimize_cancel_on_timeout),
+                "trigger_source": "MAINTENANCE_REPORT",
+            },
             "steps": steps,
             "artifacts": {
                 "run_dir": repo_relative(run_dir, repo_root),
