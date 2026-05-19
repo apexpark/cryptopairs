@@ -60,6 +60,8 @@ Async reoptimization metric labels must not include `run_id`, `pair_id`,
 errors, or stack traces. Those values are allowed only in structured logs,
 status payloads, or artifacts. Reoptimization artifact read/write metrics are
 not emitted until artifact writing and artifact read/download surfaces exist.
+Operator response procedures for these metrics live in
+`docs/playbooks/async-reoptimization-runner-runbook.md`.
 
 4. Execution and risk:
 - Order ack latency
