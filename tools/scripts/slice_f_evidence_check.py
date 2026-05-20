@@ -136,13 +136,20 @@ def verify_artifact_files(manifest: dict[str, Any], bundle_root: Path, errors: l
         except OSError as error:
             errors.append(f"artifact {artifact_id}: cannot resolve path: {error}")
             continue
-        if not str(resolved).startswith(str(root)):
+        try:
+            resolved.relative_to(root)
+        except ValueError:
             errors.append(f"artifact {artifact_id}: path escapes bundle root")
             continue
         if not resolved.exists():
             errors.append(f"artifact {artifact_id}: file missing at {path_value}")
             continue
-        digest = hashlib.sha256(resolved.read_bytes()).hexdigest()
+        try:
+            payload = resolved.read_bytes()
+        except OSError as error:
+            errors.append(f"artifact {artifact_id}: cannot read file at {path_value}: {error}")
+            continue
+        digest = hashlib.sha256(payload).hexdigest()
         if digest != expected_sha:
             errors.append(f"artifact {artifact_id}: sha256 mismatch")
 
