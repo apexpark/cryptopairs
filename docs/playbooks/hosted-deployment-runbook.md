@@ -179,6 +179,59 @@ python3 tools/scripts/data_pipeline_e2e_check.py \
   --output-json artifacts/data_pipeline_e2e_report_hosted.json
 ```
 
+## Slice F Reoptimization Evidence Capture
+
+This section is capture-only. It does not authorize enabling
+`STRATEGY_REOPT_WORKER_ENABLED`, a production scheduler, live `ENTRY` /
+`EXIT`, automatic `PROMOTE`, automatic `REVERT`, or repair-provenance
+graduation.
+
+Before any Slice F canary is reviewed, the operator captures an evidence
+bundle with a root `slice_f_manifest.json` matching:
+
+- `specs/contracts/slice_f_reoptimize_canary_evidence_manifest.schema.json`
+
+Required capture categories:
+
+1. host branch, commit, dirty status, and deployed service identity;
+2. runner/scheduler flags before and after the window;
+3. all async reoptimization budget values;
+4. active async status before the window;
+5. `/metrics` output for implemented async reoptimization metrics;
+6. alert rule definitions, routing, dashboard/query path, and active alerts
+   before and after the window;
+7. operator-approved CPU threshold and baseline;
+8. operator-approved hot endpoint latency thresholds and baselines;
+9. strategy logs before, during, and after the window, with useful async
+   reoptimization events or explicit disabled-state evidence;
+10. status endpoint payloads and status progression when a canary is
+    authorized;
+11. artifact manifest and artifacts when implemented or claimed;
+12. proof live `ENTRY` and `EXIT` remain disabled;
+13. proof `PROMOTE` and `REVERT` remain confirmation-gated;
+14. selected-row inventory plus Trade Now evidence proving
+    `RECANONICALIZED_LEGACY_ROW` rows stay blocked with
+    `RECANONICALIZED_LEGACY_ROW_ACTIVE`.
+
+Validate the manifest locally:
+
+```bash
+python3 tools/scripts/slice_f_evidence_check.py path/to/slice_f_manifest.json
+```
+
+Validate referenced artifact files and hashes when the bundle is available on
+disk:
+
+```bash
+python3 tools/scripts/slice_f_evidence_check.py \
+  path/to/slice_f_manifest.json \
+  --bundle-root path/to/bundle-root \
+  --verify-files
+```
+
+If the checker fails, keep the runner and scheduler disabled and keep
+recommendations at `HOLD`.
+
 ## Rollback Rules
 
 1. If health checks fail after deploy, revert to previous image tag and restart services.

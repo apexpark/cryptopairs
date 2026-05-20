@@ -5,6 +5,12 @@ This project follows SemVer as defined in `docs/02-versioning-and-releases.md`.
 
 ## Unreleased
 ### Operator Tooling
+- Added a Slice F async reoptimization canary evidence manifest contract,
+  pass/fail examples, semantic validation script, and capture-only runbook
+  guidance for alert readiness, CPU/hot endpoint threshold evidence, useful
+  strategy logs, status payload checks, live ENTRY/EXIT disabled proof,
+  PROMOTE/REVERT confirmation gates, and `RECANONICALIZED_LEGACY_ROW`
+  repair-provenance blocking.
 - Added bounded async reoptimization observability for the merged runner/API
   subset: lifecycle, active-run, enqueue, lease acquire/heartbeat/loss, budget
   exhaustion, progress, cancellation, fail-closed, missing-telemetry,
