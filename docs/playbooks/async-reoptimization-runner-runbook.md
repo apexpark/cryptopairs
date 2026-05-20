@@ -249,35 +249,86 @@ Before asking the operator to approve Slice F, verify:
 10. `RECANONICALIZED_LEGACY_ROW` remains repair-only and blocked from trade
     eligibility.
 11. Host verification steps are assigned to the operator only.
+12. A Slice F evidence manifest validates against
+    `specs/contracts/slice_f_reoptimize_canary_evidence_manifest.schema.json`
+    and passes `tools/scripts/slice_f_evidence_check.py`.
+
+Readiness is not enablement. A passing readiness manifest can support an
+operator review, but it does not authorize `STRATEGY_REOPT_WORKER_ENABLED`,
+scheduler enablement, live `ENTRY` / `EXIT`, automatic `PROMOTE`, automatic
+`REVERT`, or repair-provenance graduation.
 
 ## Operator-Only Host Capture For Slice F
 
-For any future enablement or canary, the operator captures:
+For any future enablement or canary, the operator captures a bundle with a
+root `slice_f_manifest.json` matching
+`specs/contracts/slice_f_reoptimize_canary_evidence_manifest.schema.json`.
+The bundle is evidence only.
 
 1. host branch, commit, and dirty status;
 2. deployed image or service identity;
-3. runner flag values and all budget env values;
-4. proof live `ENTRY` and `EXIT` remain disabled;
-5. proof promotion remains manual and confirmation-gated;
-6. pre-run CPU and hot endpoint latency baseline;
-7. current status endpoint payload;
-8. artifact manifest and required artifacts when implemented;
-9. `/metrics` output for implemented metrics only;
-10. post-run CPU and hot endpoint latency comparison;
-11. active alerts before and after the run.
+3. runner and scheduler flag values before and after the window;
+4. all budget env values;
+5. proof live `ENTRY` and `EXIT` remain disabled;
+6. proof promotion and revert remain manual and confirmation-gated;
+7. operator-approved CPU threshold source/query/window/value;
+8. operator-approved hot endpoint list, latency source/query/stat/window/value;
+9. pre-run CPU and hot endpoint latency baseline;
+10. current status endpoint payload;
+11. status progression for the exact canary run if one is authorized;
+12. artifact manifest and required artifacts when implemented;
+13. `/metrics` output for implemented metrics only;
+14. active alert configuration and active alerts before and after the run;
+15. strategy logs before, during, and after the run, or disabled-state logs for
+    readiness-only bundles;
+16. selected-row inventory and Trade Now evidence proving every
+    `RECANONICALIZED_LEGACY_ROW` remains blocked with
+    `RECANONICALIZED_LEGACY_ROW_ACTIVE`;
+17. post-run CPU and hot endpoint latency comparison if a canary ran.
+
+The required strategy log evidence must show useful async reoptimization event
+names such as `reoptimize_run_enqueue_attempted`,
+`reoptimize_run_enqueued`, `reoptimize_lease_acquired`,
+`reoptimize_lease_heartbeat`, `reoptimize_budget_exhausted`,
+`reoptimize_recommendation_finalized`, or `reoptimize_fail_closed`. Generic
+service logs are not sufficient.
+
+Validate the captured manifest from the repository root:
+
+```bash
+python3 tools/scripts/slice_f_evidence_check.py path/to/slice_f_manifest.json
+```
+
+If the bundle includes referenced artifact files, verify file containment and
+hashes:
+
+```bash
+python3 tools/scripts/slice_f_evidence_check.py \
+  path/to/slice_f_manifest.json \
+  --bundle-root path/to/bundle-root \
+  --verify-files
+```
 
 If host evidence is missing, stale, or contradictory, keep the runner disabled
 and keep recommendations at `HOLD`.
+
+Hard stop conditions include missing alert routing, missing CPU or hot endpoint
+threshold approval, weak strategy logs, unknown or schema-invalid status,
+nonzero active async gauges before approval, live `ENTRY` / `EXIT` evidence
+missing, automatic `PROMOTE` / `REVERT` evidence, or any
+`RECANONICALIZED_LEGACY_ROW` becoming trade eligible.
 
 ## Related Sources
 
 - `docs/proposals/reoptimise-background-runner-redesign.md`
 - `docs/proposals/reoptimise-api-script-migration-plan.md`
 - `docs/proposals/reoptimise-observability-runbook-plan.md`
+- `docs/proposals/reoptimise-slice-f-canary-hardening.md`
 - `docs/15-observability-and-alerting.md`
 - `docs/playbooks/hosted-deployment-runbook.md`
 - `docs/playbooks/observability-slo-runbook.md`
 - `docs/playbooks/strategy-maintenance-automation-runbook.md`
+- `specs/contracts/slice_f_reoptimize_canary_evidence_manifest.schema.json`
 - `specs/contracts/strategy_reoptimize_run_enqueue_response.schema.json`
 - `specs/contracts/strategy_reoptimize_run_status_response.schema.json`
 - `specs/contracts/strategy_reoptimize_run_cancel_response.schema.json`

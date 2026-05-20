@@ -63,6 +63,27 @@ not emitted until artifact writing and artifact read/download surfaces exist.
 Operator response procedures for these metrics live in
 `docs/playbooks/async-reoptimization-runner-runbook.md`.
 
+Before any Slice F async reoptimization canary review, alerting must be
+configured and captured in
+`specs/contracts/slice_f_reoptimize_canary_evidence_manifest.schema.json`
+format. Minimum Slice F alert coverage:
+
+- stuck lease or nonzero active async run before approval;
+- terminal `FAILED` or `DEGRADED` async runs;
+- missed schedule while enabled;
+- budget exhaustion;
+- cancellation failure or timeout;
+- missing telemetry;
+- unknown status;
+- unsafe promotion attempt;
+- repair-provenance active.
+
+Missing Slice F alert rules, unrouted alerts, unqueryable alert state, or
+dashboards that render missing data as healthy are fail-closed stop
+conditions. The runner and scheduler remain disabled, and maintenance/report
+recommendations remain `HOLD`, until the evidence manifest passes
+`tools/scripts/slice_f_evidence_check.py`.
+
 4. Execution and risk:
 - Order ack latency
 - Reject/cancel rates

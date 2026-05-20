@@ -34,6 +34,30 @@ Provide operator-facing SLO checks and alert response flow for execution and acc
 - `strategy_selection_transition_total{decision,timeframe}` (P3/P2 trend): should show steady-state `INITIALIZE`, `UNCHANGED`, `KEEP_CHAMPION`, or `PROMOTE_CHALLENGER` activity during reoptimization windows.
 - `pairs_cue_projection_total{outcome="PROJECTION_FAILED"}` (P2 trend): increases mean stored champion projection could not be materialized; inspect affected cue logs before trusting operator-facing champion state.
 
+5. Async reoptimization Slice F readiness
+- `strategy_reoptimize_active_runs{status}` (P2): any unexpected nonzero
+  active status before operator approval blocks canary review.
+- `strategy_reoptimize_run_total{trigger,status}` (P2): terminal `FAILED` or
+  `DEGRADED` counts during a canary keep recommendations at `HOLD`.
+- `strategy_reoptimize_budget_exhausted_total{budget}` (P2): any increase is
+  fail-closed and requires budget/load review.
+- `strategy_reoptimize_telemetry_missing_total{reason}` (P2): any increase
+  blocks canary trust until telemetry is restored.
+- `strategy_reoptimize_status_unknown_total{reason}` (P2): any increase
+  blocks canary trust until status persistence/contract evidence is known.
+- `strategy_reoptimize_fail_closed_total{reason="UNSAFE_PROMOTION_ATTEMPT"}`
+  (P1): any increase requires preserving audit logs and confirming no
+  automatic promote path executed.
+- `strategy_reoptimize_fail_closed_total{reason="REPAIR_PROVENANCE_ACTIVE"}`
+  (P2): evidence must show repair-only provenance stayed blocked; this signal
+  is not promotion evidence.
+
+Missing async reoptimization alert rules, missing routes, or dashboards that
+render absent data as healthy are Slice F stop conditions. Capture alert rules
+and active alert state in
+`specs/contracts/slice_f_reoptimize_canary_evidence_manifest.schema.json`
+format before any canary review.
+
 ## Alert Actions
 
 1. If any P1 is triggered:
@@ -46,6 +70,9 @@ Provide operator-facing SLO checks and alert response flow for execution and acc
 - Continue with reduced manual risk.
 - Investigate root cause within the same operator session.
 - Re-check alert status after remediation before restoring normal size.
+- For async reoptimization Slice F, do not enable the runner or scheduler and
+  keep maintenance/report recommendations at `HOLD` until the evidence
+  manifest passes `tools/scripts/slice_f_evidence_check.py`.
 
 ## Operator Loop (every 5-15 minutes in alpha)
 

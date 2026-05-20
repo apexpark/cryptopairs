@@ -1,0 +1,607 @@
+{
+  "$id": "https://cryptopairs/specs/contracts/slice_f_reoptimize_canary_evidence_manifest.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "SliceFReoptimizeCanaryEvidenceManifest",
+  "type": "object",
+  "additionalProperties": false,
+  "$comment": "Machine-readable Slice F evidence bundle manifest. This contract records canary readiness/evidence only; it does not authorize runner enablement, scheduler enablement, live ENTRY/EXIT, automatic PROMOTE, automatic REVERT, or repair-provenance graduation.",
+  "required": [
+    "schema_version",
+    "generated_at",
+    "bundle_id",
+    "canary_authorized",
+    "overall_pass",
+    "recommended_action",
+    "operator_approval",
+    "repo_identity",
+    "canary_scope",
+    "alerting",
+    "thresholds",
+    "logs",
+    "status_payloads",
+    "metrics",
+    "safety",
+    "repair_provenance",
+    "artifacts",
+    "checks",
+    "stop_conditions"
+  ],
+  "properties": {
+    "schema_version": { "type": "string", "const": "1.0.0" },
+    "generated_at": { "type": "string", "format": "date-time" },
+    "bundle_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 160,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$"
+    },
+    "canary_authorized": {
+      "type": "boolean",
+      "description": "True only when the operator has explicitly approved the canary captured by this bundle."
+    },
+    "overall_pass": {
+      "type": "boolean",
+      "description": "Semantic result expected from the evidence checker. A schema-valid manifest can still have overall_pass=false."
+    },
+    "recommended_action": {
+      "type": "string",
+      "enum": ["KEEP_DISABLED_KEEP_HOLD", "READY_FOR_OPERATOR_REVIEW"]
+    },
+    "operator_approval": { "$ref": "#/$defs/operator_approval" },
+    "repo_identity": { "$ref": "#/$defs/repo_identity" },
+    "canary_scope": { "$ref": "#/$defs/canary_scope" },
+    "alerting": { "$ref": "#/$defs/alerting" },
+    "thresholds": { "$ref": "#/$defs/thresholds" },
+    "logs": { "$ref": "#/$defs/logs" },
+    "status_payloads": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/status_payload" }
+    },
+    "metrics": { "$ref": "#/$defs/metrics" },
+    "safety": { "$ref": "#/$defs/safety" },
+    "repair_provenance": { "$ref": "#/$defs/repair_provenance" },
+    "artifacts": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/artifact_ref" }
+    },
+    "checks": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/check" }
+    },
+    "stop_conditions": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/stop_condition" },
+      "uniqueItems": true
+    }
+  },
+  "$defs": {
+    "operator_approval": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "present",
+        "reference",
+        "approved_at",
+        "approved_by",
+        "scope",
+        "abort_owner",
+        "rollback_owner",
+        "host_evidence_owner"
+      ],
+      "properties": {
+        "present": { "type": "boolean" },
+        "reference": { "type": ["string", "null"], "minLength": 1 },
+        "approved_at": { "type": ["string", "null"], "format": "date-time" },
+        "approved_by": { "type": ["string", "null"], "minLength": 1 },
+        "scope": { "type": ["string", "null"], "minLength": 1 },
+        "abort_owner": { "type": ["string", "null"], "minLength": 1 },
+        "rollback_owner": { "type": ["string", "null"], "minLength": 1 },
+        "host_evidence_owner": {
+          "type": "string",
+          "enum": ["operator", "unknown"]
+        }
+      }
+    },
+    "repo_identity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["branch", "commit", "dirty_status", "captured_by"],
+      "properties": {
+        "branch": { "type": "string", "minLength": 1 },
+        "commit": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{7,40}$"
+        },
+        "dirty_status": { "type": "string", "enum": ["CLEAN", "DIRTY", "UNKNOWN"] },
+        "captured_by": { "type": "string", "enum": ["operator", "agent", "unknown"] }
+      }
+    },
+    "canary_scope": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "timeframes",
+        "trigger_source",
+        "runner_enabled_before",
+        "scheduler_enabled_before",
+        "runner_enabled_after",
+        "scheduler_enabled_after"
+      ],
+      "properties": {
+        "timeframes": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/timeframe" },
+          "uniqueItems": true
+        },
+        "trigger_source": {
+          "type": ["string", "null"],
+          "enum": ["SCHEDULED", "MANUAL_API", "MAINTENANCE_REPORT", "RECOVERY", null]
+        },
+        "runner_enabled_before": { "type": "boolean" },
+        "scheduler_enabled_before": { "type": "boolean" },
+        "runner_enabled_after": { "type": "boolean" },
+        "scheduler_enabled_after": { "type": "boolean" }
+      }
+    },
+    "alerting": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "configured",
+        "routed",
+        "missing_data_blocks",
+        "routing_destination",
+        "dashboard_or_query_path",
+        "rules"
+      ],
+      "properties": {
+        "configured": { "type": "boolean" },
+        "routed": { "type": "boolean" },
+        "missing_data_blocks": { "type": "boolean" },
+        "routing_destination": { "type": ["string", "null"], "minLength": 1 },
+        "dashboard_or_query_path": { "type": ["string", "null"], "minLength": 1 },
+        "rules": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/alert_rule" }
+        }
+      }
+    },
+    "alert_rule": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "configured",
+        "routed",
+        "query_present",
+        "before_state_captured",
+        "after_state_captured"
+      ],
+      "properties": {
+        "id": { "$ref": "#/$defs/alert_rule_id" },
+        "configured": { "type": "boolean" },
+        "routed": { "type": "boolean" },
+        "query_present": { "type": "boolean" },
+        "before_state_captured": { "type": "boolean" },
+        "after_state_captured": { "type": "boolean" }
+      }
+    },
+    "thresholds": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["approved_before_canary", "cpu", "hot_endpoints"],
+      "properties": {
+        "approved_before_canary": { "type": "boolean" },
+        "cpu": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "metric_source",
+            "query",
+            "aggregation_window_seconds",
+            "baseline_window_seconds",
+            "threshold_type",
+            "threshold_value",
+            "baseline_captured",
+            "post_run_captured",
+            "within_threshold"
+          ],
+          "properties": {
+            "metric_source": { "type": "string", "minLength": 1 },
+            "query": { "type": "string", "minLength": 1 },
+            "aggregation_window_seconds": { "type": "integer", "minimum": 1 },
+            "baseline_window_seconds": { "type": "integer", "minimum": 1 },
+            "threshold_type": { "type": "string", "enum": ["ABSOLUTE", "RELATIVE_INCREASE"] },
+            "threshold_value": { "type": "number", "minimum": 0 },
+            "baseline_captured": { "type": "boolean" },
+            "post_run_captured": { "type": "boolean" },
+            "within_threshold": { "type": "boolean" }
+          }
+        },
+        "hot_endpoints": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/hot_endpoint_threshold" }
+        }
+      }
+    },
+    "hot_endpoint_threshold": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "method",
+        "path",
+        "metric_source",
+        "query",
+        "statistic",
+        "baseline_window_seconds",
+        "threshold_type",
+        "threshold_value",
+        "baseline_captured",
+        "post_run_captured",
+        "within_threshold"
+      ],
+      "properties": {
+        "method": { "type": "string", "enum": ["GET", "POST"] },
+        "path": { "type": "string", "minLength": 1 },
+        "metric_source": { "type": "string", "minLength": 1 },
+        "query": { "type": "string", "minLength": 1 },
+        "statistic": { "type": "string", "enum": ["p95", "p99", "max"] },
+        "baseline_window_seconds": { "type": "integer", "minimum": 1 },
+        "threshold_type": { "type": "string", "enum": ["ABSOLUTE", "RELATIVE_INCREASE"] },
+        "threshold_value": { "type": "number", "minimum": 0 },
+        "baseline_captured": { "type": "boolean" },
+        "post_run_captured": { "type": "boolean" },
+        "within_threshold": { "type": "boolean" }
+      }
+    },
+    "logs": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "before_useful",
+        "during_useful",
+        "after_useful",
+        "disabled_state_evidence",
+        "events_seen"
+      ],
+      "properties": {
+        "before_useful": { "type": "boolean" },
+        "during_useful": { "type": "boolean" },
+        "after_useful": { "type": "boolean" },
+        "disabled_state_evidence": { "type": "boolean" },
+        "events_seen": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/log_event" },
+          "uniqueItems": true
+        }
+      }
+    },
+    "status_payload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "artifact_id",
+        "schema_name",
+        "payload_valid",
+        "status",
+        "recommendation_decision",
+        "fail_closed_reasons",
+        "budget_state"
+      ],
+      "properties": {
+        "artifact_id": { "$ref": "#/$defs/artifact_id" },
+        "schema_name": {
+          "type": "string",
+          "enum": [
+            "strategy_reoptimize_run_enqueue_response",
+            "strategy_reoptimize_run_status_response",
+            "strategy_reoptimize_run_cancel_response",
+            "strategy_reoptimize_run_artifact_manifest"
+          ]
+        },
+        "payload_valid": { "type": "boolean" },
+        "status": { "$ref": "#/$defs/run_status" },
+        "recommendation_decision": { "$ref": "#/$defs/recommendation" },
+        "fail_closed_reasons": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/fail_closed_reason" },
+          "uniqueItems": true
+        },
+        "budget_state": { "type": "string", "enum": ["WITHIN_BUDGET", "EXHAUSTED", "UNKNOWN"] }
+      }
+    },
+    "metrics": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "active_runs_before",
+        "active_runs_after",
+        "missing_telemetry_delta",
+        "status_unknown_delta",
+        "budget_exhausted_delta",
+        "unsafe_promotion_delta",
+        "repair_provenance_active_delta"
+      ],
+      "properties": {
+        "active_runs_before": { "$ref": "#/$defs/active_run_counts" },
+        "active_runs_after": { "$ref": "#/$defs/active_run_counts" },
+        "missing_telemetry_delta": { "type": "integer", "minimum": 0 },
+        "status_unknown_delta": { "type": "integer", "minimum": 0 },
+        "budget_exhausted_delta": { "type": "integer", "minimum": 0 },
+        "unsafe_promotion_delta": { "type": "integer", "minimum": 0 },
+        "repair_provenance_active_delta": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "active_run_counts": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["QUEUED", "LEASED", "RUNNING", "CANCEL_REQUESTED"],
+      "properties": {
+        "QUEUED": { "type": "integer", "minimum": 0 },
+        "LEASED": { "type": "integer", "minimum": 0 },
+        "RUNNING": { "type": "integer", "minimum": 0 },
+        "CANCEL_REQUESTED": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "safety": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "live_entry_enabled",
+        "live_exit_enabled",
+        "automatic_promote_enabled",
+        "automatic_revert_enabled",
+        "promote_confirm_gated",
+        "revert_confirm_gated"
+      ],
+      "properties": {
+        "live_entry_enabled": { "type": "boolean" },
+        "live_exit_enabled": { "type": "boolean" },
+        "automatic_promote_enabled": { "type": "boolean" },
+        "automatic_revert_enabled": { "type": "boolean" },
+        "promote_confirm_gated": { "type": "boolean" },
+        "revert_confirm_gated": { "type": "boolean" }
+      }
+    },
+    "repair_provenance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "inventory_captured",
+        "all_recanonicalized_rows_blocked",
+        "recanonicalized_rows_audited",
+        "rows"
+      ],
+      "properties": {
+        "inventory_captured": { "type": "boolean" },
+        "all_recanonicalized_rows_blocked": { "type": "boolean" },
+        "recanonicalized_rows_audited": { "type": "integer", "minimum": 0 },
+        "rows": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/repair_provenance_row" }
+        }
+      }
+    },
+    "repair_provenance_row": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "pair_id",
+        "timeframe",
+        "selected_config_source",
+        "decision_bucket",
+        "decision_reason_code",
+        "blocked_reason_code",
+        "rationale_codes",
+        "live_trade_eligible",
+        "graduated_to_non_repair_source"
+      ],
+      "properties": {
+        "pair_id": { "type": "string", "minLength": 1 },
+        "timeframe": { "$ref": "#/$defs/timeframe" },
+        "selected_config_source": { "type": "string", "const": "RECANONICALIZED_LEGACY_ROW" },
+        "decision_bucket": { "type": "string", "enum": ["EXCLUDED", "WATCHLIST", "TRADE_NOW"] },
+        "decision_reason_code": { "type": "string" },
+        "blocked_reason_code": { "type": ["string", "null"] },
+        "rationale_codes": {
+          "type": "array",
+          "items": { "type": "string" },
+          "uniqueItems": true
+        },
+        "live_trade_eligible": { "type": "boolean" },
+        "graduated_to_non_repair_source": { "type": "boolean" }
+      }
+    },
+    "artifact_ref": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "path", "kind", "required", "sha256", "captured_at"],
+      "properties": {
+        "id": { "$ref": "#/$defs/artifact_id" },
+        "path": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "^(?!/)(?!.*\\.\\.)[A-Za-z0-9._/-]+$"
+        },
+        "kind": { "$ref": "#/$defs/artifact_kind" },
+        "required": { "type": "boolean" },
+        "sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+        "captured_at": { "type": "string", "format": "date-time" }
+      }
+    },
+    "check": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "status", "evidence_artifact_ids", "failure_reason"],
+      "properties": {
+        "id": { "$ref": "#/$defs/check_id" },
+        "status": { "type": "string", "enum": ["PASS", "FAIL", "NOT_APPLICABLE"] },
+        "evidence_artifact_ids": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/artifact_id" },
+          "uniqueItems": true
+        },
+        "failure_reason": { "type": ["string", "null"], "minLength": 1 }
+      }
+    },
+    "timeframe": {
+      "type": "string",
+      "enum": ["1m", "15m", "1h"]
+    },
+    "run_status": {
+      "type": "string",
+      "enum": [
+        "QUEUED",
+        "LEASED",
+        "RUNNING",
+        "CANCEL_REQUESTED",
+        "CANCELED",
+        "SUCCEEDED",
+        "DEGRADED",
+        "FAILED",
+        "EXPIRED"
+      ]
+    },
+    "recommendation": {
+      "type": "string",
+      "enum": [
+        "HOLD",
+        "OPERATOR_REVIEW_REQUIRED",
+        "PROMOTION_CANDIDATE_AVAILABLE",
+        "REVERT_REVIEW_REQUIRED"
+      ]
+    },
+    "fail_closed_reason": {
+      "type": "string",
+      "enum": [
+        "MISSING_TELEMETRY",
+        "UNKNOWN_STATUS",
+        "STALE_STATUS",
+        "LEASE_LOST",
+        "BUDGET_EXHAUSTED",
+        "CANCELED",
+        "ARTIFACT_FAILED",
+        "INTEGRITY_UNKNOWN",
+        "RISK_UNKNOWN",
+        "ACCOUNTING_ANOMALY",
+        "SCHEDULE_MISSED",
+        "UNSAFE_PROMOTION_ATTEMPT",
+        "CONFIG_INVALID",
+        "REPAIR_PROVENANCE_ACTIVE"
+      ]
+    },
+    "alert_rule_id": {
+      "type": "string",
+      "enum": [
+        "stuck_lease",
+        "failed_degraded_runs",
+        "schedule_missed",
+        "budget_exhaustion",
+        "cancellation_failure",
+        "missing_telemetry",
+        "unknown_status",
+        "unsafe_promotion",
+        "repair_provenance_active"
+      ]
+    },
+    "log_event": {
+      "type": "string",
+      "enum": [
+        "strategy reoptimize worker disabled",
+        "reoptimize_run_enqueue_attempted",
+        "reoptimize_run_enqueued",
+        "reoptimize_run_enqueue_rejected",
+        "reoptimize_lease_acquired",
+        "reoptimize_lease_heartbeat",
+        "reoptimize_lease_lost",
+        "reoptimize_budget_exhausted",
+        "reoptimize_cancel_observed",
+        "reoptimize_recommendation_finalized",
+        "reoptimize_fail_closed"
+      ]
+    },
+    "artifact_id": {
+      "type": "string",
+      "enum": [
+        "repo_identity",
+        "operator_approval",
+        "runner_flags_before",
+        "runner_flags_after",
+        "budget_values",
+        "status_before",
+        "status_progression",
+        "status_after",
+        "metrics_before",
+        "metrics_during",
+        "metrics_after",
+        "alerts_config",
+        "alerts_before",
+        "alerts_after",
+        "strategy_logs_before",
+        "strategy_logs_during",
+        "strategy_logs_after",
+        "cpu_baseline",
+        "cpu_during_after",
+        "hot_endpoint_latency_baseline",
+        "hot_endpoint_latency_after",
+        "artifact_manifest",
+        "repair_provenance_inventory",
+        "trade_now_repair_provenance_block",
+        "entry_exit_disabled",
+        "promotion_revert_gating"
+      ]
+    },
+    "artifact_kind": {
+      "type": "string",
+      "enum": ["JSON", "LOG", "METRICS", "ALERTS", "STATUS", "THRESHOLD", "PROVENANCE", "SAFETY", "OTHER"]
+    },
+    "check_id": {
+      "type": "string",
+      "enum": [
+        "operator_approval_present",
+        "alerting_ready",
+        "thresholds_approved",
+        "strategy_logs_useful",
+        "status_contract_valid",
+        "metrics_bounded_and_present",
+        "active_async_gauges_zero_before",
+        "status_progression_known",
+        "recommendation_safe",
+        "entry_exit_disabled",
+        "promotion_revert_confirm_gated",
+        "repair_provenance_blocked",
+        "cpu_within_threshold",
+        "hot_endpoint_latency_within_threshold",
+        "artifact_evidence_valid",
+        "stop_conditions_absent"
+      ]
+    },
+    "stop_condition": {
+      "type": "string",
+      "enum": [
+        "MISSING_OPERATOR_APPROVAL",
+        "ALERTING_NOT_READY",
+        "THRESHOLDS_NOT_APPROVED",
+        "WEAK_STRATEGY_LOGS",
+        "STATUS_INVALID_OR_UNKNOWN",
+        "NON_TERMINAL_AFTER_WINDOW",
+        "UNSAFE_TERMINAL_STATUS",
+        "BUDGET_UNKNOWN_OR_EXHAUSTED",
+        "LEASE_UNPROVEN",
+        "MISSING_TELEMETRY",
+        "UNKNOWN_STATUS",
+        "ARTIFACT_INVALID",
+        "ACTIVE_RUN_BEFORE_APPROVAL",
+        "ENTRY_EXIT_NOT_DISABLED",
+        "PROMOTE_REVERT_NOT_CONFIRM_GATED",
+        "REPAIR_PROVENANCE_NOT_BLOCKED",
+        "HOST_IDENTITY_UNKNOWN",
+        "MANIFEST_INVALID",
+        "AGENT_CLAIMED_HOST_VERIFICATION"
+      ]
+    }
+  },
+  "version": "1.0.0"
+}
