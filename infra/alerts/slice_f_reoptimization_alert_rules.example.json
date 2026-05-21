@@ -1,0 +1,117 @@
+{
+  "schema_version": "1.0.0",
+  "template_only": true,
+  "not_deployment_evidence": true,
+  "host_alerting_configured": false,
+  "missing_data_policy": "BLOCK",
+  "routing_required": true,
+  "dashboard_or_query_required": true,
+  "forbidden_metric_label_values": [
+    "run_id",
+    "pair_id",
+    "operator_id",
+    "lease_owner",
+    "hostname",
+    "container_id",
+    "artifact_path",
+    "url",
+    "error_text"
+  ],
+  "notes": [
+    "Example only. This file is not deployed alert evidence.",
+    "The operator must capture deployed/routed alert rules and active alert state in the Slice F evidence bundle.",
+    "Missing alert data must block canary trust instead of rendering green."
+  ],
+  "rules": [
+    {
+      "id": "stuck_lease",
+      "severity": "P2",
+      "query_template": "sum(strategy_reoptimize_active_runs{status=~\"LEASED|RUNNING|CANCEL_REQUESTED\"}) > 0",
+      "missing_data_policy": "BLOCK",
+      "route_required": true,
+      "dashboard_or_query_required": true,
+      "host_configured": false,
+      "notes": "Alert if async work remains active beyond the operator-approved lease/status window."
+    },
+    {
+      "id": "failed_degraded_runs",
+      "severity": "P2",
+      "query_template": "increase(strategy_reoptimize_run_total{status=~\"FAILED|DEGRADED|EXPIRED|CANCELED\"}[15m]) > 0",
+      "missing_data_policy": "BLOCK",
+      "route_required": true,
+      "dashboard_or_query_required": true,
+      "host_configured": false,
+      "notes": "Terminal non-success statuses keep recommendations fail-closed."
+    },
+    {
+      "id": "schedule_missed",
+      "severity": "P2",
+      "query_template": "increase(strategy_reoptimize_fail_closed_total{reason=\"SCHEDULE_MISSED\"}[15m]) > 0 or increase(strategy_reoptimize_scheduler_enqueue_total{result=~\"HEALTH_UNAVAILABLE|INTEGRITY_UNKNOWN|BUDGET_INVALID|LEASE_UNAVAILABLE|UNKNOWN_STATUS|CONFIG_INVALID\"}[15m]) > 0",
+      "missing_data_policy": "BLOCK",
+      "route_required": true,
+      "dashboard_or_query_required": true,
+      "host_configured": false,
+      "notes": "Only meaningful when a scheduler has been explicitly approved; absence of scheduler evidence blocks."
+    },
+    {
+      "id": "budget_exhaustion",
+      "severity": "P2",
+      "query_template": "increase(strategy_reoptimize_budget_exhausted_total[15m]) > 0",
+      "missing_data_policy": "BLOCK",
+      "route_required": true,
+      "dashboard_or_query_required": true,
+      "host_configured": false,
+      "notes": "Any budget exhaustion maps to HOLD or OPERATOR_REVIEW_REQUIRED."
+    },
+    {
+      "id": "cancellation_failure",
+      "severity": "P2",
+      "query_template": "increase(strategy_reoptimize_cancel_total{result=~\"FAILED|TIMED_OUT\"}[15m]) > 0",
+      "missing_data_policy": "BLOCK",
+      "route_required": true,
+      "dashboard_or_query_required": true,
+      "host_configured": false,
+      "notes": "Cancellation never becomes SUCCEEDED and no public cancellation route is assumed."
+    },
+    {
+      "id": "missing_telemetry",
+      "severity": "P2",
+      "query_template": "increase(strategy_reoptimize_telemetry_missing_total[15m]) > 0",
+      "missing_data_policy": "BLOCK",
+      "route_required": true,
+      "dashboard_or_query_required": true,
+      "host_configured": false,
+      "notes": "Missing telemetry blocks canary trust."
+    },
+    {
+      "id": "unknown_status",
+      "severity": "P2",
+      "query_template": "increase(strategy_reoptimize_status_unknown_total[15m]) > 0",
+      "missing_data_policy": "BLOCK",
+      "route_required": true,
+      "dashboard_or_query_required": true,
+      "host_configured": false,
+      "notes": "Unknown status maps to HOLD and blocks promotion review."
+    },
+    {
+      "id": "unsafe_promotion",
+      "severity": "P1",
+      "query_template": "increase(strategy_reoptimize_fail_closed_total{reason=\"UNSAFE_PROMOTION_ATTEMPT\"}[15m]) > 0",
+      "missing_data_policy": "BLOCK",
+      "route_required": true,
+      "dashboard_or_query_required": true,
+      "host_configured": false,
+      "notes": "Automatic promotion must remain unavailable."
+    },
+    {
+      "id": "repair_provenance_active",
+      "severity": "P2",
+      "query_template": "increase(strategy_reoptimize_fail_closed_total{reason=\"REPAIR_PROVENANCE_ACTIVE\"}[15m]) > 0",
+      "missing_data_policy": "BLOCK",
+      "route_required": true,
+      "dashboard_or_query_required": true,
+      "host_configured": false,
+      "notes": "Repair-only provenance must stay blocked from live trade eligibility."
+    }
+  ]
+}

@@ -211,6 +211,23 @@ Alert on:
 Alert payloads may include the latest `run_id` as context, not as a metric
 label.
 
+Repo-side alert templates live at:
+
+- `infra/alerts/slice_f_reoptimization_alert_rules.example.json`
+- `infra/alerts/slice_f_reoptimization_prometheus_rules.example.yml`
+
+These files are examples only. They are not deployed alert evidence, not routed
+host alerting, and not active alert state. Validate the JSON template with:
+
+```bash
+python3 tools/scripts/validate_slice_f_alert_rules.py \
+  infra/alerts/slice_f_reoptimization_alert_rules.example.json
+```
+
+Slice F still fails unless the operator captures deployed alert definitions or
+equivalent queries, routing destination, dashboard/query path, missing-data
+behavior, and active alert state in the evidence bundle.
+
 ## Artifact Evidence
 
 Artifact evidence is required only when the consuming workflow declares it
@@ -285,6 +302,25 @@ The bundle is evidence only.
     `RECANONICALIZED_LEGACY_ROW` remains blocked with
     `RECANONICALIZED_LEGACY_ROW_ACTIVE`;
 17. post-run CPU and hot endpoint latency comparison if a canary ran.
+
+Capture raw evidence outside the repository working tree when possible. If the
+evidence directory itself makes `git status --short --branch` dirty, the
+manifest must remain fail-closed until identity evidence is recaptured from a
+clean worktree or the operator explicitly records a separate approved recovery
+path.
+
+If the bundle contains raw capture files but no manifest yet, generate a
+fail-closed manifest locally from the repository root:
+
+```bash
+python3 tools/scripts/slice_f_evidence_manifest_from_bundle.py \
+  path/to/operator-captured-bundle
+```
+
+The generator only reads local operator-provided files. It does not connect to
+the host and does not claim host verification. Missing alerting, missing
+thresholds, dirty identity, unknown status, weak logs, missing safety proof, or
+missing repair-provenance evidence become stop conditions.
 
 The required strategy log evidence must show useful async reoptimization event
 names such as `reoptimize_run_enqueue_attempted`,

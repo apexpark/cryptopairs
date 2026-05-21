@@ -5,6 +5,12 @@ This project follows SemVer as defined in `docs/02-versioning-and-releases.md`.
 
 ## Unreleased
 ### Operator Tooling
+- Added repo-side Slice F evidence hardening tools: fail-closed raw bundle
+  manifest generation, alert-rule templates plus template validation, a
+  zero-row repair-provenance example, and stricter semantic checks for dirty
+  host identity, runner/scheduler enablement, fail-closed status, required
+  artifacts, and repair-provenance-active deltas. These additions do not
+  configure host alerting or claim host verification.
 - Added a Slice F async reoptimization canary evidence manifest contract,
   pass/fail examples, semantic validation script, and capture-only runbook
   guidance for alert readiness, CPU/hot endpoint threshold evidence, useful

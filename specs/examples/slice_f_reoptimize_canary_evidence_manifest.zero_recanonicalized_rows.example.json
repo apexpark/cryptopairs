@@ -1,7 +1,7 @@
 {
   "schema_version": "1.0.0",
   "generated_at": "2026-05-20T01:00:00Z",
-  "bundle_id": "slice-f-readiness-2026-05-20T01-00-00Z",
+  "bundle_id": "slice-f-readiness-zero-recanonicalized-2026-05-20T01-00-00Z",
   "canary_authorized": false,
   "overall_pass": true,
   "recommended_action": "READY_FOR_OPERATOR_REVIEW",
@@ -200,20 +200,8 @@
   "repair_provenance": {
     "inventory_captured": true,
     "all_recanonicalized_rows_blocked": true,
-    "recanonicalized_rows_audited": 1,
-    "rows": [
-      {
-        "pair_id": "PF_XBTUSD__PF_DOGEUSD",
-        "timeframe": "1m",
-        "selected_config_source": "RECANONICALIZED_LEGACY_ROW",
-        "decision_bucket": "EXCLUDED",
-        "decision_reason_code": "PROVENANCE_POLICY_BLOCKED",
-        "blocked_reason_code": "RECANONICALIZED_LEGACY_ROW_ACTIVE",
-        "rationale_codes": ["RECANONICALIZED_LEGACY_ROW_ACTIVE"],
-        "live_trade_eligible": false,
-        "graduated_to_non_repair_source": false
-      }
-    ]
+    "recanonicalized_rows_audited": 0,
+    "rows": []
   },
   "artifacts": [
     {
