@@ -213,6 +213,35 @@ Required capture categories:
     `RECANONICALIZED_LEGACY_ROW` rows stay blocked with
     `RECANONICALIZED_LEGACY_ROW_ACTIVE`.
 
+Capture the evidence bundle outside `/opt/cryptopairs` when possible. If the
+evidence directory itself appears as an untracked or modified path in
+`git status --short --branch`, the host identity evidence is dirty and the
+manifest remains fail-closed until recaptured or separately approved by the
+operator.
+
+Repo alert templates can help operators configure coverage, but they are not
+host evidence:
+
+- `infra/alerts/slice_f_reoptimization_alert_rules.example.json`
+- `infra/alerts/slice_f_reoptimization_prometheus_rules.example.yml`
+
+Do not set `alerting.configured=true`, `alerting.routed=true`, or any alert
+rule `configured=true` from these repo templates alone. The bundle must include
+deployed alert rules or equivalent queries, routing destination, dashboard or
+query path, missing-data behavior, and active alert state before/after the
+window.
+
+If raw capture files are available but `slice_f_manifest.json` is missing,
+generate a fail-closed manifest locally:
+
+```bash
+python3 tools/scripts/slice_f_evidence_manifest_from_bundle.py \
+  path/to/operator-captured-bundle
+```
+
+The generator only normalizes local operator-captured artifacts. It does not
+contact the host and must not be treated as host verification.
+
 Validate the manifest locally:
 
 ```bash

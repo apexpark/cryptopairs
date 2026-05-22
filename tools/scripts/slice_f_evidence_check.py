@@ -35,6 +35,8 @@ BASE_REQUIRED_ARTIFACTS = {
     "alerts_config",
     "alerts_before",
     "strategy_logs_before",
+    "cpu_baseline",
+    "hot_endpoint_latency_baseline",
     "repair_provenance_inventory",
     "trade_now_repair_provenance_block",
     "entry_exit_disabled",
@@ -90,6 +92,14 @@ NON_SUCCESS_STATUSES = {
 
 SAFE_NON_SUCCESS_RECOMMENDATIONS = {"HOLD", "OPERATOR_REVIEW_REQUIRED"}
 
+BLOCKING_STATUS_REASONS = {
+    "MISSING_TELEMETRY",
+    "UNKNOWN_STATUS",
+    "STALE_STATUS",
+    "CANCELED",
+    "BUDGET_EXHAUSTED",
+}
+
 
 def load_json(path: Path) -> dict[str, Any]:
     with path.open("r", encoding="utf-8") as handle:
@@ -105,6 +115,16 @@ def artifact_ids(manifest: dict[str, Any]) -> set[str]:
         if isinstance(artifact, dict) and isinstance(artifact.get("id"), str):
             ids.add(artifact["id"])
     return ids
+
+
+def duplicate_ids(items: Any) -> list[str]:
+    if not isinstance(items, list):
+        return []
+    counts: dict[str, int] = {}
+    for item in items:
+        if isinstance(item, dict) and isinstance(item.get("id"), str):
+            counts[item["id"]] = counts.get(item["id"], 0) + 1
+    return sorted(item_id for item_id, count in counts.items() if count > 1)
 
 
 def check_map(manifest: dict[str, Any]) -> dict[str, dict[str, Any]]:
@@ -167,8 +187,8 @@ def validate_manifest(manifest: dict[str, Any]) -> list[str]:
     else:
         if repo_identity.get("captured_by") != "operator":
             errors.append("host/repo identity must be operator-captured")
-        if repo_identity.get("dirty_status") == "UNKNOWN":
-            errors.append("host/repo dirty status is unknown")
+        if repo_identity.get("dirty_status") != "CLEAN":
+            errors.append("host/repo dirty status must be CLEAN")
 
     approval = manifest.get("operator_approval", {})
     if canary:
@@ -190,14 +210,24 @@ def validate_manifest(manifest: dict[str, Any]) -> list[str]:
                 errors.append("host evidence owner must be operator")
 
     artifacts = artifact_ids(manifest)
+    for artifact_id in duplicate_ids(manifest.get("artifacts", [])):
+        errors.append(f"duplicate artifact id: {artifact_id}")
     required_artifacts = set(BASE_REQUIRED_ARTIFACTS)
     if canary:
         required_artifacts.update(CANARY_REQUIRED_ARTIFACTS)
     missing_artifacts = sorted(required_artifacts - artifacts)
     for artifact_id in missing_artifacts:
         errors.append(f"required artifact missing: {artifact_id}")
+    for artifact in manifest.get("artifacts", []):
+        if not isinstance(artifact, dict):
+            continue
+        artifact_id = artifact.get("id")
+        if artifact_id in required_artifacts and artifact.get("required") is not True:
+            errors.append(f"required artifact {artifact_id} must be marked required")
 
     checks = check_map(manifest)
+    for check_id in duplicate_ids(manifest.get("checks", [])):
+        errors.append(f"duplicate check id: {check_id}")
     missing_checks = sorted(REQUIRED_CHECKS - set(checks))
     for check_id in missing_checks:
         errors.append(f"required check missing: {check_id}")
@@ -217,6 +247,19 @@ def validate_manifest(manifest: dict[str, Any]) -> list[str]:
         for artifact_id in check.get("evidence_artifact_ids", []):
             if artifact_id not in artifacts:
                 errors.append(f"check {check_id} references missing artifact {artifact_id}")
+
+    scope = manifest.get("canary_scope", {})
+    if not isinstance(scope, dict):
+        errors.append("canary_scope object missing")
+    else:
+        if scope.get("runner_enabled_before") is not False:
+            errors.append("runner must be disabled before Slice F evidence window")
+        if scope.get("scheduler_enabled_before") is not False:
+            errors.append("scheduler must be disabled before Slice F evidence window")
+        if scope.get("runner_enabled_after") is not False:
+            errors.append("runner must be disabled after Slice F evidence window")
+        if scope.get("scheduler_enabled_after") is not False:
+            errors.append("scheduler must be disabled after Slice F evidence window")
 
     alerting = manifest.get("alerting", {})
     if not isinstance(alerting, dict):
@@ -303,12 +346,19 @@ def validate_manifest(manifest: dict[str, Any]) -> list[str]:
         budget_state = payload.get("budget_state")
         if payload.get("payload_valid") is not True:
             errors.append(f"status payload {payload.get('artifact_id')} did not validate")
+        if status != "SUCCEEDED":
+            errors.append(f"status must be SUCCEEDED for passing Slice F evidence: {status}")
+        if status in {"CANCELED", "DEGRADED", "FAILED", "EXPIRED"}:
+            errors.append(f"status is fail-closed and cannot pass Slice F evidence: {status}")
         if status in NON_SUCCESS_STATUSES and decision not in SAFE_NON_SUCCESS_RECOMMENDATIONS:
             errors.append(f"status {status} must map to HOLD or OPERATOR_REVIEW_REQUIRED")
         if status in {"QUEUED", "LEASED", "RUNNING", "CANCEL_REQUESTED"} and canary:
             errors.append(f"canary status remained non-terminal: {status}")
         if budget_state in {"UNKNOWN", "EXHAUSTED"}:
             errors.append(f"budget state is fail-closed: {budget_state}")
+        fail_closed_reasons = set(payload.get("fail_closed_reasons", []))
+        for reason in sorted(fail_closed_reasons & BLOCKING_STATUS_REASONS):
+            errors.append(f"status payload contains blocking fail-closed reason: {reason}")
 
     metrics = manifest.get("metrics", {})
     if not isinstance(metrics, dict):
@@ -324,6 +374,7 @@ def validate_manifest(manifest: dict[str, Any]) -> list[str]:
             "status_unknown_delta",
             "budget_exhausted_delta",
             "unsafe_promotion_delta",
+            "repair_provenance_active_delta",
         ):
             if int(metrics.get(field, 0)) != 0:
                 errors.append(f"{field} increased")

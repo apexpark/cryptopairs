@@ -261,6 +261,11 @@ Pass semantics:
 
 1. `PASS`: every recanonicalized row is present in evidence and blocked as
    repair-only with the exact reason codes above.
+   If the current inventory has zero `RECANONICALIZED_LEGACY_ROW` rows, `PASS`
+   is allowed only when the bundle explicitly captures a selected-row inventory
+   with count `0` plus Trade Now or equivalent evidence showing no
+   recanonicalized row is trade eligible. Missing inventory is not the same as
+   a zero-row inventory.
 2. `FAIL`: repair-provenance evidence is missing; any recanonicalized row is
    absent from the audit; any recanonicalized row is tradable, watchlisted as
    execution-ready, promoted, or graduated; reason codes are missing or
@@ -276,6 +281,20 @@ referenced artifacts. The manifest validates against
 `specs/contracts/slice_f_reoptimize_canary_evidence_manifest.schema.json` and
 then must pass the semantic checker in
 `tools/scripts/slice_f_evidence_check.py`.
+
+If an operator bundle contains raw artifacts but no manifest, normalize it
+locally with:
+
+```bash
+python3 tools/scripts/slice_f_evidence_manifest_from_bundle.py \
+  path/to/operator-captured-bundle
+```
+
+The generator only reads local operator-captured files. It does not contact the
+host and does not claim host verification. It emits fail-closed stop conditions
+for dirty repo identity, missing alerting, missing thresholds, weak logs,
+unknown or non-success status, nonzero fail-closed metric deltas, missing
+safety proof, missing repair-provenance proof, and missing required artifacts.
 
 Required top-level fields:
 
@@ -499,9 +518,11 @@ This follow-up requires:
 
 1. `git diff --check`;
 2. JSON syntax validation for the new manifest contract and examples;
-3. schema validation for the pass/fail manifest examples;
-4. semantic validation proving the pass example exits `0` and the fail example
-   exits nonzero.
+3. schema validation for the pass/fail/zero-row manifest examples;
+4. semantic validation proving the pass and zero-row examples exit `0` and the
+   fail example exits nonzero;
+5. unit coverage for dirty repo identity, unknown status, runner enablement,
+   alert template coverage, and raw-bundle fail-closed manifest generation.
 
 Future extensions to the manifest contract should add:
 
