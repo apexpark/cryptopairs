@@ -56,14 +56,19 @@ Missing async reoptimization alert rules, missing routes, or dashboards that
 render absent data as healthy are Slice F stop conditions. Capture alert rules
 and active alert state in
 `specs/contracts/slice_f_reoptimize_canary_evidence_manifest.schema.json`
-format before any canary review.
+format before any canary review. CPU and hot endpoint thresholds must also be
+operator-approved in a `threshold_approval` artifact matching
+`specs/contracts/slice_f_threshold_approval.schema.json`; baseline samples are
+not approval evidence.
 
 Repo-side Slice F alert templates:
 
 - `infra/alerts/slice_f_reoptimization_alert_rules.example.json`
 - `infra/alerts/slice_f_reoptimization_prometheus_rules.example.yml`
+- `infra/alerts/slice_f_alert_deployment_checklist.md`
 
-These templates are not deployed alert evidence. Validate template coverage
+These templates and checklists are not deployed alert evidence. Validate
+template coverage
 with `python3 tools/scripts/validate_slice_f_alert_rules.py
 infra/alerts/slice_f_reoptimization_alert_rules.example.json`, then capture the
 host's deployed/routed alert state separately.

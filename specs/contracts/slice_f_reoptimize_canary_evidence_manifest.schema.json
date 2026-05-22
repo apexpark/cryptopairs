@@ -27,7 +27,7 @@
     "stop_conditions"
   ],
   "properties": {
-    "schema_version": { "type": "string", "const": "1.0.0" },
+    "schema_version": { "type": "string", "const": "1.1.0" },
     "generated_at": { "type": "string", "format": "date-time" },
     "bundle_id": {
       "type": "string",
@@ -106,7 +106,7 @@
     "repo_identity": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["branch", "commit", "dirty_status", "captured_by"],
+      "required": ["branch", "commit", "dirty_status", "captured_by", "evidence_root"],
       "properties": {
         "branch": { "type": "string", "minLength": 1 },
         "commit": {
@@ -114,7 +114,11 @@
           "pattern": "^[a-f0-9]{7,40}$"
         },
         "dirty_status": { "type": "string", "enum": ["CLEAN", "DIRTY", "UNKNOWN"] },
-        "captured_by": { "type": "string", "enum": ["operator", "agent", "unknown"] }
+        "captured_by": { "type": "string", "enum": ["operator", "agent", "unknown"] },
+        "evidence_root": {
+          "type": "string",
+          "enum": ["OUTSIDE_REPO", "INSIDE_REPO", "UNKNOWN"]
+        }
       }
     },
     "canary_scope": {
@@ -153,6 +157,8 @@
         "missing_data_blocks",
         "routing_destination",
         "dashboard_or_query_path",
+        "evidence_state",
+        "absence_reason",
         "rules"
       ],
       "properties": {
@@ -161,6 +167,11 @@
         "missing_data_blocks": { "type": "boolean" },
         "routing_destination": { "type": ["string", "null"], "minLength": 1 },
         "dashboard_or_query_path": { "type": ["string", "null"], "minLength": 1 },
+        "evidence_state": {
+          "type": "string",
+          "enum": ["DEPLOYED", "ABSENT", "TEMPLATE_ONLY", "UNKNOWN"]
+        },
+        "absence_reason": { "type": ["string", "null"], "minLength": 1 },
         "rules": {
           "type": "array",
           "items": { "$ref": "#/$defs/alert_rule" }
@@ -190,9 +201,14 @@
     "thresholds": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["approved_before_canary", "cpu", "hot_endpoints"],
+      "required": ["approved_before_canary", "evidence_state", "absence_reason", "cpu", "hot_endpoints"],
       "properties": {
         "approved_before_canary": { "type": "boolean" },
+        "evidence_state": {
+          "type": "string",
+          "enum": ["APPROVED", "ABSENT", "BASELINE_ONLY", "UNKNOWN"]
+        },
+        "absence_reason": { "type": ["string", "null"], "minLength": 1 },
         "cpu": {
           "type": "object",
           "additionalProperties": false,
@@ -264,6 +280,7 @@
         "during_useful",
         "after_useful",
         "disabled_state_evidence",
+        "disabled_state_source",
         "events_seen"
       ],
       "properties": {
@@ -271,6 +288,10 @@
         "during_useful": { "type": "boolean" },
         "after_useful": { "type": "boolean" },
         "disabled_state_evidence": { "type": "boolean" },
+        "disabled_state_source": {
+          "type": "string",
+          "enum": ["LOG_EVENT", "CAPTURE_STATEMENT", "NONE"]
+        },
         "events_seen": {
           "type": "array",
           "items": { "$ref": "#/$defs/log_event" },
@@ -354,7 +375,9 @@
         "automatic_promote_enabled",
         "automatic_revert_enabled",
         "promote_confirm_gated",
-        "revert_confirm_gated"
+        "revert_confirm_gated",
+        "promote_probe_labeled",
+        "revert_probe_labeled"
       ],
       "properties": {
         "live_entry_enabled": { "type": "boolean" },
@@ -362,7 +385,9 @@
         "automatic_promote_enabled": { "type": "boolean" },
         "automatic_revert_enabled": { "type": "boolean" },
         "promote_confirm_gated": { "type": "boolean" },
-        "revert_confirm_gated": { "type": "boolean" }
+        "revert_confirm_gated": { "type": "boolean" },
+        "promote_probe_labeled": { "type": "boolean" },
+        "revert_probe_labeled": { "type": "boolean" }
       }
     },
     "repair_provenance": {
@@ -542,6 +567,7 @@
         "strategy_logs_before",
         "strategy_logs_during",
         "strategy_logs_after",
+        "threshold_approval",
         "cpu_baseline",
         "cpu_during_after",
         "hot_endpoint_latency_baseline",
@@ -603,5 +629,5 @@
       ]
     }
   },
-  "version": "1.0.0"
+  "version": "1.1.0"
 }

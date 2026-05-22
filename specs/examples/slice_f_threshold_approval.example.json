@@ -1,0 +1,42 @@
+{
+  "schema_version": "1.0.0",
+  "approved_before_canary": true,
+  "approval": {
+    "reference": "OPERATOR-APPROVAL-SLICE-F-THRESHOLDS-2026-05-20",
+    "approved_at": "2026-05-20T00:45:00Z",
+    "approved_by": "operator",
+    "scope": "Readiness-only Slice F CPU and hot endpoint threshold approval before any production canary.",
+    "abort_rule": "Keep STRATEGY_REOPT_WORKER_ENABLED=false and keep recommendations at HOLD if CPU or any hot endpoint exceeds the approved threshold, or if threshold telemetry is missing.",
+    "host_evidence_owner": "operator"
+  },
+  "cpu": {
+    "metric_source": "prometheus",
+    "query": "rate(process_cpu_seconds_total{job=\"cryptopairs-strategy\"}[5m])",
+    "aggregation_window_seconds": 300,
+    "baseline_window_seconds": 900,
+    "threshold_type": "RELATIVE_INCREASE",
+    "threshold_value": 0.2
+  },
+  "hot_endpoints": [
+    {
+      "method": "GET",
+      "path": "/v1/strategy/pairs/cues",
+      "metric_source": "prometheus",
+      "query": "histogram_quantile(0.95, sum(rate(http_request_duration_seconds_bucket{route=\"/v1/strategy/pairs/cues\"}[5m])) by (le))",
+      "statistic": "p95",
+      "baseline_window_seconds": 900,
+      "threshold_type": "RELATIVE_INCREASE",
+      "threshold_value": 0.2
+    },
+    {
+      "method": "GET",
+      "path": "/v1/strategy/pairs/trade-now",
+      "metric_source": "prometheus",
+      "query": "histogram_quantile(0.95, sum(rate(http_request_duration_seconds_bucket{route=\"/v1/strategy/pairs/trade-now\"}[5m])) by (le))",
+      "statistic": "p95",
+      "baseline_window_seconds": 900,
+      "threshold_type": "RELATIVE_INCREASE",
+      "threshold_value": 0.2
+    }
+  ]
+}

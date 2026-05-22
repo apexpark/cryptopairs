@@ -178,13 +178,20 @@ Response:
 
 1. Treat the runner state as unknown.
 2. Do not enqueue scheduled mutation-producing work.
-3. Keep latest maintenance/report decision at `HOLD`.
+3. Keep latest maintenance/report decision at `HOLD` or
+   `OPERATOR_REVIEW_REQUIRED`.
 4. Emit or record `MISSING_TELEMETRY`, `UNKNOWN_STATUS`, or `STALE_STATUS` on
    the approved status/alert surface.
 5. Restore observability first: status, logs, run rows, metrics, and artifacts.
 6. Re-run status inspection before considering enablement or promotion review.
 
 Unknown status is not a warning-only condition.
+
+If `GET /v1/strategy/reoptimize/runs/latest` has no durable run row to read,
+the endpoint may return a contract-valid synthetic non-success payload with
+`status=FAILED`, `recommendation.decision=OPERATOR_REVIEW_REQUIRED`, and
+fail-closed reasons `MISSING_TELEMETRY` plus `UNKNOWN_STATUS`. That payload is
+not evidence of a completed failed run and must not be treated as success.
 
 ## Metrics And Alerts
 
@@ -215,9 +222,11 @@ Repo-side alert templates live at:
 
 - `infra/alerts/slice_f_reoptimization_alert_rules.example.json`
 - `infra/alerts/slice_f_reoptimization_prometheus_rules.example.yml`
+- `infra/alerts/slice_f_alert_deployment_checklist.md`
 
-These files are examples only. They are not deployed alert evidence, not routed
-host alerting, and not active alert state. Validate the JSON template with:
+These files are examples/checklists only. They are not deployed alert evidence,
+not routed host alerting, and not active alert state. Validate the JSON
+template with:
 
 ```bash
 python3 tools/scripts/validate_slice_f_alert_rules.py \
@@ -227,6 +236,11 @@ python3 tools/scripts/validate_slice_f_alert_rules.py \
 Slice F still fails unless the operator captures deployed alert definitions or
 equivalent queries, routing destination, dashboard/query path, missing-data
 behavior, and active alert state in the evidence bundle.
+
+CPU and hot endpoint thresholds must be operator-approved in a separate
+`threshold_approval` artifact before canary review. The artifact must match
+`specs/contracts/slice_f_threshold_approval.schema.json`; CPU and latency
+baseline captures alone do not prove threshold approval.
 
 ## Artifact Evidence
 
@@ -269,6 +283,9 @@ Before asking the operator to approve Slice F, verify:
 12. A Slice F evidence manifest validates against
     `specs/contracts/slice_f_reoptimize_canary_evidence_manifest.schema.json`
     and passes `tools/scripts/slice_f_evidence_check.py`.
+13. The `threshold_approval` artifact validates against
+    `specs/contracts/slice_f_threshold_approval.schema.json` and is referenced
+    by the manifest `thresholds_approved` check.
 
 Readiness is not enablement. A passing readiness manifest can support an
 operator review, but it does not authorize `STRATEGY_REOPT_WORKER_ENABLED`,
@@ -288,7 +305,8 @@ The bundle is evidence only.
 4. all budget env values;
 5. proof live `ENTRY` and `EXIT` remain disabled;
 6. proof promotion and revert remain manual and confirmation-gated;
-7. operator-approved CPU threshold source/query/window/value;
+7. `threshold_approval` artifact with operator-approved CPU threshold
+   source/query/window/value and abort rule;
 8. operator-approved hot endpoint list, latency source/query/stat/window/value;
 9. pre-run CPU and hot endpoint latency baseline;
 10. current status endpoint payload;
@@ -303,11 +321,27 @@ The bundle is evidence only.
     `RECANONICALIZED_LEGACY_ROW_ACTIVE`;
 17. post-run CPU and hot endpoint latency comparison if a canary ran.
 
-Capture raw evidence outside the repository working tree when possible. If the
-evidence directory itself makes `git status --short --branch` dirty, the
-manifest must remain fail-closed until identity evidence is recaptured from a
-clean worktree or the operator explicitly records a separate approved recovery
-path.
+Capture raw evidence outside the repository working tree. On the hosted
+runtime, do not place the evidence directory under `/opt/cryptopairs`; use a
+separate directory such as `/tmp/slice_f_<timestamp>` or another operator-owned
+path outside the checkout. If the evidence directory itself makes
+`git status --short --branch` dirty, or the generated manifest records
+`repo_identity.evidence_root` as `INSIDE_REPO` or `UNKNOWN`, the manifest must
+remain fail-closed until identity evidence is recaptured from a clean worktree
+or the operator explicitly records a separate approved recovery path.
+
+Recommended read-only capture root guard:
+
+```bash
+EVIDENCE_ROOT="/tmp/slice_f_$(date -u +%Y%m%dT%H%M%SZ)"
+case "$EVIDENCE_ROOT" in
+  /opt/cryptopairs|/opt/cryptopairs/*)
+    echo "refusing to capture Slice F evidence inside /opt/cryptopairs" >&2
+    exit 1
+    ;;
+esac
+mkdir -p "$EVIDENCE_ROOT"
+```
 
 If the bundle contains raw capture files but no manifest yet, generate a
 fail-closed manifest locally from the repository root:
@@ -319,15 +353,71 @@ python3 tools/scripts/slice_f_evidence_manifest_from_bundle.py \
 
 The generator only reads local operator-provided files. It does not connect to
 the host and does not claim host verification. Missing alerting, missing
-thresholds, dirty identity, unknown status, weak logs, missing safety proof, or
-missing repair-provenance evidence become stop conditions.
+threshold approval, dirty identity, unknown status, weak logs, missing safety
+proof, or missing repair-provenance evidence become stop conditions.
 
-The required strategy log evidence must show useful async reoptimization event
-names such as `reoptimize_run_enqueue_attempted`,
+The required `strategy_logs_before` evidence must not be an empty log tail. It
+must either contain a useful async reoptimization log event or an explicit
+disabled-state capture statement. For readiness-only bundles where the runner
+is disabled and no async events are expected, write a statement like:
+
+```text
+SLICE_F_DISABLED_STATE_EVIDENCE
+capture_window_utc=<start>/<end>
+NO_SERVICE_RESTART_DURING_CAPTURE_WINDOW=true
+STRATEGY_REOPT_WORKER_ENABLED=false
+ACTIVE_ASYNC_GAUGES_ZERO=true
+status_recommendation=HOLD
+```
+
+If the operator cannot prove no restart occurred, or cannot prove disabled
+state from flags plus metrics/status evidence, leave the log evidence failing
+instead of filling a success-looking placeholder. The checker treats empty or
+generic-only `strategy_logs_before` as `WEAK_STRATEGY_LOGS`.
+
+For canary bundles, strategy log evidence must show useful async
+reoptimization event names such as `reoptimize_run_enqueue_attempted`,
 `reoptimize_run_enqueued`, `reoptimize_lease_acquired`,
 `reoptimize_lease_heartbeat`, `reoptimize_budget_exhausted`,
 `reoptimize_recommendation_finalized`, or `reoptimize_fail_closed`. Generic
 service logs are not sufficient.
+
+The `promotion_revert_gating` artifact must label the two confirmation probes
+separately. Two unlabeled `400 confirm=true` responses are ambiguous and must
+fail. Use either JSON:
+
+```json
+{
+  "promote": {
+    "label": "PROMOTE",
+    "http_status": 400,
+    "body": "{\"error\":\"confirm=true is required to run maintenance actions\"}"
+  },
+  "revert": {
+    "label": "REVERT",
+    "http_status": 400,
+    "body": "{\"error\":\"confirm=true is required to run maintenance actions\"}"
+  }
+}
+```
+
+or text sections:
+
+```text
+=== PROMOTE without confirm ===
+HTTP/1.1 400 Bad Request
+{"error":"confirm=true is required to run maintenance actions"}
+
+=== REVERT without confirm ===
+HTTP/1.1 400 Bad Request
+{"error":"confirm=true is required to run maintenance actions"}
+```
+
+Alert and threshold absence is valid evidence of a blocker only when recorded
+explicitly: `alerting.evidence_state` must be `ABSENT` or `TEMPLATE_ONLY` with
+an `absence_reason`, and `thresholds.evidence_state` must be `ABSENT` or
+`BASELINE_ONLY` with an `absence_reason`. Absence never passes readiness; it
+only makes the fail-closed reason machine-readable.
 
 Validate the captured manifest from the repository root:
 

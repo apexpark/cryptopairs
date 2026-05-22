@@ -7907,7 +7907,11 @@ fn async_reoptimize_recommendation_for_response(
             if reasons.is_empty() {
                 reasons.push(AsyncReoptimizeFailClosedReason::MissingTelemetry);
             }
-            AsyncReoptimizeRecommendation::Hold
+            if persisted_recommendation == AsyncReoptimizeRecommendation::OperatorReviewRequired {
+                AsyncReoptimizeRecommendation::OperatorReviewRequired
+            } else {
+                AsyncReoptimizeRecommendation::Hold
+            }
         }
         AsyncReoptimizeRunStatus::CancelRequested => {
             if !reasons.contains(&AsyncReoptimizeFailClosedReason::Canceled) {
@@ -7966,6 +7970,12 @@ fn async_reoptimize_recommendation_summary(
             "Run lease expired or became stale; keep recommendations fail-closed.".to_string()
         }
         AsyncReoptimizeRunStatus::Failed => {
+            if reasons.contains(&AsyncReoptimizeFailClosedReason::MissingTelemetry)
+                || reasons.contains(&AsyncReoptimizeFailClosedReason::UnknownStatus)
+            {
+                return "Run status is unavailable or missing; operator review is required before enablement."
+                    .to_string();
+            }
             "Run failed; keep recommendations fail-closed.".to_string()
         }
         AsyncReoptimizeRunStatus::Degraded => {
@@ -8083,12 +8093,19 @@ fn async_reoptimize_missing_status_response(
         lease_expires_at: None,
         heartbeat_at: None,
         progress_json: "{}".to_string(),
-        summary_json: "{}".to_string(),
-        recommendation: AsyncReoptimizeRecommendation::Hold.as_str().to_string(),
+        summary_json: serde_json::json!({
+            "budgets": async_reoptimize_unknown_budget_snapshot_json(settings),
+            "errors": [],
+        })
+        .to_string(),
+        recommendation: AsyncReoptimizeRecommendation::OperatorReviewRequired
+            .as_str()
+            .to_string(),
         fail_closed_reasons_json: async_fail_closed_reasons_json(&[
+            AsyncReoptimizeFailClosedReason::MissingTelemetry,
             AsyncReoptimizeFailClosedReason::UnknownStatus,
         ])
-        .unwrap_or_else(|_| "[\"UNKNOWN_STATUS\"]".to_string()),
+        .unwrap_or_else(|_| "[\"MISSING_TELEMETRY\",\"UNKNOWN_STATUS\"]".to_string()),
         artifact_manifest_json: "{}".to_string(),
         created_at: generated_at,
         started_at: None,
@@ -8746,6 +8763,13 @@ fn async_reoptimize_budget_snapshot_json(
         "heartbeat_interval_seconds": settings.reopt_heartbeat_interval_seconds,
         "exhausted_budget": exhausted_budget.map(|budget| budget.as_str()),
     })
+}
+
+fn async_reoptimize_unknown_budget_snapshot_json(settings: &StrategySettings) -> serde_json::Value {
+    let mut budgets = async_reoptimize_budget_snapshot_json(settings, None);
+    budgets["budget_state"] = serde_json::Value::String("UNKNOWN".to_string());
+    budgets["exhausted_budget"] = serde_json::Value::Null;
+    budgets
 }
 
 fn async_reoptimize_summary_json(
@@ -15736,7 +15760,7 @@ mod tests {
     }
 
     #[test]
-    fn async_reoptimize_missing_status_response_is_contract_shaped_hold() {
+    fn async_reoptimize_missing_status_response_is_contract_shaped_operator_review() {
         let settings = StrategySettings::from_env();
         let generated_at = Utc::now();
 
@@ -15749,11 +15773,25 @@ mod tests {
         assert_eq!(response.schema_version, "1.0.0");
         assert_eq!(response.run_id, "reopt_missing");
         assert_eq!(response.status, "FAILED");
-        assert_eq!(response.recommendation.decision, "HOLD");
+        assert_eq!(response.recommendation.decision, "OPERATOR_REVIEW_REQUIRED");
+        assert_eq!(
+            response.fail_closed_reasons,
+            vec![
+                "MISSING_TELEMETRY".to_string(),
+                "UNKNOWN_STATUS".to_string()
+            ]
+        );
+        assert_eq!(
+            response
+                .budgets
+                .get("budget_state")
+                .and_then(|value| value.as_str()),
+            Some("UNKNOWN")
+        );
         assert!(response
-            .fail_closed_reasons
-            .iter()
-            .any(|reason| reason == "UNKNOWN_STATUS"));
+            .recommendation
+            .summary
+            .contains("operator review is required"));
         assert!(response.operator_action_required);
         assert!(async_reoptimize_progress_has_contract_shape(
             &response.progress
@@ -15761,6 +15799,40 @@ mod tests {
         assert!(async_reoptimize_budget_has_contract_shape(
             &response.budgets
         ));
+    }
+
+    #[test]
+    fn async_reoptimize_failed_operator_review_remains_fail_closed() {
+        let settings = StrategySettings::from_env();
+        let mut state = async_reoptimize_test_state(
+            AsyncReoptimizeRunStatus::Failed,
+            AsyncReoptimizeRecommendation::OperatorReviewRequired,
+            &[AsyncReoptimizeFailClosedReason::MissingTelemetry],
+        );
+        state.progress_json = super::async_reoptimize_default_progress_json(
+            AsyncReoptimizeRunStatus::Failed,
+            &settings.timeframes,
+            &settings,
+            None,
+        )
+        .to_string();
+        state.summary_json = serde_json::json!({
+            "budgets": super::async_reoptimize_budget_snapshot_json(&settings, None),
+            "errors": []
+        })
+        .to_string();
+
+        let response =
+            async_reoptimize_status_response_from_state(&state, &settings, Utc::now(), &[]);
+
+        assert_eq!(response.status, "FAILED");
+        assert_eq!(response.recommendation.decision, "OPERATOR_REVIEW_REQUIRED");
+        assert_eq!(
+            response.fail_closed_reasons,
+            vec!["MISSING_TELEMETRY".to_string()]
+        );
+        assert!(response.operator_action_required);
+        assert!(response.artifact_manifest.is_none());
     }
 
     #[test]

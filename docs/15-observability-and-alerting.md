@@ -66,7 +66,10 @@ Operator response procedures for these metrics live in
 Before any Slice F async reoptimization canary review, alerting must be
 configured and captured in
 `specs/contracts/slice_f_reoptimize_canary_evidence_manifest.schema.json`
-format. Minimum Slice F alert coverage:
+format. The operator-approved CPU and hot endpoint threshold source must also
+be captured as a `threshold_approval` artifact matching
+`specs/contracts/slice_f_threshold_approval.schema.json`; baseline samples
+alone are not threshold approval evidence. Minimum Slice F alert coverage:
 
 - stuck lease or nonzero active async run before approval;
 - terminal `FAILED` or `DEGRADED` async runs;
@@ -83,6 +86,11 @@ dashboards that render missing data as healthy are fail-closed stop
 conditions. The runner and scheduler remain disabled, and maintenance/report
 recommendations remain `HOLD`, until the evidence manifest passes
 `tools/scripts/slice_f_evidence_check.py`.
+
+Repo-side alert examples and checklists under `infra/alerts/` are not deployed
+alert evidence. They must be deployed or translated into the operator's actual
+alerting surface, routed, queried, and captured before Slice F alert readiness
+can pass.
 
 4. Execution and risk:
 - Order ack latency

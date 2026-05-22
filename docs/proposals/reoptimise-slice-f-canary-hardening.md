@@ -1,7 +1,8 @@
 # Proposal: Slice F reoptimization canary hardening
 
-> **Status**: docs-only hardening proposal. No code, config, schema, script,
-> scheduler, runner, live execution, promotion, revert, or host-runtime change.
+> **Status**: repo-side evidence hardening proposal. The resulting docs,
+> contracts, examples, and local validation scripts do not change config,
+> scheduler, runner, live execution, promotion, revert, or host runtime.
 >
 > **Item addressed**: Slice F follow-up after local evidence review found
 > missing alerting surface, unapproved CPU/hot endpoint thresholds, weak
@@ -152,6 +153,9 @@ Before any canary, the manifest must capture operator-approved thresholds:
 
 The hot endpoint list must be explicit in the manifest. It must not rely on
 phrases such as "all important endpoints" or "normal strategy endpoints."
+The approval itself must be captured as a `threshold_approval` artifact matching
+`specs/contracts/slice_f_threshold_approval.schema.json`; CPU and latency
+baseline captures are measurement evidence, not approval evidence.
 
 Pass semantics:
 
@@ -295,12 +299,17 @@ host and does not claim host verification. It emits fail-closed stop conditions
 for dirty repo identity, missing alerting, missing thresholds, weak logs,
 unknown or non-success status, nonzero fail-closed metric deltas, missing
 safety proof, missing repair-provenance proof, and missing required artifacts.
+The manifest also records whether the evidence root was outside the hosted
+checkout, whether alert/threshold evidence is deployed, absent, template-only,
+or baseline-only, whether disabled-state log evidence came from an implemented
+log event or explicit capture statement, and whether `PROMOTE` and `REVERT`
+confirmation probes were labeled separately.
 
 Required top-level fields:
 
 ```json
 {
-  "schema_version": "1.0.0",
+  "schema_version": "1.1.0",
   "bundle_id": "slice-f-<timestamp>",
   "generated_at": "<UTC timestamp>",
   "canary_authorized": false,
@@ -315,7 +324,8 @@ Required top-level fields:
     "branch": "<operator-captured>",
     "commit": "<operator-captured>",
     "dirty_status": "<operator-captured>",
-    "captured_by": "operator"
+    "captured_by": "operator",
+    "evidence_root": "OUTSIDE_REPO"
   },
   "canary_scope": {
     "timeframes": [],
@@ -325,16 +335,26 @@ Required top-level fields:
     "runner_enabled_after": false,
     "scheduler_enabled_after": false
   },
-  "alerting": {},
+  "alerting": {
+    "evidence_state": "ABSENT",
+    "absence_reason": "deployed/routed host alerting not captured"
+  },
   "thresholds": {
     "approved_before_canary": false,
+    "evidence_state": "BASELINE_ONLY",
+    "absence_reason": "operator-approved thresholds not captured",
     "cpu": {},
     "hot_endpoints": []
   },
-  "logs": {},
+  "logs": {
+    "disabled_state_source": "NONE"
+  },
   "status_payloads": [],
   "metrics": {},
-  "safety": {},
+  "safety": {
+    "promote_probe_labeled": false,
+    "revert_probe_labeled": false
+  },
   "repair_provenance": {},
   "artifacts": [],
   "checks": [],
@@ -376,6 +396,7 @@ Required artifact ids:
 | `strategy_logs_before` | every bundle |
 | `strategy_logs_during` | any canary bundle |
 | `strategy_logs_after` | any canary bundle |
+| `threshold_approval` | every readiness or canary bundle |
 | `cpu_baseline` | every readiness or canary bundle |
 | `cpu_during_after` | any canary bundle |
 | `hot_endpoint_latency_baseline` | every readiness or canary bundle |
@@ -518,7 +539,8 @@ This follow-up requires:
 
 1. `git diff --check`;
 2. JSON syntax validation for the new manifest contract and examples;
-3. schema validation for the pass/fail/zero-row manifest examples;
+3. schema validation for the pass/fail/zero-row manifest examples and the
+   threshold approval example;
 4. semantic validation proving the pass and zero-row examples exit `0` and the
    fail example exits nonzero;
 5. unit coverage for dirty repo identity, unknown status, runner enablement,
@@ -534,10 +556,10 @@ Future extensions to the manifest contract should add:
 
 ## 11. Versioning
 
-This follow-up changes docs, adds a machine-readable evidence manifest
-contract, adds pass/fail examples, and adds a local validation script. It does
-not change public service behavior, metric names, metric labels, config keys,
-runtime defaults, or operator enablement procedure.
+This follow-up changes docs, adds machine-readable evidence manifest and
+threshold approval contracts, adds examples, and adds local validation scripts.
+It does not change public service behavior, metric names, metric labels,
+config keys, runtime defaults, or operator enablement procedure.
 
 Because a contract and operator-facing checker are added, record the change in
 `CHANGELOG.md`. No runtime version bump is required unless release metadata is

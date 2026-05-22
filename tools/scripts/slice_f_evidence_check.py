@@ -35,6 +35,7 @@ BASE_REQUIRED_ARTIFACTS = {
     "alerts_config",
     "alerts_before",
     "strategy_logs_before",
+    "threshold_approval",
     "cpu_baseline",
     "hot_endpoint_latency_baseline",
     "repair_provenance_inventory",
@@ -99,6 +100,9 @@ BLOCKING_STATUS_REASONS = {
     "CANCELED",
     "BUDGET_EXHAUSTED",
 }
+
+
+SCHEMA_VERSION = "1.1.0"
 
 
 def load_json(path: Path) -> dict[str, Any]:
@@ -178,8 +182,8 @@ def validate_manifest(manifest: dict[str, Any]) -> list[str]:
     errors: list[str] = []
     canary = bool(manifest.get("canary_authorized"))
 
-    if manifest.get("schema_version") != "1.0.0":
-        errors.append("schema_version must be 1.0.0")
+    if manifest.get("schema_version") != SCHEMA_VERSION:
+        errors.append(f"schema_version must be {SCHEMA_VERSION}")
 
     repo_identity = manifest.get("repo_identity", {})
     if not isinstance(repo_identity, dict):
@@ -189,6 +193,8 @@ def validate_manifest(manifest: dict[str, Any]) -> list[str]:
             errors.append("host/repo identity must be operator-captured")
         if repo_identity.get("dirty_status") != "CLEAN":
             errors.append("host/repo dirty status must be CLEAN")
+        if repo_identity.get("evidence_root") != "OUTSIDE_REPO":
+            errors.append("host evidence bundle must be captured outside /opt/cryptopairs")
 
     approval = manifest.get("operator_approval", {})
     if canary:
@@ -271,6 +277,10 @@ def validate_manifest(manifest: dict[str, Any]) -> list[str]:
             errors.append("alerting is not routed")
         if alerting.get("missing_data_blocks") is not True:
             errors.append("alerting does not render missing data as blocked")
+        if alerting.get("configured") is True and alerting.get("evidence_state") != "DEPLOYED":
+            errors.append("configured alerting evidence must be marked DEPLOYED")
+        if alerting.get("configured") is not True and not alerting.get("absence_reason"):
+            errors.append("alert absence reason missing")
         rules = {
             rule.get("id"): rule
             for rule in alerting.get("rules", [])
@@ -293,6 +303,10 @@ def validate_manifest(manifest: dict[str, Any]) -> list[str]:
     else:
         if thresholds.get("approved_before_canary") is not True:
             errors.append("CPU/hot endpoint thresholds were not approved before canary")
+        if thresholds.get("approved_before_canary") is True and thresholds.get("evidence_state") != "APPROVED":
+            errors.append("approved threshold evidence must be marked APPROVED")
+        if thresholds.get("approved_before_canary") is not True and not thresholds.get("absence_reason"):
+            errors.append("threshold absence reason missing")
         cpu = thresholds.get("cpu", {})
         if not isinstance(cpu, dict):
             errors.append("CPU threshold missing")
@@ -325,6 +339,8 @@ def validate_manifest(manifest: dict[str, Any]) -> list[str]:
     else:
         if logs.get("before_useful") is not True:
             errors.append("strategy_logs_before is not useful")
+        if logs.get("disabled_state_source") == "NONE":
+            errors.append("strategy_logs_before disabled-state source missing")
         if canary:
             if logs.get("during_useful") is not True:
                 errors.append("strategy_logs_during is not useful")
@@ -395,6 +411,10 @@ def validate_manifest(manifest: dict[str, Any]) -> list[str]:
             errors.append("PROMOTE is not confirmation-gated")
         if safety.get("revert_confirm_gated") is not True:
             errors.append("REVERT is not confirmation-gated")
+        if safety.get("promote_probe_labeled") is not True:
+            errors.append("PROMOTE confirmation probe is not labeled")
+        if safety.get("revert_probe_labeled") is not True:
+            errors.append("REVERT confirmation probe is not labeled")
 
     repair = manifest.get("repair_provenance", {})
     if not isinstance(repair, dict):
