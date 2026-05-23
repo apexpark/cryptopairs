@@ -24,7 +24,9 @@ Implemented by the merged Slice A-D work and this Slice E branch:
 4. opt-in script modes for `tools/scripts/strategy_tuning_report.py` and
    `tools/scripts/strategy_maintenance_cycle.py`;
 5. bounded async reoptimization metrics and structured runner/API logs;
-6. async contracts and examples under
+6. terminal async reoptimization artifact writing under
+   `STRATEGY_REOPT_ARTIFACT_ROOT`;
+7. async contracts and examples under
    `specs/contracts/strategy_reoptimize_run_*` and
    `specs/examples/strategy_reoptimize_run_*`.
 
@@ -245,8 +247,13 @@ baseline captures alone do not prove threshold approval.
 ## Artifact Evidence
 
 Artifact evidence is required only when the consuming workflow declares it
-required. Until artifact writing and download routes are implemented, missing
-artifacts must stay fail-closed for workflows that require them.
+required. The service writes async reoptimization artifacts under
+`STRATEGY_REOPT_ARTIFACT_ROOT` and persists the manifest in
+`strategy_reoptimize_runs.artifact_manifest_json`; download/read routes remain
+deferred. Until an artifact download route is approved, generated manifests use
+`artifact_download_route=DEFERRED_NO_DOWNLOAD_ROUTE`. Missing, unreadable,
+partial, or unsafe artifacts must stay fail-closed for workflows that require
+them.
 
 When artifacts exist:
 
@@ -268,8 +275,8 @@ Before asking the operator to approve Slice F, verify:
 2. Async endpoints validate against the async contracts.
 3. Async metrics are implemented with bounded labels only.
 4. Status, logs, run rows, metrics, and artifacts agree for a completed
-   non-production run, or artifact absence is explicitly fail-closed where
-   artifacts are not implemented.
+   non-production run; artifact absence remains fail-closed for workflows that
+   require artifacts.
 5. Missing telemetry and unknown status render as blocked.
 6. Cancel behavior is authorized, audited, idempotent, and fail-closed before
    any mutating cancel route is exposed.

@@ -205,7 +205,7 @@ def async_artifact_manifest(
         "service_version": service_version,
         "artifact_root": "artifacts/strategy_reoptimize",
         "run_artifact_dir": f"runs/{run_id}",
-        "artifact_download_route": "/v1/strategy/reoptimize/artifact?path=",
+        "artifact_download_route": "DEFERRED_NO_DOWNLOAD_ROUTE",
         "complete": True,
         "total_bytes": 40,
         "artifacts": [

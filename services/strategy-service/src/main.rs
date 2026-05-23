@@ -11,6 +11,7 @@ use common_types::{
     kraken_perp_constraints, quantize_price_to_tick, InstrumentTradingConstraints, Timeframe,
 };
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -170,6 +171,7 @@ struct StrategySettings {
     reopt_max_in_flight_pair_evaluations: usize,
     reopt_max_db_write_batch_size: usize,
     reopt_max_artifact_bytes: u64,
+    reopt_artifacts_root: String,
     reopt_min_cooldown_seconds: u64,
     reopt_lease_ttl_seconds: u64,
     reopt_heartbeat_interval_seconds: u64,
@@ -237,6 +239,7 @@ struct StrategySettings {
 const DEFAULT_REOPT_WORKER_ENABLED: bool = false;
 const DEFAULT_SAMPLED_SLIPPAGE_WORKER_ENABLED: bool = false;
 const DEFAULT_HISTORY_RETENTION_WORKER_ENABLED: bool = false;
+const ASYNC_REOPTIMIZE_ARTIFACT_DOWNLOAD_ROUTE: &str = "DEFERRED_NO_DOWNLOAD_ROUTE";
 static ASYNC_REOPTIMIZE_RUN_COUNTER: AtomicU64 = AtomicU64::new(0);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -337,6 +340,8 @@ impl StrategySettings {
             "STRATEGY_REOPT_MAX_ARTIFACT_BYTES",
             10_485_760,
         ));
+        let reopt_artifacts_root = std::env::var("STRATEGY_REOPT_ARTIFACT_ROOT")
+            .unwrap_or_else(|_| "artifacts/strategy_reoptimize".to_string());
         let reopt_min_cooldown_seconds = effective_async_reopt_min_cooldown_seconds(parse_env_u64(
             "STRATEGY_REOPT_MIN_COOLDOWN_SECONDS",
             3_600,
@@ -509,6 +514,7 @@ impl StrategySettings {
             reopt_max_in_flight_pair_evaluations,
             reopt_max_db_write_batch_size,
             reopt_max_artifact_bytes,
+            reopt_artifacts_root,
             reopt_min_cooldown_seconds,
             reopt_lease_ttl_seconds,
             reopt_heartbeat_interval_seconds,
@@ -6181,7 +6187,7 @@ impl MaintenanceAction {
     }
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 struct ReoptError {
     pair_id: String,
     timeframe: String,
@@ -7757,6 +7763,54 @@ fn async_reoptimize_reason_strings(reasons: &[AsyncReoptimizeFailClosedReason]) 
         .collect()
 }
 
+fn async_reoptimize_error_phase_for_code(code: &str) -> AsyncReoptimizePhase {
+    match code {
+        "CUE_EVAL_FAILED" => AsyncReoptimizePhase::PairEvaluation,
+        "RECORD_EVALUATION_FAILED" => AsyncReoptimizePhase::PersistSelectedRows,
+        "SHADOW_MODEL_RUN_PERSIST_FAILED" => AsyncReoptimizePhase::PersistShadowModel,
+        "ASYNC_REOPTIMIZE_ARTIFACT_FAILED" => AsyncReoptimizePhase::ArtifactWrite,
+        "ASYNC_REOPTIMIZE_BUDGET_EXHAUSTED" => AsyncReoptimizePhase::PairEvaluation,
+        "ASYNC_REOPTIMIZE_LEASE_LOST" => AsyncReoptimizePhase::Terminal,
+        _ => AsyncReoptimizePhase::RunSummary,
+    }
+}
+
+fn async_reoptimize_error_retryable(error: &ReoptError) -> bool {
+    matches!(
+        error.code.as_str(),
+        "ASYNC_REOPTIMIZE_BUDGET_EXHAUSTED" | "ASYNC_REOPTIMIZE_LEASE_LOST"
+    ) || error.severity == ReoptErrorSeverity::NonCritical.as_str()
+}
+
+fn async_reoptimize_errors_json(
+    errors: &[ReoptError],
+    occurred_at: DateTime<Utc>,
+) -> Vec<serde_json::Value> {
+    errors
+        .iter()
+        .map(|error| {
+            let timeframe = Timeframe::parse(error.timeframe.as_str())
+                .map(|timeframe| serde_json::Value::String(timeframe.as_str().to_string()))
+                .unwrap_or(serde_json::Value::Null);
+            let pair_id = if error.pair_id == "SYSTEM" || error.pair_id.trim().is_empty() {
+                serde_json::Value::Null
+            } else {
+                serde_json::Value::String(error.pair_id.clone())
+            };
+            serde_json::json!({
+                "code": error.code,
+                "severity": error.severity,
+                "message": error.error,
+                "phase": async_reoptimize_error_phase_for_code(&error.code).as_str(),
+                "timeframe": timeframe,
+                "pair_id": pair_id,
+                "retryable": async_reoptimize_error_retryable(error),
+                "occurred_at": occurred_at.to_rfc3339(),
+            })
+        })
+        .collect()
+}
+
 fn async_reoptimize_artifact_manifest_for_response(
     state: &AsyncReoptimizeRunState,
 ) -> (Option<serde_json::Value>, bool) {
@@ -8793,8 +8847,270 @@ fn async_reoptimize_summary_json(
         "generated_at": Utc::now().to_rfc3339(),
         "budgets": async_reoptimize_budget_snapshot_json(settings, exhausted_budget),
         "progress": progress_json,
-        "errors": errors,
+        "errors": async_reoptimize_errors_json(errors, Utc::now()),
     })
+}
+
+#[derive(Debug)]
+struct AsyncReoptimizeArtifactPayload {
+    kind: &'static str,
+    relative_path: String,
+    content_type: &'static str,
+    required: bool,
+    bytes: Vec<u8>,
+}
+
+struct AsyncReoptimizeArtifactWriteInput<'a> {
+    settings: &'a StrategySettings,
+    run_id: &'a str,
+    status: AsyncReoptimizeRunStatus,
+    trigger_source: AsyncReoptimizeTriggerSource,
+    progress_json: &'a serde_json::Value,
+    summary_json: &'a serde_json::Value,
+    errors: &'a [ReoptError],
+    recommendation: AsyncReoptimizeRecommendation,
+    fail_closed_reasons: &'a [AsyncReoptimizeFailClosedReason],
+    generated_at: DateTime<Utc>,
+}
+
+fn sha256_hex(bytes: &[u8]) -> String {
+    format!("{:x}", Sha256::digest(bytes))
+}
+
+fn json_artifact_bytes(value: &serde_json::Value) -> anyhow::Result<Vec<u8>> {
+    Ok(serde_json::to_vec_pretty(value)?)
+}
+
+fn write_bytes_atomic(path: &Path, bytes: &[u8]) -> anyhow::Result<()> {
+    let parent = path.parent().ok_or_else(|| {
+        anyhow::anyhow!(
+            "unable to resolve parent directory for '{}'",
+            path.display()
+        )
+    })?;
+    fs::create_dir_all(parent).with_context(|| {
+        format!(
+            "unable to create artifact parent directory '{}'",
+            parent.display()
+        )
+    })?;
+    let nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_nanos())
+        .unwrap_or_default();
+    let tmp_name = format!(
+        ".{}.tmp.{nanos}",
+        path.file_name()
+            .and_then(|value| value.to_str())
+            .unwrap_or("artifact")
+    );
+    let tmp_path = parent.join(tmp_name);
+    fs::write(&tmp_path, bytes).with_context(|| {
+        format!(
+            "unable to write artifact temp file '{}'",
+            tmp_path.display()
+        )
+    })?;
+    fs::rename(&tmp_path, path)
+        .with_context(|| format!("unable to finalize artifact file '{}'", path.display()))?;
+    Ok(())
+}
+
+fn async_reoptimize_operator_summary_markdown(
+    run_id: &str,
+    status: AsyncReoptimizeRunStatus,
+    recommendation: AsyncReoptimizeRecommendation,
+    fail_closed_reasons: &[AsyncReoptimizeFailClosedReason],
+    progress_json: &serde_json::Value,
+    generated_at: DateTime<Utc>,
+) -> String {
+    let reasons = if fail_closed_reasons.is_empty() {
+        "none".to_string()
+    } else {
+        async_reoptimize_reason_strings(fail_closed_reasons).join(", ")
+    };
+    let pairs_completed = progress_json
+        .get("pairs_completed")
+        .and_then(serde_json::Value::as_u64)
+        .unwrap_or_default();
+    let pairs_failed = progress_json
+        .get("pairs_failed")
+        .and_then(serde_json::Value::as_u64)
+        .unwrap_or_default();
+    let pairs_skipped = progress_json
+        .get("pairs_skipped")
+        .and_then(serde_json::Value::as_u64)
+        .unwrap_or_default();
+    format!(
+        "# Async Reoptimization Run Summary\n\n\
+         - generated_at: {}\n\
+         - run_id: {}\n\
+         - status: {}\n\
+         - recommendation: {}\n\
+         - fail_closed_reasons: {}\n\
+         - pairs_completed: {}\n\
+         - pairs_failed: {}\n\
+         - pairs_skipped: {}\n\n\
+         This artifact is evidence only. It does not authorize automatic PROMOTE, automatic REVERT, live ENTRY, live EXIT, or repair-provenance graduation.\n",
+        generated_at.to_rfc3339(),
+        run_id,
+        status.as_str(),
+        recommendation.as_str(),
+        reasons,
+        pairs_completed,
+        pairs_failed,
+        pairs_skipped
+    )
+}
+
+fn async_reoptimize_artifact_payloads(
+    input: &AsyncReoptimizeArtifactWriteInput<'_>,
+) -> anyhow::Result<Vec<AsyncReoptimizeArtifactPayload>> {
+    let run_artifact_dir = format!("runs/{}", input.run_id);
+    let request_json = serde_json::json!({
+        "schema_version": "1.0.0",
+        "generated_at": input.generated_at.to_rfc3339(),
+        "run_id": input.run_id,
+        "trigger_source": input.trigger_source.as_str(),
+        "requested_timeframes": input.settings
+            .timeframes
+            .iter()
+            .map(|timeframe| timeframe.as_str())
+            .collect::<Vec<_>>(),
+        "request_fingerprint": serde_json::Value::Null,
+        "service_version": serde_json::Value::Null,
+        "worker_enabled": input.settings.reopt_worker_enabled,
+        "budgets": async_reoptimize_budget_snapshot_json(input.settings, None),
+    });
+    let errors_json = serde_json::Value::Array(async_reoptimize_errors_json(
+        input.errors,
+        input.generated_at,
+    ));
+    let operator_summary = async_reoptimize_operator_summary_markdown(
+        input.run_id,
+        input.status,
+        input.recommendation,
+        input.fail_closed_reasons,
+        input.progress_json,
+        input.generated_at,
+    );
+    Ok(vec![
+        AsyncReoptimizeArtifactPayload {
+            kind: "REQUEST",
+            relative_path: format!("{run_artifact_dir}/request.json"),
+            content_type: "application/json",
+            required: true,
+            bytes: json_artifact_bytes(&request_json)?,
+        },
+        AsyncReoptimizeArtifactPayload {
+            kind: "PROGRESS",
+            relative_path: format!("{run_artifact_dir}/progress.json"),
+            content_type: "application/json",
+            required: true,
+            bytes: json_artifact_bytes(input.progress_json)?,
+        },
+        AsyncReoptimizeArtifactPayload {
+            kind: "SUMMARY",
+            relative_path: format!("{run_artifact_dir}/summary.json"),
+            content_type: "application/json",
+            required: true,
+            bytes: json_artifact_bytes(input.summary_json)?,
+        },
+        AsyncReoptimizeArtifactPayload {
+            kind: "ERRORS",
+            relative_path: format!("{run_artifact_dir}/errors.json"),
+            content_type: "application/json",
+            required: true,
+            bytes: json_artifact_bytes(&errors_json)?,
+        },
+        AsyncReoptimizeArtifactPayload {
+            kind: "OPERATOR_SUMMARY",
+            relative_path: format!("{run_artifact_dir}/operator_summary.md"),
+            content_type: "text/markdown",
+            required: false,
+            bytes: operator_summary.into_bytes(),
+        },
+    ])
+}
+
+fn write_async_reoptimize_artifacts(
+    input: AsyncReoptimizeArtifactWriteInput<'_>,
+) -> anyhow::Result<serde_json::Value> {
+    let run_artifact_dir = format!("runs/{}", input.run_id);
+    if !async_reoptimize_json_safe_artifact_path(Some(&serde_json::Value::String(
+        run_artifact_dir.clone(),
+    ))) {
+        anyhow::bail!("async reoptimize run artifact directory is unsafe");
+    }
+    let artifact_root = resolve_workspace_path(&input.settings.reopt_artifacts_root);
+    let payloads = async_reoptimize_artifact_payloads(&input)?;
+    let total_bytes = payloads.iter().try_fold(0u64, |total, payload| {
+        let len = u64::try_from(payload.bytes.len())
+            .map_err(|_| anyhow::anyhow!("artifact payload length overflow"))?;
+        total
+            .checked_add(len)
+            .ok_or_else(|| anyhow::anyhow!("artifact byte total overflow"))
+    })?;
+    if total_bytes > input.settings.reopt_max_artifact_bytes {
+        anyhow::bail!(
+            "async reoptimize artifacts total {} bytes exceeds max {} bytes",
+            total_bytes,
+            input.settings.reopt_max_artifact_bytes
+        );
+    }
+
+    let mut artifact_refs = Vec::with_capacity(payloads.len());
+    for payload in payloads {
+        if !async_reoptimize_json_safe_artifact_path(Some(&serde_json::Value::String(
+            payload.relative_path.clone(),
+        ))) {
+            anyhow::bail!(
+                "async reoptimize artifact path '{}' is unsafe",
+                payload.relative_path
+            );
+        }
+        let bytes_len = u64::try_from(payload.bytes.len())
+            .map_err(|_| anyhow::anyhow!("artifact payload length overflow"))?;
+        let artifact_path = artifact_root.join(&payload.relative_path);
+        write_bytes_atomic(&artifact_path, &payload.bytes)?;
+        artifact_refs.push(serde_json::json!({
+            "kind": payload.kind,
+            "path": payload.relative_path,
+            "content_type": payload.content_type,
+            "bytes": bytes_len,
+            "sha256": sha256_hex(&payload.bytes),
+            "created_at": input.generated_at.to_rfc3339(),
+            "required": payload.required,
+        }));
+    }
+
+    let manifest = serde_json::json!({
+        "schema_version": "1.0.0",
+        "generated_at": input.generated_at.to_rfc3339(),
+        "run_id": input.run_id,
+        "status": input.status.as_str(),
+        "trigger_source": input.trigger_source.as_str(),
+        "request_fingerprint": serde_json::Value::Null,
+        "service_version": serde_json::Value::Null,
+        "artifact_root": input.settings.reopt_artifacts_root,
+        "run_artifact_dir": run_artifact_dir,
+        "artifact_download_route": ASYNC_REOPTIMIZE_ARTIFACT_DOWNLOAD_ROUTE,
+        "complete": true,
+        "total_bytes": total_bytes,
+        "artifacts": artifact_refs,
+        "fail_closed_reasons": async_reoptimize_reason_strings(input.fail_closed_reasons),
+        "errors": async_reoptimize_errors_json(input.errors, input.generated_at),
+    });
+    if !async_reoptimize_manifest_paths_are_contained(&manifest)
+        || !async_reoptimize_artifact_manifest_has_contract_shape(&manifest)
+    {
+        anyhow::bail!("async reoptimize artifact manifest failed contract validation");
+    }
+    write_bytes_atomic(
+        &artifact_root.join(format!("runs/{}/manifest.json", input.run_id)),
+        &json_artifact_bytes(&manifest)?,
+    )?;
+    Ok(manifest)
 }
 
 fn async_reoptimize_budget_exhausted(
@@ -9010,30 +9326,88 @@ async fn complete_async_reoptimize_run(
     terminal: &AsyncReoptimizeTerminalDecision,
 ) -> anyhow::Result<Option<AsyncReoptimizeRunState>> {
     let now = Utc::now();
-    let _artifact_phase = AsyncReoptimizePhase::ArtifactWrite;
     progress.phase = AsyncReoptimizePhase::Terminal;
     progress.active_timeframe = None;
     progress.last_heartbeat_at = Some(now);
-    let progress_json = progress.to_json();
-    let summary_json = async_reoptimize_summary_json(
+    let initial_progress_json = progress.to_json();
+    let initial_summary_json = async_reoptimize_summary_json(
         &lease.run_id,
         terminal.requested_status,
         AsyncReoptimizeTriggerSource::Scheduled,
         &state.settings,
-        &progress_json,
+        &initial_progress_json,
         errors,
         terminal.exhausted_budget,
     );
-    let artifact_manifest = serde_json::json!({});
+    let mut requested_status = terminal.requested_status;
+    let mut recommendation = terminal.recommendation;
+    let mut fail_closed_reasons = terminal.fail_closed_reasons.clone();
+    let mut progress_json = initial_progress_json.clone();
+    let mut summary_json = initial_summary_json.clone();
+    let artifact_manifest =
+        match write_async_reoptimize_artifacts(AsyncReoptimizeArtifactWriteInput {
+            settings: &state.settings,
+            run_id: &lease.run_id,
+            status: terminal.requested_status,
+            trigger_source: AsyncReoptimizeTriggerSource::Scheduled,
+            progress_json: &initial_progress_json,
+            summary_json: &initial_summary_json,
+            errors,
+            recommendation: terminal.recommendation,
+            fail_closed_reasons: &terminal.fail_closed_reasons,
+            generated_at: now,
+        }) {
+            Ok(manifest) => manifest,
+            Err(error) => {
+                tracing::warn!(
+                    event = "reoptimize_artifact_write_failed",
+                    run_id = %lease.run_id,
+                    error = %error,
+                    "async reoptimize artifact write failed; completing run fail-closed"
+                );
+                let mut completion_errors = errors.to_vec();
+                let mut artifact_error_counts = ReoptErrorCounts::default();
+                push_reopt_error(
+                    &mut completion_errors,
+                    "SYSTEM".to_string(),
+                    "SYSTEM".to_string(),
+                    "ASYNC_REOPTIMIZE_ARTIFACT_FAILED",
+                    format!("async reoptimize artifact write failed: {error}"),
+                    &mut artifact_error_counts,
+                );
+                progress.critical_error_count = progress
+                    .critical_error_count
+                    .saturating_add(artifact_error_counts.critical);
+                progress.non_critical_error_count = progress
+                    .non_critical_error_count
+                    .saturating_add(artifact_error_counts.non_critical);
+                progress_json = progress.to_json();
+                requested_status = AsyncReoptimizeRunStatus::Failed;
+                recommendation = AsyncReoptimizeRecommendation::Hold;
+                if !fail_closed_reasons.contains(&AsyncReoptimizeFailClosedReason::ArtifactFailed) {
+                    fail_closed_reasons.push(AsyncReoptimizeFailClosedReason::ArtifactFailed);
+                }
+                summary_json = async_reoptimize_summary_json(
+                    &lease.run_id,
+                    requested_status,
+                    AsyncReoptimizeTriggerSource::Scheduled,
+                    &state.settings,
+                    &progress_json,
+                    &completion_errors,
+                    terminal.exhausted_budget,
+                );
+                serde_json::json!({})
+            }
+        };
     state
         .repository
         .complete_reoptimize_run(AsyncReoptimizeCompletion {
             run_id: &lease.run_id,
             lease_owner: &lease.lease_owner,
             lease_generation: lease.lease_generation,
-            requested_status: terminal.requested_status,
-            recommendation: terminal.recommendation,
-            fail_closed_reasons: &terminal.fail_closed_reasons,
+            requested_status,
+            recommendation,
+            fail_closed_reasons: &fail_closed_reasons,
             artifact_manifest_json: &artifact_manifest,
             progress_json: &progress_json,
             summary_json: &summary_json,
@@ -14267,6 +14641,7 @@ fn classify_reopt_error_severity(code: &str) -> ReoptErrorSeverity {
         "CUE_EVAL_FAILED"
         | "RECORD_EVALUATION_FAILED"
         | "CANDIDATE_PROBATION_UPDATE_FAILED"
+        | "ASYNC_REOPTIMIZE_ARTIFACT_FAILED"
         | "TIMEFRAME_ABORTED_CRITICAL"
         | "ASYNC_REOPTIMIZE_BUDGET_EXHAUSTED"
         | "ASYNC_REOPTIMIZE_LEASE_LOST" => ReoptErrorSeverity::Critical,
@@ -15739,7 +16114,7 @@ mod tests {
             "service_version": null,
             "artifact_root": "artifacts/strategy_reoptimize",
             "run_artifact_dir": format!("runs/{run_id}"),
-            "artifact_download_route": "/v1/strategy/reoptimize/artifact?path=",
+            "artifact_download_route": "DEFERRED_NO_DOWNLOAD_ROUTE",
             "complete": true,
             "total_bytes": 512,
             "artifacts": [
@@ -16002,6 +16377,241 @@ mod tests {
         assert!(!async_reoptimize_manifest_paths_are_contained(
             &absolute_escape_manifest
         ));
+    }
+
+    fn async_reoptimize_artifact_test_settings(root: &std::path::Path) -> StrategySettings {
+        let mut settings = StrategySettings::from_env();
+        settings.reopt_artifacts_root = root.to_string_lossy().to_string();
+        settings.reopt_max_artifact_bytes = 1024 * 1024;
+        settings.timeframes = vec![Timeframe::OneMinute];
+        settings.pairs = vec![super::PairSpec {
+            left: "PF_XBTUSD".to_string(),
+            right: "PF_ETHUSD".to_string(),
+        }];
+        settings
+    }
+
+    #[test]
+    fn async_reoptimize_artifact_writer_persists_manifest_and_required_files() {
+        let root = temp_dir("async-reopt-artifacts-ok");
+        let settings = async_reoptimize_artifact_test_settings(&root);
+        let run_id = "reopt_test_artifacts_000001";
+        let generated_at = Utc::now();
+        let errors = Vec::<ReoptError>::new();
+        let mut progress =
+            AsyncReoptimizeRunnerProgress::new(settings.timeframes.clone(), settings.pairs.len());
+        progress.phase = super::AsyncReoptimizePhase::Terminal;
+        progress.completed_timeframe_count = 1;
+        progress.pairs_completed = 1;
+        progress.last_heartbeat_at = Some(generated_at);
+        let progress_json = progress.to_json();
+        let summary_json = super::async_reoptimize_summary_json(
+            run_id,
+            AsyncReoptimizeRunStatus::Succeeded,
+            AsyncReoptimizeTriggerSource::Scheduled,
+            &settings,
+            &progress_json,
+            &errors,
+            None,
+        );
+
+        let manifest =
+            super::write_async_reoptimize_artifacts(super::AsyncReoptimizeArtifactWriteInput {
+                settings: &settings,
+                run_id,
+                status: AsyncReoptimizeRunStatus::Succeeded,
+                trigger_source: AsyncReoptimizeTriggerSource::Scheduled,
+                progress_json: &progress_json,
+                summary_json: &summary_json,
+                errors: &errors,
+                recommendation: AsyncReoptimizeRecommendation::PromotionCandidateAvailable,
+                fail_closed_reasons: &[],
+                generated_at,
+            })
+            .expect("write async reoptimize artifacts");
+
+        assert!(async_reoptimize_artifact_manifest_has_contract_shape(
+            &manifest
+        ));
+        let schema_path = async_reoptimize_artifact_manifest_schema_path();
+        let schema_json: serde_json::Value =
+            serde_json::from_slice(&fs::read(&schema_path).expect("read artifact manifest schema"))
+                .expect("parse artifact manifest schema");
+        let compiled = JSONSchema::options()
+            .with_draft(Draft::Draft202012)
+            .compile(&schema_json)
+            .expect("compile artifact manifest schema");
+        let validation = compiled.validate(&manifest);
+        let errors = match validation {
+            Ok(()) => vec![],
+            Err(errors) => errors.map(|error| error.to_string()).collect::<Vec<_>>(),
+        };
+        assert!(
+            errors.is_empty(),
+            "artifact manifest must validate against schema at {}: {:?}",
+            schema_path.display(),
+            errors
+        );
+        assert!(async_reoptimize_manifest_paths_are_contained(&manifest));
+        assert_eq!(
+            manifest.get("status").and_then(serde_json::Value::as_str),
+            Some("SUCCEEDED")
+        );
+        let expected_run_artifact_dir = format!("runs/{run_id}");
+        assert_eq!(
+            manifest
+                .get("run_artifact_dir")
+                .and_then(serde_json::Value::as_str),
+            Some(expected_run_artifact_dir.as_str())
+        );
+        let artifacts = manifest
+            .get("artifacts")
+            .and_then(serde_json::Value::as_array)
+            .expect("artifact refs");
+        let mut kinds = artifacts
+            .iter()
+            .map(|artifact| {
+                artifact
+                    .get("kind")
+                    .and_then(serde_json::Value::as_str)
+                    .expect("artifact kind")
+                    .to_string()
+            })
+            .collect::<Vec<_>>();
+        kinds.sort();
+        assert_eq!(
+            kinds,
+            vec![
+                "ERRORS",
+                "OPERATOR_SUMMARY",
+                "PROGRESS",
+                "REQUEST",
+                "SUMMARY"
+            ]
+        );
+
+        let mut total_bytes = 0u64;
+        for artifact in artifacts {
+            let relative_path = artifact
+                .get("path")
+                .and_then(serde_json::Value::as_str)
+                .expect("artifact path");
+            let payload = fs::read(root.join(relative_path)).expect("read artifact");
+            let expected_bytes = artifact
+                .get("bytes")
+                .and_then(serde_json::Value::as_u64)
+                .expect("artifact bytes");
+            assert_eq!(payload.len() as u64, expected_bytes);
+            assert_eq!(
+                artifact.get("sha256").and_then(serde_json::Value::as_str),
+                Some(super::sha256_hex(&payload).as_str())
+            );
+            total_bytes = total_bytes.saturating_add(expected_bytes);
+        }
+        assert_eq!(
+            manifest
+                .get("total_bytes")
+                .and_then(serde_json::Value::as_u64),
+            Some(total_bytes)
+        );
+        assert!(root.join(format!("runs/{run_id}/manifest.json")).is_file());
+
+        fs::remove_dir_all(&root).expect("cleanup root");
+    }
+
+    #[test]
+    fn async_reoptimize_artifact_write_failure_keeps_status_response_fail_closed() {
+        let root = temp_dir("async-reopt-artifacts-root-file");
+        let root_file = root.join("not-a-directory");
+        fs::write(&root_file, b"not a directory").expect("write root file");
+        let settings = async_reoptimize_artifact_test_settings(&root_file);
+        let run_id = "reopt_test_artifacts_failed_000001";
+        let generated_at = Utc::now();
+        let errors = Vec::<ReoptError>::new();
+        let mut progress =
+            AsyncReoptimizeRunnerProgress::new(settings.timeframes.clone(), settings.pairs.len());
+        progress.phase = super::AsyncReoptimizePhase::Terminal;
+        progress.last_heartbeat_at = Some(generated_at);
+        let progress_json = progress.to_json();
+        let summary_json = super::async_reoptimize_summary_json(
+            run_id,
+            AsyncReoptimizeRunStatus::Succeeded,
+            AsyncReoptimizeTriggerSource::Scheduled,
+            &settings,
+            &progress_json,
+            &errors,
+            None,
+        );
+
+        let result =
+            super::write_async_reoptimize_artifacts(super::AsyncReoptimizeArtifactWriteInput {
+                settings: &settings,
+                run_id,
+                status: AsyncReoptimizeRunStatus::Succeeded,
+                trigger_source: AsyncReoptimizeTriggerSource::Scheduled,
+                progress_json: &progress_json,
+                summary_json: &summary_json,
+                errors: &errors,
+                recommendation: AsyncReoptimizeRecommendation::PromotionCandidateAvailable,
+                fail_closed_reasons: &[],
+                generated_at,
+            });
+        assert!(result.is_err());
+
+        let mut failed_errors = errors.clone();
+        let mut error_counts = super::ReoptErrorCounts::default();
+        super::push_reopt_error(
+            &mut failed_errors,
+            "SYSTEM".to_string(),
+            "SYSTEM".to_string(),
+            "ASYNC_REOPTIMIZE_ARTIFACT_FAILED",
+            format!(
+                "async reoptimize artifact write failed: {}",
+                result.unwrap_err()
+            ),
+            &mut error_counts,
+        );
+        progress.critical_error_count = progress
+            .critical_error_count
+            .saturating_add(error_counts.critical);
+        let failed_progress_json = progress.to_json();
+        let failed_summary_json = super::async_reoptimize_summary_json(
+            run_id,
+            AsyncReoptimizeRunStatus::Failed,
+            AsyncReoptimizeTriggerSource::Scheduled,
+            &settings,
+            &failed_progress_json,
+            &failed_errors,
+            None,
+        );
+        let mut state = async_reoptimize_test_state(
+            AsyncReoptimizeRunStatus::Failed,
+            AsyncReoptimizeRecommendation::Hold,
+            &[AsyncReoptimizeFailClosedReason::ArtifactFailed],
+        );
+        state.run_id = run_id.to_string();
+        state.trigger_source = AsyncReoptimizeTriggerSource::Scheduled.as_str().to_string();
+        state.requested_timeframes = "1m".to_string();
+        state.progress_json = failed_progress_json.to_string();
+        state.summary_json = failed_summary_json.to_string();
+
+        let response =
+            async_reoptimize_status_response_from_state(&state, &settings, generated_at, &[]);
+
+        assert_eq!(response.status, "FAILED");
+        assert_eq!(response.recommendation.decision, "HOLD");
+        assert!(response
+            .fail_closed_reasons
+            .iter()
+            .any(|reason| reason == "ARTIFACT_FAILED"));
+        assert!(response.operator_action_required);
+        assert!(response.artifact_manifest.is_none());
+        assert!(response.errors.iter().any(|error| {
+            error.get("code").and_then(serde_json::Value::as_str)
+                == Some("ASYNC_REOPTIMIZE_ARTIFACT_FAILED")
+        }));
+
+        fs::remove_dir_all(&root).expect("cleanup root");
     }
 
     #[test]
@@ -16363,6 +16973,11 @@ mod tests {
             .join("../../specs/contracts/strategy_pairs_trade_now_response.schema.json")
     }
 
+    fn async_reoptimize_artifact_manifest_schema_path() -> PathBuf {
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../specs/contracts/strategy_reoptimize_run_artifact_manifest.schema.json")
+    }
+
     #[test]
     fn champion_transition_initializes_when_no_previous_selection() {
         let evaluation = output("VOL_NORMALIZED", 2.0, 1.0, 2.0);
@@ -16662,7 +17277,7 @@ mod tests {
         assert!(body.contains("strategy_reoptimize_fail_closed_total{reason=\"UNKNOWN_STATUS\"} 0"));
         assert!(
             !body.contains("strategy_reoptimize_artifact_write_total"),
-            "artifact write metrics must wait until artifact writes are implemented"
+            "artifact write metrics must wait until the metric contract is approved"
         );
         assert!(
             !body.contains("strategy_reoptimize_artifact_read_total"),
