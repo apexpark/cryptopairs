@@ -5,6 +5,21 @@ This project follows SemVer as defined in `docs/02-versioning-and-releases.md`.
 
 ## Unreleased
 ### Operator Tooling
+- Clarified async reoptimization no-row status semantics: missing
+  `/v1/strategy/reoptimize/runs/latest` durable state now remains a
+  schema-valid non-success `FAILED` payload while recommending
+  `OPERATOR_REVIEW_REQUIRED` with bounded `MISSING_TELEMETRY` and
+  `UNKNOWN_STATUS` reasons, so disabled/no-run readiness evidence stays
+  fail-closed without looking like promotion evidence.
+- Hardened the Slice F evidence manifest to version `1.1.0`, requiring
+  machine-readable capture-root location, alert/threshold absence state,
+  disabled-state log source, and separately labeled `PROMOTE`/`REVERT`
+  confirmation probes so ambiguous readiness bundles fail closed.
+- Added a Slice F threshold approval artifact contract/example, made
+  `threshold_approval` required by the Slice F evidence checker, taught the raw
+  bundle generator to consume that artifact, and added a deployable but not
+  applied alert checklist. These changes keep missing or unapproved thresholds
+  fail-closed and do not configure host alerting.
 - Added repo-side Slice F evidence hardening tools: fail-closed raw bundle
   manifest generation, alert-rule templates plus template validation, a
   zero-row repair-provenance example, and stricter semantic checks for dirty

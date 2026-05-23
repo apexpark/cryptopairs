@@ -1,5 +1,5 @@
 {
-  "schema_version": "1.0.0",
+  "schema_version": "1.1.0",
   "generated_at": "2026-05-20T01:00:00Z",
   "bundle_id": "slice-f-readiness-2026-05-20T01-00-00Z",
   "canary_authorized": false,
@@ -19,7 +19,8 @@
     "branch": "main",
     "commit": "85240676e60818d08df86826e857d73b31f8c78e",
     "dirty_status": "CLEAN",
-    "captured_by": "operator"
+    "captured_by": "operator",
+    "evidence_root": "OUTSIDE_REPO"
   },
   "canary_scope": {
     "timeframes": [],
@@ -35,6 +36,8 @@
     "missing_data_blocks": true,
     "routing_destination": "operator-pager",
     "dashboard_or_query_path": "dashboards/reoptimization-readiness",
+    "evidence_state": "DEPLOYED",
+    "absence_reason": null,
     "rules": [
       {
         "id": "stuck_lease",
@@ -112,6 +115,8 @@
   },
   "thresholds": {
     "approved_before_canary": true,
+    "evidence_state": "APPROVED",
+    "absence_reason": null,
     "cpu": {
       "metric_source": "prometheus",
       "query": "process_cpu_seconds_total",
@@ -157,6 +162,7 @@
     "during_useful": false,
     "after_useful": false,
     "disabled_state_evidence": true,
+    "disabled_state_source": "LOG_EVENT",
     "events_seen": ["strategy reoptimize worker disabled"]
   },
   "status_payloads": [
@@ -195,7 +201,9 @@
     "automatic_promote_enabled": false,
     "automatic_revert_enabled": false,
     "promote_confirm_gated": true,
-    "revert_confirm_gated": true
+    "revert_confirm_gated": true,
+    "promote_probe_labeled": true,
+    "revert_probe_labeled": true
   },
   "repair_provenance": {
     "inventory_captured": true,
@@ -273,6 +281,14 @@
       "captured_at": "2026-05-20T00:59:30Z"
     },
     {
+      "id": "threshold_approval",
+      "path": "threshold_approval.json",
+      "kind": "THRESHOLD",
+      "required": true,
+      "sha256": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+      "captured_at": "2026-05-20T00:59:32Z"
+    },
+    {
       "id": "cpu_baseline",
       "path": "cpu_baseline.json",
       "kind": "THRESHOLD",
@@ -337,7 +353,7 @@
     {
       "id": "thresholds_approved",
       "status": "PASS",
-      "evidence_artifact_ids": ["cpu_baseline", "hot_endpoint_latency_baseline"],
+      "evidence_artifact_ids": ["threshold_approval", "cpu_baseline", "hot_endpoint_latency_baseline"],
       "failure_reason": null
     },
     {

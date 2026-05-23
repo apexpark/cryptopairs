@@ -37,6 +37,17 @@ def test_slice_f_checker_rejects_dirty_host_identity() -> None:
     assert "host/repo dirty status must be CLEAN" in errors
 
 
+def test_slice_f_checker_rejects_evidence_root_inside_host_repo() -> None:
+    manifest = copy.deepcopy(load_example("slice_f_reoptimize_canary_evidence_manifest.pass.example.json"))
+    manifest["repo_identity"]["evidence_root"] = "INSIDE_REPO"  # type: ignore[index]
+    manifest["overall_pass"] = False
+    manifest["recommended_action"] = "KEEP_DISABLED_KEEP_HOLD"
+
+    errors = evidence_check.validate_manifest(manifest)
+
+    assert "host evidence bundle must be captured outside /opt/cryptopairs" in errors
+
+
 def test_slice_f_checker_rejects_failed_unknown_status() -> None:
     manifest = copy.deepcopy(load_example("slice_f_reoptimize_canary_evidence_manifest.pass.example.json"))
     status_payload = manifest["status_payloads"][0]  # type: ignore[index]
@@ -62,12 +73,58 @@ def test_slice_f_checker_rejects_runner_enabled_without_operator_canary() -> Non
     assert "runner must be disabled before Slice F evidence window" in errors
 
 
+def test_slice_f_checker_requires_threshold_approval_artifact() -> None:
+    manifest = copy.deepcopy(load_example("slice_f_reoptimize_canary_evidence_manifest.pass.example.json"))
+    manifest["artifacts"] = [  # type: ignore[index]
+        artifact
+        for artifact in manifest["artifacts"]  # type: ignore[index]
+        if artifact["id"] != "threshold_approval"
+    ]
+    manifest["overall_pass"] = False
+    manifest["recommended_action"] = "KEEP_DISABLED_KEEP_HOLD"
+
+    errors = evidence_check.validate_manifest(manifest)
+
+    assert "required artifact missing: threshold_approval" in errors
+
+
 def test_slice_f_alert_template_covers_required_rules() -> None:
     template = alert_rules.load_json(
         REPO_ROOT / "infra" / "alerts" / "slice_f_reoptimization_alert_rules.example.json"
     )
 
     assert alert_rules.validate_template(template) == []
+
+
+def test_slice_f_threshold_approval_populates_manifest_thresholds() -> None:
+    approval = load_example("slice_f_threshold_approval.example.json")
+
+    thresholds = manifest_from_bundle.parse_threshold_approval(
+        json.dumps(approval),
+        "CPU baseline captured\n",
+        "GET /v1/strategy/pairs/cues p95=0.012\n",
+    )
+
+    assert thresholds["approved_before_canary"] is True
+    assert thresholds["evidence_state"] == "APPROVED"
+    assert thresholds["absence_reason"] is None
+    assert thresholds["cpu"]["metric_source"] == "prometheus"  # type: ignore[index]
+    assert thresholds["cpu"]["baseline_captured"] is True  # type: ignore[index]
+    assert [endpoint["path"] for endpoint in thresholds["hot_endpoints"]] == [  # type: ignore[index]
+        "/v1/strategy/pairs/cues",
+        "/v1/strategy/pairs/trade-now",
+    ]
+    assert all(endpoint["baseline_captured"] is True for endpoint in thresholds["hot_endpoints"])  # type: ignore[index]
+
+
+def test_slice_f_manifest_generator_collects_threshold_approval_artifact(tmp_path: pathlib.Path) -> None:
+    approval = load_example("slice_f_threshold_approval.example.json")
+    (tmp_path / "threshold_approval.json").write_text(json.dumps(approval), encoding="utf-8")
+
+    artifacts, paths = manifest_from_bundle.collect_artifacts(tmp_path, "2026-05-22T00:00:00Z")
+
+    assert "threshold_approval" in paths
+    assert any(artifact["id"] == "threshold_approval" for artifact in artifacts)
 
 
 def test_slice_f_manifest_generator_treats_repo_alert_template_as_not_deployed() -> None:
@@ -80,8 +137,62 @@ def test_slice_f_manifest_generator_treats_repo_alert_template_as_not_deployed()
     assert alerting["configured"] is False
     assert alerting["routed"] is False
     assert alerting["missing_data_blocks"] is False
+    assert alerting["evidence_state"] == "TEMPLATE_ONLY"
+    assert alerting["absence_reason"]
     assert {rule["id"] for rule in alerting["rules"]} == evidence_check.REQUIRED_ALERT_RULES
     assert all(rule["configured"] is False for rule in alerting["rules"])
+
+
+def test_slice_f_manifest_generator_requires_labeled_promotion_and_revert_probes() -> None:
+    unlabeled = (
+        'HTTP/1.1 400 Bad Request\n\n{"error":"confirm=true is required to run maintenance actions"}'
+        'HTTP/1.1 400 Bad Request\n\n{"error":"confirm=true is required to run maintenance actions"}'
+    )
+    labeled = (
+        '=== PROMOTE without confirm ===\n'
+        'HTTP/1.1 400 Bad Request\n\n{"error":"confirm=true is required to run maintenance actions"}\n'
+        '=== REVERT without confirm ===\n'
+        'HTTP/1.1 400 Bad Request\n\n{"error":"confirm=true is required to run maintenance actions"}\n'
+    )
+
+    assert manifest_from_bundle.parse_promotion_revert_gating(unlabeled) == {
+        "promote_probe_labeled": False,
+        "revert_probe_labeled": False,
+        "promote_confirm_gated": False,
+        "revert_confirm_gated": False,
+    }
+    assert manifest_from_bundle.parse_promotion_revert_gating(labeled) == {
+        "promote_probe_labeled": True,
+        "revert_probe_labeled": True,
+        "promote_confirm_gated": True,
+        "revert_confirm_gated": True,
+    }
+
+
+def test_slice_f_manifest_generator_marks_empty_strategy_logs_as_no_disabled_state() -> None:
+    logs = manifest_from_bundle.parse_logs("")
+
+    assert logs["before_useful"] is False
+    assert logs["disabled_state_evidence"] is False
+    assert logs["disabled_state_source"] == "NONE"
+
+
+def test_slice_f_manifest_generator_accepts_explicit_disabled_state_capture_statement() -> None:
+    logs = manifest_from_bundle.parse_logs(
+        "SLICE_F_DISABLED_STATE_EVIDENCE\n"
+        "STRATEGY_REOPT_WORKER_ENABLED=false\n"
+        "ACTIVE_ASYNC_GAUGES_ZERO=true\n"
+        "NO_SERVICE_RESTART_DURING_CAPTURE_WINDOW=true\n"
+    )
+
+    assert logs["before_useful"] is True
+    assert logs["disabled_state_evidence"] is True
+    assert logs["disabled_state_source"] == "CAPTURE_STATEMENT"
+
+
+def test_slice_f_manifest_generator_marks_opt_cryptopairs_bundle_root_inside_repo() -> None:
+    assert manifest_from_bundle.evidence_root_location(pathlib.Path("/opt/cryptopairs/slice-f")) == "INSIDE_REPO"
+    assert manifest_from_bundle.evidence_root_location(pathlib.Path("/tmp/slice-f")) == "OUTSIDE_REPO"
 
 
 def test_slice_f_raw_bundle_manifest_fails_closed_for_missing_alerting_thresholds_and_unknown_status(
@@ -164,7 +275,15 @@ def test_slice_f_raw_bundle_manifest_fails_closed_for_missing_alerting_threshold
         "slice-f-test-bundle",
     )
 
+    assert manifest["schema_version"] == "1.1.0"
     assert manifest["overall_pass"] is False
+    assert manifest["repo_identity"]["evidence_root"] == "OUTSIDE_REPO"
+    assert manifest["alerting"]["evidence_state"] == "ABSENT"
+    assert manifest["alerting"]["absence_reason"]
+    assert manifest["thresholds"]["evidence_state"] == "BASELINE_ONLY"
+    assert manifest["thresholds"]["absence_reason"]
+    assert manifest["safety"]["promote_probe_labeled"] is True
+    assert manifest["safety"]["revert_probe_labeled"] is True
     assert "ALERTING_NOT_READY" in manifest["stop_conditions"]
     assert "THRESHOLDS_NOT_APPROVED" in manifest["stop_conditions"]
     assert "STATUS_INVALID_OR_UNKNOWN" in manifest["stop_conditions"]

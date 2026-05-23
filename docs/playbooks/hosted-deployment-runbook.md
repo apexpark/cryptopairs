@@ -190,6 +190,8 @@ Before any Slice F canary is reviewed, the operator captures an evidence
 bundle with a root `slice_f_manifest.json` matching:
 
 - `specs/contracts/slice_f_reoptimize_canary_evidence_manifest.schema.json`
+- `specs/contracts/slice_f_threshold_approval.schema.json` for the
+  `threshold_approval` artifact
 
 Required capture categories:
 
@@ -200,8 +202,9 @@ Required capture categories:
 5. `/metrics` output for implemented async reoptimization metrics;
 6. alert rule definitions, routing, dashboard/query path, and active alerts
    before and after the window;
-7. operator-approved CPU threshold and baseline;
-8. operator-approved hot endpoint latency thresholds and baselines;
+7. operator-approved `threshold_approval` artifact for CPU and hot endpoint
+   latency thresholds;
+8. CPU and hot endpoint latency baselines;
 9. strategy logs before, during, and after the window, with useful async
    reoptimization events or explicit disabled-state evidence;
 10. status endpoint payloads and status progression when a canary is
@@ -213,23 +216,74 @@ Required capture categories:
     `RECANONICALIZED_LEGACY_ROW` rows stay blocked with
     `RECANONICALIZED_LEGACY_ROW_ACTIVE`.
 
-Capture the evidence bundle outside `/opt/cryptopairs` when possible. If the
-evidence directory itself appears as an untracked or modified path in
-`git status --short --branch`, the host identity evidence is dirty and the
-manifest remains fail-closed until recaptured or separately approved by the
-operator.
+Capture the evidence bundle outside `/opt/cryptopairs`. A hosted capture under
+the checkout is ambiguous because the evidence directory can make the repo
+identity dirty. Use a path such as `/tmp/slice_f_<timestamp>` and refuse any
+capture path under `/opt/cryptopairs`:
+
+```bash
+EVIDENCE_ROOT="/tmp/slice_f_$(date -u +%Y%m%dT%H%M%SZ)"
+case "$EVIDENCE_ROOT" in
+  /opt/cryptopairs|/opt/cryptopairs/*)
+    echo "refusing to capture Slice F evidence inside /opt/cryptopairs" >&2
+    exit 1
+    ;;
+esac
+mkdir -p "$EVIDENCE_ROOT"
+```
+
+If the evidence directory itself appears as an untracked or modified path in
+`git status --short --branch`, or the generated manifest records
+`repo_identity.evidence_root` as `INSIDE_REPO` or `UNKNOWN`, the host identity
+evidence is dirty and the manifest remains fail-closed until recaptured or
+separately approved by the operator.
 
 Repo alert templates can help operators configure coverage, but they are not
 host evidence:
 
 - `infra/alerts/slice_f_reoptimization_alert_rules.example.json`
 - `infra/alerts/slice_f_reoptimization_prometheus_rules.example.yml`
+- `infra/alerts/slice_f_alert_deployment_checklist.md`
 
 Do not set `alerting.configured=true`, `alerting.routed=true`, or any alert
 rule `configured=true` from these repo templates alone. The bundle must include
 deployed alert rules or equivalent queries, routing destination, dashboard or
 query path, missing-data behavior, and active alert state before/after the
-window.
+window. If alerting is absent, record that absence explicitly in the raw alert
+artifact so the generated manifest can set `alerting.evidence_state=ABSENT`
+and `alerting.absence_reason`; absent alerting is still a fail-closed stop
+condition.
+
+Likewise, CPU and hot endpoint threshold baselines without operator-approved
+thresholds must be recorded as baseline-only evidence, not success. The
+generated manifest records this as `thresholds.evidence_state=BASELINE_ONLY`
+with `thresholds.absence_reason`, and the checker keeps
+`thresholds_approved=FAIL`.
+
+`strategy_logs_before` must contain either an implemented async reoptimization
+log event or an explicit disabled-state statement:
+
+```text
+SLICE_F_DISABLED_STATE_EVIDENCE
+capture_window_utc=<start>/<end>
+NO_SERVICE_RESTART_DURING_CAPTURE_WINDOW=true
+STRATEGY_REOPT_WORKER_ENABLED=false
+ACTIVE_ASYNC_GAUGES_ZERO=true
+status_recommendation=HOLD
+```
+
+An empty log tail is not disabled-state evidence; the manifest must keep
+`strategy_logs_useful=FAIL`.
+
+`promotion_revert_gating` must label the two read-only confirmation probes
+separately. Two unlabeled `400 confirm=true` responses are ambiguous and fail
+the checker. Use `PROMOTE` and `REVERT` text section labels, or a JSON object
+with separate `promote` and `revert` entries, each containing the `400` response
+body that says `confirm=true is required`.
+
+Do not set `thresholds.approved_before_canary=true` from CPU or latency
+baseline samples alone. The bundle must include a `threshold_approval` artifact
+captured before the canary window.
 
 If raw capture files are available but `slice_f_manifest.json` is missing,
 generate a fail-closed manifest locally:

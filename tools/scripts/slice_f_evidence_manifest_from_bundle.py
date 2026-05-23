@@ -20,6 +20,8 @@ from typing import Any
 from slice_f_evidence_check import REQUIRED_ALERT_RULES
 
 
+SCHEMA_VERSION = "1.1.0"
+HOST_REPO_ROOT = Path("/opt/cryptopairs")
 RUN_STATUSES = {
     "QUEUED",
     "LEASED",
@@ -100,6 +102,11 @@ ARTIFACT_CANDIDATES: dict[str, tuple[str, str, tuple[str, ...]]] = {
         "LOG",
         "logs",
         ("strategy_logs_before.log", "strategy_logs_before.txt", "strategy_startup_logs.txt"),
+    ),
+    "threshold_approval": (
+        "THRESHOLD",
+        "thresholds",
+        ("threshold_approval.json", "threshold_approval.txt"),
     ),
     "cpu_baseline": ("THRESHOLD", "thresholds", ("cpu_baseline.json", "cpu_baseline.txt", "docker_stats_3x_before.txt")),
     "hot_endpoint_latency_baseline": (
@@ -191,7 +198,18 @@ def parse_env(text: str) -> dict[str, str]:
     return env
 
 
-def parse_repo_identity(text: str) -> dict[str, Any]:
+def evidence_root_location(bundle_root: Path) -> str:
+    try:
+        resolved = bundle_root.resolve()
+        host_root = HOST_REPO_ROOT.resolve(strict=False)
+    except OSError:
+        return "UNKNOWN"
+    if resolved == host_root or host_root in resolved.parents:
+        return "INSIDE_REPO"
+    return "OUTSIDE_REPO"
+
+
+def parse_repo_identity(text: str, bundle_root: Path) -> dict[str, Any]:
     branch = "unknown"
     dirty = "UNKNOWN"
     commit = "0000000"
@@ -217,6 +235,7 @@ def parse_repo_identity(text: str) -> dict[str, Any]:
         "commit": commit,
         "dirty_status": dirty,
         "captured_by": "operator" if text.strip() else "unknown",
+        "evidence_root": evidence_root_location(bundle_root),
     }
 
 
@@ -321,6 +340,9 @@ def parse_alerting(text: str) -> dict[str, Any]:
         and {"configured", "routed", "missing_data_blocks", "routing_destination", "dashboard_or_query_path"}
         <= set(payload)
     ):
+        payload = dict(payload)
+        payload.setdefault("evidence_state", "DEPLOYED" if payload.get("configured") is True else "UNKNOWN")
+        payload.setdefault("absence_reason", None if payload.get("configured") is True else "alerting absence reason not captured")
         return payload
     if isinstance(payload, dict) and payload.get("template_only") is True:
         template_rules = payload.get("rules") if isinstance(payload.get("rules"), list) else []
@@ -335,6 +357,8 @@ def parse_alerting(text: str) -> dict[str, Any]:
             "missing_data_blocks": False,
             "routing_destination": None,
             "dashboard_or_query_path": None,
+            "evidence_state": "TEMPLATE_ONLY",
+            "absence_reason": "repo alert template captured, but deployed/routed host alerting was not captured",
             "rules": [
                 {
                     "id": rule_id,
@@ -347,13 +371,26 @@ def parse_alerting(text: str) -> dict[str, Any]:
                 for rule_id in sorted(REQUIRED_ALERT_RULES)
             ],
         }
-    unavailable = "no alert" in text.lower() or "not configured" in text.lower() or not text.strip()
+    lower_text = text.lower()
+    unavailable = (
+        "no alert" in lower_text
+        or "no active alert" in lower_text
+        or "no deployed" in lower_text
+        or "not configured" in lower_text
+        or "not provided" in lower_text
+        or "missing alert" in lower_text
+        or "absent" in lower_text
+        or not text.strip()
+    )
+    absence_reason = "alerting evidence absent" if not text.strip() else text.strip().splitlines()[0][:240]
     return {
         "configured": False,
         "routed": False,
         "missing_data_blocks": False,
         "routing_destination": None,
         "dashboard_or_query_path": None,
+        "evidence_state": "ABSENT" if unavailable else "UNKNOWN",
+        "absence_reason": absence_reason,
         "rules": [
             {
                 "id": rule_id,
@@ -369,8 +406,11 @@ def parse_alerting(text: str) -> dict[str, Any]:
 
 
 def threshold_placeholder(cpu_text: str, latency_text: str) -> dict[str, Any]:
+    has_baseline = bool(cpu_text.strip() or latency_text.strip())
     return {
         "approved_before_canary": False,
+        "evidence_state": "BASELINE_ONLY" if has_baseline else "ABSENT",
+        "absence_reason": "operator-approved CPU/hot endpoint thresholds were not captured",
         "cpu": {
             "metric_source": "operator evidence missing",
             "query": "operator evidence missing",
@@ -400,15 +440,180 @@ def threshold_placeholder(cpu_text: str, latency_text: str) -> dict[str, Any]:
     }
 
 
+def valid_positive_int(value: Any) -> bool:
+    return isinstance(value, int) and not isinstance(value, bool) and value >= 1
+
+
+def valid_number(value: Any) -> bool:
+    return isinstance(value, (int, float)) and not isinstance(value, bool) and value >= 0
+
+
+def missing_required_value(value: Any) -> bool:
+    return value is None or value == ""
+
+
+def parse_threshold_approval(approval_text: str, cpu_text: str, latency_text: str) -> dict[str, Any]:
+    thresholds = threshold_placeholder(cpu_text, latency_text)
+    payload = extract_json_object(approval_text)
+    if not isinstance(payload, dict) or payload.get("approved_before_canary") is not True:
+        return thresholds
+    approval = payload.get("approval")
+    if not isinstance(approval, dict):
+        return thresholds
+    required_approval = ("reference", "approved_at", "approved_by", "scope", "abort_rule")
+    if any(missing_required_value(approval.get(field)) for field in required_approval):
+        return thresholds
+    if approval.get("host_evidence_owner") != "operator":
+        return thresholds
+
+    cpu = payload.get("cpu")
+    hot_endpoints = payload.get("hot_endpoints")
+    if not isinstance(cpu, dict) or not isinstance(hot_endpoints, list) or not hot_endpoints:
+        return thresholds
+    cpu_required = (
+        "metric_source",
+        "query",
+        "aggregation_window_seconds",
+        "baseline_window_seconds",
+        "threshold_type",
+        "threshold_value",
+    )
+    if any(missing_required_value(cpu.get(field)) for field in cpu_required):
+        return thresholds
+    if cpu.get("threshold_type") not in {"ABSOLUTE", "RELATIVE_INCREASE"}:
+        return thresholds
+    if not valid_positive_int(cpu.get("aggregation_window_seconds")):
+        return thresholds
+    if not valid_positive_int(cpu.get("baseline_window_seconds")):
+        return thresholds
+    if not valid_number(cpu.get("threshold_value")):
+        return thresholds
+
+    parsed_hot_endpoints: list[dict[str, Any]] = []
+    endpoint_required = (
+        "method",
+        "path",
+        "metric_source",
+        "query",
+        "statistic",
+        "baseline_window_seconds",
+        "threshold_type",
+        "threshold_value",
+    )
+    for endpoint in hot_endpoints:
+        if not isinstance(endpoint, dict):
+            return thresholds
+        if any(missing_required_value(endpoint.get(field)) for field in endpoint_required):
+            return thresholds
+        if endpoint.get("method") not in {"GET", "POST"}:
+            return thresholds
+        if endpoint.get("statistic") not in {"p95", "p99", "max"}:
+            return thresholds
+        if endpoint.get("threshold_type") not in {"ABSOLUTE", "RELATIVE_INCREASE"}:
+            return thresholds
+        if not valid_positive_int(endpoint.get("baseline_window_seconds")):
+            return thresholds
+        if not valid_number(endpoint.get("threshold_value")):
+            return thresholds
+        parsed_hot_endpoints.append(
+            {
+                "method": endpoint["method"],
+                "path": endpoint["path"],
+                "metric_source": endpoint["metric_source"],
+                "query": endpoint["query"],
+                "statistic": endpoint["statistic"],
+                "baseline_window_seconds": endpoint["baseline_window_seconds"],
+                "threshold_type": endpoint["threshold_type"],
+                "threshold_value": endpoint["threshold_value"],
+                "baseline_captured": bool(latency_text.strip()),
+                "post_run_captured": False,
+                "within_threshold": bool(latency_text.strip()),
+            }
+        )
+
+    thresholds["approved_before_canary"] = True
+    thresholds["evidence_state"] = "APPROVED"
+    thresholds["absence_reason"] = None
+    thresholds["cpu"] = {
+        "metric_source": cpu["metric_source"],
+        "query": cpu["query"],
+        "aggregation_window_seconds": cpu["aggregation_window_seconds"],
+        "baseline_window_seconds": cpu["baseline_window_seconds"],
+        "threshold_type": cpu["threshold_type"],
+        "threshold_value": cpu["threshold_value"],
+        "baseline_captured": bool(cpu_text.strip()),
+        "post_run_captured": False,
+        "within_threshold": bool(cpu_text.strip()),
+    }
+    thresholds["hot_endpoints"] = parsed_hot_endpoints
+    return thresholds
+
+
 def parse_logs(text: str) -> dict[str, Any]:
     events_seen = sorted(event for event in LOG_EVENTS if event in text)
-    disabled = "strategy reoptimize worker disabled" in events_seen
+    capture_statement = (
+        "SLICE_F_DISABLED_STATE_EVIDENCE" in text
+        and "STRATEGY_REOPT_WORKER_ENABLED=false" in text
+        and (
+            "ACTIVE_ASYNC_GAUGES_ZERO=true" in text
+            or "active_async_gauges_zero=true" in text
+        )
+    )
+    disabled = "strategy reoptimize worker disabled" in events_seen or capture_statement
+    disabled_source = "NONE"
+    if "strategy reoptimize worker disabled" in events_seen:
+        disabled_source = "LOG_EVENT"
+    elif capture_statement:
+        disabled_source = "CAPTURE_STATEMENT"
     return {
-        "before_useful": bool(events_seen),
+        "before_useful": bool(events_seen) or capture_statement,
         "during_useful": False,
         "after_useful": False,
         "disabled_state_evidence": disabled,
+        "disabled_state_source": disabled_source,
         "events_seen": events_seen,
+    }
+
+
+def section_contains_confirm_required(section: str) -> bool:
+    lower = section.lower()
+    return "confirm=true is required" in lower and (
+        "400" in lower
+        or "bad request" in lower
+        or "required to run maintenance actions" in lower
+    )
+
+
+def labeled_text_sections(text: str) -> dict[str, str]:
+    sections: dict[str, str] = {}
+    matches = list(re.finditer(r"(?im)^\s*(?:=+\s*)?(PROMOTE|REVERT)\b[^\n]*", text))
+    for index, match in enumerate(matches):
+        label = match.group(1).upper()
+        end = matches[index + 1].start() if index + 1 < len(matches) else len(text)
+        sections[label] = text[match.start():end]
+    return sections
+
+
+def parse_promotion_revert_gating(text: str) -> dict[str, bool]:
+    payload = extract_json_object(text)
+    sections: dict[str, str] = {}
+    if isinstance(payload, dict):
+        for label in ("PROMOTE", "REVERT"):
+            value = payload.get(label.lower())
+            if value is None:
+                value = payload.get(label)
+            if value is not None:
+                sections[label] = value if isinstance(value, str) else json.dumps(value, sort_keys=True)
+    if not sections:
+        sections = labeled_text_sections(text)
+
+    promote_text = sections.get("PROMOTE", "")
+    revert_text = sections.get("REVERT", "")
+    return {
+        "promote_probe_labeled": bool(promote_text),
+        "revert_probe_labeled": bool(revert_text),
+        "promote_confirm_gated": section_contains_confirm_required(promote_text),
+        "revert_confirm_gated": section_contains_confirm_required(revert_text),
     }
 
 
@@ -495,12 +700,16 @@ def build_manifest(bundle_root: Path, generated_at: str, bundle_id: str) -> dict
     artifact_set = {artifact["id"] for artifact in artifacts}
     text = {artifact_id: read_text(path) for artifact_id, path in paths.items()}
 
-    repo = parse_repo_identity(text.get("repo_identity", ""))
+    repo = parse_repo_identity(text.get("repo_identity", ""), bundle_root)
     runner_env = parse_env(text.get("runner_flags_before", ""))
     status_payload = parse_status_payload(text.get("status_before", ""))
     metrics = parse_metrics(text.get("metrics_before", ""))
     alerting = parse_alerting(text.get("alerts_config", "") + "\n" + text.get("alerts_before", ""))
-    thresholds = threshold_placeholder(text.get("cpu_baseline", ""), text.get("hot_endpoint_latency_baseline", ""))
+    thresholds = parse_threshold_approval(
+        text.get("threshold_approval", ""),
+        text.get("cpu_baseline", ""),
+        text.get("hot_endpoint_latency_baseline", ""),
+    )
     logs = parse_logs(text.get("strategy_logs_before", ""))
     execution_env = parse_env(text.get("entry_exit_disabled", ""))
     gating_text = text.get("promotion_revert_gating", "")
@@ -516,8 +725,9 @@ def build_manifest(bundle_root: Path, generated_at: str, bundle_id: str) -> dict
     scheduler_missing = scheduler_value is None
 
     live_disabled = execution_env.get("EXECUTION_DISPATCH_MODE") == "fail_closed"
-    promote_confirm = "confirm=true is required" in gating_text and "PROMOTE" in gating_text.upper()
-    revert_confirm = "confirm=true is required" in gating_text and "REVERT" in gating_text.upper()
+    gating = parse_promotion_revert_gating(gating_text)
+    promote_confirm = gating["promote_confirm_gated"]
+    revert_confirm = gating["revert_confirm_gated"]
 
     alert_ready = (
         alerting.get("configured") is True
@@ -556,6 +766,7 @@ def build_manifest(bundle_root: Path, generated_at: str, bundle_id: str) -> dict
         "alerts_config",
         "alerts_before",
         "strategy_logs_before",
+        "threshold_approval",
         "cpu_baseline",
         "hot_endpoint_latency_baseline",
         "repair_provenance_inventory",
@@ -565,7 +776,11 @@ def build_manifest(bundle_root: Path, generated_at: str, bundle_id: str) -> dict
     }
     if required_artifacts - artifact_set or budget_missing or scheduler_missing:
         add_stop(stops, "MANIFEST_INVALID")
-    if repo.get("captured_by") != "operator" or repo.get("dirty_status") != "CLEAN":
+    if (
+        repo.get("captured_by") != "operator"
+        or repo.get("dirty_status") != "CLEAN"
+        or repo.get("evidence_root") != "OUTSIDE_REPO"
+    ):
         add_stop(stops, "HOST_IDENTITY_UNKNOWN")
     if not alert_ready:
         add_stop(stops, "ALERTING_NOT_READY")
@@ -605,14 +820,18 @@ def build_manifest(bundle_root: Path, generated_at: str, bundle_id: str) -> dict
         named_check(
             "thresholds_approved",
             "PASS" if thresholds_ready else "FAIL",
-            [artifact_id for artifact_id in ("cpu_baseline", "hot_endpoint_latency_baseline") if artifact_id in artifact_set],
+            [
+                artifact_id
+                for artifact_id in ("threshold_approval", "cpu_baseline", "hot_endpoint_latency_baseline")
+                if artifact_id in artifact_set
+            ],
             None if thresholds_ready else "operator-approved CPU/hot endpoint thresholds are missing",
         ),
         named_check(
             "strategy_logs_useful",
             "PASS" if logs.get("before_useful") and logs.get("disabled_state_evidence") else "FAIL",
             ["strategy_logs_before"] if "strategy_logs_before" in artifact_set else [],
-            None if logs.get("before_useful") and logs.get("disabled_state_evidence") else "logs do not show disabled-state or async lifecycle evidence",
+            None if logs.get("before_useful") and logs.get("disabled_state_evidence") else "strategy_logs_before is empty or lacks disabled-state evidence",
         ),
         named_check(
             "status_contract_valid",
@@ -654,7 +873,7 @@ def build_manifest(bundle_root: Path, generated_at: str, bundle_id: str) -> dict
             "promotion_revert_confirm_gated",
             "PASS" if promote_confirm and revert_confirm else "FAIL",
             ["promotion_revert_gating"] if "promotion_revert_gating" in artifact_set else [],
-            None if promote_confirm and revert_confirm else "PROMOTE/REVERT confirmation gates not both proven",
+            None if promote_confirm and revert_confirm else "PROMOTE and REVERT probes must be labeled separately and each show confirm=true rejection",
         ),
         named_check(
             "repair_provenance_blocked",
@@ -689,7 +908,7 @@ def build_manifest(bundle_root: Path, generated_at: str, bundle_id: str) -> dict
 
     overall_pass = not stops and all(item["status"] in {"PASS", "NOT_APPLICABLE"} for item in checks)
     return {
-        "schema_version": "1.0.0",
+        "schema_version": SCHEMA_VERSION,
         "generated_at": generated_at,
         "bundle_id": bundle_id,
         "canary_authorized": False,
@@ -726,6 +945,8 @@ def build_manifest(bundle_root: Path, generated_at: str, bundle_id: str) -> dict
             "automatic_revert_enabled": False,
             "promote_confirm_gated": promote_confirm,
             "revert_confirm_gated": revert_confirm,
+            "promote_probe_labeled": gating["promote_probe_labeled"],
+            "revert_probe_labeled": gating["revert_probe_labeled"],
         },
         "repair_provenance": repair,
         "artifacts": artifacts,
