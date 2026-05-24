@@ -4,6 +4,7 @@
   "run_id": "reopt_2026-05-17T02-15-00Z_000001",
   "status": "DEGRADED",
   "trigger_source": "SCHEDULED",
+  "requested_timeframes": ["1m", "15m", "1h"],
   "request_fingerprint": null,
   "service_version": null,
   "artifact_root": "artifacts/strategy_reoptimize",

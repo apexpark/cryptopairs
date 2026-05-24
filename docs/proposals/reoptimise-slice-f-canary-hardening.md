@@ -18,7 +18,8 @@ production canary of the bounded async reoptimization runner.
 It does not:
 
 1. enable `STRATEGY_REOPT_WORKER_ENABLED`;
-2. enable any production scheduler;
+2. enable `STRATEGY_REOPT_SCHEDULER_ENQUEUE_ENABLED` or any production
+   scheduler;
 3. enable live `ENTRY` or `EXIT`;
 4. create automatic `PROMOTE`;
 5. create automatic `REVERT`;
@@ -511,7 +512,8 @@ below is true:
 Stop-condition handling:
 
 1. keep `STRATEGY_REOPT_WORKER_ENABLED=false`;
-2. keep scheduler enablement disabled;
+2. keep `STRATEGY_REOPT_SCHEDULER_ENQUEUE_ENABLED=false` and any production
+   scheduler disabled;
 3. keep live `ENTRY` and `EXIT` disabled;
 4. preserve existing run rows, metrics, logs, and artifacts;
 5. mark maintenance/report output as `HOLD` or

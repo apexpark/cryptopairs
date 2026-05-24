@@ -164,6 +164,7 @@ struct StrategySettings {
     min_samples_target: usize,
     reopt_interval_secs: u64,
     reopt_worker_enabled: bool,
+    reopt_scheduler_enqueue_enabled: bool,
     reopt_max_run_seconds: u64,
     reopt_max_timeframe_seconds: u64,
     reopt_max_pairs_per_run: usize,
@@ -237,6 +238,7 @@ struct StrategySettings {
 }
 
 const DEFAULT_REOPT_WORKER_ENABLED: bool = false;
+const DEFAULT_REOPT_SCHEDULER_ENQUEUE_ENABLED: bool = false;
 const DEFAULT_SAMPLED_SLIPPAGE_WORKER_ENABLED: bool = false;
 const DEFAULT_HISTORY_RETENTION_WORKER_ENABLED: bool = false;
 const ASYNC_REOPTIMIZE_ARTIFACT_DOWNLOAD_ROUTE: &str = "DEFERRED_NO_DOWNLOAD_ROUTE";
@@ -313,6 +315,10 @@ impl StrategySettings {
         let reopt_worker_enabled = parse_env_bool(
             "STRATEGY_REOPT_WORKER_ENABLED",
             DEFAULT_REOPT_WORKER_ENABLED,
+        );
+        let reopt_scheduler_enqueue_enabled = parse_env_bool(
+            "STRATEGY_REOPT_SCHEDULER_ENQUEUE_ENABLED",
+            DEFAULT_REOPT_SCHEDULER_ENQUEUE_ENABLED,
         );
         let reopt_max_run_seconds = effective_async_reopt_max_run_seconds(parse_env_u64(
             "STRATEGY_REOPT_MAX_RUN_SECONDS",
@@ -507,6 +513,7 @@ impl StrategySettings {
             min_samples_target,
             reopt_interval_secs,
             reopt_worker_enabled,
+            reopt_scheduler_enqueue_enabled,
             reopt_max_run_seconds,
             reopt_max_timeframe_seconds,
             reopt_max_pairs_per_run,
@@ -7078,6 +7085,26 @@ struct AsyncReoptimizeTerminalDecision {
     exhausted_budget: Option<AsyncReoptimizeBudgetName>,
 }
 
+#[derive(Debug, Clone)]
+struct AsyncReoptimizeRunScope {
+    trigger_source: AsyncReoptimizeTriggerSource,
+    requested_timeframes: Vec<Timeframe>,
+}
+
+#[derive(Debug, Clone)]
+struct AsyncReoptimizeInvalidScope {
+    fallback_scope: AsyncReoptimizeRunScope,
+    fail_closed_reasons: Vec<AsyncReoptimizeFailClosedReason>,
+    message: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum AsyncReoptimizeWorkerTickPlan {
+    DrainQueued,
+    EnqueueScheduled,
+    SchedulerDisabled,
+}
+
 #[allow(dead_code)]
 fn map_async_reoptimize_status_to_fail_closed(value: &str) -> AsyncReoptimizeFailClosedMapping {
     let status = AsyncReoptimizeRunStatus::parse(value);
@@ -7285,21 +7312,12 @@ fn async_reoptimize_timeframes_from_state(
     state: &AsyncReoptimizeRunState,
     settings: &StrategySettings,
 ) -> (Vec<Timeframe>, bool) {
-    let mut parsed = Vec::new();
-    for value in state.requested_timeframes.split(',') {
-        let trimmed = value.trim();
-        if trimmed.is_empty() {
-            continue;
-        }
-        let Some(timeframe) = Timeframe::parse(trimmed) else {
-            return (settings.timeframes.clone(), false);
-        };
-        parsed.push(timeframe);
-    }
-    if parsed.is_empty() {
-        (settings.timeframes.clone(), false)
-    } else {
-        (parsed, true)
+    match parse_async_reoptimize_state_timeframes(&state.requested_timeframes) {
+        Ok(parsed) => (parsed, true),
+        Err(_) => (
+            async_reoptimize_default_requested_timeframes(settings),
+            false,
+        ),
     }
 }
 
@@ -7307,6 +7325,98 @@ fn async_reoptimize_trigger_from_state(
     state: &AsyncReoptimizeRunState,
 ) -> Option<AsyncReoptimizeTriggerSource> {
     AsyncReoptimizeTriggerSource::parse(&state.trigger_source)
+}
+
+fn async_reoptimize_default_requested_timeframes(settings: &StrategySettings) -> Vec<Timeframe> {
+    if settings.timeframes.is_empty() {
+        vec![Timeframe::OneMinute]
+    } else {
+        settings.timeframes.clone()
+    }
+}
+
+fn parse_async_reoptimize_state_timeframes(raw: &str) -> Result<Vec<Timeframe>, String> {
+    let mut parsed = Vec::new();
+    let mut seen = HashSet::new();
+    for value in raw.split(',') {
+        let trimmed = value.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        let Some(timeframe) = Timeframe::parse(trimmed) else {
+            return Err(format!("invalid timeframe '{trimmed}'"));
+        };
+        if !seen.insert(timeframe.as_str().to_string()) {
+            return Err(format!("duplicate timeframe '{}'", timeframe.as_str()));
+        }
+        parsed.push(timeframe);
+    }
+    if parsed.is_empty() {
+        return Err("missing requested timeframes".to_string());
+    }
+    Ok(parsed)
+}
+
+fn async_reoptimize_run_scope_from_state(
+    state: &AsyncReoptimizeRunState,
+    settings: &StrategySettings,
+) -> Result<AsyncReoptimizeRunScope, AsyncReoptimizeInvalidScope> {
+    let trigger_source = AsyncReoptimizeTriggerSource::parse(&state.trigger_source);
+    let requested_timeframes = parse_async_reoptimize_state_timeframes(&state.requested_timeframes);
+    match (trigger_source, requested_timeframes) {
+        (Some(trigger_source), Ok(requested_timeframes)) => Ok(AsyncReoptimizeRunScope {
+            trigger_source,
+            requested_timeframes,
+        }),
+        (trigger_source, requested_timeframes) => {
+            let mut failures = Vec::new();
+            if trigger_source.is_none() {
+                failures.push(format!("invalid trigger_source '{}'", state.trigger_source));
+            }
+            if let Err(error) = requested_timeframes.as_ref() {
+                failures.push(error.clone());
+            }
+            Err(AsyncReoptimizeInvalidScope {
+                fallback_scope: AsyncReoptimizeRunScope {
+                    trigger_source: trigger_source
+                        .unwrap_or(AsyncReoptimizeTriggerSource::Recovery),
+                    requested_timeframes: requested_timeframes.unwrap_or_else(|_| {
+                        async_reoptimize_default_requested_timeframes(settings)
+                    }),
+                },
+                fail_closed_reasons: vec![AsyncReoptimizeFailClosedReason::ConfigInvalid],
+                message: failures.join("; "),
+            })
+        }
+    }
+}
+
+fn async_reoptimize_scheduled_scope(settings: &StrategySettings) -> AsyncReoptimizeRunScope {
+    AsyncReoptimizeRunScope {
+        trigger_source: AsyncReoptimizeTriggerSource::Scheduled,
+        requested_timeframes: async_reoptimize_default_requested_timeframes(settings),
+    }
+}
+
+fn async_reoptimize_worker_tick_plan(
+    settings: &StrategySettings,
+    queued_run_present: bool,
+) -> AsyncReoptimizeWorkerTickPlan {
+    if queued_run_present {
+        AsyncReoptimizeWorkerTickPlan::DrainQueued
+    } else if settings.reopt_scheduler_enqueue_enabled {
+        AsyncReoptimizeWorkerTickPlan::EnqueueScheduled
+    } else {
+        AsyncReoptimizeWorkerTickPlan::SchedulerDisabled
+    }
+}
+
+fn async_reoptimize_trigger_enqueue_allowed(
+    settings: &StrategySettings,
+    trigger_source: AsyncReoptimizeTriggerSource,
+) -> bool {
+    trigger_source != AsyncReoptimizeTriggerSource::Scheduled
+        || settings.reopt_scheduler_enqueue_enabled
 }
 
 fn async_reoptimize_json_non_negative_integer(value: Option<&serde_json::Value>) -> bool {
@@ -7420,6 +7530,20 @@ fn async_reoptimize_json_timeframes_array(value: Option<&serde_json::Value>) -> 
         }
     }
     true
+}
+
+fn async_reoptimize_json_timeframes_match(
+    value: Option<&serde_json::Value>,
+    expected: &[Timeframe],
+) -> bool {
+    let Some(values) = value.and_then(serde_json::Value::as_array) else {
+        return false;
+    };
+    values.len() == expected.len()
+        && values
+            .iter()
+            .zip(expected)
+            .all(|(value, expected)| value.as_str() == Some(expected.as_str()))
 }
 
 fn async_reoptimize_json_nullable_timeframe(value: Option<&serde_json::Value>) -> bool {
@@ -7771,6 +7895,7 @@ fn async_reoptimize_error_phase_for_code(code: &str) -> AsyncReoptimizePhase {
         "ASYNC_REOPTIMIZE_ARTIFACT_FAILED" => AsyncReoptimizePhase::ArtifactWrite,
         "ASYNC_REOPTIMIZE_BUDGET_EXHAUSTED" => AsyncReoptimizePhase::PairEvaluation,
         "ASYNC_REOPTIMIZE_LEASE_LOST" => AsyncReoptimizePhase::Terminal,
+        "ASYNC_REOPTIMIZE_CONFIG_INVALID" => AsyncReoptimizePhase::Precheck,
         _ => AsyncReoptimizePhase::RunSummary,
     }
 }
@@ -7813,6 +7938,9 @@ fn async_reoptimize_errors_json(
 
 fn async_reoptimize_artifact_manifest_for_response(
     state: &AsyncReoptimizeRunState,
+    status: AsyncReoptimizeRunStatus,
+    trigger_source: AsyncReoptimizeTriggerSource,
+    requested_timeframes: &[Timeframe],
 ) -> (Option<serde_json::Value>, bool) {
     let Ok(value) = serde_json::from_str::<serde_json::Value>(&state.artifact_manifest_json) else {
         return (None, false);
@@ -7830,6 +7958,16 @@ fn async_reoptimize_artifact_manifest_for_response(
     if !complete
         || !async_reoptimize_manifest_paths_are_contained(&value)
         || !async_reoptimize_artifact_manifest_has_contract_shape(&value)
+        || value.get("run_id").and_then(serde_json::Value::as_str) != Some(state.run_id.as_str())
+        || value.get("status").and_then(serde_json::Value::as_str) != Some(status.as_str())
+        || value
+            .get("trigger_source")
+            .and_then(serde_json::Value::as_str)
+            != Some(trigger_source.as_str())
+        || !async_reoptimize_json_timeframes_match(
+            value.get("requested_timeframes"),
+            requested_timeframes,
+        )
     {
         return (None, false);
     }
@@ -7848,6 +7986,7 @@ fn async_reoptimize_artifact_manifest_has_contract_shape(value: &serde_json::Val
             "run_id",
             "status",
             "trigger_source",
+            "requested_timeframes",
             "request_fingerprint",
             "service_version",
             "artifact_root",
@@ -7868,6 +8007,9 @@ fn async_reoptimize_artifact_manifest_has_contract_shape(value: &serde_json::Val
         && async_reoptimize_json_run_id(object.get("run_id"))
         && async_reoptimize_json_run_status(object.get("status"))
         && async_reoptimize_json_trigger_source(object.get("trigger_source"))
+        && object.get("requested_timeframes").is_none_or(|_| {
+            async_reoptimize_json_timeframes_array(object.get("requested_timeframes"))
+        })
         && async_reoptimize_json_fingerprint_or_null(object.get("request_fingerprint"))
         && async_reoptimize_json_string_or_null_with_len(
             object.get("service_version"),
@@ -8061,28 +8203,44 @@ fn async_reoptimize_status_response_from_state(
     force_fail_reasons: &[AsyncReoptimizeFailClosedReason],
 ) -> AsyncReoptimizeRunStatusResponse {
     let status = async_reoptimize_effective_status(state, generated_at);
+    let (trigger_source, trigger_valid) =
+        match AsyncReoptimizeTriggerSource::parse(&state.trigger_source) {
+            Some(trigger_source) => (trigger_source, true),
+            None => (AsyncReoptimizeTriggerSource::Recovery, false),
+        };
     let (requested_timeframes, timeframes_valid) =
         async_reoptimize_timeframes_from_state(state, settings);
     let (progress, progress_valid) =
         async_reoptimize_progress_for_response(state, status, &requested_timeframes, settings);
     let (budgets, budgets_valid) = async_reoptimize_budgets_for_response(state, settings);
-    let (artifact_manifest, artifact_valid) =
-        async_reoptimize_artifact_manifest_for_response(state);
+    let (artifact_manifest, artifact_valid) = async_reoptimize_artifact_manifest_for_response(
+        state,
+        status,
+        trigger_source,
+        &requested_timeframes,
+    );
     let artifact_available = artifact_manifest.is_some();
     let queued_defaults_allowed = state.status == AsyncReoptimizeRunStatus::Queued
         && state.progress_json.trim() == "{}"
         && state.summary_json.trim() == "{}";
-    let parsed_state_ok = timeframes_valid
+    let parsed_state_ok = trigger_valid
+        && timeframes_valid
         && (progress_valid || queued_defaults_allowed)
         && (budgets_valid || queued_defaults_allowed)
         && (artifact_valid || !status.is_terminal());
+    let mut force_fail_reasons = force_fail_reasons.to_vec();
+    if (!trigger_valid || !timeframes_valid)
+        && !force_fail_reasons.contains(&AsyncReoptimizeFailClosedReason::ConfigInvalid)
+    {
+        force_fail_reasons.push(AsyncReoptimizeFailClosedReason::ConfigInvalid);
+    }
     let (recommendation, fail_closed_reasons, mut operator_action_required) =
         async_reoptimize_recommendation_for_response(
             state,
             status,
             artifact_available,
             parsed_state_ok,
-            force_fail_reasons,
+            &force_fail_reasons,
         );
     if !parsed_state_ok {
         operator_action_required = true;
@@ -8096,7 +8254,7 @@ fn async_reoptimize_status_response_from_state(
         generated_at,
         run_id: state.run_id.clone(),
         status: status.as_str().to_string(),
-        trigger_source: state.trigger_source.clone(),
+        trigger_source: trigger_source.as_str().to_string(),
         requested_timeframes: async_reoptimize_timeframe_strings(&requested_timeframes),
         request_fingerprint: None,
         service_version: None,
@@ -8427,6 +8585,7 @@ async fn main() -> anyhow::Result<()> {
         stop_band = settings.stop_band,
         reopt_interval_secs = settings.reopt_interval_secs,
         reopt_worker_enabled = settings.reopt_worker_enabled,
+        reopt_scheduler_enqueue_enabled = settings.reopt_scheduler_enqueue_enabled,
         shadow_ml_min_rows = settings.shadow_ml_min_rows,
         shadow_ml_training_limit = settings.shadow_ml_training_limit,
         trading_fee_bps = settings.trading_fee_bps,
@@ -8829,7 +8988,7 @@ fn async_reoptimize_unknown_budget_snapshot_json(settings: &StrategySettings) ->
 fn async_reoptimize_summary_json(
     run_id: &str,
     status: AsyncReoptimizeRunStatus,
-    trigger_source: AsyncReoptimizeTriggerSource,
+    scope: &AsyncReoptimizeRunScope,
     settings: &StrategySettings,
     progress_json: &serde_json::Value,
     errors: &[ReoptError],
@@ -8838,9 +8997,9 @@ fn async_reoptimize_summary_json(
     serde_json::json!({
         "run_id": run_id,
         "status": status.as_str(),
-        "trigger_source": trigger_source.as_str(),
-        "requested_timeframes": settings
-            .timeframes
+        "trigger_source": scope.trigger_source.as_str(),
+        "requested_timeframes": scope
+            .requested_timeframes
             .iter()
             .map(|timeframe| timeframe.as_str())
             .collect::<Vec<_>>(),
@@ -8865,6 +9024,7 @@ struct AsyncReoptimizeArtifactWriteInput<'a> {
     run_id: &'a str,
     status: AsyncReoptimizeRunStatus,
     trigger_source: AsyncReoptimizeTriggerSource,
+    requested_timeframes: &'a [Timeframe],
     progress_json: &'a serde_json::Value,
     summary_json: &'a serde_json::Value,
     errors: &'a [ReoptError],
@@ -8972,14 +9132,15 @@ fn async_reoptimize_artifact_payloads(
         "generated_at": input.generated_at.to_rfc3339(),
         "run_id": input.run_id,
         "trigger_source": input.trigger_source.as_str(),
-        "requested_timeframes": input.settings
-            .timeframes
+        "requested_timeframes": input
+            .requested_timeframes
             .iter()
             .map(|timeframe| timeframe.as_str())
             .collect::<Vec<_>>(),
         "request_fingerprint": serde_json::Value::Null,
         "service_version": serde_json::Value::Null,
         "worker_enabled": input.settings.reopt_worker_enabled,
+        "scheduler_enqueue_enabled": input.settings.reopt_scheduler_enqueue_enabled,
         "budgets": async_reoptimize_budget_snapshot_json(input.settings, None),
     });
     let errors_json = serde_json::Value::Array(async_reoptimize_errors_json(
@@ -9090,6 +9251,11 @@ fn write_async_reoptimize_artifacts(
         "run_id": input.run_id,
         "status": input.status.as_str(),
         "trigger_source": input.trigger_source.as_str(),
+        "requested_timeframes": input
+            .requested_timeframes
+            .iter()
+            .map(|timeframe| timeframe.as_str())
+            .collect::<Vec<_>>(),
         "request_fingerprint": serde_json::Value::Null,
         "service_version": serde_json::Value::Null,
         "artifact_root": input.settings.reopt_artifacts_root,
@@ -9240,6 +9406,7 @@ fn mark_async_reoptimize_cancel_observed(
 async fn checkpoint_async_reoptimize_run(
     state: &AppState,
     lease: &AsyncReoptimizeLease,
+    scope: &AsyncReoptimizeRunScope,
     progress: &mut AsyncReoptimizeRunnerProgress,
     errors: &[ReoptError],
     exhausted_budget: Option<AsyncReoptimizeBudgetName>,
@@ -9250,7 +9417,7 @@ async fn checkpoint_async_reoptimize_run(
     let summary_json = async_reoptimize_summary_json(
         &lease.run_id,
         AsyncReoptimizeRunStatus::Running,
-        AsyncReoptimizeTriggerSource::Scheduled,
+        scope,
         &state.settings,
         &progress_json,
         errors,
@@ -9321,6 +9488,7 @@ async fn checkpoint_async_reoptimize_run(
 async fn complete_async_reoptimize_run(
     state: &AppState,
     lease: &AsyncReoptimizeLease,
+    scope: &AsyncReoptimizeRunScope,
     progress: &mut AsyncReoptimizeRunnerProgress,
     errors: &[ReoptError],
     terminal: &AsyncReoptimizeTerminalDecision,
@@ -9333,7 +9501,7 @@ async fn complete_async_reoptimize_run(
     let initial_summary_json = async_reoptimize_summary_json(
         &lease.run_id,
         terminal.requested_status,
-        AsyncReoptimizeTriggerSource::Scheduled,
+        scope,
         &state.settings,
         &initial_progress_json,
         errors,
@@ -9349,7 +9517,8 @@ async fn complete_async_reoptimize_run(
             settings: &state.settings,
             run_id: &lease.run_id,
             status: terminal.requested_status,
-            trigger_source: AsyncReoptimizeTriggerSource::Scheduled,
+            trigger_source: scope.trigger_source,
+            requested_timeframes: &scope.requested_timeframes,
             progress_json: &initial_progress_json,
             summary_json: &initial_summary_json,
             errors,
@@ -9390,7 +9559,7 @@ async fn complete_async_reoptimize_run(
                 summary_json = async_reoptimize_summary_json(
                     &lease.run_id,
                     requested_status,
-                    AsyncReoptimizeTriggerSource::Scheduled,
+                    scope,
                     &state.settings,
                     &progress_json,
                     &completion_errors,
@@ -9419,12 +9588,14 @@ async fn complete_async_reoptimize_run(
 async fn checkpoint_or_stop_async_reoptimize_run(
     state: &AppState,
     lease: &AsyncReoptimizeLease,
+    scope: &AsyncReoptimizeRunScope,
     progress: &mut AsyncReoptimizeRunnerProgress,
     errors: &[ReoptError],
     exhausted_budget: Option<AsyncReoptimizeBudgetName>,
 ) -> anyhow::Result<Option<bool>> {
     let Some(state_row) =
-        checkpoint_async_reoptimize_run(state, lease, progress, errors, exhausted_budget).await?
+        checkpoint_async_reoptimize_run(state, lease, scope, progress, errors, exhausted_budget)
+            .await?
     else {
         return Ok(None);
     };
@@ -9434,11 +9605,19 @@ async fn checkpoint_or_stop_async_reoptimize_run(
     ))
 }
 
-async fn process_async_reoptimize_run(state: AppState, lease: AsyncReoptimizeLease) {
+async fn process_async_reoptimize_run(
+    state: AppState,
+    lease: AsyncReoptimizeLease,
+    scope_result: Result<AsyncReoptimizeRunScope, AsyncReoptimizeInvalidScope>,
+) {
     let run_started_at = Instant::now();
     let pair_count = state.settings.pairs.len();
+    let (scope, invalid_scope) = match scope_result {
+        Ok(scope) => (scope, None),
+        Err(invalid) => (invalid.fallback_scope.clone(), Some(invalid)),
+    };
     let mut progress =
-        AsyncReoptimizeRunnerProgress::new(state.settings.timeframes.clone(), pair_count);
+        AsyncReoptimizeRunnerProgress::new(scope.requested_timeframes.clone(), pair_count);
     let mut errors = vec![];
     let mut error_counts = ReoptErrorCounts::default();
     let mut exhausted_budget: Option<AsyncReoptimizeBudgetName> = None;
@@ -9446,15 +9625,96 @@ async fn process_async_reoptimize_run(state: AppState, lease: AsyncReoptimizeLea
     let mut lease_lost = false;
     let mut run_pair_evaluations = 0usize;
 
-    progress.phase = AsyncReoptimizePhase::Precheck;
-    match checkpoint_or_stop_async_reoptimize_run(&state, &lease, &mut progress, &errors, None)
+    if let Some(invalid) = invalid_scope {
+        push_reopt_error(
+            &mut errors,
+            "SYSTEM".to_string(),
+            "SYSTEM".to_string(),
+            "ASYNC_REOPTIMIZE_CONFIG_INVALID",
+            format!(
+                "async reoptimize persisted request scope is invalid: {}",
+                invalid.message
+            ),
+            &mut error_counts,
+        );
+        progress.absorb_error_counts(error_counts);
+        let _ = progress.mark_remaining_skipped(0, 0, pair_count);
+        let terminal = AsyncReoptimizeTerminalDecision {
+            requested_status: AsyncReoptimizeRunStatus::Failed,
+            recommendation: AsyncReoptimizeRecommendation::Hold,
+            fail_closed_reasons: invalid.fail_closed_reasons,
+            exhausted_budget: None,
+        };
+        match complete_async_reoptimize_run(
+            &state,
+            &lease,
+            &scope,
+            &mut progress,
+            &errors,
+            &terminal,
+        )
         .await
+        {
+            Ok(Some(final_state)) => {
+                let (fail_closed_reasons, _) =
+                    async_reoptimize_fail_closed_reasons_from_state(&final_state);
+                state.metrics.record_async_reoptimize_terminal(
+                    scope.trigger_source,
+                    final_state.status,
+                    AsyncReoptimizeRecommendation::Hold,
+                    &fail_closed_reasons,
+                );
+                tracing::warn!(
+                    event = "reoptimize_fail_closed",
+                    run_id = %final_state.run_id,
+                    trigger_source = scope.trigger_source.as_str(),
+                    fail_closed_reason = AsyncReoptimizeFailClosedReason::ConfigInvalid.as_str(),
+                    "async reoptimize run failed closed because persisted request scope is invalid"
+                );
+            }
+            Ok(None) => {
+                state
+                    .metrics
+                    .record_async_reoptimize_lease_lost(AsyncReoptimizeLeaseLostReason::Unknown);
+                state.metrics.record_async_reoptimize_fail_closed(
+                    AsyncReoptimizeFailClosedReason::LeaseLost,
+                );
+            }
+            Err(error) => {
+                state.metrics.record_async_reoptimize_fail_closed(
+                    AsyncReoptimizeFailClosedReason::UnknownStatus,
+                );
+                state.metrics.record_async_reoptimize_status_unknown(
+                    AsyncReoptimizeStatusUnknownReason::TelemetryUnavailable,
+                );
+                tracing::warn!(
+                    event = "reoptimize_fail_closed",
+                    run_id = %lease.run_id,
+                    error = %error,
+                    fail_closed_reason = AsyncReoptimizeFailClosedReason::UnknownStatus.as_str(),
+                    "async reoptimize invalid-scope terminal completion failed"
+                );
+            }
+        }
+        return;
+    }
+
+    progress.phase = AsyncReoptimizePhase::Precheck;
+    match checkpoint_or_stop_async_reoptimize_run(
+        &state,
+        &lease,
+        &scope,
+        &mut progress,
+        &errors,
+        None,
+    )
+    .await
     {
         Ok(Some(cancel_requested)) => {
             if cancel_requested {
                 mark_async_reoptimize_cancel_observed(&state.metrics, &lease.run_id, &mut canceled);
                 let canceled_count = progress.mark_remaining_skipped(0, 0, pair_count);
-                for timeframe in &state.settings.timeframes {
+                for timeframe in &scope.requested_timeframes {
                     state.metrics.record_async_reoptimize_progress_pairs(
                         *timeframe,
                         AsyncReoptimizeProgressPairResult::Canceled,
@@ -9475,15 +9735,22 @@ async fn process_async_reoptimize_run(state: AppState, lease: AsyncReoptimizeLea
     }
 
     'timeframes: for (timeframe_index, timeframe) in
-        state.settings.timeframes.iter().copied().enumerate()
+        scope.requested_timeframes.iter().copied().enumerate()
     {
         if canceled || lease_lost || exhausted_budget.is_some() {
             break;
         }
         progress.phase = AsyncReoptimizePhase::TimeframePrecheck;
         progress.active_timeframe = Some(timeframe);
-        match checkpoint_or_stop_async_reoptimize_run(&state, &lease, &mut progress, &errors, None)
-            .await
+        match checkpoint_or_stop_async_reoptimize_run(
+            &state,
+            &lease,
+            &scope,
+            &mut progress,
+            &errors,
+            None,
+        )
+        .await
         {
             Ok(Some(cancel_requested)) if cancel_requested => {
                 mark_async_reoptimize_cancel_observed(&state.metrics, &lease.run_id, &mut canceled);
@@ -9552,6 +9819,7 @@ async fn process_async_reoptimize_run(state: AppState, lease: AsyncReoptimizeLea
             match checkpoint_or_stop_async_reoptimize_run(
                 &state,
                 &lease,
+                &scope,
                 &mut progress,
                 &errors,
                 exhausted_budget,
@@ -9687,6 +9955,7 @@ async fn process_async_reoptimize_run(state: AppState, lease: AsyncReoptimizeLea
             match checkpoint_or_stop_async_reoptimize_run(
                 &state,
                 &lease,
+                &scope,
                 &mut progress,
                 &errors,
                 exhausted_budget,
@@ -10047,6 +10316,7 @@ async fn process_async_reoptimize_run(state: AppState, lease: AsyncReoptimizeLea
         match checkpoint_or_stop_async_reoptimize_run(
             &state,
             &lease,
+            &scope,
             &mut progress,
             &errors,
             exhausted_budget,
@@ -10059,7 +10329,7 @@ async fn process_async_reoptimize_run(state: AppState, lease: AsyncReoptimizeLea
                 if next_timeframe_index < progress.planned_timeframe_count {
                     let _ = progress.mark_remaining_skipped(next_timeframe_index, 0, pair_count);
                     for future_timeframe in
-                        state.settings.timeframes.iter().skip(next_timeframe_index)
+                        scope.requested_timeframes.iter().skip(next_timeframe_index)
                     {
                         state.metrics.record_async_reoptimize_progress_pairs(
                             *future_timeframe,
@@ -10188,7 +10458,9 @@ async fn process_async_reoptimize_run(state: AppState, lease: AsyncReoptimizeLea
         }
     };
 
-    match complete_async_reoptimize_run(&state, &lease, &mut progress, &errors, &terminal).await {
+    match complete_async_reoptimize_run(&state, &lease, &scope, &mut progress, &errors, &terminal)
+        .await
+    {
         Ok(Some(final_state)) => {
             let (fail_closed_reasons, _) =
                 async_reoptimize_fail_closed_reasons_from_state(&final_state);
@@ -10288,6 +10560,7 @@ fn spawn_reoptimize_worker(state: AppState) -> tokio::task::JoinHandle<()> {
             reopt_max_pairs_per_timeframe = state.settings.reopt_max_pairs_per_timeframe,
             reopt_lease_ttl_seconds = state.settings.reopt_lease_ttl_seconds,
             reopt_heartbeat_interval_seconds = state.settings.reopt_heartbeat_interval_seconds,
+            reopt_scheduler_enqueue_enabled = state.settings.reopt_scheduler_enqueue_enabled,
             "bounded async strategy reoptimize runner scheduled"
         );
         loop {
@@ -10361,73 +10634,95 @@ fn spawn_reoptimize_worker(state: AppState) -> tokio::task::JoinHandle<()> {
                     continue;
                 }
             };
-            let run_id = if let Some(queued_run) = queued_run {
-                state
-                    .metrics
-                    .set_async_reoptimize_active_status(queued_run.status);
-                info!(
-                    event = "reoptimize_run_enqueued",
-                    run_id = %queued_run.run_id,
-                    trigger_source = %queued_run.trigger_source,
-                    status_after = queued_run.status.as_str(),
-                    "bounded async strategy reoptimize runner picked up queued run"
-                );
-                queued_run.run_id
-            } else {
-                let run_id = next_async_reoptimize_run_id(now);
-                let enqueued = match state
-                    .repository
-                    .enqueue_reoptimize_run_state(
-                        &run_id,
-                        AsyncReoptimizeTriggerSource::Scheduled,
-                        &state.settings.timeframes,
-                        now,
-                    )
-                    .await
-                {
-                    Ok(enqueued) => enqueued,
-                    Err(error) => {
-                        state.metrics.record_async_reoptimize_scheduler_enqueue(
-                            AsyncReoptimizeTriggerSource::Scheduled,
-                            AsyncReoptimizeSchedulerEnqueueResult::UnknownStatus,
-                        );
-                        state.metrics.record_async_reoptimize_status_unknown(
-                            AsyncReoptimizeStatusUnknownReason::TelemetryUnavailable,
-                        );
-                        tracing::warn!(
-                            event = "reoptimize_run_enqueue_rejected",
-                            run_id = %run_id,
-                            trigger_source = AsyncReoptimizeTriggerSource::Scheduled.as_str(),
-                            status_after = AsyncReoptimizeRunStatus::Failed.as_str(),
-                            fail_closed_reason = AsyncReoptimizeFailClosedReason::UnknownStatus.as_str(),
-                            error = %error,
-                            "failed to enqueue async reoptimize run"
-                        );
-                        continue;
-                    }
-                };
-                if !enqueued {
+            let tick_plan =
+                async_reoptimize_worker_tick_plan(&state.settings, queued_run.is_some());
+            let (run_id, scope_result) = match tick_plan {
+                AsyncReoptimizeWorkerTickPlan::DrainQueued => {
+                    let queued_run = queued_run.expect("queued run exists for drain plan");
+                    let scope_result =
+                        async_reoptimize_run_scope_from_state(&queued_run, &state.settings);
+                    state
+                        .metrics
+                        .set_async_reoptimize_active_status(queued_run.status);
+                    info!(
+                        event = "reoptimize_run_enqueued",
+                        run_id = %queued_run.run_id,
+                        trigger_source = %queued_run.trigger_source,
+                        status_after = queued_run.status.as_str(),
+                        "bounded async strategy reoptimize runner picked up queued run"
+                    );
+                    (queued_run.run_id, scope_result)
+                }
+                AsyncReoptimizeWorkerTickPlan::SchedulerDisabled => {
                     state.metrics.record_async_reoptimize_scheduler_enqueue(
                         AsyncReoptimizeTriggerSource::Scheduled,
-                        AsyncReoptimizeSchedulerEnqueueResult::ActiveRun,
+                        AsyncReoptimizeSchedulerEnqueueResult::Disabled,
                     );
-                    info!(
+                    tracing::debug!(
                         event = "reoptimize_run_enqueue_rejected",
-                        run_id = %run_id,
                         trigger_source = AsyncReoptimizeTriggerSource::Scheduled.as_str(),
                         status_after = AsyncReoptimizeRunStatus::Queued.as_str(),
-                        "async reoptimize enqueue skipped because an active run already exists"
+                        "async reoptimize scheduled enqueue skipped because scheduler enqueue is disabled"
                     );
                     continue;
                 }
-                state.metrics.record_async_reoptimize_scheduler_enqueue(
-                    AsyncReoptimizeTriggerSource::Scheduled,
-                    AsyncReoptimizeSchedulerEnqueueResult::Enqueued,
-                );
-                state
-                    .metrics
-                    .set_async_reoptimize_active_status(AsyncReoptimizeRunStatus::Queued);
-                run_id
+                AsyncReoptimizeWorkerTickPlan::EnqueueScheduled => {
+                    let scheduled_scope = async_reoptimize_scheduled_scope(&state.settings);
+                    let run_id = next_async_reoptimize_run_id(now);
+                    let enqueued = match state
+                        .repository
+                        .enqueue_reoptimize_run_state(
+                            &run_id,
+                            scheduled_scope.trigger_source,
+                            &scheduled_scope.requested_timeframes,
+                            now,
+                        )
+                        .await
+                    {
+                        Ok(enqueued) => enqueued,
+                        Err(error) => {
+                            state.metrics.record_async_reoptimize_scheduler_enqueue(
+                                AsyncReoptimizeTriggerSource::Scheduled,
+                                AsyncReoptimizeSchedulerEnqueueResult::UnknownStatus,
+                            );
+                            state.metrics.record_async_reoptimize_status_unknown(
+                                AsyncReoptimizeStatusUnknownReason::TelemetryUnavailable,
+                            );
+                            tracing::warn!(
+                                event = "reoptimize_run_enqueue_rejected",
+                                run_id = %run_id,
+                                trigger_source = AsyncReoptimizeTriggerSource::Scheduled.as_str(),
+                                status_after = AsyncReoptimizeRunStatus::Failed.as_str(),
+                                fail_closed_reason = AsyncReoptimizeFailClosedReason::UnknownStatus.as_str(),
+                                error = %error,
+                                "failed to enqueue async reoptimize run"
+                            );
+                            continue;
+                        }
+                    };
+                    if !enqueued {
+                        state.metrics.record_async_reoptimize_scheduler_enqueue(
+                            AsyncReoptimizeTriggerSource::Scheduled,
+                            AsyncReoptimizeSchedulerEnqueueResult::ActiveRun,
+                        );
+                        info!(
+                            event = "reoptimize_run_enqueue_rejected",
+                            run_id = %run_id,
+                            trigger_source = AsyncReoptimizeTriggerSource::Scheduled.as_str(),
+                            status_after = AsyncReoptimizeRunStatus::Queued.as_str(),
+                            "async reoptimize enqueue skipped because an active run already exists"
+                        );
+                        continue;
+                    }
+                    state.metrics.record_async_reoptimize_scheduler_enqueue(
+                        AsyncReoptimizeTriggerSource::Scheduled,
+                        AsyncReoptimizeSchedulerEnqueueResult::Enqueued,
+                    );
+                    state
+                        .metrics
+                        .set_async_reoptimize_active_status(AsyncReoptimizeRunStatus::Queued);
+                    (run_id, Ok(scheduled_scope))
+                }
             };
 
             let lease = match state
@@ -10485,7 +10780,7 @@ fn spawn_reoptimize_worker(state: AppState) -> tokio::task::JoinHandle<()> {
                 }
             };
 
-            process_async_reoptimize_run(state.clone(), lease).await;
+            process_async_reoptimize_run(state.clone(), lease, scope_result).await;
         }
     })
 }
@@ -10830,6 +11125,31 @@ async fn reoptimize_run_enqueue(
             trigger_source,
             vec![AsyncReoptimizeFailClosedReason::ConfigInvalid],
             "Async reoptimization worker is disabled; no run was enqueued.".to_string(),
+        )));
+    }
+
+    if !async_reoptimize_trigger_enqueue_allowed(&state.settings, trigger_source) {
+        state.metrics.record_async_reoptimize_scheduler_enqueue(
+            trigger_source,
+            AsyncReoptimizeSchedulerEnqueueResult::Disabled,
+        );
+        state
+            .metrics
+            .record_async_reoptimize_fail_closed(AsyncReoptimizeFailClosedReason::ConfigInvalid);
+        tracing::warn!(
+            event = "reoptimize_run_enqueue_rejected",
+            trigger_source = trigger_source.as_str(),
+            status_after = AsyncReoptimizeRunStatus::Failed.as_str(),
+            fail_closed_reason = AsyncReoptimizeFailClosedReason::ConfigInvalid.as_str(),
+            "scheduled async reoptimize enqueue refused because scheduler enqueue is disabled"
+        );
+        return Ok(Json(async_reoptimize_fail_closed_enqueue_response(
+            generated_at,
+            &state.settings,
+            &requested_timeframes,
+            trigger_source,
+            vec![AsyncReoptimizeFailClosedReason::ConfigInvalid],
+            "Scheduled async reoptimization enqueue is disabled; no run was enqueued.".to_string(),
         )));
     }
 
@@ -16010,21 +16330,23 @@ mod tests {
         AsyncReoptimizeLeaseLostReason, AsyncReoptimizeProgressPairResult,
         AsyncReoptimizeRecommendation, AsyncReoptimizeRunState, AsyncReoptimizeRunStatus,
         AsyncReoptimizeRunnerProgress, AsyncReoptimizeSchedulerEnqueueResult,
-        AsyncReoptimizeStatusUnknownReason, AsyncReoptimizeTriggerSource, CandidateInboxQuery,
-        CandidateLifecycleState, CandidateOperatorAction, CandidateProbationInputs,
-        CandidateProbationRow, ChampionDecision, CueProjectionOutcome, ExpectancyConfig,
-        ExpectancyMetrics, ExpectancyQuery, FundingCostEstimate, FundingRateInputMode,
-        LearningOverlayApprovalSource, LearningOverlayBlockedReason, LearningOverlayEntry,
-        LearningOverlaySnapshot, LearningOverlayUniverseBucket, LearningOverlayWatchReason,
-        LearningRecommendation, MaintenanceAction, OpportunityHistoryQuery,
-        OpportunityHistoryStatsQuery, PaperTradesQuery, PersistSummary, ReoptError,
-        ReoptErrorSeverity, ReoptimizeResponse, ReoptimizeRunStatus, ReplayTradeEntry,
-        ReplayTradePathSummary, ReplayTradesQuery, ResearchSweepRequest, SampledSlippageStatus,
-        SelectedSignalRow, SelectionTransitionCounts, StrategyMarketMetricsResponse,
-        StrategyMetrics, StrategySettings, TradeNowHistoricalQuality, TradeNowObservabilityStore,
-        TradeNowQuery, DEFAULT_HISTORY_RETENTION_WORKER_ENABLED, DEFAULT_REOPT_WORKER_ENABLED,
-        DEFAULT_SAMPLED_SLIPPAGE_WORKER_ENABLED, LEARNING_OVERLAY_TTL_SECS,
-        SELECTED_CONFIG_SOURCE_LEGACY_FALLBACK, SELECTED_CONFIG_SOURCE_OPERATOR_PROMOTION,
+        AsyncReoptimizeStatusUnknownReason, AsyncReoptimizeTriggerSource,
+        AsyncReoptimizeWorkerTickPlan, CandidateInboxQuery, CandidateLifecycleState,
+        CandidateOperatorAction, CandidateProbationInputs, CandidateProbationRow, ChampionDecision,
+        CueProjectionOutcome, ExpectancyConfig, ExpectancyMetrics, ExpectancyQuery,
+        FundingCostEstimate, FundingRateInputMode, LearningOverlayApprovalSource,
+        LearningOverlayBlockedReason, LearningOverlayEntry, LearningOverlaySnapshot,
+        LearningOverlayUniverseBucket, LearningOverlayWatchReason, LearningRecommendation,
+        MaintenanceAction, OpportunityHistoryQuery, OpportunityHistoryStatsQuery, PaperTradesQuery,
+        PersistSummary, ReoptError, ReoptErrorSeverity, ReoptimizeResponse, ReoptimizeRunStatus,
+        ReplayTradeEntry, ReplayTradePathSummary, ReplayTradesQuery, ResearchSweepRequest,
+        SampledSlippageStatus, SelectedSignalRow, SelectionTransitionCounts,
+        StrategyMarketMetricsResponse, StrategyMetrics, StrategySettings,
+        TradeNowHistoricalQuality, TradeNowObservabilityStore, TradeNowQuery,
+        DEFAULT_HISTORY_RETENTION_WORKER_ENABLED, DEFAULT_REOPT_SCHEDULER_ENQUEUE_ENABLED,
+        DEFAULT_REOPT_WORKER_ENABLED, DEFAULT_SAMPLED_SLIPPAGE_WORKER_ENABLED,
+        LEARNING_OVERLAY_TTL_SECS, SELECTED_CONFIG_SOURCE_LEGACY_FALLBACK,
+        SELECTED_CONFIG_SOURCE_OPERATOR_PROMOTION,
         SELECTED_CONFIG_SOURCE_RECANONICALIZED_LEGACY_ROW,
     };
     use axum::{routing::get, Json, Router};
@@ -16110,6 +16432,7 @@ mod tests {
             "run_id": run_id,
             "status": "SUCCEEDED",
             "trigger_source": "MANUAL_API",
+            "requested_timeframes": ["1m", "15m"],
             "request_fingerprint": null,
             "service_version": null,
             "artifact_root": "artifacts/strategy_reoptimize",
@@ -16132,6 +16455,96 @@ mod tests {
             "errors": []
         })
         .to_string()
+    }
+
+    #[test]
+    fn async_reoptimize_manual_run_scope_uses_persisted_timeframes() {
+        let mut settings = StrategySettings::from_env();
+        settings.timeframes = vec![
+            Timeframe::OneMinute,
+            Timeframe::FifteenMinutes,
+            Timeframe::OneHour,
+        ];
+        let mut state = async_reoptimize_test_state(
+            AsyncReoptimizeRunStatus::Queued,
+            AsyncReoptimizeRecommendation::Hold,
+            &[AsyncReoptimizeFailClosedReason::UnknownStatus],
+        );
+        state.trigger_source = AsyncReoptimizeTriggerSource::ManualApi.as_str().to_string();
+        state.requested_timeframes = "1m".to_string();
+
+        let scope = super::async_reoptimize_run_scope_from_state(&state, &settings)
+            .expect("manual scope should parse");
+
+        assert_eq!(
+            scope.trigger_source,
+            AsyncReoptimizeTriggerSource::ManualApi
+        );
+        assert_eq!(scope.requested_timeframes, vec![Timeframe::OneMinute]);
+    }
+
+    #[test]
+    fn async_reoptimize_worker_drains_queued_run_without_scheduler_enqueue() {
+        let mut settings = StrategySettings::from_env();
+        settings.reopt_worker_enabled = true;
+        settings.reopt_scheduler_enqueue_enabled = false;
+
+        assert_eq!(
+            super::async_reoptimize_worker_tick_plan(&settings, true),
+            AsyncReoptimizeWorkerTickPlan::DrainQueued
+        );
+        assert_eq!(
+            super::async_reoptimize_worker_tick_plan(&settings, false),
+            AsyncReoptimizeWorkerTickPlan::SchedulerDisabled
+        );
+        assert!(!super::async_reoptimize_trigger_enqueue_allowed(
+            &settings,
+            AsyncReoptimizeTriggerSource::Scheduled
+        ));
+        assert!(super::async_reoptimize_trigger_enqueue_allowed(
+            &settings,
+            AsyncReoptimizeTriggerSource::ManualApi
+        ));
+
+        settings.reopt_scheduler_enqueue_enabled = true;
+        assert_eq!(
+            super::async_reoptimize_worker_tick_plan(&settings, false),
+            AsyncReoptimizeWorkerTickPlan::EnqueueScheduled
+        );
+        assert!(super::async_reoptimize_trigger_enqueue_allowed(
+            &settings,
+            AsyncReoptimizeTriggerSource::Scheduled
+        ));
+    }
+
+    #[test]
+    fn async_reoptimize_invalid_persisted_scope_fails_closed() {
+        let settings = StrategySettings::from_env();
+        let mut state = async_reoptimize_test_state(
+            AsyncReoptimizeRunStatus::Failed,
+            AsyncReoptimizeRecommendation::Hold,
+            &[AsyncReoptimizeFailClosedReason::ConfigInvalid],
+        );
+        state.trigger_source = "SURPRISE".to_string();
+        state.requested_timeframes = "bogus".to_string();
+        state.summary_json = serde_json::json!({
+            "budgets": super::async_reoptimize_budget_snapshot_json(&settings, None),
+            "errors": []
+        })
+        .to_string();
+
+        let response =
+            async_reoptimize_status_response_from_state(&state, &settings, Utc::now(), &[]);
+
+        assert_eq!(response.status, "FAILED");
+        assert_eq!(response.trigger_source, "RECOVERY");
+        assert_eq!(response.recommendation.decision, "HOLD");
+        assert!(response.operator_action_required);
+        assert!(response
+            .fail_closed_reasons
+            .iter()
+            .any(|reason| reason == "CONFIG_INVALID"));
+        assert!(response.artifact_manifest.is_none());
     }
 
     #[test]
@@ -16229,6 +16642,60 @@ mod tests {
             .iter()
             .any(|reason| reason == "ARTIFACT_FAILED"));
         assert!(response.operator_action_required);
+        assert!(response.artifact_manifest.is_none());
+    }
+
+    #[test]
+    fn async_reoptimize_contradictory_artifact_manifest_fails_closed() {
+        let settings = StrategySettings::from_env();
+        let mut state = async_reoptimize_test_state(
+            AsyncReoptimizeRunStatus::Succeeded,
+            AsyncReoptimizeRecommendation::PromotionCandidateAvailable,
+            &[],
+        );
+        let mut manifest: serde_json::Value = serde_json::from_str(
+            &async_reoptimize_test_complete_artifact_manifest(&state.run_id),
+        )
+        .expect("parse test manifest");
+        manifest["trigger_source"] = serde_json::Value::String("SCHEDULED".to_string());
+        state.artifact_manifest_json = manifest.to_string();
+
+        let response =
+            async_reoptimize_status_response_from_state(&state, &settings, Utc::now(), &[]);
+
+        assert_eq!(response.status, "SUCCEEDED");
+        assert_eq!(response.recommendation.decision, "HOLD");
+        assert!(response
+            .fail_closed_reasons
+            .iter()
+            .any(|reason| reason == "ARTIFACT_FAILED"));
+        assert!(response.artifact_manifest.is_none());
+    }
+
+    #[test]
+    fn async_reoptimize_artifact_manifest_timeframe_mismatch_fails_closed() {
+        let settings = StrategySettings::from_env();
+        let mut state = async_reoptimize_test_state(
+            AsyncReoptimizeRunStatus::Succeeded,
+            AsyncReoptimizeRecommendation::PromotionCandidateAvailable,
+            &[],
+        );
+        let mut manifest: serde_json::Value = serde_json::from_str(
+            &async_reoptimize_test_complete_artifact_manifest(&state.run_id),
+        )
+        .expect("parse test manifest");
+        manifest["requested_timeframes"] = serde_json::json!(["1m", "15m", "1h"]);
+        state.artifact_manifest_json = manifest.to_string();
+
+        let response =
+            async_reoptimize_status_response_from_state(&state, &settings, Utc::now(), &[]);
+
+        assert_eq!(response.status, "SUCCEEDED");
+        assert_eq!(response.recommendation.decision, "HOLD");
+        assert!(response
+            .fail_closed_reasons
+            .iter()
+            .any(|reason| reason == "ARTIFACT_FAILED"));
         assert!(response.artifact_manifest.is_none());
     }
 
@@ -16391,10 +16858,24 @@ mod tests {
         settings
     }
 
+    fn async_reoptimize_test_scope(
+        trigger_source: AsyncReoptimizeTriggerSource,
+        requested_timeframes: Vec<Timeframe>,
+    ) -> super::AsyncReoptimizeRunScope {
+        super::AsyncReoptimizeRunScope {
+            trigger_source,
+            requested_timeframes,
+        }
+    }
+
     #[test]
     fn async_reoptimize_artifact_writer_persists_manifest_and_required_files() {
         let root = temp_dir("async-reopt-artifacts-ok");
         let settings = async_reoptimize_artifact_test_settings(&root);
+        let scope = async_reoptimize_test_scope(
+            AsyncReoptimizeTriggerSource::Scheduled,
+            settings.timeframes.clone(),
+        );
         let run_id = "reopt_test_artifacts_000001";
         let generated_at = Utc::now();
         let errors = Vec::<ReoptError>::new();
@@ -16408,7 +16889,7 @@ mod tests {
         let summary_json = super::async_reoptimize_summary_json(
             run_id,
             AsyncReoptimizeRunStatus::Succeeded,
-            AsyncReoptimizeTriggerSource::Scheduled,
+            &scope,
             &settings,
             &progress_json,
             &errors,
@@ -16421,6 +16902,7 @@ mod tests {
                 run_id,
                 status: AsyncReoptimizeRunStatus::Succeeded,
                 trigger_source: AsyncReoptimizeTriggerSource::Scheduled,
+                requested_timeframes: &scope.requested_timeframes,
                 progress_json: &progress_json,
                 summary_json: &summary_json,
                 errors: &errors,
@@ -16520,11 +17002,128 @@ mod tests {
     }
 
     #[test]
+    fn async_reoptimize_artifacts_preserve_manual_request_scope() {
+        let root = temp_dir("async-reopt-artifacts-manual-scope");
+        let mut settings = async_reoptimize_artifact_test_settings(&root);
+        settings.timeframes = vec![
+            Timeframe::OneMinute,
+            Timeframe::FifteenMinutes,
+            Timeframe::OneHour,
+        ];
+        let requested_timeframes = vec![Timeframe::OneMinute];
+        let scope = async_reoptimize_test_scope(
+            AsyncReoptimizeTriggerSource::ManualApi,
+            requested_timeframes.clone(),
+        );
+        let run_id = "reopt_test_manual_scope_000001";
+        let generated_at = Utc::now();
+        let errors = Vec::<ReoptError>::new();
+        let mut progress =
+            AsyncReoptimizeRunnerProgress::new(requested_timeframes.clone(), settings.pairs.len());
+        progress.phase = super::AsyncReoptimizePhase::Terminal;
+        progress.completed_timeframe_count = 1;
+        progress.pairs_completed = 1;
+        progress.last_heartbeat_at = Some(generated_at);
+        let progress_json = progress.to_json();
+        let summary_json = super::async_reoptimize_summary_json(
+            run_id,
+            AsyncReoptimizeRunStatus::Succeeded,
+            &scope,
+            &settings,
+            &progress_json,
+            &errors,
+            None,
+        );
+
+        let manifest =
+            super::write_async_reoptimize_artifacts(super::AsyncReoptimizeArtifactWriteInput {
+                settings: &settings,
+                run_id,
+                status: AsyncReoptimizeRunStatus::Succeeded,
+                trigger_source: AsyncReoptimizeTriggerSource::ManualApi,
+                requested_timeframes: &scope.requested_timeframes,
+                progress_json: &progress_json,
+                summary_json: &summary_json,
+                errors: &errors,
+                recommendation: AsyncReoptimizeRecommendation::PromotionCandidateAvailable,
+                fail_closed_reasons: &[],
+                generated_at,
+            })
+            .expect("write manual-scope async reoptimize artifacts");
+
+        assert_eq!(
+            manifest
+                .get("trigger_source")
+                .and_then(serde_json::Value::as_str),
+            Some("MANUAL_API")
+        );
+        assert_eq!(
+            manifest
+                .get("requested_timeframes")
+                .and_then(serde_json::Value::as_array)
+                .map(|values| {
+                    values
+                        .iter()
+                        .filter_map(serde_json::Value::as_str)
+                        .collect::<Vec<_>>()
+                }),
+            Some(vec!["1m"])
+        );
+        let request_json: serde_json::Value = serde_json::from_slice(
+            &fs::read(root.join(format!("runs/{run_id}/request.json")))
+                .expect("read request artifact"),
+        )
+        .expect("parse request artifact");
+        assert_eq!(
+            request_json
+                .get("trigger_source")
+                .and_then(serde_json::Value::as_str),
+            Some("MANUAL_API")
+        );
+        assert_eq!(
+            request_json
+                .get("requested_timeframes")
+                .and_then(serde_json::Value::as_array)
+                .map(|values| {
+                    values
+                        .iter()
+                        .filter_map(serde_json::Value::as_str)
+                        .collect::<Vec<_>>()
+                }),
+            Some(vec!["1m"])
+        );
+        assert_eq!(
+            summary_json
+                .get("trigger_source")
+                .and_then(serde_json::Value::as_str),
+            Some("MANUAL_API")
+        );
+        assert_eq!(
+            summary_json
+                .get("requested_timeframes")
+                .and_then(serde_json::Value::as_array)
+                .map(|values| {
+                    values
+                        .iter()
+                        .filter_map(serde_json::Value::as_str)
+                        .collect::<Vec<_>>()
+                }),
+            Some(vec!["1m"])
+        );
+
+        fs::remove_dir_all(&root).expect("cleanup root");
+    }
+
+    #[test]
     fn async_reoptimize_artifact_write_failure_keeps_status_response_fail_closed() {
         let root = temp_dir("async-reopt-artifacts-root-file");
         let root_file = root.join("not-a-directory");
         fs::write(&root_file, b"not a directory").expect("write root file");
         let settings = async_reoptimize_artifact_test_settings(&root_file);
+        let scope = async_reoptimize_test_scope(
+            AsyncReoptimizeTriggerSource::Scheduled,
+            settings.timeframes.clone(),
+        );
         let run_id = "reopt_test_artifacts_failed_000001";
         let generated_at = Utc::now();
         let errors = Vec::<ReoptError>::new();
@@ -16536,7 +17135,7 @@ mod tests {
         let summary_json = super::async_reoptimize_summary_json(
             run_id,
             AsyncReoptimizeRunStatus::Succeeded,
-            AsyncReoptimizeTriggerSource::Scheduled,
+            &scope,
             &settings,
             &progress_json,
             &errors,
@@ -16549,6 +17148,7 @@ mod tests {
                 run_id,
                 status: AsyncReoptimizeRunStatus::Succeeded,
                 trigger_source: AsyncReoptimizeTriggerSource::Scheduled,
+                requested_timeframes: &scope.requested_timeframes,
                 progress_json: &progress_json,
                 summary_json: &summary_json,
                 errors: &errors,
@@ -16578,7 +17178,7 @@ mod tests {
         let failed_summary_json = super::async_reoptimize_summary_json(
             run_id,
             AsyncReoptimizeRunStatus::Failed,
-            AsyncReoptimizeTriggerSource::Scheduled,
+            &scope,
             &settings,
             &failed_progress_json,
             &failed_errors,
@@ -16732,6 +17332,7 @@ mod tests {
     fn heavy_background_worker_defaults_are_fail_closed() {
         let enabled_by_default = [
             DEFAULT_REOPT_WORKER_ENABLED,
+            DEFAULT_REOPT_SCHEDULER_ENQUEUE_ENABLED,
             DEFAULT_SAMPLED_SLIPPAGE_WORKER_ENABLED,
             DEFAULT_HISTORY_RETENTION_WORKER_ENABLED,
         ]

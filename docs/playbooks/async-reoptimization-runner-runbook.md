@@ -15,18 +15,20 @@ Implemented by the merged Slice A-D work and this Slice E branch:
 
 1. durable async run state and single-flight lease state in
    `services/strategy-service/src/main.rs`;
-2. disabled-by-default bounded runner controlled by
+2. disabled-by-default bounded worker drain controlled by
    `STRATEGY_REOPT_WORKER_ENABLED`;
-3. read/enqueue-only async run endpoints:
+3. separately disabled-by-default scheduled enqueue controlled by
+   `STRATEGY_REOPT_SCHEDULER_ENQUEUE_ENABLED`;
+4. read/enqueue-only async run endpoints:
    `POST /v1/strategy/reoptimize/runs`,
    `GET /v1/strategy/reoptimize/runs/latest`, and
    `GET /v1/strategy/reoptimize/runs/{run_id}`;
-4. opt-in script modes for `tools/scripts/strategy_tuning_report.py` and
+5. opt-in script modes for `tools/scripts/strategy_tuning_report.py` and
    `tools/scripts/strategy_maintenance_cycle.py`;
-5. bounded async reoptimization metrics and structured runner/API logs;
-6. terminal async reoptimization artifact writing under
+6. bounded async reoptimization metrics and structured runner/API logs;
+7. terminal async reoptimization artifact writing under
    `STRATEGY_REOPT_ARTIFACT_ROOT`;
-7. async contracts and examples under
+8. async contracts and examples under
    `specs/contracts/strategy_reoptimize_run_*` and
    `specs/examples/strategy_reoptimize_run_*`.
 
@@ -39,8 +41,10 @@ Not implemented by these slices:
 5. live `ENTRY` or `EXIT` enablement;
 6. host verification.
 
-Do not enable the runner or scheduler in production until Slice F is explicitly
-approved by the operator.
+Do not enable the worker drain or scheduled enqueue in production until Slice F
+is explicitly approved by the operator. For bounded manual canaries, the worker
+drain may be enabled only to process an existing queued run while scheduled
+enqueue remains disabled.
 
 ## Hard Safety Rules
 
@@ -94,13 +98,14 @@ Non-terminal states (`QUEUED`, `LEASED`, `RUNNING`,
 
 ## Disable And Rollback
 
-1. Set `STRATEGY_REOPT_WORKER_ENABLED=false`.
-2. Restart only required services.
-3. Verify no new scheduled mutation-producing run is enqueued after disable.
-4. If an active run exists, let it reach terminal state under existing budgets
+1. Set `STRATEGY_REOPT_SCHEDULER_ENQUEUE_ENABLED=false`.
+2. Set `STRATEGY_REOPT_WORKER_ENABLED=false`.
+3. Restart only required services.
+4. Verify no new scheduled mutation-producing run is enqueued after disable.
+5. If an active run exists, let it reach terminal state under existing budgets
    or use an approved cancellation path when one exists.
-5. Keep run rows, logs, and artifacts readable.
-6. Keep maintenance/report recommendations fail-closed until a fresh approved
+6. Keep run rows, logs, and artifacts readable.
+7. Keep maintenance/report recommendations fail-closed until a fresh approved
    successful run exists after re-enable.
 
 Rollback must not delete run history or artifact evidence.
@@ -262,8 +267,10 @@ When artifacts exist:
 2. require paths to be relative to the artifact root;
 3. reject parent traversal, absolute paths, unreadable files, partial
    manifests, and mismatched byte/count summaries;
-4. compare artifact counts with status progress;
-5. preserve artifacts as audit evidence.
+4. compare manifest `trigger_source` and `requested_timeframes` with the
+   status payload and request artifact;
+5. compare artifact counts with status progress;
+6. preserve artifacts as audit evidence.
 
 Artifact inspection never substitutes for operator-only host verification.
 
@@ -296,8 +303,8 @@ Before asking the operator to approve Slice F, verify:
 
 Readiness is not enablement. A passing readiness manifest can support an
 operator review, but it does not authorize `STRATEGY_REOPT_WORKER_ENABLED`,
-scheduler enablement, live `ENTRY` / `EXIT`, automatic `PROMOTE`, automatic
-`REVERT`, or repair-provenance graduation.
+`STRATEGY_REOPT_SCHEDULER_ENQUEUE_ENABLED`, live `ENTRY` / `EXIT`, automatic
+`PROMOTE`, automatic `REVERT`, or repair-provenance graduation.
 
 ## Operator-Only Host Capture For Slice F
 
@@ -308,7 +315,7 @@ The bundle is evidence only.
 
 1. host branch, commit, and dirty status;
 2. deployed image or service identity;
-3. runner and scheduler flag values before and after the window;
+3. worker-drain and scheduler-enqueue flag values before and after the window;
 4. all budget env values;
 5. proof live `ENTRY` and `EXIT` remain disabled;
 6. proof promotion and revert remain manual and confirmation-gated;
@@ -373,6 +380,7 @@ SLICE_F_DISABLED_STATE_EVIDENCE
 capture_window_utc=<start>/<end>
 NO_SERVICE_RESTART_DURING_CAPTURE_WINDOW=true
 STRATEGY_REOPT_WORKER_ENABLED=false
+STRATEGY_REOPT_SCHEDULER_ENQUEUE_ENABLED=false
 ACTIVE_ASYNC_GAUGES_ZERO=true
 status_recommendation=HOLD
 ```

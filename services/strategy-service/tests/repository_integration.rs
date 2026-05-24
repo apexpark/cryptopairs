@@ -716,6 +716,10 @@ mod strategy_service_bin {
                 left: "PF_XBTUSD".to_string(),
                 right: "PF_ETHUSD".to_string(),
             }];
+            let scope = AsyncReoptimizeRunScope {
+                trigger_source: AsyncReoptimizeTriggerSource::Scheduled,
+                requested_timeframes: settings.timeframes.clone(),
+            };
 
             assert!(
                 fixture
@@ -746,7 +750,7 @@ mod strategy_service_bin {
             let summary_json = async_reoptimize_summary_json(
                 run_id,
                 AsyncReoptimizeRunStatus::Succeeded,
-                AsyncReoptimizeTriggerSource::Scheduled,
+                &scope,
                 &settings,
                 &progress_json,
                 &errors,
@@ -758,6 +762,7 @@ mod strategy_service_bin {
                     run_id,
                     status: AsyncReoptimizeRunStatus::Succeeded,
                     trigger_source: AsyncReoptimizeTriggerSource::Scheduled,
+                    requested_timeframes: &scope.requested_timeframes,
                     progress_json: &progress_json,
                     summary_json: &summary_json,
                     errors: &errors,
@@ -949,6 +954,14 @@ mod strategy_service_bin {
                 .expect("worker can find API-created queued run");
             assert_eq!(queued.run_id, run_id);
             assert_eq!(queued.trigger_source, "MANUAL_API");
+            let settings = StrategySettings::from_env();
+            let scope = async_reoptimize_run_scope_from_state(&queued, &settings)
+                .expect("queued manual run scope should parse");
+            assert_eq!(
+                scope.trigger_source,
+                AsyncReoptimizeTriggerSource::ManualApi
+            );
+            assert_eq!(scope.requested_timeframes, vec![Timeframe::OneMinute]);
 
             let lease = fixture
                 .repository
