@@ -9,14 +9,14 @@
 
 | Field | Value |
 |---|---|
-| Last updated (UTC) | 2026-05-19 |
+| Last updated (UTC) | 2026-05-24 |
 | Updated by | codex/local |
-| Repo HEAD pin (committed) | `df1690c8832359b316ce3206d16694b2e4c749fc` |
+| Repo HEAD pin (committed) | `0328b4632e6f12439d07188a06e19795685de6e2` |
 | Pin branch | `main` |
 | Sprint base branch | `main` |
-| Pin notes | Post-Slice E curation. The pin is the PR #200 squash merge on main at df1690c8832359b316ce3206d16694b2e4c749fc. This curation records Slices D-E as done and intentionally leaves host verification and production enablement operator-only. |
+| Pin notes | Post-PR #205 curation. The pin records `origin/main` after Slice F repo-side evidence hardening and async artifact writing landed. Production canary approval, host verification, scheduler/runner enablement, alert deployment evidence, and live execution remain operator-only. |
 | Origin | `https://github.com/apexpark/cryptopairs.git` |
-| Working-tree state | Reoptimise runner Slices A-E are merged on `main`. Host-runtime verification, scheduler enablement, and production canary evidence remain operator-only and are not claimed by agents. |
+| Working-tree state | Reoptimise runner Slices A-E, Slice F repo-side evidence hardening, and async artifact writing are merged on `main`. Host-runtime verification, scheduler enablement, alert deployment, threshold approval, and production canary evidence remain operator-only and are not claimed by agents. |
 
 If the pin above is not reachable from `HEAD` via fast-forward, this file is stale; if `HEAD` is ahead of the pin, see §"Pin Convention".
 
@@ -87,8 +87,8 @@ Slice tracker:
 | Slice B — durable run state and lease state machine | **Committed on main** | remote/local | PR #193 squash-merged at 3751ee56f059138e9a11c7238e0e68bc4bea7a71 from head 52fb6f8. Local verification passed: `cargo fmt --all -- --check`, `cargo clippy --workspace --all-targets -- -D warnings`, and `cargo test --workspace`. Explicit local Postgres-backed reoptimize tests were invoked with `--nocapture` and skipped per harness policy because `STRATEGY_TEST_DATABASE_URL` was unset; GitHub CI rust checks were green on the PR head. Scope stayed limited to canonical schema/init path, isolated strategy-service persistence/state-machine helpers, focused unit/Postgres tests, and `CHANGELOG.md`. No routes, scheduler loop, UI, scripts, or synchronous reoptimize behavior changed. |
 | Slice C — bounded runner loop | **Committed on main** | remote/local | PR #195 squash-merged at d38229bd7c2b7b8d174e064a9aa9bae4fd48f458 from reviewed head 78a118e. The implementation remains disabled by default and adds the bounded runner loop on top of Slice B state: durable single-flight enqueue/lease, conservative budgets, checkpointed pair/timeframe work, heartbeats, progress/summary writes, cancellation checks, and fail-closed terminal completion. Local verification passed: `cargo fmt --all -- --check`, `cargo clippy --workspace --all-targets -- -D warnings`, `cargo test --workspace`, explicit `cargo test -p strategy-service --test repository_integration -- --nocapture`, and `git diff --check`; local Postgres-backed test bodies skipped per harness because `STRATEGY_TEST_DATABASE_URL` was unset. GitHub CI was green on PR #195. No public API routes, UI, maintenance scripts, existing synchronous `/v1/strategy/pairs/reoptimize` behavior, automatic promotion, repair-provenance graduation, or host verification claims were added. |
 | Slice D — async API and script migration | **Committed on main** | remote/local | PR #197 / commit 880da1112a66e4ce58fb24cf354be0c82f2df173 landed the read/enqueue-only async run endpoint subset. PR #198 / commit a115ab785479cf54929cd59aee8f3b787f46a993 landed opt-in script modes (`sync`, `async`, `latest-successful`, `skip`) for report/maintenance scripts while preserving synchronous defaults and baseline skip behavior. Async/latest evidence uses bounded polling and fails closed to `HOLD` on timeout, invalid/unknown status, stale or incompatible latest evidence, missing artifacts, critical errors, fail-closed reasons, or unavailable cancellation. The existing synchronous `/v1/strategy/pairs/reoptimize` route remains unchanged; UI changes, production scheduler defaults, automatic promotion/revert, repair-provenance graduation, artifact download routes, and mutating cancellation remain deferred. |
-| Slice E — observability and runbooks | **Committed on main** | remote/local | PR #200 / commit df1690c8832359b316ce3206d16694b2e4c749fc adds bounded async reoptimization metrics, structured runner/API logs, and `docs/playbooks/async-reoptimization-runner-runbook.md` for the merged Slice C/D subset: lifecycle, active runs, enqueue outcomes, lease acquire/heartbeat/loss, budget exhaustion, pair/timeframe progress, cancellation observation/completion, fail-closed reasons, missing/unknown telemetry, terminal recommendations, status inspection, disable/rollback, stuck lease recovery, budget exhaustion response, artifact evidence, and Slice F readiness. Artifact read/write metrics remain deferred because this base still writes empty manifests and has no artifact read/download route. No production scheduler enablement, UI edits, scripts, automatic promotion/revert, repair-provenance graduation, or host verification claims are included. |
-| Slice F — production canary | **Not started; operator-only** | operator | Requires explicit operator approval after C-E. Must capture host identity, flags, budgets, metrics, status progression, artifacts, CPU/hot-path baseline comparison, live ENTRY/EXIT disabled evidence, and no automatic promotion. |
+| Slice E — observability and runbooks | **Committed on main** | remote/local | PR #200 / commit df1690c8832359b316ce3206d16694b2e4c749fc adds bounded async reoptimization metrics, structured runner/API logs, and `docs/playbooks/async-reoptimization-runner-runbook.md` for the merged Slice C/D subset: lifecycle, active runs, enqueue outcomes, lease acquire/heartbeat/loss, budget exhaustion, pair/timeframe progress, cancellation observation/completion, fail-closed reasons, missing/unknown telemetry, terminal recommendations, status inspection, disable/rollback, stuck lease recovery, budget exhaustion response, artifact evidence, and Slice F readiness. Artifact read/download routes and artifact read/download metrics remain deferred. No production scheduler enablement, UI edits, automatic promotion/revert, repair-provenance graduation, or host verification claims are included. |
+| Slice F — production canary | **Repo-side hardening committed; canary not started; operator-only** | operator | PRs #202-#205 added repo-side evidence gates/tooling, threshold approval contract, alert templates/checklists, fail-closed readiness checks, no-row status semantics, and async artifact writing. Production canary still requires explicit operator approval and must capture host identity, flags, budgets, metrics, status progression, artifacts, CPU/hot-path baseline comparison, alert deployment/routing state, live ENTRY/EXIT disabled evidence, and no automatic promotion. |
 
 Open operator decisions before production enablement:
 
@@ -97,11 +97,12 @@ Open operator decisions before production enablement:
    heartbeat interval.
 2. First canary timeframe and success thresholds.
 3. Cancellation authority and auth/audit boundary.
-4. Artifact root, retention period, and download/access policy.
-5. Canonical request/config fingerprint fields.
-6. Script migration defaults: stay sync, async opt-in, latest-successful, or
+4. Host artifact root, retention period, and download/access policy.
+5. Alert deployment/routing evidence and `threshold_approval` artifact.
+6. Canonical request/config fingerprint fields.
+7. Script migration defaults: stay sync, async opt-in, latest-successful, or
    skip for each maintenance path.
-7. Long-term fate of `POST /v1/strategy/pairs/reoptimize`: compatibility
+8. Long-term fate of `POST /v1/strategy/pairs/reoptimize`: compatibility
    route, admin-only route, async wrapper, or deprecated route.
 
 Next safe sequence:
@@ -151,11 +152,31 @@ Source of truth for shipped behavior is `CHANGELOG.md` `## Unreleased` section. 
 - **Committed (`d38229b`)**: Reoptimise runner Slice C (PR #195) — disabled-by-default bounded async runner loop on Slice B durable state, with lease-gated mutation work, conservative budgets, checkpointed pair/timeframe processing, heartbeats, cancellation checks, fail-closed budget/cancellation terminal behavior, and focused unit/repository coverage. Local verification passed fmt, clippy, full workspace tests, explicit repository integration invocation, and diff check; local Postgres DB was unavailable so fixture bodies skipped per harness policy while GitHub CI was green. No public API routes, scheduler production enablement, UI, maintenance scripts, synchronous reoptimize behavior change, automatic promotion, repair-provenance graduation, or host verification claim landed.
 - **Committed (`880da11`)**: Reoptimise runner Slice D endpoint subset (PR #197) — strategy-service exposes read/enqueue-only async run APIs (`POST /v1/strategy/reoptimize/runs`, `GET /v1/strategy/reoptimize/runs/latest`, `GET /v1/strategy/reoptimize/runs/{run_id}`) on top of Slice C durable state. Enqueue fails closed while the disabled-by-default async worker is off, compatible active runs can be attached, and the existing synchronous `/v1/strategy/pairs/reoptimize` route remains unchanged. Cancellation, artifact download routes, script migration, UI changes, scheduler production enablement, automatic promotion/revert, repair-provenance graduation, and host verification were deferred.
 - **Committed (`a115ab7`)**: Reoptimise runner Slice D script migration (PR #198) — tuning report and maintenance cycle scripts now support explicit `sync`, `async`, `latest-successful`, and `skip` reoptimization modes while preserving synchronous/default compatibility. Async/latest evidence uses bounded polling and fails closed to `HOLD` on unknown, stale, schema-invalid, timed-out, degraded, canceled, or artifact-missing state. No scheduler production enablement, automatic promotion/revert, repair-provenance graduation, artifact download route, mutating cancellation route, UI change, or host verification claim landed.
-- **Committed (`df1690c`)**: Reoptimise runner Slice E observability and runbooks (PR #200) — strategy-service exposes bounded async reoptimization metrics/logs for lifecycle, active runs, enqueue, leases, budgets, progress, cancellation, fail-closed, missing telemetry, unknown status, terminal timeframe status, and terminal recommendations. `docs/playbooks/async-reoptimization-runner-runbook.md` covers status inspection, disable/rollback, cancellation handling, stuck lease recovery, budget exhaustion, missing telemetry, artifact evidence, and Slice F readiness. Artifact read/write metrics remain deferred until artifact write/read/download surfaces exist; production canary remains operator-only.
+- **Committed (`df1690c`)**: Reoptimise runner Slice E observability and runbooks (PR #200) — strategy-service exposes bounded async reoptimization metrics/logs for lifecycle, active runs, enqueue, leases, budgets, progress, cancellation, fail-closed, missing telemetry, unknown status, terminal timeframe status, and terminal recommendations. `docs/playbooks/async-reoptimization-runner-runbook.md` covers status inspection, disable/rollback, cancellation handling, stuck lease recovery, budget exhaustion, missing telemetry, artifact evidence, and Slice F readiness. Artifact read/download routes and artifact read/download metrics remain deferred; production canary remains operator-only.
+- **Committed (`8524067`)**: Slice F evidence gates (PR #202) — added the Slice F canary evidence manifest contract, pass/fail examples, semantic checker, and capture-only runbook guidance for alert readiness, CPU/hot endpoint threshold evidence, useful strategy logs, status payload checks, live ENTRY/EXIT disabled proof, PROMOTE/REVERT confirmation gates, and repair-provenance blocking. This did not configure host alerting or claim host verification.
+- **Committed (`e28a4df`)**: Slice F evidence tooling hardening — added fail-closed raw bundle manifest generation, alert-rule templates plus template validation, a zero-row repair-provenance example, and stricter semantic checks for dirty host identity, runner/scheduler enablement, fail-closed status, required artifacts, and repair-provenance-active deltas. Repo-side templates are not deployed alert evidence.
+- **Committed (`2394648`)**: Slice F readiness evidence hardening (PR #204) — added the `slice_f_threshold_approval` contract/example, made threshold approval a required artifact, taught the raw bundle generator to consume it, added a deployable-but-not-applied alert checklist, and made missing latest async durable state a schema-valid fail-closed status payload with `OPERATOR_REVIEW_REQUIRED`, `MISSING_TELEMETRY`, and `UNKNOWN_STATUS`.
+- **Committed (`0328b46`)**: Async reoptimization artifact writing (PR #205) — terminal runs now write request, progress, summary, errors, and operator-summary artifacts under `STRATEGY_REOPT_ARTIFACT_ROOT`, compute SHA-256 digests with pinned `sha2` `0.10.9`, persist a contract-shaped manifest in `strategy_reoptimize_runs.artifact_manifest_json`, and fail closed with `ARTIFACT_FAILED` if artifact writing or manifest validation fails. Artifact read/download routes, host verification, scheduler enablement, automatic promotion/revert, and live ENTRY/EXIT remain deferred.
 
 ---
 
 ## Blocked / Waiting On
+
+### B-Slice-F-Production-Canary (operator-only)
+
+Repo-side Slice F evidence gates, readiness tooling, no-row status semantics,
+and async artifact writing are merged on `main` as of
+`0328b4632e6f12439d07188a06e19795685de6e2`. Production canary remains blocked
+until the operator explicitly approves host work and captures a clean host
+evidence bundle covering deployed identity, runner/scheduler flags, budgets,
+status progression, artifacts, metrics, alert deployment/routing state,
+threshold approval, strategy logs, live ENTRY/EXIT disabled proof,
+promotion/revert confirmation gates, and repair-provenance blocking.
+
+Agents must not SSH to `cryptopairs`, enable `STRATEGY_REOPT_WORKER_ENABLED`,
+enable a production scheduler, start canary jobs, enable live ENTRY/EXIT,
+automate PROMOTE/REVERT, or graduate repair-only provenance from repo state
+alone.
 
 ### B-Host-Lineage (deployed; 72-hour observation active)
 
@@ -566,7 +587,7 @@ Pickable items, in priority order:
 1. **Operator-only: reoptimise runner Slice F production canary** — only after explicit operator approval; host verification remains operator-only.
 2. **Operator/local agent: continue any remaining Champion-Selection observation capture** — preserve fail-closed runtime settings and compare Trade Now buckets, blocked reasons, opportunity history, paper trades, and drift events against prior captures.
 3. **Remote/UI agent: Trade Now observation UI** — improve the web UI for the current observation window using existing Trade Now and observability contracts; do not add controls that mutate runtime state.
-4. **Remote/local agent: async reoptimization hardening follow-ups** — if approved, handle deferred mutating cancellation auth/audit, artifact write/read/download surfaces, request/config fingerprint graduation, or scheduler/canary refinements as separate slices without making legacy or repair-only provenance trade-eligible.
+4. **Remote/local agent: async reoptimization hardening follow-ups** — if approved, handle deferred mutating cancellation auth/audit, artifact read/download surfaces, request/config fingerprint graduation, or scheduler/canary refinements as separate slices without making legacy or repair-only provenance trade-eligible.
 8. **Remote/local agent: X3 implementation** — only after reconciled deployment is observed; implement PR #175's optional/additive reporting diagnostics while preserving legacy `selected_variant`.
 9. **Remote/local agent: blocker-specific strategy follow-up** — only after T+72, target the blocker shown by evidence (learning hold/not eligible, live setup/cost gates, or approved-universe policy) rather than weakening Trade Now safety gates.
 
