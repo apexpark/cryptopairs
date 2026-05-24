@@ -5,6 +5,16 @@ This project follows SemVer as defined in `docs/02-versioning-and-releases.md`.
 
 ## Unreleased
 ### Operator Tooling
+- Added repo-side async reoptimization artifact writing: terminal runs now
+  write request, progress, summary, errors, and operator-summary artifacts
+  under `STRATEGY_REOPT_ARTIFACT_ROOT`, compute SHA-256 digests with pinned
+  `sha2` `0.10.9`, persist a contract-shaped manifest in
+  `strategy_reoptimize_runs.artifact_manifest_json`, set
+  `artifact_download_route=DEFERRED_NO_DOWNLOAD_ROUTE` while read/download
+  surfaces remain deferred, and fail closed with `ARTIFACT_FAILED` if artifact
+  writing or manifest validation fails. Artifact read/download routes, host
+  verification, scheduler enablement, automatic promotion/revert, and live
+  `ENTRY`/`EXIT` remain deferred.
 - Clarified async reoptimization no-row status semantics: missing
   `/v1/strategy/reoptimize/runs/latest` durable state now remains a
   schema-valid non-success `FAILED` payload while recommending

@@ -9,6 +9,8 @@ mod strategy_service_bin {
         use super::*;
         use chrono::{DateTime, TimeZone, Utc};
         use common_types::Timeframe;
+        use std::fs;
+        use std::path::PathBuf;
         use std::sync::atomic::{AtomicUsize, Ordering};
         use std::time::{SystemTime, UNIX_EPOCH};
         use strategy_service::{
@@ -694,6 +696,124 @@ mod strategy_service_bin {
         }
 
         #[tokio::test]
+        async fn reoptimize_completion_persists_generated_artifact_manifest() -> anyhow::Result<()>
+        {
+            let Some(fixture) =
+                PgFixture::connect("reoptimize_completion_persists_generated_artifact_manifest")
+                    .await?
+            else {
+                return Ok(());
+            };
+            let run_id = "reopt_state_generated_manifest";
+            let now = test_time(1_779_000_451)?;
+            let completed_at = test_time(1_779_000_460)?;
+            let artifact_root = temp_dir("reoptimize-generated-manifest")?;
+            let mut settings = StrategySettings::from_env();
+            settings.reopt_artifacts_root = artifact_root.to_string_lossy().to_string();
+            settings.reopt_max_artifact_bytes = 1024 * 1024;
+            settings.timeframes = vec![Timeframe::OneMinute];
+            settings.pairs = vec![PairSpec {
+                left: "PF_XBTUSD".to_string(),
+                right: "PF_ETHUSD".to_string(),
+            }];
+
+            assert!(
+                fixture
+                    .repository
+                    .enqueue_reoptimize_run_state(
+                        run_id,
+                        AsyncReoptimizeTriggerSource::Scheduled,
+                        &[Timeframe::OneMinute],
+                        now,
+                    )
+                    .await?
+            );
+            let lease = fixture
+                .repository
+                .acquire_reoptimize_run_lease(run_id, "owner-a", 120, now)
+                .await?
+                .expect("lease acquired");
+            let mut progress = AsyncReoptimizeRunnerProgress::new(
+                settings.timeframes.clone(),
+                settings.pairs.len(),
+            );
+            progress.phase = AsyncReoptimizePhase::Terminal;
+            progress.completed_timeframe_count = 1;
+            progress.pairs_completed = 1;
+            progress.last_heartbeat_at = Some(completed_at);
+            let progress_json = progress.to_json();
+            let errors = Vec::<ReoptError>::new();
+            let summary_json = async_reoptimize_summary_json(
+                run_id,
+                AsyncReoptimizeRunStatus::Succeeded,
+                AsyncReoptimizeTriggerSource::Scheduled,
+                &settings,
+                &progress_json,
+                &errors,
+                None,
+            );
+            let artifact_manifest =
+                write_async_reoptimize_artifacts(AsyncReoptimizeArtifactWriteInput {
+                    settings: &settings,
+                    run_id,
+                    status: AsyncReoptimizeRunStatus::Succeeded,
+                    trigger_source: AsyncReoptimizeTriggerSource::Scheduled,
+                    progress_json: &progress_json,
+                    summary_json: &summary_json,
+                    errors: &errors,
+                    recommendation: AsyncReoptimizeRecommendation::PromotionCandidateAvailable,
+                    fail_closed_reasons: &[],
+                    generated_at: completed_at,
+                })?;
+
+            let finalized = fixture
+                .repository
+                .complete_reoptimize_run(AsyncReoptimizeCompletion {
+                    run_id,
+                    lease_owner: "owner-a",
+                    lease_generation: lease.lease_generation,
+                    requested_status: AsyncReoptimizeRunStatus::Succeeded,
+                    recommendation: AsyncReoptimizeRecommendation::PromotionCandidateAvailable,
+                    fail_closed_reasons: &[],
+                    artifact_manifest_json: &artifact_manifest,
+                    progress_json: &progress_json,
+                    summary_json: &summary_json,
+                    now: completed_at,
+                })
+                .await?
+                .expect("completion persisted");
+            assert_eq!(finalized.status, AsyncReoptimizeRunStatus::Succeeded);
+            let persisted_manifest: serde_json::Value =
+                serde_json::from_str(&finalized.artifact_manifest_json)?;
+            assert!(async_reoptimize_artifact_manifest_has_contract_shape(
+                &persisted_manifest
+            ));
+            assert_eq!(
+                persisted_manifest["artifact_download_route"],
+                "DEFERRED_NO_DOWNLOAD_ROUTE"
+            );
+            assert!(artifact_root
+                .join(format!("runs/{run_id}/manifest.json"))
+                .is_file());
+
+            let response = async_reoptimize_status_response_from_state(
+                &finalized,
+                &settings,
+                completed_at,
+                &[],
+            );
+            assert_eq!(response.status, "SUCCEEDED");
+            assert!(response.artifact_manifest.is_some());
+            assert_eq!(
+                response.recommendation.decision,
+                AsyncReoptimizeRecommendation::PromotionCandidateAvailable.as_str()
+            );
+
+            fs::remove_dir_all(&artifact_root)?;
+            Ok(())
+        }
+
+        #[tokio::test]
         async fn reoptimize_active_run_single_flight_refuses_second_queue() -> anyhow::Result<()> {
             let Some(fixture) =
                 PgFixture::connect("reoptimize_active_run_single_flight_refuses_second_queue")
@@ -971,6 +1091,15 @@ mod strategy_service_bin {
             Utc.timestamp_opt(seconds, 0)
                 .single()
                 .ok_or_else(|| anyhow::anyhow!("invalid test timestamp {}", seconds))
+        }
+
+        fn temp_dir(name: &str) -> anyhow::Result<PathBuf> {
+            let mut path = std::env::temp_dir();
+            let stamp = Utc::now().timestamp_nanos_opt().unwrap_or_default();
+            let counter = SCHEMA_COUNTER.fetch_add(1, Ordering::SeqCst);
+            path.push(format!("cryptopairs-strategy-{name}-{stamp}-{counter:03}"));
+            fs::create_dir_all(&path)?;
+            Ok(path)
         }
 
         fn next_schema_name() -> anyhow::Result<String> {
