@@ -182,9 +182,9 @@ python3 tools/scripts/data_pipeline_e2e_check.py \
 ## Slice F Reoptimization Evidence Capture
 
 This section is capture-only. It does not authorize enabling
-`STRATEGY_REOPT_WORKER_ENABLED`, a production scheduler, live `ENTRY` /
-`EXIT`, automatic `PROMOTE`, automatic `REVERT`, or repair-provenance
-graduation.
+`STRATEGY_REOPT_WORKER_ENABLED`,
+`STRATEGY_REOPT_SCHEDULER_ENQUEUE_ENABLED`, live `ENTRY` / `EXIT`,
+automatic `PROMOTE`, automatic `REVERT`, or repair-provenance graduation.
 
 Before any Slice F canary is reviewed, the operator captures an evidence
 bundle with a root `slice_f_manifest.json` matching:
@@ -196,7 +196,7 @@ bundle with a root `slice_f_manifest.json` matching:
 Required capture categories:
 
 1. host branch, commit, dirty status, and deployed service identity;
-2. runner/scheduler flags before and after the window;
+2. worker-drain/scheduler-enqueue flags before and after the window;
 3. all async reoptimization budget values;
 4. active async status before the window;
 5. `/metrics` output for implemented async reoptimization metrics;
@@ -268,6 +268,7 @@ SLICE_F_DISABLED_STATE_EVIDENCE
 capture_window_utc=<start>/<end>
 NO_SERVICE_RESTART_DURING_CAPTURE_WINDOW=true
 STRATEGY_REOPT_WORKER_ENABLED=false
+STRATEGY_REOPT_SCHEDULER_ENQUEUE_ENABLED=false
 ACTIVE_ASYNC_GAUGES_ZERO=true
 status_recommendation=HOLD
 ```

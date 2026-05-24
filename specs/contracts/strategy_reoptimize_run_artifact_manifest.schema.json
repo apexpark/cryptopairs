@@ -33,6 +33,13 @@
     },
     "status": { "$ref": "#/$defs/run_status" },
     "trigger_source": { "$ref": "#/$defs/trigger_source" },
+    "requested_timeframes": {
+      "type": "array",
+      "description": "Requested timeframe scope that produced this manifest. Missing values must not be treated as compatibility proof by consumers that require request-scope agreement.",
+      "items": { "$ref": "#/$defs/timeframe" },
+      "minItems": 1,
+      "uniqueItems": true
+    },
     "request_fingerprint": {
       "type": ["string", "null"],
       "description": "Opaque deterministic request/config fingerprint. Null means the implementation has not emitted an approved fingerprint, so consumers that require compatibility evidence must fail closed.",
@@ -89,6 +96,10 @@
       "type": "string",
       "$comment": "Canonical trigger-source vocabulary for async reoptimization. Future observability trigger labels must use this enum exactly. Trigger source is metadata and does not change risk or promotion gates.",
       "enum": ["SCHEDULED", "MANUAL_API", "MAINTENANCE_REPORT", "RECOVERY"]
+    },
+    "timeframe": {
+      "type": "string",
+      "enum": ["1m", "15m", "1h"]
     },
     "timeframe_nullable": {
       "type": ["string", "null"],

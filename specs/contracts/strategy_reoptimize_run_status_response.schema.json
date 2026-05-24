@@ -318,6 +318,13 @@
         "run_id": { "$ref": "#/$defs/run_id" },
         "status": { "$ref": "#/$defs/run_status" },
         "trigger_source": { "$ref": "#/$defs/trigger_source" },
+        "requested_timeframes": {
+          "type": "array",
+          "description": "Requested timeframe scope that produced this manifest. Missing values must not be treated as compatibility proof by consumers that require request-scope agreement.",
+          "items": { "$ref": "#/$defs/timeframe" },
+          "minItems": 1,
+          "uniqueItems": true
+        },
         "request_fingerprint": {
           "type": ["string", "null"],
           "description": "Opaque deterministic request/config fingerprint. Null means the implementation has not emitted an approved fingerprint, so consumers that require compatibility evidence must fail closed.",

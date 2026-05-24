@@ -5,6 +5,14 @@ This project follows SemVer as defined in `docs/02-versioning-and-releases.md`.
 
 ## Unreleased
 ### Operator Tooling
+- Separated async reoptimization worker drain from scheduled enqueue with the
+  default-off `STRATEGY_REOPT_SCHEDULER_ENQUEUE_ENABLED` gate. Existing queued
+  manual runs can be drained with `STRATEGY_REOPT_WORKER_ENABLED=true` while
+  scheduled enqueue remains disabled, and terminal status, summaries, request
+  artifacts, and manifests now preserve the persisted run trigger/timeframe
+  scope or fail closed on invalid/contradictory scope. The async artifact
+  manifest contract/examples now include additive `requested_timeframes`
+  evidence for scope reconciliation.
 - Added repo-side async reoptimization artifact writing: terminal runs now
   write request, progress, summary, errors, and operator-summary artifacts
   under `STRATEGY_REOPT_ARTIFACT_ROOT`, compute SHA-256 digests with pinned
