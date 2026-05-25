@@ -11,12 +11,12 @@
 |---|---|
 | Last updated (UTC) | 2026-05-25 |
 | Updated by | codex/local |
-| Repo HEAD pin (committed) | `07ee4edcc271863e6fc4faf096cae1436a3bc5f0` |
+| Repo HEAD pin (committed) | `97213ba2f8c3efa565c2977f7e3064aec1ea5ae6` |
 | Pin branch | `main` |
 | Sprint base branch | `main` |
-| Pin notes | Post-PR #207 plus operator-captured reduced manual canary evidence curation. The pin records `origin/main` after async artifact writing and scheduler/manual-run separation landed. Operator evidence proved a reduced manual 1m run can complete with scheduler enqueue disabled and scope-consistent status/request/artifacts, but full Slice F readiness remains blocked on the broader operator-only evidence gate. |
+| Pin notes | Post-PR #209 plus operator-captured full Slice F evidence bundle. The pin records `origin/main` after async artifact writing, scheduler/manual-run separation, reduced manual canary state curation, and evidence-tooling alignment landed. Operator evidence bundle `slice_f_full_evidence_20260525T071215Z` passed the canonical checker with `READY_FOR_OPERATOR_REVIEW`; this is evidence review state only and does not authorize worker/scheduler enablement, live ENTRY/EXIT, automatic PROMOTE/REVERT, or repair-provenance graduation. |
 | Origin | `https://github.com/apexpark/cryptopairs.git` |
-| Working-tree state | Reoptimise runner Slices A-E, Slice F repo-side evidence hardening, async artifact writing, and scheduler/manual-run separation are merged on `main`. Operator-captured reduced manual canary evidence for PR #207 showed a `MANUAL_API` + `["1m"]` run completed `SUCCEEDED` with artifact schema/hash verification, no fail-closed reasons, `SCHEDULED/ENQUEUED=0`, and active async gauges zero after disable. Full Slice F readiness still remains `KEEP_DISABLED_KEEP_HOLD` until alert deployment evidence, threshold approval, live ENTRY/EXIT disabled proof, PROMOTE/REVERT confirmation gating, repair-provenance block evidence, and a canonical Slice F evidence manifest all pass. |
+| Working-tree state | Reoptimise runner Slices A-E, Slice F repo-side evidence hardening, async artifact writing, scheduler/manual-run separation, and evidence tooling alignment are merged on `main`. Operator-captured bundle `slice_f_full_evidence_20260525T071215Z` validates with `tools/scripts/slice_f_evidence_check.py --verify-files`: `pass=true`, `recommended_action=READY_FOR_OPERATOR_REVIEW`, and no stop conditions. Keep runtime disabled pending explicit operator review/approval. |
 
 If the pin above is not reachable from `HEAD` via fast-forward, this file is stale; if `HEAD` is ahead of the pin, see §"Pin Convention".
 
@@ -88,7 +88,7 @@ Slice tracker:
 | Slice C — bounded runner loop | **Committed on main** | remote/local | PR #195 squash-merged at d38229bd7c2b7b8d174e064a9aa9bae4fd48f458 from reviewed head 78a118e. The implementation remains disabled by default and adds the bounded runner loop on top of Slice B state: durable single-flight enqueue/lease, conservative budgets, checkpointed pair/timeframe work, heartbeats, progress/summary writes, cancellation checks, and fail-closed terminal completion. Local verification passed: `cargo fmt --all -- --check`, `cargo clippy --workspace --all-targets -- -D warnings`, `cargo test --workspace`, explicit `cargo test -p strategy-service --test repository_integration -- --nocapture`, and `git diff --check`; local Postgres-backed test bodies skipped per harness because `STRATEGY_TEST_DATABASE_URL` was unset. GitHub CI was green on PR #195. No public API routes, UI, maintenance scripts, existing synchronous `/v1/strategy/pairs/reoptimize` behavior, automatic promotion, repair-provenance graduation, or host verification claims were added. |
 | Slice D — async API and script migration | **Committed on main** | remote/local | PR #197 / commit 880da1112a66e4ce58fb24cf354be0c82f2df173 landed the read/enqueue-only async run endpoint subset. PR #198 / commit a115ab785479cf54929cd59aee8f3b787f46a993 landed opt-in script modes (`sync`, `async`, `latest-successful`, `skip`) for report/maintenance scripts while preserving synchronous defaults and baseline skip behavior. Async/latest evidence uses bounded polling and fails closed to `HOLD` on timeout, invalid/unknown status, stale or incompatible latest evidence, missing artifacts, critical errors, fail-closed reasons, or unavailable cancellation. The existing synchronous `/v1/strategy/pairs/reoptimize` route remains unchanged; UI changes, production scheduler defaults, automatic promotion/revert, repair-provenance graduation, artifact download routes, and mutating cancellation remain deferred. |
 | Slice E — observability and runbooks | **Committed on main** | remote/local | PR #200 / commit df1690c8832359b316ce3206d16694b2e4c749fc adds bounded async reoptimization metrics, structured runner/API logs, and `docs/playbooks/async-reoptimization-runner-runbook.md` for the merged Slice C/D subset: lifecycle, active runs, enqueue outcomes, lease acquire/heartbeat/loss, budget exhaustion, pair/timeframe progress, cancellation observation/completion, fail-closed reasons, missing/unknown telemetry, terminal recommendations, status inspection, disable/rollback, stuck lease recovery, budget exhaustion response, artifact evidence, and Slice F readiness. Artifact read/download routes and artifact read/download metrics remain deferred. No production scheduler enablement, UI edits, automatic promotion/revert, repair-provenance graduation, or host verification claims are included. |
-| Slice F — production canary | **Reduced manual canary succeeded; full readiness still blocked** | operator/local | PRs #202-#207 added repo-side evidence gates/tooling, threshold approval contract, alert templates/checklists, fail-closed readiness checks, no-row status semantics, async artifact writing, and scheduler/manual-run separation. The earlier full-scope operator canary failed closed with `DEGRADED` / `HOLD` / `BUDGET_EXHAUSTED` and exposed manual/scheduled scope contamination. PR #207 split worker drain from scheduled enqueue. Operator evidence after deployment showed: a full-pair manual 1m run now kept scope consistent but still exhausted `TIMEFRAME_WALL_CLOCK`; a reduced one-pair manual 1m run then completed `SUCCEEDED` with `PROMOTION_CANDIDATE_AVAILABLE`, no fail-closed reasons, `SCHEDULED/ENQUEUED=0`, active gauges zero after disable, and status/DB/request/summary/artifact agreement on `MANUAL_API` + `["1m"]`. This is repo-side/manual-canary proof only, not production readiness approval. |
+| Slice F — production canary | **Full evidence checker pass; operator review pending** | operator/local | PRs #202-#209 added repo-side evidence gates/tooling, threshold approval contract, alert templates/checklists, fail-closed readiness checks, no-row status semantics, async artifact writing, scheduler/manual-run separation, and PR #207-aligned evidence tooling. The earlier full-scope operator canary failed closed with `DEGRADED` / `HOLD` / `BUDGET_EXHAUSTED`; a reduced one-pair manual run later completed `SUCCEEDED` with scope-consistent artifacts and no scheduled enqueue. The operator-provided full evidence bundle `slice_f_full_evidence_20260525T071215Z` now passes the canonical checker with `READY_FOR_OPERATOR_REVIEW`, clean host identity at `97213ba`, worker/scheduler disabled, live ENTRY/EXIT disabled, PROMOTE/REVERT confirmation-gated, repair provenance blocked, and no stop conditions. This remains operator review evidence only, not production enablement approval. |
 
 Open operator decisions before production enablement:
 
@@ -108,16 +108,15 @@ Open operator decisions before production enablement:
 Next safe sequence:
 
 1. Keep `STRATEGY_REOPT_WORKER_ENABLED=false` and
-   `STRATEGY_REOPT_SCHEDULER_ENQUEUE_ENABLED=false` outside explicit
-   operator-approved evidence windows.
-2. Do not treat the reduced one-pair canary as full Slice F readiness. It
-   proves scheduler/manual separation and artifact-backed manual completion
-   only.
-3. Before any production readiness approval, capture and validate the full
-   Slice F evidence bundle: alert deployment/routing, threshold approval,
-   live ENTRY/EXIT disabled proof, PROMOTE/REVERT confirmation gates,
-   repair-provenance blocking, clean host identity, useful logs, status,
-   run rows, metrics, and artifacts.
+   `STRATEGY_REOPT_SCHEDULER_ENQUEUE_ENABLED=false` until an explicit
+   operator approval names the next enablement window, scope, budget, abort
+   rule, and rollback owner.
+2. Treat `READY_FOR_OPERATOR_REVIEW` as evidence review state only. It does not
+   authorize worker/scheduler enablement, live `ENTRY` / `EXIT`, automatic
+   `PROMOTE` / `REVERT`, or repair-provenance graduation.
+3. Operator review must decide whether any next enablement/canary step is
+   approved, and if so must preserve bounded scope, disabled defaults, explicit
+   rollback, and evidence capture.
 4. Keep the existing synchronous `/v1/strategy/pairs/reoptimize`
    compatibility route unchanged unless a separate versioned migration is
    approved.
@@ -168,16 +167,19 @@ Source of truth for shipped behavior is `CHANGELOG.md` `## Unreleased` section. 
 - **Committed (`0328b46`)**: Async reoptimization artifact writing (PR #205) — terminal runs now write request, progress, summary, errors, and operator-summary artifacts under `STRATEGY_REOPT_ARTIFACT_ROOT`, compute SHA-256 digests with pinned `sha2` `0.10.9`, persist a contract-shaped manifest in `strategy_reoptimize_runs.artifact_manifest_json`, and fail closed with `ARTIFACT_FAILED` if artifact writing or manifest validation fails. Artifact read/download routes, host verification, scheduler enablement, automatic promotion/revert, and live ENTRY/EXIT remain deferred.
 - **Committed (`905cc08`)**: Slice F rerun state curation (PR #206) — refreshed this state file after the operator-captured canary failed closed, recorded the `MANUAL_API`/`SCHEDULED` scope mismatch and repeated scheduled `DEGRADED` runs, and kept Slice F on `KEEP_DISABLED_KEEP_HOLD` pending a repo-side scheduler/manual-run separation fix.
 - **Committed (`07ee4ed`)**: Scheduler/manual-run separation (PR #207) — added default-off `STRATEGY_REOPT_SCHEDULER_ENQUEUE_ENABLED`, kept `STRATEGY_REOPT_WORKER_ENABLED` as worker-drain only, persisted `trigger_source` and `requested_timeframes` through status/summaries/artifacts/manifests, and fail-closed contradictory scope evidence. Operator-captured reduced manual canary evidence later proved a one-pair `MANUAL_API` + `["1m"]` run could complete `SUCCEEDED` with schema/hash-valid artifacts and no scheduled enqueue.
+- **Committed (`7473da6`)**: Reduced Slice F manual canary state curation (PR #208) — recorded the operator-provided reduced one-pair manual canary evidence while keeping full Slice F readiness blocked pending the complete operator-only evidence gate.
+- **Committed (`97213ba`)**: Slice F evidence tooling alignment (PR #209) — updated the raw bundle generator/checker to recognize `STRATEGY_REOPT_SCHEDULER_ENQUEUE_ENABLED`, keep successful `PROMOTION_CANDIDATE_AVAILABLE` as evidence-only review state, and document that `EXECUTION_DISPATCH_MODE` must be captured from `cryptopairs-execution-service`.
 
 ---
 
 ## Blocked / Waiting On
 
-### B-Slice-F-Production-Canary (reduced manual canary succeeded; full readiness blocked)
+### B-Slice-F-Production-Canary (full evidence passed; operator review pending)
 
 Repo-side Slice F evidence gates, readiness tooling, no-row status semantics,
-async artifact writing, and scheduler/manual-run separation are merged on
-`main` as of `07ee4edcc271863e6fc4faf096cae1436a3bc5f0`.
+async artifact writing, scheduler/manual-run separation, and evidence-tooling
+alignment are merged on `main` as of
+`97213ba2f8c3efa565c2977f7e3064aec1ea5ae6`.
 
 Operator-captured evidence showed:
 
@@ -207,15 +209,24 @@ Operator-captured evidence showed:
    instead of the execution-service container. Treat this as repo-side evidence
    tooling/runbook drift, not a reason to relax the checker or hand-edit
    evidence.
+7. PR #209 fixed that evidence-tooling drift. The operator then captured
+   bundle `slice_f_full_evidence_20260525T071215Z` and provided it locally at
+   `/tmp/cryptopairs-slice-f/slice_f_full_evidence_20260525T071215Z.tgz`.
+   Local verification against current `origin/main` passed:
+   `tools/scripts/slice_f_evidence_check.py --verify-files` returned
+   `pass=true`, `recommended_action=READY_FOR_OPERATOR_REVIEW`, and
+   `errors=[]`. The manifest records clean host identity at `97213ba`, bundle
+   root outside `/opt/cryptopairs`, worker/scheduler disabled before/after,
+   live ENTRY/EXIT disabled, PROMOTE/REVERT confirmation-gated, repair
+   provenance blocked, threshold approval captured, alerting ready, useful
+   disabled-state logs, and no stop conditions.
 
-This clears the repo-side scheduler/manual-run separation blocker for reduced
-manual evidence. Full Slice F readiness remains blocked because the passing
-bundle is intentionally reduced scope and does not include the complete
-operator-only readiness gate: alert deployment/routing evidence,
-`threshold_approval`, live ENTRY/EXIT disabled proof, PROMOTE/REVERT
-confirmation-gating evidence, repair-provenance block evidence, clean
-host-identity manifest fields, useful strategy logs, and a canonical
-Slice F evidence manifest that passes `tools/scripts/slice_f_evidence_check.py`.
+This clears the canonical evidence-manifest gate for operator review. It does
+not authorize `STRATEGY_REOPT_WORKER_ENABLED`,
+`STRATEGY_REOPT_SCHEDULER_ENQUEUE_ENABLED`, live `ENTRY` / `EXIT`, automatic
+`PROMOTE`, automatic `REVERT`, or repair-provenance graduation. Those remain
+separate operator decisions with explicit scope, budget, abort, rollback, and
+evidence requirements.
 
 Agents must not SSH to `cryptopairs`, enable `STRATEGY_REOPT_WORKER_ENABLED`,
 enable a production scheduler, start canary jobs, enable live ENTRY/EXIT,
@@ -613,7 +624,7 @@ Follow-ups carried forward from prior reviews. Ordered by source review then sev
 
 | ID | Severity | Description | Status |
 |---|---|---|---|
-| SF1 | **HIGH** | Implement scheduler/manual-run separation for async reoptimization canaries. Operator-captured evidence showed manual/status scope reporting `MANUAL_API` + `["1m"]` while artifacts/request reflected `SCHEDULED` + `["1m","15m","1h"]`, and the scheduler kept producing repeated scheduled `DEGRADED` runs while enabled. The implementation must make manual canary status, request artifacts, trigger source, and requested timeframes agree; prevent scheduled runs from contaminating manual canary evidence; preserve single-flight, budget, lease, disable, and fail-closed behavior; and include focused Rust tests plus any required contract/example updates. | **implementation proposed by codex 2026-05-24** — keep `KEEP_DISABLED_KEEP_HOLD`; do not rerun an operator canary until this fix is merged, redeployed, and a fresh operator-captured bundle validates status/artifact scope agreement |
+| SF1 | **HIGH** | Implement scheduler/manual-run separation for async reoptimization canaries. Operator-captured evidence showed manual/status scope reporting `MANUAL_API` + `["1m"]` while artifacts/request reflected `SCHEDULED` + `["1m","15m","1h"]`, and the scheduler kept producing repeated scheduled `DEGRADED` runs while enabled. The implementation must make manual canary status, request artifacts, trigger source, and requested timeframes agree; prevent scheduled runs from contaminating manual canary evidence; preserve single-flight, budget, lease, disable, and fail-closed behavior; and include focused Rust tests plus any required contract/example updates. | **resolved by PR #207 (`07ee4ed`) plus PR #209 (`97213ba`) and operator evidence** — scheduler/manual separation landed, evidence tooling was aligned to the new scheduler gate, and bundle `slice_f_full_evidence_20260525T071215Z` passed the canonical checker with `READY_FOR_OPERATOR_REVIEW`. |
 
 ### Cross-cutting
 
@@ -634,13 +645,12 @@ Follow-ups carried forward from prior reviews. Ordered by source review then sev
 
 Pickable items, in priority order:
 
-1. **Remote/local agent: SF1 scheduler/manual-run separation** — implement the repo-side fix exposed by the operator-captured Slice F rerun evidence before any further canary attempt.
-2. **Operator-only: reoptimise runner Slice F production canary rerun** — only after SF1 is merged, deployed, and explicitly approved; host verification remains operator-only.
+1. **Operator-only: Slice F readiness review decision** — review bundle `slice_f_full_evidence_20260525T071215Z` and decide whether to approve any next enablement/canary step. Approval must name scope, budgets, abort rule, rollback owner, evidence owner, and whether worker drain or scheduler enqueue may be enabled.
+2. **Remote/local agent: async reoptimization hardening follow-ups** — if separately approved, handle deferred mutating cancellation auth/audit, artifact read/download surfaces, request/config fingerprint graduation, or additional scheduler/canary refinements as separate slices without making legacy or repair-only provenance trade-eligible.
 3. **Operator/local agent: continue any remaining Champion-Selection observation capture** — preserve fail-closed runtime settings and compare Trade Now buckets, blocked reasons, opportunity history, paper trades, and drift events against prior captures.
 4. **Remote/UI agent: Trade Now observation UI** — improve the web UI for the current observation window using existing Trade Now and observability contracts; do not add controls that mutate runtime state.
-5. **Remote/local agent: async reoptimization hardening follow-ups** — if approved, handle deferred mutating cancellation auth/audit, artifact read/download surfaces, request/config fingerprint graduation, or additional scheduler/canary refinements as separate slices without making legacy or repair-only provenance trade-eligible.
-6. **Remote/local agent: X3 implementation** — only after reconciled deployment is observed; implement PR #175's optional/additive reporting diagnostics while preserving legacy `selected_variant`.
-7. **Remote/local agent: blocker-specific strategy follow-up** — only after T+72, target the blocker shown by evidence (learning hold/not eligible, live setup/cost gates, or approved-universe policy) rather than weakening Trade Now safety gates.
+5. **Remote/local agent: X3 implementation** — only after reconciled deployment is observed; implement PR #175's optional/additive reporting diagnostics while preserving legacy `selected_variant`.
+6. **Remote/local agent: blocker-specific strategy follow-up** — only after T+72, target the blocker shown by evidence (learning hold/not eligible, live setup/cost gates, or approved-universe policy) rather than weakening Trade Now safety gates.
 
 ---
 
