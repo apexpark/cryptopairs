@@ -9,14 +9,14 @@
 
 | Field | Value |
 |---|---|
-| Last updated (UTC) | 2026-05-24 |
+| Last updated (UTC) | 2026-05-25 |
 | Updated by | codex/local |
-| Repo HEAD pin (committed) | `0328b4632e6f12439d07188a06e19795685de6e2` |
+| Repo HEAD pin (committed) | `07ee4edcc271863e6fc4faf096cae1436a3bc5f0` |
 | Pin branch | `main` |
 | Sprint base branch | `main` |
-| Pin notes | Post-PR #205 plus operator-captured Slice F rerun evidence curation. The pin records `origin/main` after Slice F repo-side evidence hardening and async artifact writing landed; the later operator-captured canary attempt failed closed and exposed a repo-side scheduler/manual-run separation blocker. Host verification, scheduler/runner enablement, alert deployment evidence, and live execution remain operator-only. |
+| Pin notes | Post-PR #207 plus operator-captured reduced manual canary evidence curation. The pin records `origin/main` after async artifact writing and scheduler/manual-run separation landed. Operator evidence proved a reduced manual 1m run can complete with scheduler enqueue disabled and scope-consistent status/request/artifacts, but full Slice F readiness remains blocked on the broader operator-only evidence gate. |
 | Origin | `https://github.com/apexpark/cryptopairs.git` |
-| Working-tree state | Reoptimise runner Slices A-E, Slice F repo-side evidence hardening, and async artifact writing are merged on `main`. Operator-captured Slice F canary evidence shows artifact schema/hash verification passed, but readiness failed closed (`DEGRADED` / `HOLD` / `BUDGET_EXHAUSTED`) and opened a repo-side scheduler/manual-run separation follow-up. Host-runtime verification, scheduler enablement, alert deployment, threshold approval, and production canary evidence remain operator-only and are not claimed by agents. |
+| Working-tree state | Reoptimise runner Slices A-E, Slice F repo-side evidence hardening, async artifact writing, and scheduler/manual-run separation are merged on `main`. Operator-captured reduced manual canary evidence for PR #207 showed a `MANUAL_API` + `["1m"]` run completed `SUCCEEDED` with artifact schema/hash verification, no fail-closed reasons, `SCHEDULED/ENQUEUED=0`, and active async gauges zero after disable. Full Slice F readiness still remains `KEEP_DISABLED_KEEP_HOLD` until alert deployment evidence, threshold approval, live ENTRY/EXIT disabled proof, PROMOTE/REVERT confirmation gating, repair-provenance block evidence, and a canonical Slice F evidence manifest all pass. |
 
 If the pin above is not reachable from `HEAD` via fast-forward, this file is stale; if `HEAD` is ahead of the pin, see §"Pin Convention".
 
@@ -88,7 +88,7 @@ Slice tracker:
 | Slice C — bounded runner loop | **Committed on main** | remote/local | PR #195 squash-merged at d38229bd7c2b7b8d174e064a9aa9bae4fd48f458 from reviewed head 78a118e. The implementation remains disabled by default and adds the bounded runner loop on top of Slice B state: durable single-flight enqueue/lease, conservative budgets, checkpointed pair/timeframe work, heartbeats, progress/summary writes, cancellation checks, and fail-closed terminal completion. Local verification passed: `cargo fmt --all -- --check`, `cargo clippy --workspace --all-targets -- -D warnings`, `cargo test --workspace`, explicit `cargo test -p strategy-service --test repository_integration -- --nocapture`, and `git diff --check`; local Postgres-backed test bodies skipped per harness because `STRATEGY_TEST_DATABASE_URL` was unset. GitHub CI was green on PR #195. No public API routes, UI, maintenance scripts, existing synchronous `/v1/strategy/pairs/reoptimize` behavior, automatic promotion, repair-provenance graduation, or host verification claims were added. |
 | Slice D — async API and script migration | **Committed on main** | remote/local | PR #197 / commit 880da1112a66e4ce58fb24cf354be0c82f2df173 landed the read/enqueue-only async run endpoint subset. PR #198 / commit a115ab785479cf54929cd59aee8f3b787f46a993 landed opt-in script modes (`sync`, `async`, `latest-successful`, `skip`) for report/maintenance scripts while preserving synchronous defaults and baseline skip behavior. Async/latest evidence uses bounded polling and fails closed to `HOLD` on timeout, invalid/unknown status, stale or incompatible latest evidence, missing artifacts, critical errors, fail-closed reasons, or unavailable cancellation. The existing synchronous `/v1/strategy/pairs/reoptimize` route remains unchanged; UI changes, production scheduler defaults, automatic promotion/revert, repair-provenance graduation, artifact download routes, and mutating cancellation remain deferred. |
 | Slice E — observability and runbooks | **Committed on main** | remote/local | PR #200 / commit df1690c8832359b316ce3206d16694b2e4c749fc adds bounded async reoptimization metrics, structured runner/API logs, and `docs/playbooks/async-reoptimization-runner-runbook.md` for the merged Slice C/D subset: lifecycle, active runs, enqueue outcomes, lease acquire/heartbeat/loss, budget exhaustion, pair/timeframe progress, cancellation observation/completion, fail-closed reasons, missing/unknown telemetry, terminal recommendations, status inspection, disable/rollback, stuck lease recovery, budget exhaustion response, artifact evidence, and Slice F readiness. Artifact read/download routes and artifact read/download metrics remain deferred. No production scheduler enablement, UI edits, automatic promotion/revert, repair-provenance graduation, or host verification claims are included. |
-| Slice F — production canary | **Attempted; failed closed; repo-side blocker open** | operator/local | PRs #202-#205 added repo-side evidence gates/tooling, threshold approval contract, alert templates/checklists, fail-closed readiness checks, no-row status semantics, and async artifact writing. Operator-captured rerun evidence showed the canary terminal result was `DEGRADED` / `HOLD` with `BUDGET_EXHAUSTED`. Artifact writing passed schema/hash verification, but readiness failed. The run exposed repo-side scope blockers: manual/status evidence reported `MANUAL_API` + `["1m"]`, while artifacts/request reflected `SCHEDULED` + `["1m","15m","1h"]`; the scheduler also continued producing repeated scheduled `DEGRADED` runs while enabled. Disable proof later showed `STRATEGY_REOPT_WORKER_ENABLED=false`, latest status `EXPIRED` / `HOLD` with `LEASE_LOST` and `STALE_STATUS`, and active run gauges zero. Next step is a repo-side scheduler/manual-run separation implementation PR before any further canary. |
+| Slice F — production canary | **Reduced manual canary succeeded; full readiness still blocked** | operator/local | PRs #202-#207 added repo-side evidence gates/tooling, threshold approval contract, alert templates/checklists, fail-closed readiness checks, no-row status semantics, async artifact writing, and scheduler/manual-run separation. The earlier full-scope operator canary failed closed with `DEGRADED` / `HOLD` / `BUDGET_EXHAUSTED` and exposed manual/scheduled scope contamination. PR #207 split worker drain from scheduled enqueue. Operator evidence after deployment showed: a full-pair manual 1m run now kept scope consistent but still exhausted `TIMEFRAME_WALL_CLOCK`; a reduced one-pair manual 1m run then completed `SUCCEEDED` with `PROMOTION_CANDIDATE_AVAILABLE`, no fail-closed reasons, `SCHEDULED/ENQUEUED=0`, active gauges zero after disable, and status/DB/request/summary/artifact agreement on `MANUAL_API` + `["1m"]`. This is repo-side/manual-canary proof only, not production readiness approval. |
 
 Open operator decisions before production enablement:
 
@@ -107,18 +107,24 @@ Open operator decisions before production enablement:
 
 Next safe sequence:
 
-1. Do not run another Slice F production canary until a repo-side
-   scheduler/manual-run separation fix lands, is reviewed, and is redeployed
-   for operator verification.
-2. Open a remote/local implementation PR for the scheduler/manual-run
-   separation blocker exposed by the operator-captured rerun evidence.
-3. Keep the existing synchronous `/v1/strategy/pairs/reoptimize`
+1. Keep `STRATEGY_REOPT_WORKER_ENABLED=false` and
+   `STRATEGY_REOPT_SCHEDULER_ENQUEUE_ENABLED=false` outside explicit
+   operator-approved evidence windows.
+2. Do not treat the reduced one-pair canary as full Slice F readiness. It
+   proves scheduler/manual separation and artifact-backed manual completion
+   only.
+3. Before any production readiness approval, capture and validate the full
+   Slice F evidence bundle: alert deployment/routing, threshold approval,
+   live ENTRY/EXIT disabled proof, PROMOTE/REVERT confirmation gates,
+   repair-provenance blocking, clean host identity, useful logs, status,
+   run rows, metrics, and artifacts.
+4. Keep the existing synchronous `/v1/strategy/pairs/reoptimize`
    compatibility route unchanged unless a separate versioned migration is
    approved.
-4. Treat public mutating cancellation, artifact download/read surfaces,
+5. Treat public mutating cancellation, artifact download/read surfaces,
    request/config fingerprint graduation, and production scheduler enablement
    as separate follow-up decisions unless explicitly assigned.
-5. If implementation needs files
+6. If implementation needs files
    outside the slice boundary, stop and escalate per `AGENTS.md` §7.
 
 ---
@@ -160,35 +166,48 @@ Source of truth for shipped behavior is `CHANGELOG.md` `## Unreleased` section. 
 - **Committed (`e28a4df`)**: Slice F evidence tooling hardening — added fail-closed raw bundle manifest generation, alert-rule templates plus template validation, a zero-row repair-provenance example, and stricter semantic checks for dirty host identity, runner/scheduler enablement, fail-closed status, required artifacts, and repair-provenance-active deltas. Repo-side templates are not deployed alert evidence.
 - **Committed (`2394648`)**: Slice F readiness evidence hardening (PR #204) — added the `slice_f_threshold_approval` contract/example, made threshold approval a required artifact, taught the raw bundle generator to consume it, added a deployable-but-not-applied alert checklist, and made missing latest async durable state a schema-valid fail-closed status payload with `OPERATOR_REVIEW_REQUIRED`, `MISSING_TELEMETRY`, and `UNKNOWN_STATUS`.
 - **Committed (`0328b46`)**: Async reoptimization artifact writing (PR #205) — terminal runs now write request, progress, summary, errors, and operator-summary artifacts under `STRATEGY_REOPT_ARTIFACT_ROOT`, compute SHA-256 digests with pinned `sha2` `0.10.9`, persist a contract-shaped manifest in `strategy_reoptimize_runs.artifact_manifest_json`, and fail closed with `ARTIFACT_FAILED` if artifact writing or manifest validation fails. Artifact read/download routes, host verification, scheduler enablement, automatic promotion/revert, and live ENTRY/EXIT remain deferred.
+- **Committed (`905cc08`)**: Slice F rerun state curation (PR #206) — refreshed this state file after the operator-captured canary failed closed, recorded the `MANUAL_API`/`SCHEDULED` scope mismatch and repeated scheduled `DEGRADED` runs, and kept Slice F on `KEEP_DISABLED_KEEP_HOLD` pending a repo-side scheduler/manual-run separation fix.
+- **Committed (`07ee4ed`)**: Scheduler/manual-run separation (PR #207) — added default-off `STRATEGY_REOPT_SCHEDULER_ENQUEUE_ENABLED`, kept `STRATEGY_REOPT_WORKER_ENABLED` as worker-drain only, persisted `trigger_source` and `requested_timeframes` through status/summaries/artifacts/manifests, and fail-closed contradictory scope evidence. Operator-captured reduced manual canary evidence later proved a one-pair `MANUAL_API` + `["1m"]` run could complete `SUCCEEDED` with schema/hash-valid artifacts and no scheduled enqueue.
 
 ---
 
 ## Blocked / Waiting On
 
-### B-Slice-F-Production-Canary (attempted; failed closed)
+### B-Slice-F-Production-Canary (reduced manual canary succeeded; full readiness blocked)
 
 Repo-side Slice F evidence gates, readiness tooling, no-row status semantics,
-and async artifact writing are merged on `main` as of
-`0328b4632e6f12439d07188a06e19795685de6e2`.
+async artifact writing, and scheduler/manual-run separation are merged on
+`main` as of `07ee4edcc271863e6fc4faf096cae1436a3bc5f0`.
 
-Operator-captured Slice F rerun evidence showed:
+Operator-captured evidence showed:
 
-1. The Slice F canary was attempted.
-2. Terminal canary result failed closed: `DEGRADED`, recommendation `HOLD`,
-   with `BUDGET_EXHAUSTED`.
-3. Artifact writing passed schema/hash verification, but overall readiness
-   failed.
-4. Manual/status scope reported `MANUAL_API` + `["1m"]`, while
-   artifacts/request reflected `SCHEDULED` + `["1m","15m","1h"]`.
-5. The scheduler continued producing repeated scheduled `DEGRADED` runs while
-   enabled.
-6. Disable proof showed `STRATEGY_REOPT_WORKER_ENABLED=false`, latest status
-   `EXPIRED` / `HOLD` with `LEASE_LOST` and `STALE_STATUS`, and active run
-   gauges zero.
+1. The pre-PR #207 canary failed closed: `DEGRADED`, recommendation `HOLD`,
+   with `BUDGET_EXHAUSTED`; artifact writing passed schema/hash
+   verification, but manual/status scope disagreed with request/artifact
+   scope and the scheduler continued producing scheduled `DEGRADED` runs.
+2. PR #207 landed the repo-side scheduler/manual separation fix.
+3. After PR #207 deployment, a full-pair manual 1m run preserved consistent
+   `MANUAL_API` + `["1m"]` scope across status, DB row, request, summary, and
+   artifact manifest, and proved `SCHEDULED/ENQUEUED=0`; it still failed
+   closed with `DEGRADED` / `HOLD` / `BUDGET_EXHAUSTED`.
+4. A reduced one-pair manual 1m canary then succeeded:
+   `reopt_2026-05-25T01-27-45Z_000000`, `SUCCEEDED`,
+   `PROMOTION_CANDIDATE_AVAILABLE`, no fail-closed reasons,
+   `WITHIN_BUDGET`, `MANUAL_API` + `["1m"]`, schema/hash-valid artifacts,
+   `SCHEDULED/ENQUEUED=0`, `MANUAL_API/ENQUEUED=1`, and active async gauges
+   zero after disable.
+5. Disable proof after the reduced canary restored the full pair list and kept
+   `STRATEGY_REOPT_WORKER_ENABLED=false` and
+   `STRATEGY_REOPT_SCHEDULER_ENQUEUE_ENABLED=false`.
 
-Production canary remains blocked until a repo-side scheduler/manual-run
-separation fix lands and a fresh operator-captured evidence bundle proves the
-manual canary scope, status payloads, and artifacts agree.
+This clears the repo-side scheduler/manual-run separation blocker for reduced
+manual evidence. Full Slice F readiness remains blocked because the passing
+bundle is intentionally reduced scope and does not include the complete
+operator-only readiness gate: alert deployment/routing evidence,
+`threshold_approval`, live ENTRY/EXIT disabled proof, PROMOTE/REVERT
+confirmation-gating evidence, repair-provenance block evidence, clean
+host-identity manifest fields, useful strategy logs, and a canonical
+Slice F evidence manifest that passes `tools/scripts/slice_f_evidence_check.py`.
 
 Agents must not SSH to `cryptopairs`, enable `STRATEGY_REOPT_WORKER_ENABLED`,
 enable a production scheduler, start canary jobs, enable live ENTRY/EXIT,
