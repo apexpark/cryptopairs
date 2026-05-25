@@ -92,6 +92,11 @@ NON_SUCCESS_STATUSES = {
 }
 
 SAFE_NON_SUCCESS_RECOMMENDATIONS = {"HOLD", "OPERATOR_REVIEW_REQUIRED"}
+SAFE_SUCCESS_RECOMMENDATIONS = {
+    "HOLD",
+    "OPERATOR_REVIEW_REQUIRED",
+    "PROMOTION_CANDIDATE_AVAILABLE",
+}
 
 BLOCKING_STATUS_REASONS = {
     "MISSING_TELEMETRY",
@@ -366,6 +371,8 @@ def validate_manifest(manifest: dict[str, Any]) -> list[str]:
             errors.append(f"status must be SUCCEEDED for passing Slice F evidence: {status}")
         if status in {"CANCELED", "DEGRADED", "FAILED", "EXPIRED"}:
             errors.append(f"status is fail-closed and cannot pass Slice F evidence: {status}")
+        if status == "SUCCEEDED" and decision not in SAFE_SUCCESS_RECOMMENDATIONS:
+            errors.append(f"status SUCCEEDED has unsafe recommendation: {decision}")
         if status in NON_SUCCESS_STATUSES and decision not in SAFE_NON_SUCCESS_RECOMMENDATIONS:
             errors.append(f"status {status} must map to HOLD or OPERATOR_REVIEW_REQUIRED")
         if status in {"QUEUED", "LEASED", "RUNNING", "CANCEL_REQUESTED"} and canary:

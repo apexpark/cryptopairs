@@ -357,6 +357,20 @@ esac
 mkdir -p "$EVIDENCE_ROOT"
 ```
 
+Capture the live `ENTRY`/`EXIT` dispatch proof from the execution service,
+because `EXECUTION_DISPATCH_MODE` is wired to
+`cryptopairs-execution-service`, not to `cryptopairs-strategy-service`.
+Append strategy-side champion-drift evidence separately if needed:
+
+```bash
+{
+  docker exec cryptopairs-execution-service printenv | sort \
+    | rg '^EXECUTION_DISPATCH_MODE='
+  docker exec cryptopairs-strategy-service printenv | sort \
+    | rg '^STRATEGY_BLOCK_ON_CHAMPION_DRIFT=' || true
+} > "$EVIDENCE_ROOT/execution_flags.txt"
+```
+
 If the bundle contains raw capture files but no manifest yet, generate a
 fail-closed manifest locally from the repository root:
 
