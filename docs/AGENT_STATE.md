@@ -9,14 +9,14 @@
 
 | Field | Value |
 |---|---|
-| Last updated (UTC) | 2026-05-25 |
+| Last updated (UTC) | 2026-05-26 |
 | Updated by | codex/local |
-| Repo HEAD pin (committed) | `bb28a6bca618e86cb3cd57411f61a543987e24a4` |
+| Repo HEAD pin (committed) | `9074df90875dbf0dc0d5a7a8b401e053f6b33d1b` |
 | Pin branch | `main` |
 | Sprint base branch | `main` |
-| Pin notes | Post-PR #212 plus operator-captured approved reduced Slice F manual canary evidence. The pin records `origin/main` after async artifact writing, scheduler/manual-run separation, reduced manual canary state curation, evidence-tooling alignment, full-evidence state curation, pin curation, and the weak-log blocker curation landed. Operator evidence bundle `slice_f_approved_manual_logs_20260525T092644Z` proved the approved bounded manual 1m canary reached `SUCCEEDED` with scope-consistent artifacts and passed the canonical checker with `READY_FOR_OPERATOR_REVIEW`. This does not authorize worker/scheduler enablement, live ENTRY/EXIT, automatic PROMOTE/REVERT, or repair-provenance graduation. |
+| Pin notes | Post-PR #213 plus operator acceptance of the approved reduced Slice F manual canary evidence. The pin records `origin/main` after async artifact writing, scheduler/manual-run separation, reduced manual canary state curation, evidence-tooling alignment, full-evidence state curation, pin curation, weak-log blocker curation, and approved evidence-pass curation landed. The operator accepted evidence bundle `slice_f_approved_manual_logs_20260525T092644Z` as the Slice F passing packet and explicitly closed Slice F with runtime left disabled. This does not authorize worker/scheduler enablement, live ENTRY/EXIT, automatic PROMOTE/REVERT, or repair-provenance graduation. |
 | Origin | `https://github.com/apexpark/cryptopairs.git` |
-| Working-tree state | Reoptimise runner Slices A-E, Slice F repo-side evidence hardening, async artifact writing, scheduler/manual-run separation, evidence tooling alignment, and state curation through PR #212 are merged on `main`. Operator-captured bundle `slice_f_approved_manual_logs_20260525T092644Z` shows approved bounded manual canary run `reopt_2026-05-25T09-27-53Z_000000` completed `SUCCEEDED` with `MANUAL_API` + `["1m"]`, no fail-closed reasons, `WITHIN_BUDGET`, complete scope-consistent artifacts, useful strategy-log evidence, and canonical checker result `READY_FOR_OPERATOR_REVIEW`; worker/scheduler flags were restored disabled after the window. Runtime remains disabled pending a separate explicit operator enablement decision with scope, budgets, abort rule, rollback owner, and evidence owner. |
+| Working-tree state | Reoptimise runner Slices A-F are complete through the accepted bounded manual Slice F evidence packet. Operator accepted bundle `slice_f_approved_manual_logs_20260525T092644Z`, whose run `reopt_2026-05-25T09-27-53Z_000000` completed `SUCCEEDED` with `MANUAL_API` + `["1m"]`, no fail-closed reasons, `WITHIN_BUDGET`, complete scope-consistent artifacts, useful strategy-log evidence, and canonical checker result `READY_FOR_OPERATOR_REVIEW`. Runtime remains disabled: no scheduler, no worker, no live ENTRY/EXIT, no automatic PROMOTE/REVERT, and no repair-provenance graduation. Future production enablement is a separate operator-approved slice with explicit scope, budgets, abort rule, rollback owner, and evidence owner. |
 
 If the pin above is not reachable from `HEAD` via fast-forward, this file is stale; if `HEAD` is ahead of the pin, see §"Pin Convention".
 
@@ -88,9 +88,9 @@ Slice tracker:
 | Slice C — bounded runner loop | **Committed on main** | remote/local | PR #195 squash-merged at d38229bd7c2b7b8d174e064a9aa9bae4fd48f458 from reviewed head 78a118e. The implementation remains disabled by default and adds the bounded runner loop on top of Slice B state: durable single-flight enqueue/lease, conservative budgets, checkpointed pair/timeframe work, heartbeats, progress/summary writes, cancellation checks, and fail-closed terminal completion. Local verification passed: `cargo fmt --all -- --check`, `cargo clippy --workspace --all-targets -- -D warnings`, `cargo test --workspace`, explicit `cargo test -p strategy-service --test repository_integration -- --nocapture`, and `git diff --check`; local Postgres-backed test bodies skipped per harness because `STRATEGY_TEST_DATABASE_URL` was unset. GitHub CI was green on PR #195. No public API routes, UI, maintenance scripts, existing synchronous `/v1/strategy/pairs/reoptimize` behavior, automatic promotion, repair-provenance graduation, or host verification claims were added. |
 | Slice D — async API and script migration | **Committed on main** | remote/local | PR #197 / commit 880da1112a66e4ce58fb24cf354be0c82f2df173 landed the read/enqueue-only async run endpoint subset. PR #198 / commit a115ab785479cf54929cd59aee8f3b787f46a993 landed opt-in script modes (`sync`, `async`, `latest-successful`, `skip`) for report/maintenance scripts while preserving synchronous defaults and baseline skip behavior. Async/latest evidence uses bounded polling and fails closed to `HOLD` on timeout, invalid/unknown status, stale or incompatible latest evidence, missing artifacts, critical errors, fail-closed reasons, or unavailable cancellation. The existing synchronous `/v1/strategy/pairs/reoptimize` route remains unchanged; UI changes, production scheduler defaults, automatic promotion/revert, repair-provenance graduation, artifact download routes, and mutating cancellation remain deferred. |
 | Slice E — observability and runbooks | **Committed on main** | remote/local | PR #200 / commit df1690c8832359b316ce3206d16694b2e4c749fc adds bounded async reoptimization metrics, structured runner/API logs, and `docs/playbooks/async-reoptimization-runner-runbook.md` for the merged Slice C/D subset: lifecycle, active runs, enqueue outcomes, lease acquire/heartbeat/loss, budget exhaustion, pair/timeframe progress, cancellation observation/completion, fail-closed reasons, missing/unknown telemetry, terminal recommendations, status inspection, disable/rollback, stuck lease recovery, budget exhaustion response, artifact evidence, and Slice F readiness. Artifact read/download routes and artifact read/download metrics remain deferred. No production scheduler enablement, UI edits, automatic promotion/revert, repair-provenance graduation, or host verification claims are included. |
-| Slice F — production canary | **Approved reduced manual canary evidence ready for operator review** | operator/local | PRs #202-#212 added repo-side evidence gates/tooling, threshold approval contract, alert templates/checklists, fail-closed readiness checks, no-row status semantics, async artifact writing, scheduler/manual-run separation, PR #207-aligned evidence tooling, full-evidence state curation, pin curation, and weak-log blocker curation. The operator-approved bounded manual 1m canary bundle `slice_f_approved_manual_logs_20260525T092644Z` shows run `reopt_2026-05-25T09-27-53Z_000000` completed `SUCCEEDED` with `MANUAL_API` + `["1m"]`, no fail-closed reasons, `WITHIN_BUDGET`, complete scope-consistent artifacts, useful strategy-log evidence, clean host identity at `bb28a6b`, scheduler enqueue disabled, and worker/scheduler disabled again after rollback. The canonical checker now returns `READY_FOR_OPERATOR_REVIEW` with no stop conditions. This is evidence review only, not runtime enablement approval. |
+| Slice F — production canary | **Complete; evidence accepted, runtime disabled** | operator/local | PRs #202-#213 added repo-side evidence gates/tooling, threshold approval contract, alert templates/checklists, fail-closed readiness checks, no-row status semantics, async artifact writing, scheduler/manual-run separation, PR #207-aligned evidence tooling, full-evidence state curation, pin curation, weak-log blocker curation, and approved evidence-pass curation. The operator accepted bundle `slice_f_approved_manual_logs_20260525T092644Z` as the Slice F passing evidence packet. Its approved bounded manual 1m canary run `reopt_2026-05-25T09-27-53Z_000000` completed `SUCCEEDED` with `MANUAL_API` + `["1m"]`, no fail-closed reasons, `WITHIN_BUDGET`, complete scope-consistent artifacts, useful strategy-log evidence, clean host identity at `bb28a6b`, scheduler enqueue disabled, and worker/scheduler disabled again after rollback. Runtime remains disabled; production enablement is separate future work. |
 
-Open operator decisions before production enablement:
+Future operator decisions before any separate production enablement:
 
 1. Initial runtime budgets: run wall-clock, timeframe wall-clock, pair counts,
    pair concurrency, DB batch size, artifact bytes, cooldown, lease TTL, and
@@ -108,15 +108,13 @@ Open operator decisions before production enablement:
 Next safe sequence:
 
 1. Keep `STRATEGY_REOPT_WORKER_ENABLED=false` and
-   `STRATEGY_REOPT_SCHEDULER_ENQUEUE_ENABLED=false` until an explicit
-   operator approval names the next enablement window, scope, budget, abort
-   rule, and rollback owner.
-2. Treat `READY_FOR_OPERATOR_REVIEW` as evidence review state only. It does not
-   authorize worker/scheduler enablement, live `ENTRY` / `EXIT`, automatic
-   `PROMOTE` / `REVERT`, or repair-provenance graduation.
-3. Operator review must decide whether any next enablement/canary step is
-   approved, and if so must preserve bounded scope, disabled defaults, explicit
-   rollback, and evidence capture.
+   `STRATEGY_REOPT_SCHEDULER_ENQUEUE_ENABLED=false`; Slice F is closed as an
+   evidence-passed manual canary, not as production scheduler enablement.
+2. Do not enable live `ENTRY` / `EXIT`, automatic `PROMOTE` / `REVERT`, or
+   repair-provenance graduation from Slice F evidence.
+3. Any future enablement/canary step is a separate operator-approved slice and
+   must preserve bounded scope, disabled defaults, explicit rollback, and
+   evidence capture.
 4. Keep the existing synchronous `/v1/strategy/pairs/reoptimize`
    compatibility route unchanged unless a separate versioned migration is
    approved.
@@ -172,18 +170,19 @@ Source of truth for shipped behavior is `CHANGELOG.md` `## Unreleased` section. 
 - **Committed (`0eed63b`)**: Slice F full evidence state curation (PR #210) — recorded the operator-provided full evidence bundle `slice_f_full_evidence_20260525T071215Z`, its canonical checker result `READY_FOR_OPERATOR_REVIEW`, and the continued disabled/operator-only runtime posture.
 - **Committed (`e8a99d0`)**: Slice F evidence pin curation (PR #211) — pinned this state file to the PR #210 full-evidence state and preserved the operator-review-only runtime posture.
 - **Committed (`bb28a6b`)**: Slice F approved-canary log blocker curation (PR #212) — recorded that the first approved bounded manual canary run succeeded but still failed the canonical evidence checker on `WEAK_STRATEGY_LOGS`, preserving `KEEP_DISABLED_KEEP_HOLD` until useful strategy logs were recaptured.
+- **Committed (`9074df9`)**: Slice F approved-canary evidence pass curation (PR #213) — recorded the recaptured approved-log bundle `slice_f_approved_manual_logs_20260525T092644Z`, canonical checker result `READY_FOR_OPERATOR_REVIEW`, no stop conditions, and continued disabled/operator-only runtime posture.
 
 ---
 
-## Blocked / Waiting On
+## Completed / Accepted Evidence
 
-### B-Slice-F-Production-Canary (approved evidence ready for operator review)
+### Slice F Production Canary (complete; runtime disabled)
 
 Repo-side Slice F evidence gates, readiness tooling, no-row status semantics,
 async artifact writing, scheduler/manual-run separation, and evidence-tooling
 alignment are merged on `main`, and full-evidence state curation, pin
-curation, and weak-log blocker curation are recorded as of
-`bb28a6bca618e86cb3cd57411f61a543987e24a4`.
+curation, weak-log blocker curation, and approved evidence-pass curation are
+recorded as of `9074df90875dbf0dc0d5a7a8b401e053f6b33d1b`.
 
 Operator-captured evidence showed:
 
@@ -269,14 +268,18 @@ Operator-captured evidence showed:
 This clears the bounded manual-run evidence gate for operator review, but it
 does not authorize `STRATEGY_REOPT_WORKER_ENABLED`,
 `STRATEGY_REOPT_SCHEDULER_ENQUEUE_ENABLED`, live `ENTRY` / `EXIT`, automatic
-`PROMOTE`, automatic `REVERT`, or repair-provenance graduation. Those remain
-separate operator decisions with explicit scope, budget, abort, rollback, and
-evidence requirements.
+`PROMOTE`, automatic `REVERT`, or repair-provenance graduation.
+On 2026-05-26, the operator accepted
+`/tmp/cryptopairs-slice-f/slice_f_approved_manual_logs_20260525T092644Z.tgz`
+as the Slice F passing evidence packet and closed Slice F with runtime left
+disabled.
 
 Agents must not SSH to `cryptopairs`, enable `STRATEGY_REOPT_WORKER_ENABLED`,
 enable a production scheduler, start canary jobs, enable live ENTRY/EXIT,
 automate PROMOTE/REVERT, or graduate repair-only provenance from repo state
 alone.
+
+## Blocked / Waiting On
 
 ### B-Host-Lineage (deployed; 72-hour observation active)
 
@@ -690,12 +693,12 @@ Follow-ups carried forward from prior reviews. Ordered by source review then sev
 
 Pickable items, in priority order:
 
-1. **Operator-only: decide the next Slice F enablement step** — the approved bounded manual evidence bundle `slice_f_approved_manual_logs_20260525T092644Z` now passes the canonical checker with `READY_FOR_OPERATOR_REVIEW`, but this is evidence review only. Any next enablement requires explicit operator approval naming scope, budgets, abort rule, rollback owner, evidence owner, and the exact runtime flags to change.
-2. **Remote/local agent: async reoptimization hardening follow-ups** — if separately approved, handle deferred mutating cancellation auth/audit, artifact read/download surfaces, request/config fingerprint graduation, or additional scheduler/canary refinements as separate slices without making legacy or repair-only provenance trade-eligible.
-3. **Operator/local agent: continue any remaining Champion-Selection observation capture** — preserve fail-closed runtime settings and compare Trade Now buckets, blocked reasons, opportunity history, paper trades, and drift events against prior captures.
-4. **Remote/UI agent: Trade Now observation UI** — improve the web UI for the current observation window using existing Trade Now and observability contracts; do not add controls that mutate runtime state.
-5. **Remote/local agent: X3 implementation** — only after reconciled deployment is observed; implement PR #175's optional/additive reporting diagnostics while preserving legacy `selected_variant`.
-6. **Remote/local agent: blocker-specific strategy follow-up** — only after T+72, target the blocker shown by evidence (learning hold/not eligible, live setup/cost gates, or approved-universe policy) rather than weakening Trade Now safety gates.
+1. **Remote/local agent: async reoptimization hardening follow-ups** — if separately approved, handle deferred mutating cancellation auth/audit, artifact read/download surfaces, request/config fingerprint graduation, or additional scheduler/canary refinements as separate slices without making legacy or repair-only provenance trade-eligible.
+2. **Operator/local agent: continue any remaining Champion-Selection observation capture** — preserve fail-closed runtime settings and compare Trade Now buckets, blocked reasons, opportunity history, paper trades, and drift events against prior captures.
+3. **Remote/UI agent: Trade Now observation UI** — improve the web UI for the current observation window using existing Trade Now and observability contracts; do not add controls that mutate runtime state.
+4. **Remote/local agent: X3 implementation** — only after reconciled deployment is observed; implement PR #175's optional/additive reporting diagnostics while preserving legacy `selected_variant`.
+5. **Remote/local agent: blocker-specific strategy follow-up** — only after T+72, target the blocker shown by evidence (learning hold/not eligible, live setup/cost gates, or approved-universe policy) rather than weakening Trade Now safety gates.
+6. **Operator-only: future production async enablement** — out of scope for completed Slice F. Any future worker/scheduler enablement requires a new explicit approval naming scope, budgets, abort rule, rollback owner, evidence owner, and exact runtime flags.
 
 ---
 
