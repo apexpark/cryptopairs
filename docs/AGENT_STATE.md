@@ -11,12 +11,12 @@
 |---|---|
 | Last updated (UTC) | 2026-05-25 |
 | Updated by | codex/local |
-| Repo HEAD pin (committed) | `0eed63bb5b5218c06ecb718cef344ef17331b068` |
+| Repo HEAD pin (committed) | `e8a99d0fbcbb6cfdabdbbe6186e398d61c2908ac` |
 | Pin branch | `main` |
 | Sprint base branch | `main` |
-| Pin notes | Post-PR #210 plus operator-captured full Slice F evidence bundle. The pin records `origin/main` after async artifact writing, scheduler/manual-run separation, reduced manual canary state curation, evidence-tooling alignment, and full-evidence state curation landed. Operator evidence bundle `slice_f_full_evidence_20260525T071215Z` passed the canonical checker with `READY_FOR_OPERATOR_REVIEW`; this is evidence review state only and does not authorize worker/scheduler enablement, live ENTRY/EXIT, automatic PROMOTE/REVERT, or repair-provenance graduation. |
+| Pin notes | Post-PR #211 plus operator-captured approved reduced Slice F manual canary evidence. The pin records `origin/main` after async artifact writing, scheduler/manual-run separation, reduced manual canary state curation, evidence-tooling alignment, full-evidence state curation, and pin curation landed. Operator evidence bundle `slice_f_approved_manual_20260525T085748Z` proved the approved bounded manual 1m canary reached `SUCCEEDED` with scope-consistent artifacts, but the canonical checker still returned `KEEP_DISABLED_KEEP_HOLD` because strategy log evidence was weak (`WEAK_STRATEGY_LOGS`). This does not authorize worker/scheduler enablement, live ENTRY/EXIT, automatic PROMOTE/REVERT, or repair-provenance graduation. |
 | Origin | `https://github.com/apexpark/cryptopairs.git` |
-| Working-tree state | Reoptimise runner Slices A-E, Slice F repo-side evidence hardening, async artifact writing, scheduler/manual-run separation, and evidence tooling alignment are merged on `main`. Operator-captured bundle `slice_f_full_evidence_20260525T071215Z` validates with `tools/scripts/slice_f_evidence_check.py --verify-files`: `pass=true`, `recommended_action=READY_FOR_OPERATOR_REVIEW`, and no stop conditions. Keep runtime disabled pending explicit operator review/approval. |
+| Working-tree state | Reoptimise runner Slices A-E, Slice F repo-side evidence hardening, async artifact writing, scheduler/manual-run separation, evidence tooling alignment, and state curation through PR #211 are merged on `main`. Operator-captured bundle `slice_f_approved_manual_20260525T085748Z` shows approved bounded manual canary run `reopt_2026-05-25T08-58-57Z_000000` completed `SUCCEEDED` with `MANUAL_API` + `["1m"]`, no fail-closed reasons, `WITHIN_BUDGET`, and complete scope-consistent artifacts; worker/scheduler flags were restored disabled after the window. The canonical evidence checker still fails closed with `WEAK_STRATEGY_LOGS`, so keep runtime disabled pending recaptured useful strategy logs or a fresh approved evidence window. |
 
 If the pin above is not reachable from `HEAD` via fast-forward, this file is stale; if `HEAD` is ahead of the pin, see §"Pin Convention".
 
@@ -88,7 +88,7 @@ Slice tracker:
 | Slice C — bounded runner loop | **Committed on main** | remote/local | PR #195 squash-merged at d38229bd7c2b7b8d174e064a9aa9bae4fd48f458 from reviewed head 78a118e. The implementation remains disabled by default and adds the bounded runner loop on top of Slice B state: durable single-flight enqueue/lease, conservative budgets, checkpointed pair/timeframe work, heartbeats, progress/summary writes, cancellation checks, and fail-closed terminal completion. Local verification passed: `cargo fmt --all -- --check`, `cargo clippy --workspace --all-targets -- -D warnings`, `cargo test --workspace`, explicit `cargo test -p strategy-service --test repository_integration -- --nocapture`, and `git diff --check`; local Postgres-backed test bodies skipped per harness because `STRATEGY_TEST_DATABASE_URL` was unset. GitHub CI was green on PR #195. No public API routes, UI, maintenance scripts, existing synchronous `/v1/strategy/pairs/reoptimize` behavior, automatic promotion, repair-provenance graduation, or host verification claims were added. |
 | Slice D — async API and script migration | **Committed on main** | remote/local | PR #197 / commit 880da1112a66e4ce58fb24cf354be0c82f2df173 landed the read/enqueue-only async run endpoint subset. PR #198 / commit a115ab785479cf54929cd59aee8f3b787f46a993 landed opt-in script modes (`sync`, `async`, `latest-successful`, `skip`) for report/maintenance scripts while preserving synchronous defaults and baseline skip behavior. Async/latest evidence uses bounded polling and fails closed to `HOLD` on timeout, invalid/unknown status, stale or incompatible latest evidence, missing artifacts, critical errors, fail-closed reasons, or unavailable cancellation. The existing synchronous `/v1/strategy/pairs/reoptimize` route remains unchanged; UI changes, production scheduler defaults, automatic promotion/revert, repair-provenance graduation, artifact download routes, and mutating cancellation remain deferred. |
 | Slice E — observability and runbooks | **Committed on main** | remote/local | PR #200 / commit df1690c8832359b316ce3206d16694b2e4c749fc adds bounded async reoptimization metrics, structured runner/API logs, and `docs/playbooks/async-reoptimization-runner-runbook.md` for the merged Slice C/D subset: lifecycle, active runs, enqueue outcomes, lease acquire/heartbeat/loss, budget exhaustion, pair/timeframe progress, cancellation observation/completion, fail-closed reasons, missing/unknown telemetry, terminal recommendations, status inspection, disable/rollback, stuck lease recovery, budget exhaustion response, artifact evidence, and Slice F readiness. Artifact read/download routes and artifact read/download metrics remain deferred. No production scheduler enablement, UI edits, automatic promotion/revert, repair-provenance graduation, or host verification claims are included. |
-| Slice F — production canary | **Full evidence checker pass; operator review pending** | operator/local | PRs #202-#210 added repo-side evidence gates/tooling, threshold approval contract, alert templates/checklists, fail-closed readiness checks, no-row status semantics, async artifact writing, scheduler/manual-run separation, PR #207-aligned evidence tooling, and full-evidence state curation. The earlier full-scope operator canary failed closed with `DEGRADED` / `HOLD` / `BUDGET_EXHAUSTED`; a reduced one-pair manual run later completed `SUCCEEDED` with scope-consistent artifacts and no scheduled enqueue. The operator-provided full evidence bundle `slice_f_full_evidence_20260525T071215Z` now passes the canonical checker with `READY_FOR_OPERATOR_REVIEW`, clean host identity at `97213ba`, worker/scheduler disabled, live ENTRY/EXIT disabled, PROMOTE/REVERT confirmation-gated, repair provenance blocked, and no stop conditions. This remains operator review evidence only, not production enablement approval. |
+| Slice F — production canary | **Approved reduced manual canary succeeded; evidence gate blocked on logs** | operator/local | PRs #202-#211 added repo-side evidence gates/tooling, threshold approval contract, alert templates/checklists, fail-closed readiness checks, no-row status semantics, async artifact writing, scheduler/manual-run separation, PR #207-aligned evidence tooling, full-evidence state curation, and pin curation. The operator-approved bounded manual 1m canary bundle `slice_f_approved_manual_20260525T085748Z` shows run `reopt_2026-05-25T08-58-57Z_000000` completed `SUCCEEDED` with `MANUAL_API` + `["1m"]`, no fail-closed reasons, `WITHIN_BUDGET`, complete scope-consistent artifacts, clean host identity at `e8a99d0`, scheduler enqueue disabled, and worker/scheduler disabled again after rollback. The canonical checker still returns `KEEP_DISABLED_KEEP_HOLD` because `strategy_logs_before.log` lacks required async runtime events or disabled-state evidence (`WEAK_STRATEGY_LOGS`). Do not hand-edit host evidence; recapture useful strategy logs or rerun the same bounded canary under an approved evidence window. |
 
 Open operator decisions before production enablement:
 
@@ -170,17 +170,19 @@ Source of truth for shipped behavior is `CHANGELOG.md` `## Unreleased` section. 
 - **Committed (`7473da6`)**: Reduced Slice F manual canary state curation (PR #208) — recorded the operator-provided reduced one-pair manual canary evidence while keeping full Slice F readiness blocked pending the complete operator-only evidence gate.
 - **Committed (`97213ba`)**: Slice F evidence tooling alignment (PR #209) — updated the raw bundle generator/checker to recognize `STRATEGY_REOPT_SCHEDULER_ENQUEUE_ENABLED`, keep successful `PROMOTION_CANDIDATE_AVAILABLE` as evidence-only review state, and document that `EXECUTION_DISPATCH_MODE` must be captured from `cryptopairs-execution-service`.
 - **Committed (`0eed63b`)**: Slice F full evidence state curation (PR #210) — recorded the operator-provided full evidence bundle `slice_f_full_evidence_20260525T071215Z`, its canonical checker result `READY_FOR_OPERATOR_REVIEW`, and the continued disabled/operator-only runtime posture.
+- **Committed (`e8a99d0`)**: Slice F evidence pin curation (PR #211) — pinned this state file to the PR #210 full-evidence state and preserved the operator-review-only runtime posture.
 
 ---
 
 ## Blocked / Waiting On
 
-### B-Slice-F-Production-Canary (full evidence passed; operator review pending)
+### B-Slice-F-Production-Canary (approved reduced canary succeeded; log evidence blocked)
 
 Repo-side Slice F evidence gates, readiness tooling, no-row status semantics,
 async artifact writing, scheduler/manual-run separation, and evidence-tooling
-alignment are merged on `main`, and full-evidence state curation is recorded
-as of `0eed63bb5b5218c06ecb718cef344ef17331b068`.
+alignment are merged on `main`, and full-evidence state curation plus pin
+curation is recorded as of
+`e8a99d0fbcbb6cfdabdbbe6186e398d61c2908ac`.
 
 Operator-captured evidence showed:
 
@@ -221,9 +223,37 @@ Operator-captured evidence showed:
    live ENTRY/EXIT disabled, PROMOTE/REVERT confirmation-gated, repair
    provenance blocked, threshold approval captured, alerting ready, useful
    disabled-state logs, and no stop conditions.
+8. The operator then explicitly approved a bounded Slice F manual canary:
+   manual API only, 1m timeframe, reduced pair scope, worker drain enabled only
+   for the window, scheduler enqueue disabled, live ENTRY/EXIT disabled,
+   automatic PROMOTE/REVERT disabled, repair-provenance graduation not
+   approved, current conservative budgets, operator rollback/evidence owner,
+   and post-window worker/scheduler disabled.
+9. The approved canary bundle
+   `/tmp/cryptopairs-slice-f/slice_f_approved_manual_20260525T085748Z.tgz`
+   showed the run itself succeeded: `reopt_2026-05-25T08-58-57Z_000000`,
+   terminal `SUCCEEDED`, `MANUAL_API` + `["1m"]`, no fail-closed reasons,
+   `WITHIN_BUDGET`, complete artifact manifest with `MANUAL_API` + `["1m"]`,
+   `total_bytes=3194`, host identity clean at `e8a99d0`, canary flags
+   `STRATEGY_PAIRS=PF_XBTUSD:PF_ETHUSD`,
+   `STRATEGY_TIMEFRAMES=1m`,
+   `STRATEGY_REOPT_WORKER_ENABLED=true`, and
+   `STRATEGY_REOPT_SCHEDULER_ENQUEUE_ENABLED=false`, followed by rollback to
+   `STRATEGY_REOPT_WORKER_ENABLED=false` and
+   `STRATEGY_REOPT_SCHEDULER_ENQUEUE_ENABLED=false`.
+10. The same approved canary bundle did **not** clear the canonical readiness
+    checker. Local verification against current `origin/main` returned
+    `pass=false`, `recommended_action=KEEP_DISABLED_KEEP_HOLD`, and stop
+    condition `WEAK_STRATEGY_LOGS`. The captured `strategy_logs_before.log`
+    contained build/dependency output and lacked required async runtime events
+    such as `reoptimize_run_enqueued`, `reoptimize_lease_acquired`, or
+    `reoptimize_recommendation_finalized`, and it also lacked explicit
+    disabled-state evidence. Treat this as an evidence-capture blocker, not a
+    run failure and not a reason to relax the checker.
 
-This clears the canonical evidence-manifest gate for operator review. It does
-not authorize `STRATEGY_REOPT_WORKER_ENABLED`,
+This clears the bounded manual-run behavior itself, but the canonical evidence
+gate remains fail-closed until useful strategy log evidence is captured and the
+checker passes. It does not authorize `STRATEGY_REOPT_WORKER_ENABLED`,
 `STRATEGY_REOPT_SCHEDULER_ENQUEUE_ENABLED`, live `ENTRY` / `EXIT`, automatic
 `PROMOTE`, automatic `REVERT`, or repair-provenance graduation. Those remain
 separate operator decisions with explicit scope, budget, abort, rollback, and
@@ -646,7 +676,7 @@ Follow-ups carried forward from prior reviews. Ordered by source review then sev
 
 Pickable items, in priority order:
 
-1. **Operator-only: Slice F readiness review decision** — review bundle `slice_f_full_evidence_20260525T071215Z` and decide whether to approve any next enablement/canary step. Approval must name scope, budgets, abort rule, rollback owner, evidence owner, and whether worker drain or scheduler enqueue may be enabled.
+1. **Operator-only: recapture Slice F canary log evidence** — do not hand-edit `slice_f_approved_manual_20260525T085748Z`. Either recapture useful strategy logs for the exact approved run if still available, or rerun the same bounded manual canary under a fresh explicit evidence window so `strategy_logs_before` includes required async runtime events and the canonical checker can pass.
 2. **Remote/local agent: async reoptimization hardening follow-ups** — if separately approved, handle deferred mutating cancellation auth/audit, artifact read/download surfaces, request/config fingerprint graduation, or additional scheduler/canary refinements as separate slices without making legacy or repair-only provenance trade-eligible.
 3. **Operator/local agent: continue any remaining Champion-Selection observation capture** — preserve fail-closed runtime settings and compare Trade Now buckets, blocked reasons, opportunity history, paper trades, and drift events against prior captures.
 4. **Remote/UI agent: Trade Now observation UI** — improve the web UI for the current observation window using existing Trade Now and observability contracts; do not add controls that mutate runtime state.
