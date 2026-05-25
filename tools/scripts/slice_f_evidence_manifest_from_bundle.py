@@ -69,6 +69,11 @@ LOG_EVENTS = {
     "reoptimize_fail_closed",
 }
 ACTIVE_STATUSES = ("QUEUED", "LEASED", "RUNNING", "CANCEL_REQUESTED")
+SCHEDULER_ENABLE_ENV_KEYS = (
+    "STRATEGY_REOPT_SCHEDULER_ENQUEUE_ENABLED",
+    "STRATEGY_REOPT_SCHEDULER_ENABLED",
+    "STRATEGY_REOPT_SCHEDULE_ENABLED",
+)
 REQUIRED_BUDGET_ENV = {
     "STRATEGY_REOPT_HEARTBEAT_INTERVAL_SECONDS",
     "STRATEGY_REOPT_LEASE_TTL_SECONDS",
@@ -676,6 +681,20 @@ def status_check_pass(status_payload: dict[str, Any]) -> bool:
     )
 
 
+def first_env_value(env: dict[str, str], keys: tuple[str, ...]) -> str | None:
+    for key in keys:
+        if key in env:
+            return env[key]
+    return None
+
+
+def recommendation_safe(status_payload: dict[str, Any]) -> bool:
+    decision = status_payload.get("recommendation_decision")
+    if decision in {"HOLD", "OPERATOR_REVIEW_REQUIRED"}:
+        return True
+    return status_check_pass(status_payload) and decision == "PROMOTION_CANDIDATE_AVAILABLE"
+
+
 def check(status: str, evidence: list[str], failure: str | None = None) -> dict[str, Any]:
     return {
         "id": "",
@@ -719,7 +738,7 @@ def build_manifest(bundle_root: Path, generated_at: str, bundle_id: str) -> dict
     )
 
     runner_enabled = runner_env.get("STRATEGY_REOPT_WORKER_ENABLED", "").lower() == "true"
-    scheduler_value = runner_env.get("STRATEGY_REOPT_SCHEDULER_ENABLED") or runner_env.get("STRATEGY_REOPT_SCHEDULE_ENABLED")
+    scheduler_value = first_env_value(runner_env, SCHEDULER_ENABLE_ENV_KEYS)
     scheduler_enabled = str(scheduler_value).lower() == "true"
     budget_missing = sorted(REQUIRED_BUDGET_ENV - set(runner_env))
     scheduler_missing = scheduler_value is None
@@ -745,6 +764,7 @@ def build_manifest(bundle_root: Path, generated_at: str, bundle_id: str) -> dict
     )
     thresholds_ready = thresholds.get("approved_before_canary") is True
     status_ready = status_check_pass(status_payload)
+    safe_recommendation = recommendation_safe(status_payload)
     active_zero = sum(int(metrics["active_runs_before"].get(status, 0)) for status in ACTIVE_STATUSES) == 0
     metrics_zero_delta = all(
         int(metrics.get(field, 0)) == 0
@@ -859,9 +879,9 @@ def build_manifest(bundle_root: Path, generated_at: str, bundle_id: str) -> dict
         ),
         named_check(
             "recommendation_safe",
-            "PASS" if status_payload.get("recommendation_decision") in {"HOLD", "OPERATOR_REVIEW_REQUIRED"} else "FAIL",
+            "PASS" if safe_recommendation else "FAIL",
             ["status_before"] if "status_before" in artifact_set else [],
-            None if status_payload.get("recommendation_decision") in {"HOLD", "OPERATOR_REVIEW_REQUIRED"} else "recommendation was not evidence-only safe",
+            None if safe_recommendation else "recommendation was not evidence-only safe",
         ),
         named_check(
             "entry_exit_disabled",

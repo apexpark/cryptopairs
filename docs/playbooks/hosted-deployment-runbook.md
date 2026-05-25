@@ -276,6 +276,18 @@ status_recommendation=HOLD
 An empty log tail is not disabled-state evidence; the manifest must keep
 `strategy_logs_useful=FAIL`.
 
+Capture `entry_exit_disabled` from `cryptopairs-execution-service`; the
+strategy-service container does not receive `EXECUTION_DISPATCH_MODE`.
+
+```bash
+{
+  docker exec cryptopairs-execution-service printenv | sort \
+    | rg '^EXECUTION_DISPATCH_MODE='
+  docker exec cryptopairs-strategy-service printenv | sort \
+    | rg '^STRATEGY_BLOCK_ON_CHAMPION_DRIFT=' || true
+} > "$EVIDENCE_ROOT/execution_flags.txt"
+```
+
 `promotion_revert_gating` must label the two read-only confirmation probes
 separately. Two unlabeled `400 confirm=true` responses are ambiguous and fail
 the checker. Use `PROMOTE` and `REVERT` text section labels, or a JSON object

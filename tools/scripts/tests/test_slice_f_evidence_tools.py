@@ -62,6 +62,26 @@ def test_slice_f_checker_rejects_failed_unknown_status() -> None:
     assert "status payload contains blocking fail-closed reason: UNKNOWN_STATUS" in errors
 
 
+def test_slice_f_checker_accepts_manual_promotion_candidate_on_success() -> None:
+    manifest = copy.deepcopy(load_example("slice_f_reoptimize_canary_evidence_manifest.pass.example.json"))
+    status_payload = manifest["status_payloads"][0]  # type: ignore[index]
+    status_payload["recommendation_decision"] = "PROMOTION_CANDIDATE_AVAILABLE"  # type: ignore[index]
+
+    assert evidence_check.validate_manifest(manifest) == []
+
+
+def test_slice_f_checker_rejects_unexpected_success_recommendation() -> None:
+    manifest = copy.deepcopy(load_example("slice_f_reoptimize_canary_evidence_manifest.pass.example.json"))
+    status_payload = manifest["status_payloads"][0]  # type: ignore[index]
+    status_payload["recommendation_decision"] = "REVERT_REVIEW_REQUIRED"  # type: ignore[index]
+    manifest["overall_pass"] = False
+    manifest["recommended_action"] = "KEEP_DISABLED_KEEP_HOLD"
+
+    errors = evidence_check.validate_manifest(manifest)
+
+    assert "status SUCCEEDED has unsafe recommendation: REVERT_REVIEW_REQUIRED" in errors
+
+
 def test_slice_f_checker_rejects_runner_enabled_without_operator_canary() -> None:
     manifest = copy.deepcopy(load_example("slice_f_reoptimize_canary_evidence_manifest.pass.example.json"))
     manifest["canary_scope"]["runner_enabled_before"] = True  # type: ignore[index]
@@ -125,6 +145,24 @@ def test_slice_f_manifest_generator_collects_threshold_approval_artifact(tmp_pat
 
     assert "threshold_approval" in paths
     assert any(artifact["id"] == "threshold_approval" for artifact in artifacts)
+
+
+def test_slice_f_manifest_generator_uses_scheduler_enqueue_env_name() -> None:
+    env = {"STRATEGY_REOPT_SCHEDULER_ENQUEUE_ENABLED": "false"}
+
+    assert manifest_from_bundle.first_env_value(env, manifest_from_bundle.SCHEDULER_ENABLE_ENV_KEYS) == "false"
+
+
+def test_slice_f_manifest_generator_treats_success_promotion_candidate_as_safe() -> None:
+    status_payload = {
+        "payload_valid": True,
+        "status": "SUCCEEDED",
+        "recommendation_decision": "PROMOTION_CANDIDATE_AVAILABLE",
+        "fail_closed_reasons": [],
+        "budget_state": "WITHIN_BUDGET",
+    }
+
+    assert manifest_from_bundle.recommendation_safe(status_payload) is True
 
 
 def test_slice_f_manifest_generator_treats_repo_alert_template_as_not_deployed() -> None:

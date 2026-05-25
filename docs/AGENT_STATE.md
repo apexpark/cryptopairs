@@ -199,6 +199,14 @@ Operator-captured evidence showed:
 5. Disable proof after the reduced canary restored the full pair list and kept
    `STRATEGY_REOPT_WORKER_ENABLED=false` and
    `STRATEGY_REOPT_SCHEDULER_ENQUEUE_ENABLED=false`.
+6. A later full evidence/checker attempt stayed fail-closed before readiness:
+   host evidence showed both reoptimization flags disabled, but exposed
+   repo-side evidence tooling drift from PR #207: the raw-bundle generator
+   looked for legacy scheduler env names, and the operator capture command
+   gathered `EXECUTION_DISPATCH_MODE` from the strategy-service container
+   instead of the execution-service container. Treat this as repo-side evidence
+   tooling/runbook drift, not a reason to relax the checker or hand-edit
+   evidence.
 
 This clears the repo-side scheduler/manual-run separation blocker for reduced
 manual evidence. Full Slice F readiness remains blocked because the passing

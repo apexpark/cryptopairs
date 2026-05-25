@@ -5,6 +5,12 @@ This project follows SemVer as defined in `docs/02-versioning-and-releases.md`.
 
 ## Unreleased
 ### Operator Tooling
+- Updated Slice F evidence tooling for the scheduler/manual-run separation
+  landed in PR #207: raw bundle generation now recognizes
+  `STRATEGY_REOPT_SCHEDULER_ENQUEUE_ENABLED`, successful evidence-only
+  `PROMOTION_CANDIDATE_AVAILABLE` recommendations can pass when all other
+  safety gates pass, and the hosted capture guidance records live
+  `ENTRY`/`EXIT` disabled proof from the execution-service container.
 - Separated async reoptimization worker drain from scheduled enqueue with the
   default-off `STRATEGY_REOPT_SCHEDULER_ENQUEUE_ENABLED` gate. Existing queued
   manual runs can be drained with `STRATEGY_REOPT_WORKER_ENABLED=true` while
