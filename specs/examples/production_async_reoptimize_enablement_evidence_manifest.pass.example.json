@@ -1,0 +1,166 @@
+{
+  "schema_version": "1.0.0",
+  "generated_at": "2026-05-27T00:00:00Z",
+  "bundle_id": "production-async-enable-pass-example",
+  "overall_pass": true,
+  "recommended_action": "READY_FOR_OPERATOR_REVIEW",
+  "operator_approval": {
+    "present": true,
+    "reference": "operator-approved-pae-c-window-20260527",
+    "approved_at": "2026-05-27T00:00:00Z",
+    "approved_by": "operator",
+    "scope": "one scheduled async reoptimization run, 1m timeframe, reduced pair set",
+    "approved_timeframes": ["1m"],
+    "expected_scheduled_run_count": 1,
+    "scheduler_window_start": "2026-05-27T00:05:00Z",
+    "scheduler_window_end": "2026-05-27T00:15:00Z",
+    "abort_owner": "operator",
+    "rollback_owner": "operator",
+    "host_evidence_owner": "operator"
+  },
+  "repo_identity": {
+    "branch": "main",
+    "commit": "86af22f8d18d3e8c251e5fcae60866ee88f7b95d",
+    "dirty_status": "CLEAN",
+    "captured_by": "operator",
+    "evidence_root": "OUTSIDE_REPO"
+  },
+  "enablement_scope": {
+    "trigger_source": "SCHEDULED",
+    "requested_timeframes": ["1m"],
+    "expected_scheduled_run_count": 1,
+    "worker_enabled_before": false,
+    "scheduler_enabled_before": false,
+    "worker_enabled_during": true,
+    "scheduler_enabled_during": true,
+    "worker_enabled_after": false,
+    "scheduler_enabled_after": false
+  },
+  "status_evidence": {
+    "payload_valid": true,
+    "final_status": "SUCCEEDED",
+    "recommendation_decision": "PROMOTION_CANDIDATE_AVAILABLE",
+    "budget_state": "WITHIN_BUDGET",
+    "fail_closed_reasons": [],
+    "progression": ["QUEUED", "LEASED", "RUNNING", "SUCCEEDED"],
+    "scheduled_run_count": 1,
+    "manual_run_count": 0,
+    "artifact_manifest_present": true,
+    "artifact_manifest_valid": true,
+    "artifact_trigger_source": "SCHEDULED",
+    "artifact_requested_timeframes": ["1m"]
+  },
+  "metrics": {
+    "active_runs_before": {
+      "QUEUED": 0,
+      "LEASED": 0,
+      "RUNNING": 0,
+      "CANCEL_REQUESTED": 0
+    },
+    "active_runs_during_peak": {
+      "QUEUED": 0,
+      "LEASED": 0,
+      "RUNNING": 1,
+      "CANCEL_REQUESTED": 0
+    },
+    "active_runs_after": {
+      "QUEUED": 0,
+      "LEASED": 0,
+      "RUNNING": 0,
+      "CANCEL_REQUESTED": 0
+    },
+    "scheduler_enqueued_delta": 1,
+    "manual_enqueued_delta": 0,
+    "missing_telemetry_delta": 0,
+    "status_unknown_delta": 0,
+    "budget_exhausted_delta": 0,
+    "unsafe_promotion_delta": 0,
+    "repair_provenance_active_delta": 0
+  },
+  "alerting": {
+    "configured": true,
+    "routed": true,
+    "missing_data_blocks": true,
+    "evidence_state": "DEPLOYED",
+    "rules": [
+      {"id": "stuck_lease", "configured": true, "routed": true, "query_present": true, "before_state_captured": true, "during_state_captured": true, "after_state_captured": true},
+      {"id": "failed_degraded_runs", "configured": true, "routed": true, "query_present": true, "before_state_captured": true, "during_state_captured": true, "after_state_captured": true},
+      {"id": "schedule_missed", "configured": true, "routed": true, "query_present": true, "before_state_captured": true, "during_state_captured": true, "after_state_captured": true},
+      {"id": "budget_exhaustion", "configured": true, "routed": true, "query_present": true, "before_state_captured": true, "during_state_captured": true, "after_state_captured": true},
+      {"id": "cancellation_failure", "configured": true, "routed": true, "query_present": true, "before_state_captured": true, "during_state_captured": true, "after_state_captured": true},
+      {"id": "missing_telemetry", "configured": true, "routed": true, "query_present": true, "before_state_captured": true, "during_state_captured": true, "after_state_captured": true},
+      {"id": "unknown_status", "configured": true, "routed": true, "query_present": true, "before_state_captured": true, "during_state_captured": true, "after_state_captured": true},
+      {"id": "unsafe_promotion", "configured": true, "routed": true, "query_present": true, "before_state_captured": true, "during_state_captured": true, "after_state_captured": true},
+      {"id": "repair_provenance_active", "configured": true, "routed": true, "query_present": true, "before_state_captured": true, "during_state_captured": true, "after_state_captured": true}
+    ]
+  },
+  "thresholds": {
+    "approved_before_window": true,
+    "cpu": {
+      "baseline_captured": true,
+      "during_after_captured": true,
+      "within_threshold": true
+    },
+    "hot_endpoints": [
+      {
+        "method": "GET",
+        "path": "/v1/strategy/pairs/trade-now",
+        "baseline_captured": true,
+        "during_after_captured": true,
+        "within_threshold": true
+      }
+    ]
+  },
+  "logs": {
+    "before_useful": true,
+    "during_useful": true,
+    "after_useful": true,
+    "events_seen": [
+      "reoptimize_run_enqueue_attempted",
+      "reoptimize_run_enqueued",
+      "reoptimize_lease_acquired",
+      "reoptimize_lease_heartbeat",
+      "reoptimize_recommendation_finalized"
+    ]
+  },
+  "safety": {
+    "live_entry_enabled": false,
+    "live_exit_enabled": false,
+    "automatic_promote_enabled": false,
+    "automatic_revert_enabled": false,
+    "promote_confirm_gated": true,
+    "revert_confirm_gated": true,
+    "repair_provenance_blocked": true
+  },
+  "artifacts": [
+    {"id": "repo_identity", "path": "evidence/repo_identity.json", "kind": "JSON", "required": true, "sha256": "0000000000000000000000000000000000000000000000000000000000000000", "captured_at": "2026-05-27T00:16:00Z"},
+    {"id": "operator_approval", "path": "evidence/operator_approval.json", "kind": "JSON", "required": true, "sha256": "0000000000000000000000000000000000000000000000000000000000000000", "captured_at": "2026-05-27T00:16:00Z"},
+    {"id": "runner_flags_before", "path": "evidence/runner_flags_before.txt", "kind": "JSON", "required": true, "sha256": "0000000000000000000000000000000000000000000000000000000000000000", "captured_at": "2026-05-27T00:16:00Z"},
+    {"id": "runner_flags_during", "path": "evidence/runner_flags_during.txt", "kind": "JSON", "required": true, "sha256": "0000000000000000000000000000000000000000000000000000000000000000", "captured_at": "2026-05-27T00:16:00Z"},
+    {"id": "runner_flags_after", "path": "evidence/runner_flags_after.txt", "kind": "JSON", "required": true, "sha256": "0000000000000000000000000000000000000000000000000000000000000000", "captured_at": "2026-05-27T00:16:00Z"},
+    {"id": "budget_values", "path": "evidence/budget_values.txt", "kind": "JSON", "required": true, "sha256": "0000000000000000000000000000000000000000000000000000000000000000", "captured_at": "2026-05-27T00:16:00Z"},
+    {"id": "status_progression", "path": "evidence/status_progression.json", "kind": "STATUS", "required": true, "sha256": "0000000000000000000000000000000000000000000000000000000000000000", "captured_at": "2026-05-27T00:16:00Z"},
+    {"id": "status_after", "path": "evidence/status_after.json", "kind": "STATUS", "required": true, "sha256": "0000000000000000000000000000000000000000000000000000000000000000", "captured_at": "2026-05-27T00:16:00Z"},
+    {"id": "metrics_before", "path": "evidence/metrics_before.prom", "kind": "METRICS", "required": true, "sha256": "0000000000000000000000000000000000000000000000000000000000000000", "captured_at": "2026-05-27T00:16:00Z"},
+    {"id": "metrics_during", "path": "evidence/metrics_during.prom", "kind": "METRICS", "required": true, "sha256": "0000000000000000000000000000000000000000000000000000000000000000", "captured_at": "2026-05-27T00:16:00Z"},
+    {"id": "metrics_after", "path": "evidence/metrics_after.prom", "kind": "METRICS", "required": true, "sha256": "0000000000000000000000000000000000000000000000000000000000000000", "captured_at": "2026-05-27T00:16:00Z"},
+    {"id": "alerts_config", "path": "evidence/alerts_config.json", "kind": "ALERTS", "required": true, "sha256": "0000000000000000000000000000000000000000000000000000000000000000", "captured_at": "2026-05-27T00:16:00Z"},
+    {"id": "alerts_before", "path": "evidence/alerts_before.json", "kind": "ALERTS", "required": true, "sha256": "0000000000000000000000000000000000000000000000000000000000000000", "captured_at": "2026-05-27T00:16:00Z"},
+    {"id": "alerts_during", "path": "evidence/alerts_during.json", "kind": "ALERTS", "required": true, "sha256": "0000000000000000000000000000000000000000000000000000000000000000", "captured_at": "2026-05-27T00:16:00Z"},
+    {"id": "alerts_after", "path": "evidence/alerts_after.json", "kind": "ALERTS", "required": true, "sha256": "0000000000000000000000000000000000000000000000000000000000000000", "captured_at": "2026-05-27T00:16:00Z"},
+    {"id": "strategy_logs_before", "path": "evidence/strategy_logs_before.log", "kind": "LOG", "required": true, "sha256": "0000000000000000000000000000000000000000000000000000000000000000", "captured_at": "2026-05-27T00:16:00Z"},
+    {"id": "strategy_logs_during", "path": "evidence/strategy_logs_during.log", "kind": "LOG", "required": true, "sha256": "0000000000000000000000000000000000000000000000000000000000000000", "captured_at": "2026-05-27T00:16:00Z"},
+    {"id": "strategy_logs_after", "path": "evidence/strategy_logs_after.log", "kind": "LOG", "required": true, "sha256": "0000000000000000000000000000000000000000000000000000000000000000", "captured_at": "2026-05-27T00:16:00Z"},
+    {"id": "threshold_approval", "path": "evidence/threshold_approval.json", "kind": "THRESHOLD", "required": true, "sha256": "0000000000000000000000000000000000000000000000000000000000000000", "captured_at": "2026-05-27T00:16:00Z"},
+    {"id": "cpu_baseline", "path": "evidence/cpu_baseline.txt", "kind": "THRESHOLD", "required": true, "sha256": "0000000000000000000000000000000000000000000000000000000000000000", "captured_at": "2026-05-27T00:16:00Z"},
+    {"id": "cpu_during_after", "path": "evidence/cpu_during_after.txt", "kind": "THRESHOLD", "required": true, "sha256": "0000000000000000000000000000000000000000000000000000000000000000", "captured_at": "2026-05-27T00:16:00Z"},
+    {"id": "hot_endpoint_latency_baseline", "path": "evidence/hot_endpoint_latency_baseline.txt", "kind": "THRESHOLD", "required": true, "sha256": "0000000000000000000000000000000000000000000000000000000000000000", "captured_at": "2026-05-27T00:16:00Z"},
+    {"id": "hot_endpoint_latency_after", "path": "evidence/hot_endpoint_latency_after.txt", "kind": "THRESHOLD", "required": true, "sha256": "0000000000000000000000000000000000000000000000000000000000000000", "captured_at": "2026-05-27T00:16:00Z"},
+    {"id": "artifact_manifest", "path": "evidence/artifact_manifest.json", "kind": "JSON", "required": true, "sha256": "0000000000000000000000000000000000000000000000000000000000000000", "captured_at": "2026-05-27T00:16:00Z"},
+    {"id": "repair_provenance_inventory", "path": "evidence/repair_provenance_inventory.txt", "kind": "PROVENANCE", "required": true, "sha256": "0000000000000000000000000000000000000000000000000000000000000000", "captured_at": "2026-05-27T00:16:00Z"},
+    {"id": "trade_now_repair_provenance_block", "path": "evidence/trade_now_repair_provenance_block.json", "kind": "PROVENANCE", "required": true, "sha256": "0000000000000000000000000000000000000000000000000000000000000000", "captured_at": "2026-05-27T00:16:00Z"},
+    {"id": "entry_exit_disabled", "path": "evidence/entry_exit_disabled.txt", "kind": "SAFETY", "required": true, "sha256": "0000000000000000000000000000000000000000000000000000000000000000", "captured_at": "2026-05-27T00:16:00Z"},
+    {"id": "promotion_revert_gating", "path": "evidence/promotion_revert_gating.txt", "kind": "SAFETY", "required": true, "sha256": "0000000000000000000000000000000000000000000000000000000000000000", "captured_at": "2026-05-27T00:16:00Z"}
+  ],
+  "stop_conditions": []
+}

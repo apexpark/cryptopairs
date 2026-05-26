@@ -5,6 +5,19 @@ This project follows SemVer as defined in `docs/02-versioning-and-releases.md`.
 
 ## Unreleased
 ### Operator Tooling
+- Added production async reoptimization enablement evidence tooling:
+  `production_async_reoptimize_enablement_evidence_manifest` contract/examples,
+  a raw-bundle generator, and a semantic checker for before/during/after
+  scheduler windows. The checker keeps enabled-window evidence separate from
+  the completed Slice F manual evidence gate and fails closed on missing
+  approval, manual/scheduled contamination, artifact/status scope mismatch,
+  nonzero after-rollback gauges, missing alert/log/threshold artifacts, unsafe
+  execution gates, or repair-provenance exposure.
+- Added a read-only Trade Now reason audit helper that summarizes WAIT/SETUP,
+  blocked, rationale, and gate-failure codes from captured
+  `/v1/strategy/pairs/trade-now` JSON so operators can distinguish scheduler
+  relevance from live setup gates, open-position conflicts, learning policy
+  holds, and repair-provenance blocks.
 - Added a production async reoptimization enablement slice proposal and
   runbook/state pointers that keep the accepted Slice F manual evidence packet
   separate from any future scheduled production enablement. The new PAE slice

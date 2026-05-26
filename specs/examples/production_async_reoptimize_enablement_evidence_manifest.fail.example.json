@@ -1,0 +1,124 @@
+{
+  "schema_version": "1.0.0",
+  "generated_at": "2026-05-27T00:00:00Z",
+  "bundle_id": "production-async-enable-fail-example",
+  "overall_pass": false,
+  "recommended_action": "KEEP_DISABLED_KEEP_HOLD",
+  "operator_approval": {
+    "present": false,
+    "reference": null,
+    "approved_at": null,
+    "approved_by": null,
+    "scope": null,
+    "approved_timeframes": [],
+    "expected_scheduled_run_count": 0,
+    "scheduler_window_start": null,
+    "scheduler_window_end": null,
+    "abort_owner": null,
+    "rollback_owner": null,
+    "host_evidence_owner": "unknown"
+  },
+  "repo_identity": {
+    "branch": "unknown",
+    "commit": "0000000",
+    "dirty_status": "UNKNOWN",
+    "captured_by": "unknown",
+    "evidence_root": "UNKNOWN"
+  },
+  "enablement_scope": {
+    "trigger_source": "SCHEDULED",
+    "requested_timeframes": [],
+    "expected_scheduled_run_count": 0,
+    "worker_enabled_before": false,
+    "scheduler_enabled_before": false,
+    "worker_enabled_during": false,
+    "scheduler_enabled_during": false,
+    "worker_enabled_after": false,
+    "scheduler_enabled_after": false
+  },
+  "status_evidence": {
+    "payload_valid": false,
+    "final_status": "FAILED",
+    "recommendation_decision": "HOLD",
+    "budget_state": "UNKNOWN",
+    "fail_closed_reasons": ["MISSING_TELEMETRY", "UNKNOWN_STATUS"],
+    "progression": ["FAILED"],
+    "scheduled_run_count": 0,
+    "manual_run_count": 0,
+    "artifact_manifest_present": false,
+    "artifact_manifest_valid": false,
+    "artifact_trigger_source": null,
+    "artifact_requested_timeframes": []
+  },
+  "metrics": {
+    "active_runs_before": {
+      "QUEUED": 0,
+      "LEASED": 0,
+      "RUNNING": 0,
+      "CANCEL_REQUESTED": 0
+    },
+    "active_runs_during_peak": {
+      "QUEUED": 0,
+      "LEASED": 0,
+      "RUNNING": 0,
+      "CANCEL_REQUESTED": 0
+    },
+    "active_runs_after": {
+      "QUEUED": 0,
+      "LEASED": 0,
+      "RUNNING": 0,
+      "CANCEL_REQUESTED": 0
+    },
+    "scheduler_enqueued_delta": 0,
+    "manual_enqueued_delta": 0,
+    "missing_telemetry_delta": 1,
+    "status_unknown_delta": 1,
+    "budget_exhausted_delta": 0,
+    "unsafe_promotion_delta": 0,
+    "repair_provenance_active_delta": 0
+  },
+  "alerting": {
+    "configured": false,
+    "routed": false,
+    "missing_data_blocks": false,
+    "evidence_state": "ABSENT",
+    "rules": []
+  },
+  "thresholds": {
+    "approved_before_window": false,
+    "cpu": {
+      "baseline_captured": false,
+      "during_after_captured": false,
+      "within_threshold": false
+    },
+    "hot_endpoints": [
+      {
+        "method": "GET",
+        "path": "/v1/strategy/pairs/trade-now",
+        "baseline_captured": false,
+        "during_after_captured": false,
+        "within_threshold": false
+      }
+    ]
+  },
+  "logs": {
+    "before_useful": false,
+    "during_useful": false,
+    "after_useful": false,
+    "events_seen": []
+  },
+  "safety": {
+    "live_entry_enabled": false,
+    "live_exit_enabled": false,
+    "automatic_promote_enabled": false,
+    "automatic_revert_enabled": false,
+    "promote_confirm_gated": false,
+    "revert_confirm_gated": false,
+    "repair_provenance_blocked": false
+  },
+  "artifacts": [],
+  "stop_conditions": [
+    "MISSING_OPERATOR_APPROVAL",
+    "MANIFEST_INVALID"
+  ]
+}

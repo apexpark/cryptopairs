@@ -91,6 +91,25 @@ Acceptance criteria:
    flags outside the approved window, nonzero after gauges, missing logs,
    missing alerts, missing artifacts, and any non-success terminal state.
 
+Implementation artifacts:
+
+1. contract:
+   `specs/contracts/production_async_reoptimize_enablement_evidence_manifest.schema.json`;
+2. examples:
+   `specs/examples/production_async_reoptimize_enablement_evidence_manifest.pass.example.json`
+   and
+   `specs/examples/production_async_reoptimize_enablement_evidence_manifest.fail.example.json`;
+3. raw-bundle generator:
+   `tools/scripts/production_async_enablement_manifest_from_bundle.py`;
+4. semantic checker:
+   `tools/scripts/production_async_enablement_evidence_check.py`;
+5. focused tests:
+   `tools/scripts/tests/test_production_async_enablement_tools.py`.
+
+These artifacts are repo-side validation tools only. They still require a
+separate operator approval and operator-captured host bundle before PAE-C may
+attempt a scheduled production window.
+
 ### PAE-B: Request/config fingerprint and service-version evidence
 
 Graduate nullable evidence fields that are currently compatibility placeholders
