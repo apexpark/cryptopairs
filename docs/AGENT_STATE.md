@@ -11,12 +11,12 @@
 |---|---|
 | Last updated (UTC) | 2026-05-26 |
 | Updated by | codex/local |
-| Repo HEAD pin (committed) | `9074df90875dbf0dc0d5a7a8b401e053f6b33d1b` |
+| Repo HEAD pin (committed) | `de9fee07e1baa0008c6475ac5b5b83323e581877` |
 | Pin branch | `main` |
 | Sprint base branch | `main` |
-| Pin notes | Post-PR #213 plus operator acceptance of the approved reduced Slice F manual canary evidence. The pin records `origin/main` after async artifact writing, scheduler/manual-run separation, reduced manual canary state curation, evidence-tooling alignment, full-evidence state curation, pin curation, weak-log blocker curation, and approved evidence-pass curation landed. The operator accepted evidence bundle `slice_f_approved_manual_logs_20260525T092644Z` as the Slice F passing packet and explicitly closed Slice F with runtime left disabled. This does not authorize worker/scheduler enablement, live ENTRY/EXIT, automatic PROMOTE/REVERT, or repair-provenance graduation. |
+| Pin notes | Post-PR #214 Slice F closeout plus creation of the separate production async enablement slice. The pin records `origin/main` after the operator accepted evidence bundle `slice_f_approved_manual_logs_20260525T092644Z` as the Slice F passing packet and explicitly closed Slice F with runtime left disabled. Production async enablement remains separate future work and does not authorize worker/scheduler enablement, live ENTRY/EXIT, automatic PROMOTE/REVERT, or repair-provenance graduation. |
 | Origin | `https://github.com/apexpark/cryptopairs.git` |
-| Working-tree state | Reoptimise runner Slices A-F are complete through the accepted bounded manual Slice F evidence packet. Operator accepted bundle `slice_f_approved_manual_logs_20260525T092644Z`, whose run `reopt_2026-05-25T09-27-53Z_000000` completed `SUCCEEDED` with `MANUAL_API` + `["1m"]`, no fail-closed reasons, `WITHIN_BUDGET`, complete scope-consistent artifacts, useful strategy-log evidence, and canonical checker result `READY_FOR_OPERATOR_REVIEW`. Runtime remains disabled: no scheduler, no worker, no live ENTRY/EXIT, no automatic PROMOTE/REVERT, and no repair-provenance graduation. Future production enablement is a separate operator-approved slice with explicit scope, budgets, abort rule, rollback owner, and evidence owner. |
+| Working-tree state | Reoptimise runner Slices A-F are complete through the accepted bounded manual Slice F evidence packet. Operator accepted bundle `slice_f_approved_manual_logs_20260525T092644Z`, whose run `reopt_2026-05-25T09-27-53Z_000000` completed `SUCCEEDED` with `MANUAL_API` + `["1m"]`, no fail-closed reasons, `WITHIN_BUDGET`, complete scope-consistent artifacts, useful strategy-log evidence, and canonical checker result `READY_FOR_OPERATOR_REVIEW`. Runtime remains disabled: no scheduler, no worker, no live ENTRY/EXIT, no automatic PROMOTE/REVERT, and no repair-provenance graduation. Production async enablement is now tracked as a separate PAE slice beginning with repo-side evidence contract/checker work before any scheduled production window. |
 
 If the pin above is not reachable from `HEAD` via fast-forward, this file is stale; if `HEAD` is ahead of the pin, see §"Pin Convention".
 
@@ -89,20 +89,24 @@ Slice tracker:
 | Slice D — async API and script migration | **Committed on main** | remote/local | PR #197 / commit 880da1112a66e4ce58fb24cf354be0c82f2df173 landed the read/enqueue-only async run endpoint subset. PR #198 / commit a115ab785479cf54929cd59aee8f3b787f46a993 landed opt-in script modes (`sync`, `async`, `latest-successful`, `skip`) for report/maintenance scripts while preserving synchronous defaults and baseline skip behavior. Async/latest evidence uses bounded polling and fails closed to `HOLD` on timeout, invalid/unknown status, stale or incompatible latest evidence, missing artifacts, critical errors, fail-closed reasons, or unavailable cancellation. The existing synchronous `/v1/strategy/pairs/reoptimize` route remains unchanged; UI changes, production scheduler defaults, automatic promotion/revert, repair-provenance graduation, artifact download routes, and mutating cancellation remain deferred. |
 | Slice E — observability and runbooks | **Committed on main** | remote/local | PR #200 / commit df1690c8832359b316ce3206d16694b2e4c749fc adds bounded async reoptimization metrics, structured runner/API logs, and `docs/playbooks/async-reoptimization-runner-runbook.md` for the merged Slice C/D subset: lifecycle, active runs, enqueue outcomes, lease acquire/heartbeat/loss, budget exhaustion, pair/timeframe progress, cancellation observation/completion, fail-closed reasons, missing/unknown telemetry, terminal recommendations, status inspection, disable/rollback, stuck lease recovery, budget exhaustion response, artifact evidence, and Slice F readiness. Artifact read/download routes and artifact read/download metrics remain deferred. No production scheduler enablement, UI edits, automatic promotion/revert, repair-provenance graduation, or host verification claims are included. |
 | Slice F — production canary | **Complete; evidence accepted, runtime disabled** | operator/local | PRs #202-#213 added repo-side evidence gates/tooling, threshold approval contract, alert templates/checklists, fail-closed readiness checks, no-row status semantics, async artifact writing, scheduler/manual-run separation, PR #207-aligned evidence tooling, full-evidence state curation, pin curation, weak-log blocker curation, and approved evidence-pass curation. The operator accepted bundle `slice_f_approved_manual_logs_20260525T092644Z` as the Slice F passing evidence packet. Its approved bounded manual 1m canary run `reopt_2026-05-25T09-27-53Z_000000` completed `SUCCEEDED` with `MANUAL_API` + `["1m"]`, no fail-closed reasons, `WITHIN_BUDGET`, complete scope-consistent artifacts, useful strategy-log evidence, clean host identity at `bb28a6b`, scheduler enqueue disabled, and worker/scheduler disabled again after rollback. Runtime remains disabled; production enablement is separate future work. |
+| Production Async Enablement (PAE) — scheduled production enablement | **Proposed; not runtime approved** | remote/local + operator | New docs-only slice boundary in `docs/proposals/reoptimise-production-async-enablement-slice.md`. PAE starts with repo-side evidence contract/checker work for before/during/after enabled-window evidence and does not authorize `STRATEGY_REOPT_WORKER_ENABLED=true`, `STRATEGY_REOPT_SCHEDULER_ENQUEUE_ENABLED=true`, live ENTRY/EXIT, automatic PROMOTE/REVERT, or repair-provenance graduation. Operator approval is still required before any host scheduler window. |
 
 Future operator decisions before any separate production enablement:
 
-1. Initial runtime budgets: run wall-clock, timeframe wall-clock, pair counts,
+1. Production enablement evidence shape: new contract/checker or clearly
+   versioned checker mode for before/during/after enabled-window evidence.
+2. Initial runtime budgets: run wall-clock, timeframe wall-clock, pair counts,
    pair concurrency, DB batch size, artifact bytes, cooldown, lease TTL, and
    heartbeat interval.
-2. First canary timeframe and success thresholds.
-3. Cancellation authority and auth/audit boundary.
-4. Host artifact root, retention period, and download/access policy.
-5. Alert deployment/routing evidence and `threshold_approval` artifact.
-6. Canonical request/config fingerprint fields.
-7. Script migration defaults: stay sync, async opt-in, latest-successful, or
+3. First scheduled canary timeframe, pair scope, scheduler cadence, enabled
+   window duration, and success thresholds.
+4. Cancellation authority and auth/audit boundary.
+5. Host artifact root, retention period, and download/access policy.
+6. Alert deployment/routing evidence and `threshold_approval` artifact.
+7. Canonical request/config fingerprint fields.
+8. Script migration defaults: stay sync, async opt-in, latest-successful, or
    skip for each maintenance path.
-8. Long-term fate of `POST /v1/strategy/pairs/reoptimize`: compatibility
+9. Long-term fate of `POST /v1/strategy/pairs/reoptimize`: compatibility
    route, admin-only route, async wrapper, or deprecated route.
 
 Next safe sequence:
@@ -113,8 +117,10 @@ Next safe sequence:
 2. Do not enable live `ENTRY` / `EXIT`, automatic `PROMOTE` / `REVERT`, or
    repair-provenance graduation from Slice F evidence.
 3. Any future enablement/canary step is a separate operator-approved slice and
-   must preserve bounded scope, disabled defaults, explicit rollback, and
-   evidence capture.
+   must start with PAE-A evidence contract/checker work for before/during/after
+   scheduler-window evidence before any host flags are changed.
+   Preserve bounded scope, disabled defaults, explicit rollback, and evidence
+   capture.
 4. Keep the existing synchronous `/v1/strategy/pairs/reoptimize`
    compatibility route unchanged unless a separate versioned migration is
    approved.
@@ -171,6 +177,7 @@ Source of truth for shipped behavior is `CHANGELOG.md` `## Unreleased` section. 
 - **Committed (`e8a99d0`)**: Slice F evidence pin curation (PR #211) — pinned this state file to the PR #210 full-evidence state and preserved the operator-review-only runtime posture.
 - **Committed (`bb28a6b`)**: Slice F approved-canary log blocker curation (PR #212) — recorded that the first approved bounded manual canary run succeeded but still failed the canonical evidence checker on `WEAK_STRATEGY_LOGS`, preserving `KEEP_DISABLED_KEEP_HOLD` until useful strategy logs were recaptured.
 - **Committed (`9074df9`)**: Slice F approved-canary evidence pass curation (PR #213) — recorded the recaptured approved-log bundle `slice_f_approved_manual_logs_20260525T092644Z`, canonical checker result `READY_FOR_OPERATOR_REVIEW`, no stop conditions, and continued disabled/operator-only runtime posture.
+- **Committed (`de9fee0`)**: Slice F closeout (PR #214) — recorded the operator decision accepting `slice_f_approved_manual_logs_20260525T092644Z` as the Slice F passing evidence packet, closed Slice F as complete, and explicitly kept runtime disabled: no worker, scheduler, live ENTRY/EXIT, automatic PROMOTE/REVERT, or repair-provenance graduation.
 
 ---
 
@@ -182,7 +189,7 @@ Repo-side Slice F evidence gates, readiness tooling, no-row status semantics,
 async artifact writing, scheduler/manual-run separation, and evidence-tooling
 alignment are merged on `main`, and full-evidence state curation, pin
 curation, weak-log blocker curation, and approved evidence-pass curation are
-recorded as of `9074df90875dbf0dc0d5a7a8b401e053f6b33d1b`.
+recorded as of `de9fee07e1baa0008c6475ac5b5b83323e581877`.
 
 Operator-captured evidence showed:
 
@@ -674,6 +681,15 @@ Follow-ups carried forward from prior reviews. Ordered by source review then sev
 |---|---|---|---|
 | SF1 | **HIGH** | Implement scheduler/manual-run separation for async reoptimization canaries. Operator-captured evidence showed manual/status scope reporting `MANUAL_API` + `["1m"]` while artifacts/request reflected `SCHEDULED` + `["1m","15m","1h"]`, and the scheduler kept producing repeated scheduled `DEGRADED` runs while enabled. The implementation must make manual canary status, request artifacts, trigger source, and requested timeframes agree; prevent scheduled runs from contaminating manual canary evidence; preserve single-flight, budget, lease, disable, and fail-closed behavior; and include focused Rust tests plus any required contract/example updates. | **resolved by PR #207 (`07ee4ed`) plus PR #209 (`97213ba`) and operator evidence** — scheduler/manual separation landed, evidence tooling was aligned to the new scheduler gate, and bundle `slice_f_full_evidence_20260525T071215Z` passed the canonical checker with `READY_FOR_OPERATOR_REVIEW`. |
 
+### From Production Async Enablement slice
+
+| ID | Severity | Description | Status |
+|---|---|---|---|
+| PAE-A | **HIGH** | Add production async enablement evidence tooling that models before/during/after scheduler windows without relaxing the completed Slice F checker. It should include a new contract or clearly versioned checker mode, pass/fail examples, raw-bundle generation, semantic checker coverage, mandatory artifact-manifest validation, explicit scheduled trigger/timeframe agreement, active-gauge lifecycle checks, and fail-closed behavior for missing/contradictory evidence. | open; first repo-side step before any host scheduler flag changes |
+| PAE-B | **HIGH** | Graduate deterministic request/config fingerprint and service-version evidence for async reoptimization status/artifacts so production enablement and `latest-successful` consumers can reject stale or incompatible successful runs instead of trusting nullable compatibility placeholders. | open; can proceed after or alongside PAE-A if scoped separately |
+| PAE-C | **HIGH** | Operator-only first scheduled canary after PAE-A is merged and explicitly approved. Approval must name timeframe scope, pair scope, scheduler cadence/window, budgets, success threshold, abort rule, rollback owner, evidence owner, and exact runtime flags. Agents validate operator-provided bundles only; they do not SSH or enable host flags. | blocked on PAE-A plus explicit operator approval |
+| PAE-D | medium | Define steady-state ramp criteria after a passing scheduled canary: repeated-run threshold, alert owner, artifact retention/access policy, rollback rehearsal cadence, scheduler cadence, and maintenance/report consumption defaults. | open; blocked on PAE-C evidence |
+
 ### Cross-cutting
 
 | ID | Severity | Description | Status |
@@ -693,12 +709,14 @@ Follow-ups carried forward from prior reviews. Ordered by source review then sev
 
 Pickable items, in priority order:
 
-1. **Remote/local agent: async reoptimization hardening follow-ups** — if separately approved, handle deferred mutating cancellation auth/audit, artifact read/download surfaces, request/config fingerprint graduation, or additional scheduler/canary refinements as separate slices without making legacy or repair-only provenance trade-eligible.
-2. **Operator/local agent: continue any remaining Champion-Selection observation capture** — preserve fail-closed runtime settings and compare Trade Now buckets, blocked reasons, opportunity history, paper trades, and drift events against prior captures.
-3. **Remote/UI agent: Trade Now observation UI** — improve the web UI for the current observation window using existing Trade Now and observability contracts; do not add controls that mutate runtime state.
-4. **Remote/local agent: X3 implementation** — only after reconciled deployment is observed; implement PR #175's optional/additive reporting diagnostics while preserving legacy `selected_variant`.
-5. **Remote/local agent: blocker-specific strategy follow-up** — only after T+72, target the blocker shown by evidence (learning hold/not eligible, live setup/cost gates, or approved-universe policy) rather than weakening Trade Now safety gates.
-6. **Operator-only: future production async enablement** — out of scope for completed Slice F. Any future worker/scheduler enablement requires a new explicit approval naming scope, budgets, abort rule, rollback owner, evidence owner, and exact runtime flags.
+1. **Remote/local agent: PAE-A production async evidence tooling** — add the separate production enablement contract/checker or versioned checker mode described in `docs/proposals/reoptimise-production-async-enablement-slice.md`. Do not relax the completed Slice F checker and do not enable host flags.
+2. **Remote/local agent: PAE-B async request/config identity** — graduate deterministic request/config fingerprint and service-version evidence before steady-state production scheduler use or `latest-successful` trust expansion.
+3. **Remote/local agent: other async hardening follow-ups** — if separately approved, handle deferred mutating cancellation auth/audit, artifact read/download surfaces, or additional scheduler/canary refinements as separate slices without making legacy or repair-only provenance trade-eligible.
+4. **Operator/local agent: continue any remaining Champion-Selection observation capture** — preserve fail-closed runtime settings and compare Trade Now buckets, blocked reasons, opportunity history, paper trades, and drift events against prior captures.
+5. **Remote/UI agent: Trade Now observation UI** — improve the web UI for the current observation window using existing Trade Now and observability contracts; do not add controls that mutate runtime state.
+6. **Remote/local agent: X3 implementation** — only after reconciled deployment is observed; implement PR #175's optional/additive reporting diagnostics while preserving legacy `selected_variant`.
+7. **Remote/local agent: blocker-specific strategy follow-up** — only after T+72, target the blocker shown by evidence (learning hold/not eligible, live setup/cost gates, or approved-universe policy) rather than weakening Trade Now safety gates.
+8. **Operator-only: future production async enablement** — out of scope for completed Slice F. Any future worker/scheduler enablement requires PAE-A tooling plus a new explicit approval naming scope, budgets, abort rule, rollback owner, evidence owner, and exact runtime flags.
 
 ---
 

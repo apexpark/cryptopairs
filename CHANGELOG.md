@@ -5,6 +5,12 @@ This project follows SemVer as defined in `docs/02-versioning-and-releases.md`.
 
 ## Unreleased
 ### Operator Tooling
+- Added a production async reoptimization enablement slice proposal and
+  runbook/state pointers that keep the accepted Slice F manual evidence packet
+  separate from any future scheduled production enablement. The new PAE slice
+  starts with repo-side before/during/after evidence tooling and does not
+  authorize worker drain, scheduled enqueue, live ENTRY/EXIT, automatic
+  PROMOTE/REVERT, or repair-provenance graduation.
 - Updated Slice F evidence tooling for the scheduler/manual-run separation
   landed in PR #207: raw bundle generation now recognizes
   `STRATEGY_REOPT_SCHEDULER_ENQUEUE_ENABLED`, successful evidence-only
