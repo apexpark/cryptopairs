@@ -7,11 +7,12 @@ strategy behavior.
 
 This runbook covers status inspection, disable/rollback, cancellation handling,
 stuck lease recovery, budget exhaustion, missing telemetry, artifact evidence,
-and the operator-only readiness checklist for the future production canary.
+the completed Slice F manual-readiness evidence posture, and the separate
+future production async enablement boundary.
 
 ## Scope And Current Status
 
-Implemented by the merged Slice A-D work and this Slice E branch:
+Implemented by the merged Slice A-E work and follow-up hardening PRs:
 
 1. durable async run state and single-flight lease state in
    `services/strategy-service/src/main.rs`;
@@ -41,8 +42,12 @@ Not implemented by these slices:
 5. live `ENTRY` or `EXIT` enablement;
 6. host verification.
 
-Do not enable the worker drain or scheduled enqueue in production until Slice F
-is explicitly approved by the operator. For bounded manual canaries, the worker
+Slice F is complete as a bounded manual evidence gate with runtime returned to
+disabled state. It does not authorize production worker drain or scheduled
+enqueue. Future production async enablement is tracked separately in
+`docs/proposals/reoptimise-production-async-enablement-slice.md` and requires
+explicit operator approval naming scope, budgets, abort rule, rollback owner,
+evidence owner, and exact runtime flags. For bounded manual canaries, the worker
 drain may be enabled only to process an existing queued run while scheduled
 enqueue remains disabled.
 
@@ -306,10 +311,34 @@ operator review, but it does not authorize `STRATEGY_REOPT_WORKER_ENABLED`,
 `STRATEGY_REOPT_SCHEDULER_ENQUEUE_ENABLED`, live `ENTRY` / `EXIT`, automatic
 `PROMOTE`, automatic `REVERT`, or repair-provenance graduation.
 
+## Production Async Enablement Boundary
+
+The accepted Slice F packet proves manual-readiness evidence only. Do not use
+the Slice F checker as authorization for an enabled scheduler window. The first
+production async enablement work item is repo-side evidence tooling that can
+model before, during, and after phases for an explicitly approved scheduled
+window without relaxing the Slice F fail-closed semantics.
+
+Production async enablement must start with the slice in
+`docs/proposals/reoptimise-production-async-enablement-slice.md`:
+
+1. PAE-A: production enablement evidence contract/checker or a clearly
+   versioned checker mode;
+2. PAE-B: deterministic request/config fingerprint and service-version
+   evidence;
+3. PAE-C: first scheduled canary procedure after explicit operator approval;
+4. PAE-D: steady-state ramp criteria after a passing scheduled canary.
+
+Any `DEGRADED`, `FAILED`, `EXPIRED`, `CANCELED`, stale, unknown,
+schema-invalid, artifact-invalid, scope-mismatched, telemetry-missing, or
+contradictory enabled-window evidence keeps worker drain and scheduler enqueue
+disabled and keeps downstream recommendations at `HOLD` or
+`OPERATOR_REVIEW_REQUIRED`.
+
 ## Operator-Only Host Capture For Slice F
 
-For any future enablement or canary, the operator captures a bundle with a
-root `slice_f_manifest.json` matching
+For Slice F readiness or bounded manual canary evidence, the operator captures
+a bundle with a root `slice_f_manifest.json` matching
 `specs/contracts/slice_f_reoptimize_canary_evidence_manifest.schema.json`.
 The bundle is evidence only.
 
