@@ -335,6 +335,70 @@ contradictory enabled-window evidence keeps worker drain and scheduler enqueue
 disabled and keeps downstream recommendations at `HOLD` or
 `OPERATOR_REVIEW_REQUIRED`.
 
+### PAE-A Local Evidence Validation
+
+PAE-A evidence tooling validates a raw bundle that the operator has already
+captured from an explicitly approved scheduled enablement window. It does not
+connect to hosts, does not enable flags, and does not relax the completed Slice
+F checker.
+
+Required local validation from the repository root:
+
+```bash
+python3 tools/scripts/production_async_enablement_manifest_from_bundle.py \
+  path/to/operator-captured-pae-bundle \
+  --output path/to/operator-captured-pae-bundle/production_async_enablement_manifest.json
+
+python3 tools/scripts/production_async_enablement_evidence_check.py \
+  path/to/operator-captured-pae-bundle/production_async_enablement_manifest.json \
+  --bundle-root path/to/operator-captured-pae-bundle \
+  --verify-files
+```
+
+Passing PAE-A evidence must show all of the following:
+
+1. explicit operator approval with timeframe scope, expected scheduled run
+   count, scheduler window, abort owner, rollback owner, and host evidence
+   owner;
+2. worker drain and scheduler enqueue disabled before the window, enabled only
+   during the approved window, and disabled again after rollback;
+3. exactly the approved `SCHEDULED` run count, zero manual contamination, final
+   `SUCCEEDED`, `WITHIN_BUDGET`, and no fail-closed reasons;
+4. artifact manifest evidence with `trigger_source=SCHEDULED` and
+   `requested_timeframes` matching approval;
+5. active-run gauges zero before and after, positive during the window, and no
+   blocking telemetry deltas;
+6. alert, threshold, useful strategy-log, live ENTRY/EXIT disabled,
+   PROMOTE/REVERT confirmation-gating, and repair-provenance block evidence.
+
+Any missing or contradictory item keeps the production scheduler disabled and
+the checker recommendation at `KEEP_DISABLED_KEEP_HOLD`.
+
+### Trade Now WAIT/SETUP Reason Audit
+
+The production async scheduler cannot safely be treated as a generic fix for
+pairs sitting in `WAIT` or `SETUP`. First capture the current Trade Now payload
+and summarize the actual reason codes:
+
+```bash
+curl -fsS http://127.0.0.1:8083/v1/strategy/pairs/trade-now \
+  > /tmp/trade_now_snapshot.json
+
+python3 tools/scripts/trade_now_reason_audit.py \
+  /tmp/trade_now_snapshot.json \
+  --output-json /tmp/trade_now_reason_audit.json
+
+jq '.aggregate' /tmp/trade_now_reason_audit.json
+```
+
+Reason classes such as `SETUP_GATE_NOT_PASSING`, `LIVE_TRIGGER_NOT_READY`,
+`OPEN_POSITION_CONFLICT`, `PENDING_CHALLENGER_REQUIRES_PROMOTION`,
+`LEGACY_FALLBACK_ACTIVE`, and `RECANONICALIZED_LEGACY_ROW_ACTIVE` are not
+solved by merely turning on scheduled async reoptimization. A scheduler window
+is only relevant where the evidence points to reoptimization-created,
+scope-compatible challenger evidence, and it must still pass PAE-A before any
+production enablement.
+
 ## Operator-Only Host Capture For Slice F
 
 For Slice F readiness or bounded manual canary evidence, the operator captures

@@ -1,0 +1,469 @@
+{
+  "$id": "https://cryptopairs/specs/contracts/production_async_reoptimize_enablement_evidence_manifest.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "ProductionAsyncReoptimizeEnablementEvidenceManifest",
+  "type": "object",
+  "additionalProperties": false,
+  "$comment": "Evidence packet for a separately approved production async reoptimization scheduler window. This contract does not authorize worker/scheduler enablement by itself; it validates operator-captured evidence after an approved window.",
+  "required": [
+    "schema_version",
+    "generated_at",
+    "bundle_id",
+    "overall_pass",
+    "recommended_action",
+    "operator_approval",
+    "repo_identity",
+    "enablement_scope",
+    "status_evidence",
+    "metrics",
+    "alerting",
+    "thresholds",
+    "logs",
+    "safety",
+    "artifacts",
+    "stop_conditions"
+  ],
+  "properties": {
+    "schema_version": { "type": "string", "const": "1.0.0" },
+    "generated_at": { "type": "string", "format": "date-time" },
+    "bundle_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 160,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$"
+    },
+    "overall_pass": { "type": "boolean" },
+    "recommended_action": {
+      "type": "string",
+      "enum": ["KEEP_DISABLED_KEEP_HOLD", "READY_FOR_OPERATOR_REVIEW"]
+    },
+    "operator_approval": { "$ref": "#/$defs/operator_approval" },
+    "repo_identity": { "$ref": "#/$defs/repo_identity" },
+    "enablement_scope": { "$ref": "#/$defs/enablement_scope" },
+    "status_evidence": { "$ref": "#/$defs/status_evidence" },
+    "metrics": { "$ref": "#/$defs/metrics" },
+    "alerting": { "$ref": "#/$defs/alerting" },
+    "thresholds": { "$ref": "#/$defs/thresholds" },
+    "logs": { "$ref": "#/$defs/logs" },
+    "safety": { "$ref": "#/$defs/safety" },
+    "artifacts": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/artifact_ref" }
+    },
+    "stop_conditions": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/stop_condition" },
+      "uniqueItems": true
+    }
+  },
+  "$defs": {
+    "operator_approval": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "present",
+        "reference",
+        "approved_at",
+        "approved_by",
+        "scope",
+        "approved_timeframes",
+        "expected_scheduled_run_count",
+        "scheduler_window_start",
+        "scheduler_window_end",
+        "abort_owner",
+        "rollback_owner",
+        "host_evidence_owner"
+      ],
+      "properties": {
+        "present": { "type": "boolean" },
+        "reference": { "type": ["string", "null"], "minLength": 1 },
+        "approved_at": { "type": ["string", "null"], "format": "date-time" },
+        "approved_by": { "type": ["string", "null"], "minLength": 1 },
+        "scope": { "type": ["string", "null"], "minLength": 1 },
+        "approved_timeframes": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/timeframe" },
+          "uniqueItems": true
+        },
+        "expected_scheduled_run_count": { "type": "integer", "minimum": 0 },
+        "scheduler_window_start": { "type": ["string", "null"], "format": "date-time" },
+        "scheduler_window_end": { "type": ["string", "null"], "format": "date-time" },
+        "abort_owner": { "type": ["string", "null"], "minLength": 1 },
+        "rollback_owner": { "type": ["string", "null"], "minLength": 1 },
+        "host_evidence_owner": { "type": "string", "enum": ["operator", "unknown"] }
+      }
+    },
+    "repo_identity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["branch", "commit", "dirty_status", "captured_by", "evidence_root"],
+      "properties": {
+        "branch": { "type": "string", "minLength": 1 },
+        "commit": { "type": "string", "pattern": "^[a-f0-9]{7,40}$" },
+        "dirty_status": { "type": "string", "enum": ["CLEAN", "DIRTY", "UNKNOWN"] },
+        "captured_by": { "type": "string", "enum": ["operator", "agent", "unknown"] },
+        "evidence_root": { "type": "string", "enum": ["OUTSIDE_REPO", "INSIDE_REPO", "UNKNOWN"] }
+      }
+    },
+    "enablement_scope": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "trigger_source",
+        "requested_timeframes",
+        "expected_scheduled_run_count",
+        "worker_enabled_before",
+        "scheduler_enabled_before",
+        "worker_enabled_during",
+        "scheduler_enabled_during",
+        "worker_enabled_after",
+        "scheduler_enabled_after"
+      ],
+      "properties": {
+        "trigger_source": { "type": "string", "const": "SCHEDULED" },
+        "requested_timeframes": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/timeframe" },
+          "uniqueItems": true
+        },
+        "expected_scheduled_run_count": { "type": "integer", "minimum": 0 },
+        "worker_enabled_before": { "type": "boolean" },
+        "scheduler_enabled_before": { "type": "boolean" },
+        "worker_enabled_during": { "type": "boolean" },
+        "scheduler_enabled_during": { "type": "boolean" },
+        "worker_enabled_after": { "type": "boolean" },
+        "scheduler_enabled_after": { "type": "boolean" }
+      }
+    },
+    "status_evidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "payload_valid",
+        "final_status",
+        "recommendation_decision",
+        "budget_state",
+        "fail_closed_reasons",
+        "progression",
+        "scheduled_run_count",
+        "manual_run_count",
+        "artifact_manifest_present",
+        "artifact_manifest_valid",
+        "artifact_trigger_source",
+        "artifact_requested_timeframes"
+      ],
+      "properties": {
+        "payload_valid": { "type": "boolean" },
+        "final_status": { "$ref": "#/$defs/run_status" },
+        "recommendation_decision": { "$ref": "#/$defs/recommendation" },
+        "budget_state": { "type": "string", "enum": ["WITHIN_BUDGET", "EXHAUSTED", "UNKNOWN"] },
+        "fail_closed_reasons": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/fail_closed_reason" },
+          "uniqueItems": true
+        },
+        "progression": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/run_status" }
+        },
+        "scheduled_run_count": { "type": "integer", "minimum": 0 },
+        "manual_run_count": { "type": "integer", "minimum": 0 },
+        "artifact_manifest_present": { "type": "boolean" },
+        "artifact_manifest_valid": { "type": "boolean" },
+        "artifact_trigger_source": { "type": ["string", "null"], "enum": ["SCHEDULED", "MANUAL_API", "MAINTENANCE_REPORT", "RECOVERY", null] },
+        "artifact_requested_timeframes": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/timeframe" },
+          "uniqueItems": true
+        }
+      }
+    },
+    "metrics": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "active_runs_before",
+        "active_runs_during_peak",
+        "active_runs_after",
+        "scheduler_enqueued_delta",
+        "manual_enqueued_delta",
+        "missing_telemetry_delta",
+        "status_unknown_delta",
+        "budget_exhausted_delta",
+        "unsafe_promotion_delta",
+        "repair_provenance_active_delta"
+      ],
+      "properties": {
+        "active_runs_before": { "$ref": "#/$defs/active_run_counts" },
+        "active_runs_during_peak": { "$ref": "#/$defs/active_run_counts" },
+        "active_runs_after": { "$ref": "#/$defs/active_run_counts" },
+        "scheduler_enqueued_delta": { "type": "integer", "minimum": 0 },
+        "manual_enqueued_delta": { "type": "integer", "minimum": 0 },
+        "missing_telemetry_delta": { "type": "integer", "minimum": 0 },
+        "status_unknown_delta": { "type": "integer", "minimum": 0 },
+        "budget_exhausted_delta": { "type": "integer", "minimum": 0 },
+        "unsafe_promotion_delta": { "type": "integer", "minimum": 0 },
+        "repair_provenance_active_delta": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "active_run_counts": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["QUEUED", "LEASED", "RUNNING", "CANCEL_REQUESTED"],
+      "properties": {
+        "QUEUED": { "type": "integer", "minimum": 0 },
+        "LEASED": { "type": "integer", "minimum": 0 },
+        "RUNNING": { "type": "integer", "minimum": 0 },
+        "CANCEL_REQUESTED": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "alerting": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "configured",
+        "routed",
+        "missing_data_blocks",
+        "evidence_state",
+        "rules"
+      ],
+      "properties": {
+        "configured": { "type": "boolean" },
+        "routed": { "type": "boolean" },
+        "missing_data_blocks": { "type": "boolean" },
+        "evidence_state": { "type": "string", "enum": ["DEPLOYED", "ABSENT", "TEMPLATE_ONLY", "UNKNOWN"] },
+        "rules": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/alert_rule" }
+        }
+      }
+    },
+    "alert_rule": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "configured",
+        "routed",
+        "query_present",
+        "before_state_captured",
+        "during_state_captured",
+        "after_state_captured"
+      ],
+      "properties": {
+        "id": { "$ref": "#/$defs/alert_rule_id" },
+        "configured": { "type": "boolean" },
+        "routed": { "type": "boolean" },
+        "query_present": { "type": "boolean" },
+        "before_state_captured": { "type": "boolean" },
+        "during_state_captured": { "type": "boolean" },
+        "after_state_captured": { "type": "boolean" }
+      }
+    },
+    "thresholds": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["approved_before_window", "cpu", "hot_endpoints"],
+      "properties": {
+        "approved_before_window": { "type": "boolean" },
+        "cpu": { "$ref": "#/$defs/threshold_check" },
+        "hot_endpoints": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/hot_endpoint_threshold_check" }
+        }
+      }
+    },
+    "threshold_check": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["baseline_captured", "during_after_captured", "within_threshold"],
+      "properties": {
+        "baseline_captured": { "type": "boolean" },
+        "during_after_captured": { "type": "boolean" },
+        "within_threshold": { "type": "boolean" }
+      }
+    },
+    "hot_endpoint_threshold_check": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["method", "path", "baseline_captured", "during_after_captured", "within_threshold"],
+      "properties": {
+        "method": { "type": "string", "enum": ["GET", "POST"] },
+        "path": { "type": "string", "minLength": 1 },
+        "baseline_captured": { "type": "boolean" },
+        "during_after_captured": { "type": "boolean" },
+        "within_threshold": { "type": "boolean" }
+      }
+    },
+    "logs": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["before_useful", "during_useful", "after_useful", "events_seen"],
+      "properties": {
+        "before_useful": { "type": "boolean" },
+        "during_useful": { "type": "boolean" },
+        "after_useful": { "type": "boolean" },
+        "events_seen": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/log_event" },
+          "uniqueItems": true
+        }
+      }
+    },
+    "safety": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "live_entry_enabled",
+        "live_exit_enabled",
+        "automatic_promote_enabled",
+        "automatic_revert_enabled",
+        "promote_confirm_gated",
+        "revert_confirm_gated",
+        "repair_provenance_blocked"
+      ],
+      "properties": {
+        "live_entry_enabled": { "type": "boolean" },
+        "live_exit_enabled": { "type": "boolean" },
+        "automatic_promote_enabled": { "type": "boolean" },
+        "automatic_revert_enabled": { "type": "boolean" },
+        "promote_confirm_gated": { "type": "boolean" },
+        "revert_confirm_gated": { "type": "boolean" },
+        "repair_provenance_blocked": { "type": "boolean" }
+      }
+    },
+    "artifact_ref": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "path", "kind", "required", "sha256", "captured_at"],
+      "properties": {
+        "id": { "$ref": "#/$defs/artifact_id" },
+        "path": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "^(?!/)(?!.*\\.\\.)[A-Za-z0-9._/-]+$"
+        },
+        "kind": { "type": "string", "enum": ["JSON", "LOG", "METRICS", "ALERTS", "STATUS", "THRESHOLD", "PROVENANCE", "SAFETY", "OTHER"] },
+        "required": { "type": "boolean" },
+        "sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+        "captured_at": { "type": "string", "format": "date-time" }
+      }
+    },
+    "timeframe": { "type": "string", "enum": ["1m", "15m", "1h"] },
+    "run_status": {
+      "type": "string",
+      "enum": ["QUEUED", "LEASED", "RUNNING", "CANCEL_REQUESTED", "CANCELED", "SUCCEEDED", "DEGRADED", "FAILED", "EXPIRED"]
+    },
+    "recommendation": {
+      "type": "string",
+      "enum": ["HOLD", "OPERATOR_REVIEW_REQUIRED", "PROMOTION_CANDIDATE_AVAILABLE", "REVERT_REVIEW_REQUIRED"]
+    },
+    "fail_closed_reason": {
+      "type": "string",
+      "enum": [
+        "MISSING_TELEMETRY",
+        "UNKNOWN_STATUS",
+        "STALE_STATUS",
+        "LEASE_LOST",
+        "BUDGET_EXHAUSTED",
+        "CANCELED",
+        "ARTIFACT_FAILED",
+        "INTEGRITY_UNKNOWN",
+        "RISK_UNKNOWN",
+        "ACCOUNTING_ANOMALY",
+        "SCHEDULE_MISSED",
+        "UNSAFE_PROMOTION_ATTEMPT",
+        "CONFIG_INVALID",
+        "REPAIR_PROVENANCE_ACTIVE"
+      ]
+    },
+    "alert_rule_id": {
+      "type": "string",
+      "enum": [
+        "stuck_lease",
+        "failed_degraded_runs",
+        "schedule_missed",
+        "budget_exhaustion",
+        "cancellation_failure",
+        "missing_telemetry",
+        "unknown_status",
+        "unsafe_promotion",
+        "repair_provenance_active"
+      ]
+    },
+    "log_event": {
+      "type": "string",
+      "enum": [
+        "reoptimize_run_enqueue_attempted",
+        "reoptimize_run_enqueued",
+        "reoptimize_lease_acquired",
+        "reoptimize_lease_heartbeat",
+        "reoptimize_recommendation_finalized",
+        "reoptimize_fail_closed"
+      ]
+    },
+    "artifact_id": {
+      "type": "string",
+      "enum": [
+        "repo_identity",
+        "operator_approval",
+        "runner_flags_before",
+        "runner_flags_during",
+        "runner_flags_after",
+        "budget_values",
+        "status_progression",
+        "status_after",
+        "metrics_before",
+        "metrics_during",
+        "metrics_after",
+        "alerts_config",
+        "alerts_before",
+        "alerts_during",
+        "alerts_after",
+        "strategy_logs_before",
+        "strategy_logs_during",
+        "strategy_logs_after",
+        "threshold_approval",
+        "cpu_baseline",
+        "cpu_during_after",
+        "hot_endpoint_latency_baseline",
+        "hot_endpoint_latency_after",
+        "artifact_manifest",
+        "repair_provenance_inventory",
+        "trade_now_repair_provenance_block",
+        "entry_exit_disabled",
+        "promotion_revert_gating"
+      ]
+    },
+    "stop_condition": {
+      "type": "string",
+      "enum": [
+        "MISSING_OPERATOR_APPROVAL",
+        "HOST_IDENTITY_UNKNOWN",
+        "SCOPE_MISMATCH",
+        "ENABLED_OUTSIDE_APPROVED_WINDOW",
+        "SCHEDULER_NOT_ENABLED_DURING_WINDOW",
+        "UNEXPECTED_RUN_COUNT",
+        "MANUAL_RUN_CONTAMINATION",
+        "STATUS_INVALID_OR_UNKNOWN",
+        "UNSAFE_TERMINAL_STATUS",
+        "BUDGET_UNKNOWN_OR_EXHAUSTED",
+        "ARTIFACT_INVALID",
+        "ACTIVE_RUN_BEFORE_APPROVAL",
+        "ACTIVE_RUN_AFTER_ROLLBACK",
+        "ALERTING_NOT_READY",
+        "THRESHOLDS_NOT_APPROVED",
+        "WEAK_STRATEGY_LOGS",
+        "MISSING_TELEMETRY",
+        "UNKNOWN_STATUS",
+        "ENTRY_EXIT_NOT_DISABLED",
+        "PROMOTE_REVERT_NOT_CONFIRM_GATED",
+        "REPAIR_PROVENANCE_NOT_BLOCKED",
+        "MANIFEST_INVALID",
+        "AGENT_CLAIMED_HOST_VERIFICATION"
+      ]
+    }
+  },
+  "version": "1.0.0"
+}
