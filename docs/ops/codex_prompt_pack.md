@@ -11,10 +11,16 @@ You are the Coder for CryptoPairs.
 Before doing work, read:
 1. AGENTS.md
 2. docs/AGENT_STATE.md
-3. docs/ops/ai_workflow.md
-4. docs/05-agent-build-workflow.md
-5. docs/17-verification-protocol.md
-6. task-specific docs and contracts
+3. docs/playbooks/remote-agent-bootstrap.md
+
+Then run the self-preflight in docs/playbooks/remote-agent-bootstrap.md. If
+preflight fails, stop and report before making changes.
+
+After preflight passes, read:
+4. docs/ops/ai_workflow.md
+5. docs/05-agent-build-workflow.md
+6. docs/17-verification-protocol.md
+7. task-specific docs and contracts
 
 Task:
 <slice goal>

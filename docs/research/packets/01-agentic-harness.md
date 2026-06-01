@@ -50,8 +50,14 @@ Reviewer:
 
 - reviews exact base/head SHA ranges;
 - returns P1/P2/P3 findings with file:line references;
-- may be a fresh Codex chat or a same-chat read-only sub-agent;
+- is a different remote agent than the implementer for required independent
+  code/spec review under current `AGENTS.md`;
+- may be a fresh Codex chat or separate remote-agent thread;
 - must not edit, commit, push, change branches, merge, or approve its own work.
+
+A same-chat read-only sub-agent can provide advisory review, but it does not
+satisfy required independent Reviewer signoff unless the Operator records an
+explicit governance exception.
 
 ## File And Path Ownership Lanes
 
@@ -89,10 +95,10 @@ Reviewer:
 
 Review approval is valid only for the exact head SHA reviewed.
 
-## Same-Chat Read-Only Reviewer Sub-Agent Protocol
+## Same-Chat Read-Only Advisory Sub-Agent Protocol
 
-Same-chat review is allowed when explicitly requested. The Coder must instruct
-the sub-agent:
+Same-chat advisory review is allowed when explicitly requested. The Coder must
+instruct the sub-agent:
 
 - read-only review only;
 - no edits;
@@ -104,7 +110,9 @@ the sub-agent:
 - return P1/P2/P3 findings with file:line references, residual risks,
   verification performed, and acceptability.
 
-A failed or incomplete sub-agent review is not signoff.
+A failed or incomplete sub-agent review is not signoff. Same-chat advisory
+review also is not required independent Reviewer signoff unless the Operator
+records an explicit governance exception.
 
 ## Merge Protocol
 
@@ -172,8 +180,16 @@ Candidate protected paths:
 - `docs/playbooks/**`
 - `specs/contracts/**`
 - `specs/examples/**`
+- `services/account-service/**`
+- `services/data-service/**`
 - `services/execution-service/**`
 - `services/strategy-service/**`
+- `Cargo.toml`
+- `Cargo.lock`
+- `rust-toolchain.toml`
+- `.githooks/**`
+- `scripts/**`
+- `docker-compose*.yml`
 - `infra/env/**`
 - `.env.example`
 

@@ -37,12 +37,17 @@ CI, and narrow technical docs when the task allows it. The Coder must keep work
 scoped to the slice, preserve unrelated user changes, and provide a Reviewer
 prompt after every commit or push.
 
-### Reviewer
+### Independent Reviewer
 
-The Reviewer is an independent review actor. The Reviewer may be a fresh Codex
-chat, a separate agent thread, or a same-chat read-only sub-agent. The Reviewer
-must not edit files, commit, push, change branches, merge, approve its own work,
-or run destructive commands.
+The Reviewer is an independent review actor. Under the current `AGENTS.md`
+topology, required independent code/spec review is cross-agent review by a
+different remote agent than the implementer. The Reviewer may be a fresh Codex
+chat or a separate remote-agent thread. The Reviewer must not edit files, commit,
+push, change branches, merge, approve its own work, or run destructive commands.
+
+A same-chat read-only sub-agent can provide advisory review, but it does not
+satisfy required independent Reviewer signoff unless the Operator records an
+explicit governance exception for that PR.
 
 ## Path Ownership Lanes
 
@@ -109,11 +114,11 @@ Reviewers must review exact base and head SHAs. A valid review includes:
 Review approval is valid only for the exact head SHA reviewed. Any later push
 invalidates the signoff and requires fresh review.
 
-## Same-Chat Read-Only Reviewer Sub-Agent
+## Same-Chat Read-Only Advisory Sub-Agent
 
-A same-chat Reviewer sub-agent is acceptable only when the Operator or Coder
-explicitly asks for sub-agents or read-only review. The Coder must instruct the
-sub-agent:
+A same-chat read-only sub-agent is acceptable only when the Operator or Coder
+explicitly asks for sub-agents or advisory read-only review. The Coder must
+instruct the sub-agent:
 
 - read only;
 - do not edit files;
@@ -123,7 +128,9 @@ sub-agent:
   residual risks, and acceptability.
 
 The Coder must not treat sub-agent silence, partial output, or failure to
-hydrate as approval.
+hydrate as approval. Same-chat advisory review does not satisfy required
+independent Reviewer signoff unless the Operator records an explicit governance
+exception.
 
 ## Review And Merge Protocol
 
@@ -185,7 +192,15 @@ Candidate protected paths:
 - `docs/playbooks/**`
 - `specs/contracts/**`
 - `specs/examples/**`
+- `services/account-service/**`
+- `services/data-service/**`
 - `services/execution-service/**`
 - `services/strategy-service/**`
+- `Cargo.toml`
+- `Cargo.lock`
+- `rust-toolchain.toml`
+- `.githooks/**`
+- `scripts/**`
+- `docker-compose*.yml`
 - `infra/env/**`
 - `.env.example`
