@@ -11,7 +11,7 @@ If instructions conflict, use this order:
 1. `AGENTS.md`
 2. `docs/00-guardrails.md`
 3. `docs/01-product-scope.md`
-4. Governance docs in `docs/` (`02-05`, `07`, and `17`)
+4. Governance docs in `docs/` (`02-05`, `07`, `17`, and `docs/ops/**`)
 5. Module policy docs in `docs/` (`10-16` series)
 6. Playbooks in `docs/playbooks/`
 7. ADRs in `docs/adr/`
@@ -20,7 +20,7 @@ If instructions conflict, use this order:
 ## How To Use This Folder
 
 1. Read `docs/00-guardrails.md` before designing or coding.
-2. Read governance docs relevant to your change (`docs/02-05`, `docs/07`, and `docs/17`).
+2. Read governance docs relevant to your change (`docs/02-05`, `docs/07`, `docs/17`, and `docs/ops/**`).
 3. Read module policy docs relevant to your change (`docs/10-16`).
 4. Follow the runbooks for incidents or data repairs.
 5. Record architectural decisions as ADRs.

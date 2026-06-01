@@ -86,7 +86,7 @@ fi
 
 1. Read `docs/AGENT_STATE.md` §"Next Recommended Move" top-to-bottom.
 2. Pick the highest-priority item that is **not** marked operator-only and **not** already claimed (look for `Claimed by:` in the open-follow-ups table).
-3. On a fresh feature branch named `<agent-id>/<short-slug>` (e.g. `claude/b3-schema-comment`, `codex/b6-pg-test-harness-design`), forked from the **sprint base branch** named in `AGENT_STATE.md` §Pin (currently `codex/fix-clippy-run-24549051096`, NOT `main`):
+3. On a fresh feature branch named `<agent-id>/<short-slug>` (e.g. `claude/b3-schema-comment`, `codex/b6-pg-test-harness-design`), forked from the **sprint base branch** named in `AGENT_STATE.md` §Pin (the `Sprint base branch` row is canonical; do not use `main` unless that row says `main`):
    - `git fetch origin && git checkout -b <agent-id>/<slug> origin/<sprint-base-branch>`
    1. Edit the open-follow-ups row in `docs/AGENT_STATE.md` to add `Claimed by: <agent-id> <ISO-date>`.
    2. Commit that single edit as the **first commit** on the branch.
