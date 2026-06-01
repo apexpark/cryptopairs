@@ -16,7 +16,7 @@
 | Sprint base branch | `cherry-picked-from-rc-live-trial` |
 | Pin notes | State refreshed after the Apex harness governance scaffold landed on the sprint base as PR #217 at da7fea9. This curation intentionally records da7fea9 as the pre-curation anchor; after this curation commit lands, the pin should lag by one commit per the convention below. Recent sprint-base commits since the prior AGENT_STATE touch include host-lineage selection work, signal learning monitoring, Trade Now slices, blocked-cue projection classification, and the Apex harness scaffold; verify individual behavior from the referenced commits before claiming runtime details. |
 | Origin | `https://github.com/apexpark/cryptopairs.git` |
-| Working-tree state | **CLEAN in this curation worktree before edits** - sprint base is `origin/cherry-picked-from-rc-live-trial` at da7fea9. The operator's primary local checkout has separate uncommitted work and is intentionally not used for this docs-only slice. |
+| Working-tree state | **Docs curation branch forked from clean sprint base** - this PR branch was created from `origin/cherry-picked-from-rc-live-trial` at da7fea9. The operator's primary local checkout has separate uncommitted work and is intentionally not used for this docs-only slice. |
 
 If the pin above is not reachable from `HEAD` via fast-forward, this file is stale; if `HEAD` is ahead of the pin, see §"Pin Convention".
 
