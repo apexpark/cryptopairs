@@ -9,20 +9,29 @@
 
 | Field | Value |
 |---|---|
-| Last updated (UTC) | 2026-05-08 |
+| Last updated (UTC) | 2026-06-01 |
 | Updated by | codex |
-| Repo HEAD pin (committed) | `2d66495bd44e1ead3042d1c981d5b21104b7a6a8` |
-| Pin branch | `codex/fix-clippy-run-24549051096` |
-| Sprint base branch | `codex/fix-clippy-run-24549051096` |
-| Pin notes | Pin notes: state-affecting commits since a87b8ae (bootstrap playbook) are pin-convention (2148693), cargo-blocked workaround (a2fa027), pin extraction fix (0602178), sprint-base configurable (c70b6a0), legacy PR protocol (2369308), retention sprint (b195447), Slice A (2771479), Slice B (e60e634), retention import + fmt restore (05bca71), clippy sort-by fix (a82e8f0), B6 design proposal merge (ff38663), B3+S8 merge (79893c6), curation post-PRs (400a776), B6 §10 answers captured (c3933d7), host verification capture (76ca372), B6 implementation merge (7a572df, PR #163), R2 design proposal merge (f87e291, PR #162), curation post-R2 design (86e014c), R2 implementation merge (d17103, PR #164), post-squash pin fix (f8b370b), Slice C planning proposal merge (3a44100, PR #166), R1 design proposal merge (4ac38b5, PR #167), R3 design proposal merge (a1c536d, PR #168), R1 toolchain implementation merge (74ef7c6, PR #169), S4+B5 metrics implementation merge (aad7445, PR #170), X1 audit docs merge (0d28534, PR #171), R3 preflight override implementation merge (f874f7c, PR #172), S6 projection-failed UI merge (94c109e, PR #173), Slice D recanonicalization design merge (38ccc01, PR #174), and X3 reporting diagnostics design merge (2d66495, PR #175). Pin lags this curation commit by 1 per the convention. Sprint base branch row is the canonical PR target. Pin row contains exactly one backticked SHA so the §1 regex extracts unambiguously. Note: feature-branch SHAs (claim/impl/fixup commits before squash-merge) are deliberately omitted because they are not reachable from sprint base after squash. |
+| Repo HEAD pin (committed) | `da7fea96835796fd4f16f3e506745a44dffcbcef` |
+| Pin branch | `cherry-picked-from-rc-live-trial` |
+| Sprint base branch | `cherry-picked-from-rc-live-trial` |
+| Pin notes | State refreshed after the Apex harness governance scaffold landed on the sprint base as PR #217 at da7fea9. This curation intentionally records da7fea9 as the pre-curation anchor; after this curation commit lands, the pin should lag by one commit per the convention below. Recent sprint-base commits since the prior AGENT_STATE touch include host-lineage selection work, signal learning monitoring, Trade Now slices, blocked-cue projection classification, and the Apex harness scaffold; verify individual behavior from the referenced commits before claiming runtime details. |
 | Origin | `https://github.com/apexpark/cryptopairs.git` |
-| Working-tree state | **CLEAN on sprint base after curation** — PRs #171, #172, #173, #174, and #175 are landed on `codex/fix-clippy-run-24549051096`; follow-up state below is curated in the post-merge curation commit. |
+| Working-tree state | **CLEAN in this curation worktree before edits** - sprint base is `origin/cherry-picked-from-rc-live-trial` at da7fea9. The operator's primary local checkout has separate uncommitted work and is intentionally not used for this docs-only slice. |
 
 If the pin above is not reachable from `HEAD` via fast-forward, this file is stale; if `HEAD` is ahead of the pin, see §"Pin Convention".
 
 ---
 
 ## Currently In Flight
+
+### Active Sequence: Apex Harness And Live Refresh Readiness
+
+| Slice | Status | Owner | Notes |
+|---|---|---|---|
+| APEX-1 - Install Apex harness governance scaffold | **Merged to sprint base** | local | PR #217 landed at da7fea9 after Operator accepted Reviewer signoff for head ae4354df78f1cdb4397b6c27243176827afb426a. |
+| APEX-2 - Curate agent state and README precedence | **In progress** | local | This slice records the post-PR #217 state, fixes the `docs/README.md` precedence ambiguity for `docs/ops/**`, and preserves same-chat sub-agent review as advisory unless the Operator records an explicit exception. |
+| HOST-1 - Hetzner-enabled machine update | **Operator-only pending instructions** | operator | This docs-only curation does not require a service restart. Runtime checkout or deploy on Hetzner must happen from the Hetzner-enabled machine, preserve fail-closed execution posture, and follow `docs/playbooks/hosted-deployment-runbook.md`. |
+| LOCAL-1 - Dirty local follow-ups | **Pending separate slices** | local/remote | Operator-local review context has unresolved code/test follow-ups. Treat them as separate small slices: signal-learning report schema/producer alignment, web TypeScript/test fallout, selected-signal config persistence coverage, and CI blind-spot hardening. Verify each from repo artifacts before editing. |
 
 ### Sprint: Champion-Selection Integrity (docs/26 + docs/27)
 
@@ -72,6 +81,7 @@ Source of truth for shipped behavior is `CHANGELOG.md` `## Unreleased` section. 
 - **Committed (`94c109e`)**: S6 projection-failed UI fix (PR #173) — Trade and Analytics render `CHAMPION_PROJECTION_FAILED` cues as `BLOCKED` instead of displaying an untrustworthy stored champion variant, with focused frontend coverage for failed, projected, projected-blocked, no-stored-champion, and legacy cue paths.
 - **Committed (`38ccc01`)**: Slice D recanonicalization design proposal (PR #174) — `docs/proposals/SLICE-D-recanonicalize-legacy-rows.md` recommends a dry-run-first, operator-confirmed maintenance action for legacy selected rows, gated on Slice C neutral-selection observation evidence, with row-level eligibility reasons, repair-only provenance, pre-image rollback artifacts, additive/versioned contracts, bounded metrics/logs, and operator-only host verification.
 - **Committed (`2d66495`)**: X3 reporting diagnostics design proposal (PR #175) — `docs/proposals/X3-reporting-alignment-diagnostics.md` recommends optional additive `selection_diagnostics` for backtest, live-z, paper-trades, and opportunity-history surfaces after Slice C observation, while preserving legacy `selected_variant` compatibility and deferring implementation/schema changes to a later PR.
+- **Committed (`da7fea9`)**: Apex harness governance scaffold (PR #217) — installs `docs/ops/README.md`, `docs/ops/ai_workflow.md`, `docs/ops/codex_prompt_pack.md`, `docs/research/packets/template.md`, `docs/research/packets/01-agentic-harness.md`, `.github/pull_request_template.md`, and docs index updates. The workflow preserves `AGENTS.md` as highest precedence, keeps required independent review cross-agent under current rules, treats same-chat sub-agent review as advisory unless the Operator records an explicit exception, and leaves protected-path enforcement as a proposal only.
 
 ---
 
@@ -482,12 +492,15 @@ Follow-ups carried forward from prior reviews. Ordered by source review then sev
 
 Pickable items, in priority order:
 
-1. **Operator action: Slice C import decision/import** — choose the import path from PR #166 (recommended: cherry-pick host-only `rc/live-trial` commits onto `cherry-picked-from-rc-live-trial`) and import the host lineage into a local reviewable branch before any Slice C implementation PR is approved.
-2. **Remote/local agent: Slice C implementation** — only after host lineage import and operator decisions; implement neutral champion selection behind the approved rollout path, preserve Slice A/B semantics, and add B6 pg-backed tests.
-3. **Operator/local agent: Slice C observation capture** — after Slice C implementation/deployment, capture the neutral-selection observation evidence required by the Slice D and X3 proposals before either follow-up implementation starts.
-4. **Remote/local agent: Slice D implementation** — only after Slice C observation and operator approval of PR #174's open questions; implement dry-run-first recanonicalization without making legacy or repair-only provenance trade-eligible.
-5. **Remote/local agent: X3 implementation** — only after Slice C lands and is observed; implement PR #175's optional/additive reporting diagnostics while preserving legacy `selected_variant`.
-6. **Operator action (long-term cleanup)**: PR the full agent-docs chain from `codex/fix-clippy-run-24549051096` to `main` when ready, then flip Sprint base branch in §Pin to `main`.
+1. **Local agent: finish APEX-2 curation** - merge the `docs/README.md` precedence cleanup and this `docs/AGENT_STATE.md` refresh only after exact-SHA review and Operator authorization.
+2. **Operator action: Hetzner repo update decision** - decide whether the Hetzner-enabled machine should receive a repo-only checkout update to the accepted sprint-base SHA, or a runtime service refresh. A docs-only update needs no container restart; any runtime refresh must preserve fail-closed settings and follow `docs/playbooks/hosted-deployment-runbook.md`.
+3. **Local/remote agents: local dirty-work cleanup sequence** - split unresolved local follow-ups into separate reviewable PRs: signal-learning report schema/producer alignment, web TypeScript/test fallout, selected-signal config persistence coverage, and CI hardening for web/contract/tools checks. Verify each issue from repo artifacts before claiming it.
+4. **Operator action: Slice C import decision/import** - choose the import path from PR #166 (recommended: cherry-pick host-only `rc/live-trial` commits onto `cherry-picked-from-rc-live-trial`) and import the host lineage into a local reviewable branch before any Slice C implementation PR is approved.
+5. **Remote/local agent: Slice C implementation** - only after host lineage import and operator decisions; implement neutral champion selection behind the approved rollout path, preserve Slice A/B semantics, and add B6 pg-backed tests.
+6. **Operator/local agent: Slice C observation capture** - after Slice C implementation/deployment, capture the neutral-selection observation evidence required by the Slice D and X3 proposals before either follow-up implementation starts.
+7. **Remote/local agent: Slice D implementation** - only after Slice C observation and operator approval of PR #174's open questions; implement dry-run-first recanonicalization without making legacy or repair-only provenance trade-eligible.
+8. **Remote/local agent: X3 implementation** - only after Slice C lands and is observed; implement PR #175's optional/additive reporting diagnostics while preserving legacy `selected_variant`.
+9. **Operator action (long-term cleanup)** - PR the full agent-docs chain from `cherry-picked-from-rc-live-trial` to `main` when ready, then flip Sprint base branch in §Pin to `main`.
 
 ---
 
