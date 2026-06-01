@@ -24,6 +24,8 @@ If instructions conflict, use this order:
 3. Read module policy docs relevant to your change (`docs/10-16`).
 4. Follow the runbooks for incidents or data repairs.
 5. Record architectural decisions as ADRs.
+6. Use `docs/ops/` and `docs/research/packets/` for Apex harness workflow and
+   governance packets.
 
 ## Documents
 
@@ -49,6 +51,11 @@ If instructions conflict, use this order:
 - `docs/22-strategy-tuning-control.md`
 - `docs/23-autonomous-optimizer-roadmap.md`
 - `docs/24-trade-now-opportunity-proposal.md`
+- `docs/ops/README.md`
+- `docs/ops/ai_workflow.md`
+- `docs/ops/codex_prompt_pack.md`
+- `docs/research/packets/template.md`
+- `docs/research/packets/01-agentic-harness.md`
 - `docs/playbooks/backfill-runbook.md`
 - `docs/playbooks/incident-runbook.md`
 - `docs/playbooks/execution-operations-runbook.md`
