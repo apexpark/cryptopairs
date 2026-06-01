@@ -679,6 +679,8 @@ This project follows SemVer as defined in `docs/02-versioning-and-releases.md`.
   - preview quantities now reflect actual executable submit size.
 
 ### Fixed
+- Trade-now historical quality now casts win/stop-rate aggregates to `DOUBLE PRECISION`,
+  preventing Postgres numeric deserialization panics when building the endpoint response.
 - Trade and Analytics now render champion projection failures as `BLOCKED`
   instead of displaying an untrustworthy stored champion variant.
 - Hosted compose wiring for execution dispatch mode:

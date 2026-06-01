@@ -17,7 +17,7 @@ mod strategy_service_bin {
             SignalFlatlineDiagnostics, TradeGateDiagnostics, VariantEvaluation,
         };
         use tokio::task::JoinHandle;
-        use tokio_postgres::{Client, NoTls};
+        use tokio_postgres::{types::ToSql, Client, NoTls};
 
         const TEST_DATABASE_URL_ENV: &str = "STRATEGY_TEST_DATABASE_URL";
         static SCHEMA_COUNTER: AtomicUsize = AtomicUsize::new(0);
@@ -336,6 +336,75 @@ mod strategy_service_bin {
             Ok(())
         }
 
+        #[tokio::test]
+        async fn fetch_trade_now_quality_deserializes_rate_aggregates() -> anyhow::Result<()> {
+            let Some(fixture) = PgFixture::connect(
+                "fetch_trade_now_historical_quality_map_deserializes_rates_as_f64",
+            )
+            .await?
+            else {
+                return Ok(());
+            };
+            let pair_id = "TRADE_NOW_QUALITY";
+            let timeframe = Timeframe::FifteenMinutes;
+            let exit_mode = "mean_revert";
+            let first_entry = test_time(1_778_200_000)?;
+            let first_exit = test_time(1_778_200_900)?;
+            let second_entry = test_time(1_778_201_800)?;
+            let second_exit = test_time(1_778_202_700)?;
+
+            insert_paper_trade_history(
+                &fixture,
+                PaperTradeHistoryFixture {
+                    pair_id,
+                    timeframe,
+                    exit_mode,
+                    entry_ts: first_entry,
+                    exit_ts: first_exit,
+                    bars_held: 8,
+                    exit_kind: "target",
+                    net_bps: 12.0,
+                },
+            )
+            .await?;
+            insert_paper_trade_history(
+                &fixture,
+                PaperTradeHistoryFixture {
+                    pair_id,
+                    timeframe,
+                    exit_mode,
+                    entry_ts: second_entry,
+                    exit_ts: second_exit,
+                    bars_held: 12,
+                    exit_kind: "stop",
+                    net_bps: -4.0,
+                },
+            )
+            .await?;
+
+            let quality = fixture
+                .repository
+                .fetch_trade_now_historical_quality_map(
+                    &[pair_id.to_string()],
+                    timeframe,
+                    exit_mode,
+                    first_entry,
+                )
+                .await?;
+
+            let row = quality.get(pair_id).expect("historical quality row");
+            assert_eq!(row.trades, 2);
+            assert!((row.sum_net_bps - 8.0).abs() < f64::EPSILON);
+            assert!((row.avg_net_bps - 4.0).abs() < f64::EPSILON);
+            assert!((row.median_net_bps - 4.0).abs() < f64::EPSILON);
+            assert!((row.win_rate - 0.5).abs() < f64::EPSILON);
+            assert!((row.avg_bars_held - 10.0).abs() < f64::EPSILON);
+            assert!((row.stop_rate - 0.5).abs() < f64::EPSILON);
+            assert_eq!(row.last_exit_ts, second_exit);
+
+            Ok(())
+        }
+
         fn assert_transition_counts(
             summary: &PersistSummary,
             initialize: usize,
@@ -450,6 +519,93 @@ mod strategy_service_bin {
                 source: "B6_REPOSITORY_TEST".to_string(),
                 updated_at,
             }
+        }
+
+        struct PaperTradeHistoryFixture<'a> {
+            pair_id: &'a str,
+            timeframe: Timeframe,
+            exit_mode: &'a str,
+            entry_ts: DateTime<Utc>,
+            exit_ts: DateTime<Utc>,
+            bars_held: i32,
+            exit_kind: &'a str,
+            net_bps: f64,
+        }
+
+        async fn insert_paper_trade_history(
+            fixture: &PgFixture,
+            row: PaperTradeHistoryFixture<'_>,
+        ) -> anyhow::Result<()> {
+            let timeframe_str = row.timeframe.as_str();
+            let left_instrument = format!("{}_LEFT", row.pair_id);
+            let right_instrument = format!("{}_RIGHT", row.pair_id);
+            let selected_variant = "ROBUST_Z";
+            let direction = "LONG_SPREAD";
+            let entry_z = 2.0_f64;
+            let exit_z = 0.4_f64;
+            let entry_index = 10_i32;
+            let exit_index = 10_i32 + row.bars_held;
+            let left_entry = 100.0_f64;
+            let left_exit = 101.0_f64;
+            let right_entry = 50.0_f64;
+            let right_exit = 50.25_f64;
+            let left_leg_bps = 6.0_f64;
+            let right_leg_bps = -1.0_f64;
+            let gross_bps = row.net_bps + 1.0;
+            let round_trip_cost_bps = 1.0_f64;
+            let equity_pre_entry = 10_000.0_f64;
+            let equity_exit = equity_pre_entry + row.net_bps;
+            fixture
+                .client
+                .execute(
+                    "INSERT INTO strategy_paper_trades_history (
+                        pair_id, timeframe, exit_mode, left_instrument, right_instrument,
+                        selected_variant, entry_ts, exit_ts, bars_held, direction, exit_kind,
+                        entry_z, exit_z, entry_index, exit_index, left_entry, left_exit,
+                        right_entry, right_exit, left_leg_bps, right_leg_bps, gross_bps,
+                        round_trip_cost_bps, net_bps, equity_pre_entry, equity_exit,
+                        equity_trade_bps
+                     )
+                     VALUES (
+                        $1, $2, $3, $4, $5,
+                        $6, $7, $8, $9, $10, $11,
+                        $12, $13, $14, $15, $16, $17,
+                        $18, $19, $20, $21, $22,
+                        $23, $24, $25, $26,
+                        $27
+                     )",
+                    &[
+                        &row.pair_id as &(dyn ToSql + Sync),
+                        &timeframe_str,
+                        &row.exit_mode,
+                        &left_instrument,
+                        &right_instrument,
+                        &selected_variant,
+                        &row.entry_ts,
+                        &row.exit_ts,
+                        &row.bars_held,
+                        &direction,
+                        &row.exit_kind,
+                        &entry_z,
+                        &exit_z,
+                        &entry_index,
+                        &exit_index,
+                        &left_entry,
+                        &left_exit,
+                        &right_entry,
+                        &right_exit,
+                        &left_leg_bps,
+                        &right_leg_bps,
+                        &gross_bps,
+                        &round_trip_cost_bps,
+                        &row.net_bps,
+                        &equity_pre_entry,
+                        &equity_exit,
+                        &row.net_bps,
+                    ],
+                )
+                .await?;
+            Ok(())
         }
 
         fn test_time(seconds: i64) -> anyhow::Result<DateTime<Utc>> {
