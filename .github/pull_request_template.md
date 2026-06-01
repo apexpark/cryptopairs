@@ -1,8 +1,28 @@
 ## Summary
 What does this PR change?
 
+## Apex Harness / Agentic Review
+- Role for this PR:
+  - [ ] Coder implementation
+  - [ ] Reviewer read-only review
+  - [ ] Operator-authored change
+- Base SHA:
+- Head SHA:
+- Reviewer prompt provided after latest push:
+  - [ ] Yes
+  - [ ] Not ready for review yet
+- Reviewer signoff:
+  - [ ] Pending
+  - [ ] Accepted for Operator review at exact head SHA:
+  - [ ] Not accepted; findings unresolved
+- Operator merge authorization:
+  - [ ] Pending
+  - [ ] Operator accepted Reviewer signoff for exact head SHA and authorized merge
+- Notes:
+
 ## Context & Policy References
 - [ ] Consulted `AGENTS.md`
+- [ ] Consulted `docs/ops/ai_workflow.md`
 - [ ] Consulted `docs/00-guardrails.md`
 - [ ] Consulted `docs/01-product-scope.md`
 - Governance docs (check all that apply):
@@ -49,3 +69,5 @@ What does this PR change?
 - [ ] Small, reviewable change (or split into slices)
 - [ ] Documentation updated
 - [ ] Runbooks updated (if ops impact)
+- [ ] If pushed after review, fresh review was requested for the new head SHA
+- [ ] No merge will occur on Coder judgment alone
