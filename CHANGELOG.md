@@ -5,6 +5,10 @@ This project follows SemVer as defined in `docs/02-versioning-and-releases.md`.
 
 ## Unreleased
 ### Operator Tooling
+- Added a hosted systemd timer installer for read-only signal-learning overlay
+  refreshes, keeping Trade Now's approved-universe artifact fresh without a
+  long-running shell loop, with artifact/log paths constrained under
+  `artifacts/signal_learning/`.
 - Rotated the pre-push Rust preflight bypass from legacy `SKIP_RUST_CHECKS=1` to reason-bearing `RUST_PREFLIGHT_OVERRIDE=<reason>`, with boolean-ish override values rejected fail-closed.
 - Pinned the Rust toolchain to channel `1.95` for local rustup-aware cargo invocations and CI, with CI logging the active toolchain before cargo checks.
 - `.githooks/pre-push` now autostashes unstaged and untracked work before running the Rust preflight so pushes check the staged tree, with `scripts/test-pre-push.sh` covering the restore paths.
