@@ -4231,6 +4231,7 @@ struct TradeNowRow {
     selected_variant: String,
     direction_hint: String,
     spread_z: f64,
+    entry_distance_z: f64,
     opportunity_score: f64,
     confidence_band: String,
     expected_hold_bars: i64,
@@ -6493,6 +6494,7 @@ fn build_trade_now_row(
     let portfolio_risk_contribution =
         (cue.portfolio_hint.status == "AVAILABLE").then_some(cue.portfolio_hint.risk_contribution);
     let net_edge_bps = cue.cost_gate.net_edge_bps;
+    let entry_distance_z = cue.spread_z.abs() - cue.entry_band.abs();
 
     let (decision_bucket, decision_reason_code, blocked_reason_code, watch_reason_code) =
         match policy.bucket {
@@ -6666,6 +6668,7 @@ fn build_trade_now_row(
         selected_variant: cue.selected_variant.clone(),
         direction_hint: cue.direction_hint.clone(),
         spread_z: cue.spread_z,
+        entry_distance_z,
         opportunity_score: cue.opportunity_score,
         confidence_band: cue.confidence_band.clone(),
         expected_hold_bars: cue.expected_hold_bars,
@@ -11997,6 +12000,36 @@ mod tests {
         );
         assert_eq!(row.approval_source, "LEARNING_SELECTION");
         assert!(row.trade_gate_pass);
+    }
+
+    #[test]
+    fn trade_now_row_reports_entry_distance_from_entry_band() {
+        let mut cue = trade_now_ready_cue(
+            "PF_SOLUSD__PF_AVAXUSD",
+            Timeframe::FifteenMinutes,
+            "AUTO_CHAMPION",
+        );
+        cue.spread_z = -1.31;
+        cue.entry_band = 2.05;
+        cue.selected_signal_config.entry_band = cue.entry_band;
+        cue.setup_actionable = false;
+        cue.setup_gate.pass = false;
+        cue.trade_gate.pass = false;
+        cue.trade_gate.blocked_by = "SETUP".to_string();
+        let snapshot = overlay_snapshot(true);
+        let entry = overlay_entry(
+            "PF_SOLUSD__PF_AVAXUSD",
+            Timeframe::FifteenMinutes,
+            LearningRecommendation::Promote,
+            true,
+            true,
+        );
+        let policy =
+            resolve_learning_overlay_policy(Some(&entry), &snapshot, "AUTO_CHAMPION", None, None);
+
+        let row = build_trade_now_row(&cue, &snapshot, &policy, false, None);
+
+        assert!((row.entry_distance_z - (-0.74)).abs() < 1e-9);
     }
 
     #[test]

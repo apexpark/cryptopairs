@@ -202,6 +202,7 @@
         "selected_variant",
         "direction_hint",
         "spread_z",
+        "entry_distance_z",
         "opportunity_score",
         "confidence_band",
         "expected_hold_bars",
@@ -241,6 +242,10 @@
           "enum": ["LONG_SPREAD", "SHORT_SPREAD", "NONE"]
         },
         "spread_z": { "type": "number" },
+        "entry_distance_z": {
+          "type": "number",
+          "description": "Selected score distance from the configured entry threshold: abs(spread_z) - entry_band. Negative values mean the setup is still waiting for that many z units."
+        },
         "opportunity_score": { "type": "number" },
         "confidence_band": {
           "type": "string",
@@ -408,5 +413,5 @@
       ]
     }
   },
-  "version": "0.3.1"
+  "version": "0.4.0"
 }
