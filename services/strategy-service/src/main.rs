@@ -6494,7 +6494,7 @@ fn build_trade_now_row(
     let portfolio_risk_contribution =
         (cue.portfolio_hint.status == "AVAILABLE").then_some(cue.portfolio_hint.risk_contribution);
     let net_edge_bps = cue.cost_gate.net_edge_bps;
-    let entry_distance_z = cue.spread_z.abs() - cue.entry_band.abs();
+    let entry_distance_z = cue.spread_z.abs() - cue.entry_band;
 
     let (decision_bucket, decision_reason_code, blocked_reason_code, watch_reason_code) =
         match policy.bucket {

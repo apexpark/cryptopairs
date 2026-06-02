@@ -910,14 +910,16 @@ function formatDurationLabel(minutes: number | null): string {
 }
 
 function formatEntryDistanceDetail(row: StrategyPairsTradeNowRow): string | null {
+  const entryDistanceZ = row.entry_distance_z;
   if (
     row.setup_gate_pass ||
-    !Number.isFinite(row.entry_distance_z) ||
-    row.entry_distance_z >= 0
+    typeof entryDistanceZ !== "number" ||
+    !Number.isFinite(entryDistanceZ) ||
+    entryDistanceZ >= 0
   ) {
     return null;
   }
-  return `waiting for ${Math.abs(row.entry_distance_z).toFixed(2)} more z`;
+  return `waiting for ${Math.abs(entryDistanceZ).toFixed(2)} more z`;
 }
 
 function formatPerDayLabel(value: number | null): string {

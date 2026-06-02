@@ -202,7 +202,6 @@
         "selected_variant",
         "direction_hint",
         "spread_z",
-        "entry_distance_z",
         "opportunity_score",
         "confidence_band",
         "expected_hold_bars",
