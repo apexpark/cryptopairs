@@ -166,6 +166,7 @@ export interface StrategyPairsTradeNowRow {
   selected_variant: string;
   direction_hint: DirectionHint;
   spread_z: number;
+  entry_distance_z?: number;
   opportunity_score: number;
   confidence_band: "LOW" | "MEDIUM" | "HIGH";
   expected_hold_bars: number;
