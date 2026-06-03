@@ -4231,6 +4231,7 @@ struct TradeNowRow {
     selected_variant: String,
     direction_hint: String,
     spread_z: f64,
+    selected_score_z: f64,
     entry_distance_z: f64,
     opportunity_score: f64,
     confidence_band: String,
@@ -6462,8 +6463,36 @@ fn group_trade_now_rows(
     }
 }
 
+#[cfg(test)]
 fn build_trade_now_row(
     cue: &PairCue,
+    overlay_snapshot: &LearningOverlaySnapshot,
+    policy: &LearningOverlayPolicyDecision,
+    open_live_trade: bool,
+    historical_quality: Option<&TradeNowHistoricalQuality>,
+) -> TradeNowRow {
+    build_trade_now_row_with_selected_score(
+        cue,
+        cue.spread_z,
+        overlay_snapshot,
+        policy,
+        open_live_trade,
+        historical_quality,
+    )
+}
+
+fn selected_score_z_for_trade_now(output: &PairEvaluationOutput, cue: &PairCue) -> f64 {
+    output
+        .variants
+        .iter()
+        .find(|variant| variant.variant == cue.selected_variant)
+        .map(|variant| variant.score_last)
+        .unwrap_or(cue.spread_z)
+}
+
+fn build_trade_now_row_with_selected_score(
+    cue: &PairCue,
+    selected_score_z: f64,
     overlay_snapshot: &LearningOverlaySnapshot,
     policy: &LearningOverlayPolicyDecision,
     open_live_trade: bool,
@@ -6494,7 +6523,7 @@ fn build_trade_now_row(
     let portfolio_risk_contribution =
         (cue.portfolio_hint.status == "AVAILABLE").then_some(cue.portfolio_hint.risk_contribution);
     let net_edge_bps = cue.cost_gate.net_edge_bps;
-    let entry_distance_z = cue.spread_z.abs() - cue.entry_band;
+    let entry_distance_z = selected_score_z.abs() - cue.entry_band;
 
     let (decision_bucket, decision_reason_code, blocked_reason_code, watch_reason_code) =
         match policy.bucket {
@@ -6668,6 +6697,7 @@ fn build_trade_now_row(
         selected_variant: cue.selected_variant.clone(),
         direction_hint: cue.direction_hint.clone(),
         spread_z: cue.spread_z,
+        selected_score_z,
         entry_distance_z,
         opportunity_score: cue.opportunity_score,
         confidence_band: cue.confidence_band.clone(),
@@ -6739,11 +6769,13 @@ async fn pairs_trade_now(
             evaluate_timeframe_outputs(&state, timeframe, include_advisory, taker_fee_bps).await;
         let mut cues = Vec::with_capacity(outputs.len());
         for output in outputs {
-            cues.push(cue_with_champion_drift_applied(&state, &output));
+            let cue = cue_with_champion_drift_applied(&state, &output);
+            let selected_score_z = selected_score_z_for_trade_now(&output, &cue);
+            cues.push((cue, selected_score_z));
         }
         let pair_ids = cues
             .iter()
-            .map(|cue| cue.pair_id.clone())
+            .map(|(cue, _)| cue.pair_id.clone())
             .collect::<Vec<_>>();
         let active_candidate_probation_by_pair = state
             .repository
@@ -6761,7 +6793,7 @@ async fn pairs_trade_now(
             .await
             .map_err(|error| ApiError::Upstream(error.to_string()))?;
 
-        for cue in cues {
+        for (cue, selected_score_z) in cues {
             let overlay = overlay_snapshot.get(&cue.pair_id, timeframe);
             let policy = resolve_learning_overlay_policy(
                 overlay,
@@ -6783,8 +6815,9 @@ async fn pairs_trade_now(
                     .record_learning_challenger_bypass_suppressed(&cue.pair_id, timeframe)
                     .await;
             }
-            let row = build_trade_now_row(
+            let row = build_trade_now_row_with_selected_score(
                 &cue,
+                selected_score_z,
                 &overlay_snapshot,
                 &policy,
                 open_live_trade_pairs.contains(&cue.pair_id),
@@ -10610,11 +10643,11 @@ mod tests {
     use super::{
         apply_data_freshness_gate, apply_live_mark_override_to_snapshot, artifact_download_path,
         bootstrap_deviation_exceeds_threshold, bootstrap_snapshot_is_fresh, build_trade_now_row,
-        canonical_metric_instrument, classify_cue_projection_outcome, classify_expectancy_result,
-        classify_reopt_error_severity, compute_candle_age_seconds, compute_expectancy_metrics,
-        compute_pair_funding_bps_per_event, compute_pair_slippage_sample_bps,
-        compute_walk_forward_summary, cue_for_pairs_response, days_covered,
-        decide_candidate_probation_transition, decide_champion_transition,
+        build_trade_now_row_with_selected_score, canonical_metric_instrument,
+        classify_cue_projection_outcome, classify_expectancy_result, classify_reopt_error_severity,
+        compute_candle_age_seconds, compute_expectancy_metrics, compute_pair_funding_bps_per_event,
+        compute_pair_slippage_sample_bps, compute_walk_forward_summary, cue_for_pairs_response,
+        days_covered, decide_candidate_probation_transition, decide_champion_transition,
         derive_paper_trades_from_series, derive_replay_trades_from_series,
         estimate_research_combinations, evaluate_recent_performance_gate,
         expectancy_objective_score, expected_funding_events_crossed, fetch_open_live_trade_pairs,
@@ -12030,6 +12063,40 @@ mod tests {
         let row = build_trade_now_row(&cue, &snapshot, &policy, false, None);
 
         assert!((row.entry_distance_z - (-0.74)).abs() < 1e-9);
+    }
+
+    #[test]
+    fn trade_now_row_reports_entry_distance_from_selected_score() {
+        let mut cue = trade_now_ready_cue(
+            "PF_SUIUSD__PF_ARBUSD",
+            Timeframe::FifteenMinutes,
+            "AUTO_CHAMPION",
+        );
+        cue.spread_z = 2.4;
+        cue.entry_band = 1.8;
+        cue.selected_variant = "ROBUST_Z".to_string();
+        cue.setup_actionable = false;
+        cue.setup_gate.pass = false;
+        cue.setup_gate.rationale_codes = vec!["BELOW_ENTRY_BAND".to_string()];
+        cue.trade_gate.pass = false;
+        cue.trade_gate.blocked_by = "SETUP".to_string();
+        cue.trade_gate.rationale_codes = vec!["BELOW_ENTRY_BAND".to_string()];
+        let snapshot = overlay_snapshot(true);
+        let entry = overlay_entry(
+            "PF_SUIUSD__PF_ARBUSD",
+            Timeframe::FifteenMinutes,
+            LearningRecommendation::Promote,
+            true,
+            true,
+        );
+        let policy =
+            resolve_learning_overlay_policy(Some(&entry), &snapshot, "AUTO_CHAMPION", None, None);
+
+        let row =
+            build_trade_now_row_with_selected_score(&cue, -1.2, &snapshot, &policy, false, None);
+
+        assert!((row.selected_score_z - (-1.2)).abs() < 1e-9);
+        assert!((row.entry_distance_z - (-0.6)).abs() < 1e-9);
     }
 
     #[test]

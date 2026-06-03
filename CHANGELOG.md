@@ -108,7 +108,7 @@ This project follows SemVer as defined in `docs/02-versioning-and-releases.md`.
 - Slice B2 `Trade Now` strategy endpoint:
   - Added `GET /v1/strategy/pairs/trade-now`, which builds grouped `tradable_now`, `watchlist`, and `excluded` rows by combining live cue gates with the Slice B1 learning overlay policy.
   - The endpoint carries learning-overlay freshness metadata, selected-config provenance, and stable decision/watch/block reason codes that match the Slice A schema.
-  - Trade Now rows now include additive `entry_distance_z` diagnostics (`abs(spread_z) - entry_band`) so setup-blocked watchlist rows can show how far from the live entry threshold they remain.
+  - Trade Now rows now include additive `selected_score_z` and `entry_distance_z` diagnostics (`abs(selected_score_z) - entry_band`) so setup-blocked watchlist rows can show how far the selected signal remains from the live entry threshold.
   - Added Rust-side contract drift protection: grouped-response orchestration tests plus a schema roundtrip validation against `specs/contracts/strategy_pairs_trade_now_response.schema.json`.
   - Current B2 scope remains strategy-service-local: `open_live_trade` is reported as `false` until a bounded execution-service position source is wired in a later slice.
 - Slice C `Trade Now` UI split:
