@@ -241,9 +241,13 @@
           "enum": ["LONG_SPREAD", "SHORT_SPREAD", "NONE"]
         },
         "spread_z": { "type": "number" },
+        "selected_score_z": {
+          "type": "number",
+          "description": "Latest score from the row's selected signal variant. This may differ from spread_z when the selected variant is not COINTEGRATION_Z."
+        },
         "entry_distance_z": {
           "type": "number",
-          "description": "Selected score distance from the configured entry threshold: abs(spread_z) - entry_band. Negative values mean the setup is still waiting for that many z units."
+          "description": "Selected score distance from the configured entry threshold: abs(selected_score_z) - entry_band. Negative values mean the setup is still waiting for that many z units."
         },
         "opportunity_score": { "type": "number" },
         "confidence_band": {
@@ -412,5 +416,5 @@
       ]
     }
   },
-  "version": "0.4.0"
+  "version": "0.5.0"
 }
