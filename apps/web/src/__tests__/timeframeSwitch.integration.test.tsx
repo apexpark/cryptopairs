@@ -196,19 +196,21 @@ function buildBacktestResponse(timeframe: Timeframe): any {
 }
 
 function buildTradeNowRow(pairId: string, timeframe: Timeframe, bucket: "TRADE_NOW" | "WATCHLIST" | "EXCLUDED"): any {
+  const spreadZ = bucket === "EXCLUDED" ? 1.2 : bucket === "WATCHLIST" ? -1.1 : -2.1;
   return {
     pair_id: pairId,
     left_instrument: pairId.split("__")[0],
     right_instrument: pairId.split("__")[1],
     timeframe,
     selected_variant: "ROBUST_Z",
-    direction_hint: bucket === "EXCLUDED" ? "SHORT_SPREAD" : "LONG_SPREAD",
-    spread_z: bucket === "EXCLUDED" ? 1.2 : -2.1,
+    direction_hint: bucket === "WATCHLIST" ? "NONE" : bucket === "EXCLUDED" ? "SHORT_SPREAD" : "LONG_SPREAD",
+    spread_z: spreadZ,
+    entry_distance_z: Math.abs(spreadZ) - 1.8,
     opportunity_score: bucket === "TRADE_NOW" ? 9.2 : bucket === "WATCHLIST" ? 7.4 : 1.1,
     confidence_band: bucket === "EXCLUDED" ? "MEDIUM" : "HIGH",
     expected_hold_bars: 18,
     net_edge_bps: bucket === "EXCLUDED" ? 0.8 : 12.4,
-    setup_gate_pass: true,
+    setup_gate_pass: bucket !== "WATCHLIST",
     cost_gate_pass: true,
     trade_gate_pass: bucket !== "WATCHLIST",
     open_live_trade: false,
@@ -233,10 +235,10 @@ function buildTradeNowRow(pairId: string, timeframe: Timeframe, bucket: "TRADE_N
       bucket === "TRADE_NOW"
         ? "LEARNING_SELECTED_AND_LIVE_GATES_PASS"
         : bucket === "WATCHLIST"
-          ? "STALE_OVERLAY_DOWNGRADED_TO_WATCHLIST"
+          ? "APPROVED_BUT_WAITING_ON_LIVE_CONDITIONS"
           : "PROVENANCE_POLICY_BLOCKED",
     blocked_reason_code: bucket === "EXCLUDED" ? "LEGACY_FALLBACK_ACTIVE" : null,
-    watch_reason_code: bucket === "WATCHLIST" ? "LEARNING_OVERLAY_STALE" : null,
+    watch_reason_code: bucket === "WATCHLIST" ? "SETUP_GATE_NOT_PASSING" : null,
     rationale_codes:
       bucket === "EXCLUDED"
         ? ["LEGACY_FALLBACK_ACTIVE", "OUTSIDE_APPROVED_UNIVERSE"]
@@ -599,6 +601,7 @@ describe("global timeframe switching", () => {
     ).toBeInTheDocument();
     expect(screen.getByText("Watchlist")).toBeInTheDocument();
     expect(screen.getByText("Excluded")).toBeInTheDocument();
+    expect(screen.getByText(/waiting for 0\.70 more z/i)).toBeInTheDocument();
     expect(screen.getAllByText("Research Bench").length).toBeGreaterThan(0);
     expect(screen.getByText("Cadence Snapshot")).toBeInTheDocument();
     expect(screen.getByText("Approved-ready rows/day")).toBeInTheDocument();

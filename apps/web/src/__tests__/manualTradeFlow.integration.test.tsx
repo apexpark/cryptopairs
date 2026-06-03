@@ -170,6 +170,7 @@ beforeEach(() => {
         selected_variant: "ROBUST_Z",
         direction_hint: "LONG_SPREAD",
         spread_z: -2.1,
+        entry_distance_z: 0.3,
         opportunity_score: 0.77,
         confidence_band: "MEDIUM",
         expected_hold_bars: 42,

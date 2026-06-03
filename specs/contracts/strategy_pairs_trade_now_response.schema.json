@@ -241,6 +241,10 @@
           "enum": ["LONG_SPREAD", "SHORT_SPREAD", "NONE"]
         },
         "spread_z": { "type": "number" },
+        "entry_distance_z": {
+          "type": "number",
+          "description": "Selected score distance from the configured entry threshold: abs(spread_z) - entry_band. Negative values mean the setup is still waiting for that many z units."
+        },
         "opportunity_score": { "type": "number" },
         "confidence_band": {
           "type": "string",
@@ -408,5 +412,5 @@
       ]
     }
   },
-  "version": "0.3.1"
+  "version": "0.4.0"
 }

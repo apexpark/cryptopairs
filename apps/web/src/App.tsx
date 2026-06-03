@@ -909,6 +909,19 @@ function formatDurationLabel(minutes: number | null): string {
   return `${(hours / 24).toFixed(1)}d`;
 }
 
+function formatEntryDistanceDetail(row: StrategyPairsTradeNowRow): string | null {
+  const entryDistanceZ = row.entry_distance_z;
+  if (
+    row.setup_gate_pass ||
+    typeof entryDistanceZ !== "number" ||
+    !Number.isFinite(entryDistanceZ) ||
+    entryDistanceZ >= 0
+  ) {
+    return null;
+  }
+  return `waiting for ${Math.abs(entryDistanceZ).toFixed(2)} more z`;
+}
+
 function formatPerDayLabel(value: number | null): string {
   if (value == null || !Number.isFinite(value)) {
     return "--";
@@ -927,6 +940,10 @@ function tradeNowDetailLabel(row: StrategyPairsTradeNowRow): string {
   }
   if (row.open_live_trade) {
     detailParts.push("open live trade");
+  }
+  const entryDistanceDetail = formatEntryDistanceDetail(row);
+  if (entryDistanceDetail) {
+    detailParts.push(entryDistanceDetail);
   }
   return detailParts.join(" | ");
 }
