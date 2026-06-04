@@ -206,6 +206,28 @@ export interface StrategyPairsTradeNowResponse {
   excluded: StrategyPairsTradeNowRow[];
 }
 
+export interface StrategyTradeNowObservabilityResponse {
+  generated_at: string;
+  learning_challenger_bypass_suppressed_total: number;
+  learning_challenger_bypass_suppressed: Array<{
+    pair_id: string;
+    timeframe: Timeframe;
+    suppressed_total: number;
+  }>;
+  learning_eligible_override_tradable_total: number;
+  learning_eligible_override_tradable: Array<{
+    pair_id: string;
+    timeframe: Timeframe;
+    surfaced_total: number;
+  }>;
+  learning_selection_cost_override_applied_total: number;
+  learning_selection_cost_override_applied: Array<{
+    pair_id: string;
+    timeframe: Timeframe;
+    applied_total: number;
+  }>;
+}
+
 export interface StrategyPairsOpportunityHistoryResponse {
   timeframe: Timeframe;
   generated_at: string;
