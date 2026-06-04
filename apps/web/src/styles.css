@@ -658,6 +658,9 @@ table {
   position: relative;
   display: inline-flex;
   align-items: center;
+  justify-self: start;
+  width: fit-content;
+  max-width: 100%;
   border: 1px solid var(--line-soft);
   border-radius: 999px;
   padding: 5px 9px;
