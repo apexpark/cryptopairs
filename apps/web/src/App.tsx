@@ -1447,11 +1447,11 @@ function nowIso(): string {
 function App(): JSX.Element {
   const viewportHeightPx = useViewportHeightPx();
   const tradeZChartHeight = useMemo(
-    () => Math.round(clampNumber(viewportHeightPx * 0.44, 340, 560)),
+    () => Math.round(clampNumber(viewportHeightPx * 0.44, 340, 940)),
     [viewportHeightPx]
   );
   const analyticsChartHeight = useMemo(
-    () => Math.round(clampNumber(viewportHeightPx * 0.4, 320, 520)),
+    () => Math.round(clampNumber(viewportHeightPx * 0.4, 320, 860)),
     [viewportHeightPx]
   );
 
