@@ -1436,8 +1436,6 @@ button:disabled {
 
 .analysis-panel .chart {
   min-height: 250px;
-  max-width: min(1800px, 100%);
-  margin-inline: auto;
 }
 
 .analysis-panel .timeline-card {

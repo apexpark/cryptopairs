@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { ChartMarker } from "../types";
 
 interface Threshold {
@@ -74,6 +74,17 @@ function clamp(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, value));
 }
 
+const DEFAULT_CHART_WIDTH = 1000;
+const MIN_CHART_WIDTH = 320;
+const MAX_CHART_WIDTH = 6000;
+
+function normalizeChartWidth(value: number): number {
+  if (!Number.isFinite(value) || value <= 0) {
+    return DEFAULT_CHART_WIDTH;
+  }
+  return Math.round(clamp(value, MIN_CHART_WIDTH, MAX_CHART_WIDTH));
+}
+
 function percentile(sortedValues: number[], ratio: number): number {
   if (!sortedValues.length) {
     return 0;
@@ -109,6 +120,8 @@ export default function LineChart({
   zoomEnabled = false,
   initialZoomFactor = 1,
 }: LineChartProps): JSX.Element {
+  const chartRef = useRef<HTMLDivElement | null>(null);
+  const [measuredWidth, setMeasuredWidth] = useState(DEFAULT_CHART_WIDTH);
   const minZoomWindowPoints = Math.min(values.length, 24);
   const zoomOptions = useMemo(() => {
     const base = [1, 2, 4, 8, 16];
@@ -139,6 +152,33 @@ export default function LineChart({
     });
   }, [initialZoomFactor, zoomEnabled, zoomOptions, values.length]);
 
+  useEffect(() => {
+    const node = chartRef.current;
+    if (!node) {
+      return;
+    }
+
+    const applyWidth = (value: number): void => {
+      const nextWidth = normalizeChartWidth(value);
+      setMeasuredWidth((previous) => (previous === nextWidth ? previous : nextWidth));
+    };
+
+    applyWidth(node.getBoundingClientRect().width);
+
+    if (typeof ResizeObserver === "undefined") {
+      return;
+    }
+
+    const observer = new ResizeObserver((entries) => {
+      const width = entries[0]?.contentRect.width;
+      if (typeof width === "number") {
+        applyWidth(width);
+      }
+    });
+    observer.observe(node);
+    return () => observer.disconnect();
+  }, []);
+
   const zoomIsActive = zoomEnabled && zoomOptions.length > 1;
   const visiblePoints = zoomIsActive
     ? clamp(Math.floor(values.length / zoomFactor), minZoomWindowPoints, values.length)
@@ -160,14 +200,14 @@ export default function LineChart({
 
   if (values.length < 2 || plotValues.length < 2) {
     return (
-      <div className="chart chart-empty" style={{ height: `${height}px` }}>
+      <div ref={chartRef} className="chart chart-empty" style={{ height: `${height}px` }}>
         {title ? <div className="chart-title">{title}</div> : null}
         <div className="empty-text">{unavailableText}</div>
       </div>
     );
   }
 
-  const width = 1000;
+  const width = measuredWidth;
   const leftPadding = 74;
   const rightPadding = showThresholdLabels ? 82 : 24;
   const topPadding = 10;
@@ -269,7 +309,7 @@ export default function LineChart({
   const panStep = Math.max(1, Math.floor(visiblePoints * 0.2));
 
   return (
-    <div className="chart" style={{ height: `${height}px` }}>
+    <div ref={chartRef} className="chart" style={{ height: `${height}px` }}>
       {title ? <div className="chart-title">{title}</div> : null}
       {zoomIsActive ? (
         <div className="chart-toolbar">
