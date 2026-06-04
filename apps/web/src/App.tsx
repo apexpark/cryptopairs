@@ -3812,6 +3812,7 @@ function SimpleTradeNowPairsSection(props: {
             <tbody>
               {props.rows.map((row) => {
                 const status = simpleTradeNowStatus(row);
+                const entryDistanceDetail = formatEntryDistanceDetail(row);
                 return (
                   <tr
                     key={`${row.pair_id}-${row.timeframe}`}
@@ -3820,7 +3821,9 @@ function SimpleTradeNowPairsSection(props: {
                     onKeyDown={(event) => handleRowKeyDown(event, row.pair_id)}
                     tabIndex={0}
                     role="button"
-                    aria-label={`${formatPairLabel(row.pair_id)} ${status.label}. ${status.why}`}
+                    aria-label={`${formatPairLabel(row.pair_id)} ${status.label}. ${status.why}${
+                      entryDistanceDetail ? ` ${entryDistanceDetail}.` : ""
+                    }`}
                   >
                     <td>
                       <div className="opportunity-pair-stack">
@@ -3831,14 +3834,21 @@ function SimpleTradeNowPairsSection(props: {
                       </div>
                     </td>
                     <td>
-                      <span
-                        className={`simple-status-pill ${status.tone} status-tooltip`}
-                        data-tooltip={status.why}
-                        title={status.why}
-                        tabIndex={0}
-                      >
-                        {status.label}
-                      </span>
+                      <div className="opportunity-status-stack">
+                        <span
+                          className={`simple-status-pill ${status.tone} status-tooltip`}
+                          data-tooltip={status.why}
+                          title={status.why}
+                          tabIndex={0}
+                        >
+                          {status.label}
+                        </span>
+                        {entryDistanceDetail ? (
+                          <span className="small-text simple-status-detail">
+                            {entryDistanceDetail}
+                          </span>
+                        ) : null}
+                      </div>
                     </td>
                     <td>{formatSigned(row.net_edge_bps)}bp</td>
                   </tr>

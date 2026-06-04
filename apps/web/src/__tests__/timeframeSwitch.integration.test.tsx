@@ -602,6 +602,7 @@ describe("global timeframe switching", () => {
     expect(screen.getByRole("button", { name: /XBTUSD\/ETHUSD Ready/i })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /SOLUSD\/AVAXUSD Setup/i })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /DOGEUSD\/PEPEUSD Wait/i })).toBeInTheDocument();
+    expect(screen.getByText("waiting for 0.70 more z")).toBeInTheDocument();
     expect(screen.queryByRole("columnheader", { name: "Chart" })).not.toBeInTheDocument();
     expect(screen.getByTitle("Ready now: current trade checks are passing.")).toHaveTextContent("Ready");
     expect(screen.getByTitle("Waiting for a fresh model update.")).toHaveTextContent("Setup");
