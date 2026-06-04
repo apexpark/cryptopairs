@@ -4,6 +4,10 @@ All notable changes to this project will be documented in this file.
 This project follows SemVer as defined in `docs/02-versioning-and-releases.md`.
 
 ## Unreleased
+### Fixed
+- Trade z-score charts now anchor the initial 16x zoom window on the newest live
+  data after a hard refresh, instead of opening on the oldest loaded history.
+
 ### Operator Tooling
 - Added a hosted systemd timer installer for read-only signal-learning overlay
   refreshes, keeping Trade Now's approved-universe artifact fresh without a

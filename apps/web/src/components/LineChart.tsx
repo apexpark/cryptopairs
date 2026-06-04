@@ -145,7 +145,7 @@ export default function LineChart({
     );
     setWindowEndIndex((previous) => {
       const latest = values.length - 1;
-      if (previous >= latest - 1) {
+      if (previous < 0 || previous >= latest - 1) {
         return latest;
       }
       return clamp(previous, 0, latest);
