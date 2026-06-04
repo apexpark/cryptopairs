@@ -93,6 +93,39 @@ describe("LineChart current value label", () => {
     expect(screen.getByText("30/120 bars")).toBeInTheDocument();
   });
 
+  it("anchors initial zoomed data loads to the newest point", async () => {
+    const values = Array.from({ length: 400 }, (_, index) => index);
+    const timestamps = values.map((_, index) =>
+      new Date(Date.UTC(2026, 4, 19, 0, index)).toISOString()
+    );
+    const { rerender } = render(
+      <LineChart
+        values={[]}
+        timestamps={[]}
+        zoomEnabled
+        initialZoomFactor={16}
+        showLatestValueLabel
+        latestValueLabelFormatter={(value) => `Z ${value.toFixed(2)}`}
+      />
+    );
+
+    rerender(
+      <LineChart
+        values={values}
+        timestamps={timestamps}
+        zoomEnabled
+        initialZoomFactor={16}
+        showLatestValueLabel
+        latestValueLabelFormatter={(value) => `Z ${value.toFixed(2)}`}
+      />
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText("Z 399.00")).toBeInTheDocument();
+    });
+    expect(screen.queryByText("Z 24.00")).not.toBeInTheDocument();
+  });
+
   it("uses the measured container width for wide chart viewboxes", async () => {
     class ResizeObserverMock {
       private readonly callback: ResizeObserverCallback;
