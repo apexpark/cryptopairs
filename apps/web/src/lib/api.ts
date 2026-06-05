@@ -33,13 +33,20 @@ import type {
   BacktestExitMode,
   Timeframe,
 } from "../types";
+import { resolveServiceBaseUrl } from "./serviceBaseUrls";
 
-const ACCOUNT_SERVICE_BASE_URL =
-  import.meta.env.VITE_ACCOUNT_SERVICE_BASE_URL ?? "http://127.0.0.1:8081";
-const EXECUTION_SERVICE_BASE_URL =
-  import.meta.env.VITE_EXECUTION_SERVICE_BASE_URL ?? "http://127.0.0.1:8082";
-const STRATEGY_SERVICE_BASE_URL =
-  import.meta.env.VITE_STRATEGY_SERVICE_BASE_URL ?? "http://127.0.0.1:8083";
+const ACCOUNT_SERVICE_BASE_URL = resolveServiceBaseUrl(
+  import.meta.env.VITE_ACCOUNT_SERVICE_BASE_URL,
+  "account"
+);
+const EXECUTION_SERVICE_BASE_URL = resolveServiceBaseUrl(
+  import.meta.env.VITE_EXECUTION_SERVICE_BASE_URL,
+  "execution"
+);
+const STRATEGY_SERVICE_BASE_URL = resolveServiceBaseUrl(
+  import.meta.env.VITE_STRATEGY_SERVICE_BASE_URL,
+  "strategy"
+);
 
 async function parseJson<T>(response: Response): Promise<T> {
   if (!response.ok) {

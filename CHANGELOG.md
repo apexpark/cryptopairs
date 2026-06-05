@@ -7,6 +7,9 @@ This project follows SemVer as defined in `docs/02-versioning-and-releases.md`.
 ### Fixed
 - Trade z-score charts now anchor the initial 16x zoom window on the newest live
   data after a hard refresh, instead of opening on the oldest loaded history.
+- Hosted web builds now treat blank Vercel service URL environment variables as
+  invalid and fall back to the public `api.apexpark.io` service bases, while
+  preserving local service defaults for localhost development.
 
 ### Operator Tooling
 - Added a hosted systemd timer installer for read-only signal-learning overlay
