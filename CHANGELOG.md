@@ -5,6 +5,8 @@ This project follows SemVer as defined in `docs/02-versioning-and-releases.md`.
 
 ## Unreleased
 ### Fixed
+- Data-service `/health` now performs a repository-backed Postgres health
+  check and returns 503 on repository errors instead of reporting static OK.
 - Trade z-score charts now anchor the initial 16x zoom window on the newest live
   data after a hard refresh, instead of opening on the oldest loaded history.
 - Hosted web builds now treat blank Vercel service URL environment variables as

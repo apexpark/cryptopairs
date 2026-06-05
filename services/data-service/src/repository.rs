@@ -7,6 +7,7 @@ use tokio_postgres::{types::ToSql, Client, NoTls};
 
 #[async_trait]
 pub trait MarketDataRepository: Send + Sync {
+    async fn health_check(&self) -> Result<()>;
     async fn fetch_candles(&self, request: &DataQueryRequest) -> Result<Vec<Candle>>;
     async fn fetch_latest_candle_ts(
         &self,
@@ -56,6 +57,12 @@ pub struct UnconfiguredRepository;
 
 #[async_trait]
 impl MarketDataRepository for UnconfiguredRepository {
+    async fn health_check(&self) -> Result<()> {
+        Err(anyhow!(
+            "market data repository is not configured; health check unavailable"
+        ))
+    }
+
     async fn fetch_candles(&self, request: &DataQueryRequest) -> Result<Vec<Candle>> {
         let _ = request;
         Err(anyhow!(
@@ -174,6 +181,11 @@ impl PostgresMarketDataRepository {
 
 #[async_trait]
 impl MarketDataRepository for PostgresMarketDataRepository {
+    async fn health_check(&self) -> Result<()> {
+        self.client.simple_query("SELECT 1").await?;
+        Ok(())
+    }
+
     async fn fetch_candles(&self, request: &DataQueryRequest) -> Result<Vec<Candle>> {
         let rows = self
             .client
