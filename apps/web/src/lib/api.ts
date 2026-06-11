@@ -5,13 +5,11 @@ import type {
   ExecutionOpenTradesResponse,
   ExecutionPortfolioPositionsResponse,
   ExecutionDecisionResponse,
-  ExecutionMode,
   KillSwitchState,
   MarketMetricsResponse,
   OrderIntentHistoryResponse,
   OrderIntentRequest,
   OrderIntentResponse,
-  PaperOrderIntentResponse,
   ReconcileResponse,
   StrategyPairsBacktestResponse,
   StrategyPairsCandidateActionRequest,
@@ -35,13 +33,20 @@ import type {
   BacktestExitMode,
   Timeframe,
 } from "../types";
+import { resolveServiceBaseUrl } from "./serviceBaseUrls";
 
-const ACCOUNT_SERVICE_BASE_URL =
-  import.meta.env.VITE_ACCOUNT_SERVICE_BASE_URL ?? "http://127.0.0.1:8081";
-const EXECUTION_SERVICE_BASE_URL =
-  import.meta.env.VITE_EXECUTION_SERVICE_BASE_URL ?? "http://127.0.0.1:8082";
-const STRATEGY_SERVICE_BASE_URL =
-  import.meta.env.VITE_STRATEGY_SERVICE_BASE_URL ?? "http://127.0.0.1:8083";
+const ACCOUNT_SERVICE_BASE_URL = resolveServiceBaseUrl(
+  import.meta.env.VITE_ACCOUNT_SERVICE_BASE_URL,
+  "account"
+);
+const EXECUTION_SERVICE_BASE_URL = resolveServiceBaseUrl(
+  import.meta.env.VITE_EXECUTION_SERVICE_BASE_URL,
+  "execution"
+);
+const STRATEGY_SERVICE_BASE_URL = resolveServiceBaseUrl(
+  import.meta.env.VITE_STRATEGY_SERVICE_BASE_URL,
+  "strategy"
+);
 
 async function parseJson<T>(response: Response): Promise<T> {
   if (!response.ok) {
@@ -340,25 +345,22 @@ export async function fetchExecutionDecision(
 
 export async function fetchExecutionPortfolioPositions(
   exchange: string,
-  accountId: string,
-  executionMode: ExecutionMode = "LIVE"
+  accountId: string
 ): Promise<ExecutionPortfolioPositionsResponse> {
   const url = `${EXECUTION_SERVICE_BASE_URL}/v1/execution/portfolio/positions?exchange=${encodeURIComponent(
     exchange
-  )}&account_id=${encodeURIComponent(accountId)}&execution_mode=${executionMode}`;
+  )}&account_id=${encodeURIComponent(accountId)}`;
   return parseJson<ExecutionPortfolioPositionsResponse>(await fetch(url));
 }
 
 export async function fetchExecutionOpenTrades(
   exchange: string,
   accountId: string,
-  pairId?: string,
-  executionMode: ExecutionMode = "LIVE"
+  pairId?: string
 ): Promise<ExecutionOpenTradesResponse> {
   const params = new URLSearchParams();
   params.set("exchange", exchange);
   params.set("account_id", accountId);
-  params.set("execution_mode", executionMode);
   if (pairId && pairId.trim().length > 0) {
     params.set("pair_id", pairId);
   }
@@ -371,19 +373,6 @@ export async function submitOrderIntent(
 ): Promise<OrderIntentResponse> {
   const url = `${EXECUTION_SERVICE_BASE_URL}/v1/execution/order-intent`;
   return parseJson<OrderIntentResponse>(
-    await fetch(url, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload),
-    })
-  );
-}
-
-export async function submitPaperOrderIntent(
-  payload: OrderIntentRequest
-): Promise<PaperOrderIntentResponse> {
-  const url = `${EXECUTION_SERVICE_BASE_URL}/v1/execution/paper/order-intent`;
-  return parseJson<PaperOrderIntentResponse>(
     await fetch(url, {
       method: "POST",
       headers: { "Content-Type": "application/json" },

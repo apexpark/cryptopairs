@@ -4,11 +4,10 @@
   "title": "ExecutionPortfolioPositionsResponse",
   "type": "object",
   "additionalProperties": false,
-  "required": ["exchange", "account_id", "execution_mode", "generated_at", "positions"],
+  "required": ["exchange", "account_id", "generated_at", "positions"],
   "properties": {
     "exchange": { "type": "string" },
     "account_id": { "type": "string" },
-    "execution_mode": { "type": "string", "enum": ["LIVE", "PAPER"] },
     "generated_at": { "type": "string", "format": "date-time" },
     "positions": {
       "type": "array",
@@ -35,5 +34,5 @@
       }
     }
   },
-  "version": "0.2.0"
+  "version": "0.1.0"
 }

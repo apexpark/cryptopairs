@@ -180,48 +180,6 @@
         "cues_generated": { "type": "integer", "minimum": 0 },
         "cost_gate_pass": { "type": "integer", "minimum": 0 },
         "cost_gate_fail": { "type": "integer", "minimum": 0 },
-        "mode": {
-          "type": "string",
-          "enum": ["sync", "async", "latest-successful", "skip"]
-        },
-        "force_hold": { "type": "boolean" },
-        "evidence_valid": { "type": "boolean" },
-        "accepted": { "type": ["boolean", "null"] },
-        "consumed_latest": { "type": "boolean" },
-        "timed_out": { "type": "boolean" },
-        "run_id": { "type": ["string", "null"] },
-        "active_run_id": { "type": ["string", "null"] },
-        "status": { "type": ["string", "null"] },
-        "trigger_source": {
-          "type": ["string", "null"],
-          "enum": ["SCHEDULED", "MANUAL_API", "MAINTENANCE_REPORT", "RECOVERY", null]
-        },
-        "status_route": { "type": ["string", "null"] },
-        "cancel_route": { "type": ["string", "null"] },
-        "request_fingerprint": { "type": ["string", "null"] },
-        "expected_request_fingerprint": { "type": ["string", "null"] },
-        "service_version": { "type": ["string", "null"] },
-        "poll_count": { "type": "integer", "minimum": 0 },
-        "elapsed_ms": { "type": "integer", "minimum": 0 },
-        "first_status": { "type": ["string", "null"] },
-        "last_status": { "type": ["string", "null"] },
-        "error_codes": {
-          "type": "array",
-          "items": { "type": "string" }
-        },
-        "fail_closed_reasons": {
-          "type": "array",
-          "items": { "type": "string" }
-        },
-        "artifact_manifest_present": { "type": "boolean" },
-        "artifact_required_kinds": {
-          "type": "array",
-          "items": { "type": "string" }
-        },
-        "cancel_attempted": { "type": "boolean" },
-        "cancel_result": { "type": ["string", "null"] },
-        "cancel_error": { "type": ["string", "null"] },
-        "age_seconds": { "type": "integer", "minimum": 0 },
         "errors": {
           "type": "array",
           "items": {
@@ -231,8 +189,6 @@
             "properties": {
               "pair_id": { "type": "string" },
               "timeframe": { "type": "string", "enum": ["1m", "15m", "1h"] },
-              "code": { "type": "string" },
-              "severity": { "type": "string", "enum": ["CRITICAL", "NON_CRITICAL"] },
               "error": { "type": "string" }
             }
           }
@@ -276,5 +232,5 @@
       }
     }
   },
-  "version": "0.2.0"
+  "version": "0.1.0"
 }

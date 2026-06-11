@@ -26,7 +26,6 @@ const api = vi.hoisted(() => ({
   dispatchOrderIntent: vi.fn(),
   fetchExecutionDispatchMode: vi.fn(),
   fetchExecutionDecision: vi.fn(),
-  fetchExecutionOpenTrades: vi.fn(),
   fetchExecutionPortfolioPositions: vi.fn(),
   fetchKillSwitchState: vi.fn(),
   fetchMarketMetrics: vi.fn(),
@@ -41,7 +40,6 @@ const api = vi.hoisted(() => ({
   fetchStrategyTradeNowObservability: vi.fn(),
   fetchStrategyUiAuthStatus: vi.fn(),
   submitOrderIntent: vi.fn(),
-  submitPaperOrderIntent: vi.fn(),
   updateKillSwitchState: vi.fn(),
   verifyStrategyUiAccess: vi.fn(),
 }));
@@ -201,19 +199,21 @@ function buildBacktestResponse(timeframe: Timeframe): any {
 }
 
 function buildTradeNowRow(pairId: string, timeframe: Timeframe, bucket: "TRADE_NOW" | "WATCHLIST" | "EXCLUDED"): any {
+  const spreadZ = bucket === "EXCLUDED" ? 1.2 : bucket === "WATCHLIST" ? -1.1 : -2.1;
   return {
     pair_id: pairId,
     left_instrument: pairId.split("__")[0],
     right_instrument: pairId.split("__")[1],
     timeframe,
     selected_variant: "ROBUST_Z",
-    direction_hint: bucket === "EXCLUDED" ? "SHORT_SPREAD" : "LONG_SPREAD",
-    spread_z: bucket === "EXCLUDED" ? 1.2 : -2.1,
+    direction_hint: bucket === "WATCHLIST" ? "NONE" : bucket === "EXCLUDED" ? "SHORT_SPREAD" : "LONG_SPREAD",
+    spread_z: spreadZ,
+    entry_distance_z: Math.abs(spreadZ) - 1.8,
     opportunity_score: bucket === "TRADE_NOW" ? 9.2 : bucket === "WATCHLIST" ? 7.4 : 1.1,
     confidence_band: bucket === "EXCLUDED" ? "MEDIUM" : "HIGH",
     expected_hold_bars: 18,
     net_edge_bps: bucket === "EXCLUDED" ? 0.8 : 12.4,
-    setup_gate_pass: true,
+    setup_gate_pass: bucket !== "WATCHLIST",
     cost_gate_pass: true,
     trade_gate_pass: bucket !== "WATCHLIST",
     open_live_trade: false,
@@ -238,7 +238,7 @@ function buildTradeNowRow(pairId: string, timeframe: Timeframe, bucket: "TRADE_N
       bucket === "TRADE_NOW"
         ? "LEARNING_SELECTED_AND_LIVE_GATES_PASS"
         : bucket === "WATCHLIST"
-          ? "STALE_OVERLAY_DOWNGRADED_TO_WATCHLIST"
+          ? "APPROVED_BUT_WAITING_ON_LIVE_CONDITIONS"
           : "PROVENANCE_POLICY_BLOCKED",
     blocked_reason_code: bucket === "EXCLUDED" ? "RECANONICALIZED_LEGACY_ROW_ACTIVE" : null,
     watch_reason_code: bucket === "WATCHLIST" ? "LEARNING_OVERLAY_STALE" : null,
@@ -400,17 +400,8 @@ beforeEach(() => {
   api.fetchExecutionPortfolioPositions.mockResolvedValue({
     exchange: "kraken_futures",
     account_id: "primary",
-    execution_mode: "PAPER",
     generated_at: "2026-02-20T00:00:00Z",
     positions: [],
-  });
-  api.fetchExecutionOpenTrades.mockResolvedValue({
-    exchange: "kraken_futures",
-    account_id: "primary",
-    execution_mode: "PAPER",
-    generated_at: "2026-02-20T00:00:00Z",
-    warnings: [],
-    trades: [],
   });
   api.fetchReconcile.mockResolvedValue({
     reconcile: {
@@ -435,12 +426,6 @@ beforeEach(() => {
   });
 
   api.submitOrderIntent.mockResolvedValue({ decision: "BLOCKED" });
-  api.submitPaperOrderIntent.mockResolvedValue({
-    schema_version: "1.0.0",
-    intent: { decision: "ACCEPTED", execution_mode: "PAPER" },
-    dispatch: { result: "ACKNOWLEDGED" },
-    recorded_at: "2026-02-20T00:00:00Z",
-  });
   api.dispatchOrderIntent.mockResolvedValue({ result: "REJECTED", reason: "not tested" });
   api.fetchOrderIntentHistory.mockResolvedValue({
     idempotency_key: "x",
@@ -471,8 +456,7 @@ describe("global timeframe switching", () => {
       expect(api.fetchMarketMetrics).toHaveBeenCalledWith(RIGHT);
       expect(api.fetchExecutionPortfolioPositions).toHaveBeenCalledWith(
         "kraken_futures",
-        "primary",
-        "PAPER"
+        "primary"
       );
     });
     expect(screen.getByText("XBTUSD Position Size").parentElement).toHaveTextContent("+1.00");
@@ -618,6 +602,7 @@ describe("global timeframe switching", () => {
     expect(screen.getByRole("button", { name: /XBTUSD\/ETHUSD Ready/i })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /SOLUSD\/AVAXUSD Setup/i })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /DOGEUSD\/PEPEUSD Wait/i })).toBeInTheDocument();
+    expect(screen.getByText("waiting for 0.70 more z")).toBeInTheDocument();
     expect(screen.queryByRole("columnheader", { name: "Chart" })).not.toBeInTheDocument();
     expect(screen.getByTitle("Ready now: current trade checks are passing.")).toHaveTextContent("Ready");
     expect(screen.getByTitle("Waiting for a fresh model update.")).toHaveTextContent("Setup");
@@ -645,7 +630,7 @@ describe("global timeframe switching", () => {
     expect(screen.getByText("Observation blockers")).toBeInTheDocument();
     expect(screen.getByText("RECANONICALIZED_LEGACY_ROW_ACTIVE=1")).toBeInTheDocument();
     expect(screen.getByText("OUTSIDE_APPROVED_UNIVERSE=1")).toBeInTheDocument();
-    expect(screen.getByText("STALE_OVERLAY_DOWNGRADED_TO_WATCHLIST")).toBeInTheDocument();
+    expect(screen.getByText("LEARNING_OVERLAY_STALE")).toBeInTheDocument();
 
     selectTimeframe("1h");
 

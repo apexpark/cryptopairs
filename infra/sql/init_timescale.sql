@@ -93,7 +93,6 @@ CREATE TABLE IF NOT EXISTS execution_order_intents (
   operator_confirmed BOOLEAN NOT NULL,
   operator_id TEXT,
   min_coverage_pct DOUBLE PRECISION NOT NULL,
-  execution_mode TEXT NOT NULL DEFAULT 'LIVE',
   decision TEXT NOT NULL,
   reason TEXT NOT NULL DEFAULT '',
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
@@ -133,21 +132,6 @@ ADD COLUMN IF NOT EXISTS operator_confirmed BOOLEAN NOT NULL DEFAULT FALSE;
 
 ALTER TABLE execution_order_intents
 ADD COLUMN IF NOT EXISTS operator_id TEXT;
-
-ALTER TABLE execution_order_intents
-ADD COLUMN IF NOT EXISTS pair_id TEXT;
-
-ALTER TABLE execution_order_intents
-ADD COLUMN IF NOT EXISTS spread_direction TEXT;
-
-ALTER TABLE execution_order_intents
-ADD COLUMN IF NOT EXISTS spread_z DOUBLE PRECISION;
-
-ALTER TABLE execution_order_intents
-ADD COLUMN IF NOT EXISTS sizing_json TEXT;
-
-ALTER TABLE execution_order_intents
-ADD COLUMN IF NOT EXISTS execution_mode TEXT NOT NULL DEFAULT 'LIVE';
 
 CREATE TABLE IF NOT EXISTS strategy_signal_performance (
   pair_id TEXT NOT NULL,

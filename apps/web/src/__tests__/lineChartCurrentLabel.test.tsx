@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import LineChart from "../components/LineChart";
 
 describe("LineChart current value label", () => {
@@ -91,5 +91,88 @@ describe("LineChart current value label", () => {
     expect(screen.getByText("120/120 bars")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "4x" }));
     expect(screen.getByText("30/120 bars")).toBeInTheDocument();
+  });
+
+  it("anchors initial zoomed data loads to the newest point", async () => {
+    const values = Array.from({ length: 400 }, (_, index) => index);
+    const timestamps = values.map((_, index) =>
+      new Date(Date.UTC(2026, 4, 19, 0, index)).toISOString()
+    );
+    const { rerender } = render(
+      <LineChart
+        values={[]}
+        timestamps={[]}
+        zoomEnabled
+        initialZoomFactor={16}
+        showLatestValueLabel
+        latestValueLabelFormatter={(value) => `Z ${value.toFixed(2)}`}
+      />
+    );
+
+    rerender(
+      <LineChart
+        values={values}
+        timestamps={timestamps}
+        zoomEnabled
+        initialZoomFactor={16}
+        showLatestValueLabel
+        latestValueLabelFormatter={(value) => `Z ${value.toFixed(2)}`}
+      />
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText("Z 399.00")).toBeInTheDocument();
+    });
+    expect(screen.queryByText("Z 24.00")).not.toBeInTheDocument();
+  });
+
+  it("uses the measured container width for wide chart viewboxes", async () => {
+    class ResizeObserverMock {
+      private readonly callback: ResizeObserverCallback;
+
+      constructor(callback: ResizeObserverCallback) {
+        this.callback = callback;
+      }
+
+      observe(target: Element): void {
+        this.callback(
+          [
+            {
+              target,
+              contentRect: {
+                width: 2200,
+                height: 500,
+                top: 0,
+                right: 2200,
+                bottom: 500,
+                left: 0,
+                x: 0,
+                y: 0,
+                toJSON: () => ({}),
+              },
+            } as ResizeObserverEntry,
+          ],
+          this as ResizeObserver
+        );
+      }
+
+      unobserve(): void {}
+
+      disconnect(): void {}
+    }
+
+    vi.stubGlobal("ResizeObserver", ResizeObserverMock);
+
+    try {
+      const { container } = render(
+        <LineChart values={[0, 0.5, -0.2, 1.1]} height={500} />
+      );
+
+      await waitFor(() => {
+        expect(container.querySelector("svg")?.getAttribute("viewBox")).toBe("0 0 2200 500");
+      });
+    } finally {
+      vi.unstubAllGlobals();
+    }
   });
 });

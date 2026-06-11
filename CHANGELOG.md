@@ -4,111 +4,31 @@ All notable changes to this project will be documented in this file.
 This project follows SemVer as defined in `docs/02-versioning-and-releases.md`.
 
 ## Unreleased
+### Fixed
+- Data-service `/health` now performs a repository-backed Postgres health
+  check and returns 503 on repository errors instead of reporting static OK.
+- Trade z-score charts now anchor the initial 16x zoom window on the newest live
+  data after a hard refresh, instead of opening on the oldest loaded history.
+- Hosted web builds now treat blank Vercel service URL environment variables as
+  invalid and fall back to the public `api.apexpark.io` service bases, while
+  preserving local service defaults for localhost development.
+
 ### Operator Tooling
-- Added a production async reoptimization enablement slice proposal and
-  runbook/state pointers that keep the accepted Slice F manual evidence packet
-  separate from any future scheduled production enablement. The new PAE slice
-  starts with repo-side before/during/after evidence tooling and does not
-  authorize worker drain, scheduled enqueue, live ENTRY/EXIT, automatic
-  PROMOTE/REVERT, or repair-provenance graduation.
-- Updated Slice F evidence tooling for the scheduler/manual-run separation
-  landed in PR #207: raw bundle generation now recognizes
-  `STRATEGY_REOPT_SCHEDULER_ENQUEUE_ENABLED`, successful evidence-only
-  `PROMOTION_CANDIDATE_AVAILABLE` recommendations can pass when all other
-  safety gates pass, and the hosted capture guidance records live
-  `ENTRY`/`EXIT` disabled proof from the execution-service container.
-- Separated async reoptimization worker drain from scheduled enqueue with the
-  default-off `STRATEGY_REOPT_SCHEDULER_ENQUEUE_ENABLED` gate. Existing queued
-  manual runs can be drained with `STRATEGY_REOPT_WORKER_ENABLED=true` while
-  scheduled enqueue remains disabled, and terminal status, summaries, request
-  artifacts, and manifests now preserve the persisted run trigger/timeframe
-  scope or fail closed on invalid/contradictory scope. The async artifact
-  manifest contract/examples now include additive `requested_timeframes`
-  evidence for scope reconciliation.
-- Added repo-side async reoptimization artifact writing: terminal runs now
-  write request, progress, summary, errors, and operator-summary artifacts
-  under `STRATEGY_REOPT_ARTIFACT_ROOT`, compute SHA-256 digests with pinned
-  `sha2` `0.10.9`, persist a contract-shaped manifest in
-  `strategy_reoptimize_runs.artifact_manifest_json`, set
-  `artifact_download_route=DEFERRED_NO_DOWNLOAD_ROUTE` while read/download
-  surfaces remain deferred, and fail closed with `ARTIFACT_FAILED` if artifact
-  writing or manifest validation fails. Artifact read/download routes, host
-  verification, scheduler enablement, automatic promotion/revert, and live
-  `ENTRY`/`EXIT` remain deferred.
-- Clarified async reoptimization no-row status semantics: missing
-  `/v1/strategy/reoptimize/runs/latest` durable state now remains a
-  schema-valid non-success `FAILED` payload while recommending
-  `OPERATOR_REVIEW_REQUIRED` with bounded `MISSING_TELEMETRY` and
-  `UNKNOWN_STATUS` reasons, so disabled/no-run readiness evidence stays
-  fail-closed without looking like promotion evidence.
-- Hardened the Slice F evidence manifest to version `1.1.0`, requiring
-  machine-readable capture-root location, alert/threshold absence state,
-  disabled-state log source, and separately labeled `PROMOTE`/`REVERT`
-  confirmation probes so ambiguous readiness bundles fail closed.
-- Added a Slice F threshold approval artifact contract/example, made
-  `threshold_approval` required by the Slice F evidence checker, taught the raw
-  bundle generator to consume that artifact, and added a deployable but not
-  applied alert checklist. These changes keep missing or unapproved thresholds
-  fail-closed and do not configure host alerting.
-- Added repo-side Slice F evidence hardening tools: fail-closed raw bundle
-  manifest generation, alert-rule templates plus template validation, a
-  zero-row repair-provenance example, and stricter semantic checks for dirty
-  host identity, runner/scheduler enablement, fail-closed status, required
-  artifacts, and repair-provenance-active deltas. These additions do not
-  configure host alerting or claim host verification.
-- Added a Slice F async reoptimization canary evidence manifest contract,
-  pass/fail examples, semantic validation script, and capture-only runbook
-  guidance for alert readiness, CPU/hot endpoint threshold evidence, useful
-  strategy logs, status payload checks, live ENTRY/EXIT disabled proof,
-  PROMOTE/REVERT confirmation gates, and `RECANONICALIZED_LEGACY_ROW`
-  repair-provenance blocking.
-- Added bounded async reoptimization observability for the merged runner/API
-  subset: lifecycle, active-run, enqueue, lease acquire/heartbeat/loss, budget
-  exhaustion, progress, cancellation, fail-closed, missing-telemetry,
-  unknown-status, timeframe-terminal, and recommendation metrics, plus
-  structured runner/API log fields. Artifact read/write metrics remain deferred
-  until artifacts are actually written and served.
-- Added the async reoptimization runner operator runbook covering status
-  inspection, disable/rollback, cancellation handling, stuck lease recovery,
-  budget exhaustion, missing telemetry, artifact evidence, and Slice F
-  operator-only readiness checks.
-- Added read/enqueue-only async reoptimization API endpoints for durable run
-  state (`POST /v1/strategy/reoptimize/runs`,
-  `GET /v1/strategy/reoptimize/runs/latest`, and
-  `GET /v1/strategy/reoptimize/runs/{run_id}`), while leaving cancellation
-  unexposed until an operator-approved auth/audit boundary exists; enqueue
-  fails closed while the disabled-by-default async worker is off.
-- Added opt-in async reoptimization modes to the strategy tuning report and
-  maintenance cycle scripts (`sync`, `async`, `latest-successful`, `skip`),
-  preserving synchronous defaults while bounded async/latest evidence fails
-  closed to `HOLD` on timeout, invalid status, stale or incompatible latest
-  runs, missing artifacts, critical errors, or unavailable cancellation.
-- Practice Mode Close Spread now records server-side paper close orders with operator audit fields, so paper positions can be closed without calling live execution submit/dispatch endpoints.
-- Trade page Spread Execution now uses operator-facing Practice Mode wording, keeps live trading separate, and records Practice Mode entries as server-side paper trades without calling live execution submit/dispatch endpoints.
+- Added a hosted systemd timer installer for read-only signal-learning overlay
+  refreshes, keeping Trade Now's approved-universe artifact fresh without a
+  long-running shell loop, with artifact/log paths constrained under
+  `artifacts/signal_learning/`.
 - Rotated the pre-push Rust preflight bypass from legacy `SKIP_RUST_CHECKS=1` to reason-bearing `RUST_PREFLIGHT_OVERRIDE=<reason>`, with boolean-ish override values rejected fail-closed.
 - Pinned the Rust toolchain to channel `1.95` for local rustup-aware cargo invocations and CI, with CI logging the active toolchain before cargo checks.
 - `.githooks/pre-push` now autostashes unstaged and untracked work before running the Rust preflight so pushes check the staged tree, with `scripts/test-pre-push.sh` covering the restore paths.
 - `docs/27` live cue mismatch audit now reads `cue.selection_state` fields for stored champion, evaluated best, source, and validation state instead of legacy cue-selected fields.
 
-### Changed
-- Heavy strategy-service background workers now default disabled (`STRATEGY_REOPT_WORKER_ENABLED`, `STRATEGY_SAMPLED_SLIPPAGE_WORKER_ENABLED`, `STRATEGY_HISTORY_RETENTION_WORKER_ENABLED`) until the reoptimization path has explicit leases, budgets, and single-flight protection.
-- Recanonicalized legacy selected-signal rows remain repair-only on same-variant reevaluation; reoptimization no longer automatically graduates `RECANONICALIZED_LEGACY_ROW` provenance to `AUTO_CHAMPION`.
-
 ### Added
-- Strategy service reoptimization worker now uses the durable async run-state path when enabled: it enqueues a single-flight `strategy_reoptimize_runs` row, acquires a lease, writes progress/summary checkpoints, honors cancellation, enforces conservative run/timeframe/pair budgets, and completes fail-closed on budget exhaustion or errors while remaining disabled by default.
-- Strategy service now has disabled-by-default durable async reoptimization run-state persistence scaffolding, including `strategy_reoptimize_runs` lease/single-flight state, fail-closed expiry/cancellation helpers, and Postgres-backed repository tests without changing public reoptimize API behavior.
-- Added strict Slice A async reoptimization run contracts and examples for enqueue, status, cancel, and artifact manifest responses, including nullable request fingerprint/build identity evidence fields, without changing existing `/v1/strategy/pairs/reoptimize` semantics.
-- Trade Now rows now include an additive `z_score` alias that mirrors `spread_z` for operator diagnostics and live-z comparisons.
-- Strategy service background sampled-slippage and history-retention workers can now be disabled with explicit env flags, and their first automatic ticks are delayed until their configured interval instead of running immediately at startup.
-- Strategy service now short-caches expensive cue/trade-now/live-z response computations and caps ticker-style live-z windows to reduce CPU under repeated polling or stale browser bundles.
-- Trade page polling now avoids all-row live-z fan-out and uses timeframe-aware refresh cadence to reduce strategy-service CPU and network load while keeping the selected pair ticking.
-- Execution service now exposes `POST /v1/execution/paper/order-intent`, persists `execution_mode=PAPER` order lifecycle rows, and keeps live risk, live portfolio reads, stale-ack watchdog, and live observability scoped to `execution_mode=LIVE`.
 - Strategy service now exposes Prometheus-style `/metrics` counters for champion-selection observability:
   - `pairs_cue_projection_total{outcome}`
     - records `PROJECTED_BLOCKED` separately when champion projection succeeds but drift blocking keeps the cue non-actionable
   - `strategy_selection_transition_total{decision,timeframe}`
   - `strategy_selection_rows_updated_without_transition_total{timeframe}`
-- Trade Now now treats `RECANONICALIZED_LEGACY_ROW` selected-signal provenance as a distinct fail-closed provenance block (`RECANONICALIZED_LEGACY_ROW_ACTIVE`) until an explicit approved non-repair source replaces it.
 - Multi-agent operating model:
   - `AGENTS.md` §8 defines Local vs Remote agent roles, the canonical-source rule, work allocation defaults, branch/PR conventions, and a mandatory hydration sequence (`AGENTS.md` → `docs/AGENT_STATE.md` → `docs/playbooks/remote-agent-bootstrap.md` → task brief → code).
   - `docs/AGENT_STATE.md` is a living state file: sprint pin, in-flight work, blocked items, open follow-ups (S4/S6-S8 from Slice A review, B1-B6 from Slice B review including the new B6 Postgres-backed test harness item, X1-X2 cross-cutting), and update protocol. Curated by the local agent; deltas proposed by remote agents in their PRs.
@@ -197,6 +117,7 @@ This project follows SemVer as defined in `docs/02-versioning-and-releases.md`.
 - Slice B2 `Trade Now` strategy endpoint:
   - Added `GET /v1/strategy/pairs/trade-now`, which builds grouped `tradable_now`, `watchlist`, and `excluded` rows by combining live cue gates with the Slice B1 learning overlay policy.
   - The endpoint carries learning-overlay freshness metadata, selected-config provenance, and stable decision/watch/block reason codes that match the Slice A schema.
+  - Trade Now rows now include additive `selected_score_z` and `entry_distance_z` diagnostics (`abs(selected_score_z) - entry_band`) so setup-blocked watchlist rows can show how far the selected signal remains from the live entry threshold.
   - Added Rust-side contract drift protection: grouped-response orchestration tests plus a schema roundtrip validation against `specs/contracts/strategy_pairs_trade_now_response.schema.json`.
   - Current B2 scope remains strategy-service-local: `open_live_trade` is reported as `false` until a bounded execution-service position source is wired in a later slice.
 - Slice C `Trade Now` UI split:
@@ -766,18 +687,14 @@ This project follows SemVer as defined in `docs/02-versioning-and-releases.md`.
   - `GET /v1/execution/decision` returns `ALLOWED` for UI leg checks.
   - order-intent evaluation ignores kill-switch, integrity, reconcile, and risk gates in SIM mode.
   - live modes (`FAIL_CLOSED`, `LIVE_KRAKEN`) retain existing fail-closed gate behavior.
-- Trade page SIM gate bypass is now operator-armed from the Spread Execution panel
-  and remains unavailable unless the backend reports `SIMULATE_ACK`.
 - Trade panel now enforces executable lot-step sizing before submit:
   - spread size is quantized down to a pair-valid executable step for ENTRY/EXIT in UI,
     preventing server-side lot-step rejects (for example `PF_XRPUSD` with integer lots).
   - preview quantities now reflect actual executable submit size.
 
 ### Fixed
-- Strategy reoptimize worker no longer runs a full optimizer tick immediately on service boot, and
-  can be disabled with `STRATEGY_REOPT_WORKER_ENABLED=false` while keeping manual reoptimize
-  available.
-- Trade Now Pairs table columns now stay inside the Pairs frame at narrow window widths.
+- Trade-now historical quality now casts win/stop-rate aggregates to `DOUBLE PRECISION`,
+  preventing Postgres numeric deserialization panics when building the endpoint response.
 - Trade and Analytics now render champion projection failures as `BLOCKED`
   instead of displaying an untrustworthy stored champion variant.
 - Hosted compose wiring for execution dispatch mode:
@@ -815,5 +732,3 @@ This project follows SemVer as defined in `docs/02-versioning-and-releases.md`.
   explicit rationale provenance, and preserves the raw live `net_edge_bps` display.
 - Trade-now observability now tracks surfaced `LEARNING_ELIGIBLE_OVERRIDE` rows and applied
   `LEARNING_SELECTION_COST_OVERRIDE_APPLIED` rows alongside challenger-bypass suppressions.
-- Strategy `trade-now` historical-quality aggregates now cast ratio columns to `DOUBLE PRECISION`,
-  preventing live endpoint panics when reading `win_rate` and `stop_rate` from Postgres.

@@ -9,20 +9,29 @@
 
 | Field | Value |
 |---|---|
-| Last updated (UTC) | 2026-05-26 |
-| Updated by | codex/local |
-| Repo HEAD pin (committed) | `de9fee07e1baa0008c6475ac5b5b83323e581877` |
-| Pin branch | `main` |
-| Sprint base branch | `main` |
-| Pin notes | Post-PR #214 Slice F closeout plus creation of the separate production async enablement slice. The pin records `origin/main` after the operator accepted evidence bundle `slice_f_approved_manual_logs_20260525T092644Z` as the Slice F passing packet and explicitly closed Slice F with runtime left disabled. Production async enablement remains separate future work and does not authorize worker/scheduler enablement, live ENTRY/EXIT, automatic PROMOTE/REVERT, or repair-provenance graduation. |
+| Last updated (UTC) | 2026-06-01 |
+| Updated by | codex |
+| Repo HEAD pin (committed) | `da7fea96835796fd4f16f3e506745a44dffcbcef` |
+| Pin branch | `cherry-picked-from-rc-live-trial` |
+| Sprint base branch | `cherry-picked-from-rc-live-trial` |
+| Pin notes | State refreshed after the Apex harness governance scaffold landed on the sprint base as PR #217 at da7fea9. This curation intentionally records da7fea9 as the pre-curation anchor; after this curation commit lands, the pin should lag by one commit per the convention below. Recent sprint-base commits since the prior AGENT_STATE touch include host-lineage selection work, signal learning monitoring, Trade Now slices, blocked-cue projection classification, and the Apex harness scaffold; verify individual behavior from the referenced commits before claiming runtime details. |
 | Origin | `https://github.com/apexpark/cryptopairs.git` |
-| Working-tree state | Reoptimise runner Slices A-F are complete through the accepted bounded manual Slice F evidence packet. Operator accepted bundle `slice_f_approved_manual_logs_20260525T092644Z`, whose run `reopt_2026-05-25T09-27-53Z_000000` completed `SUCCEEDED` with `MANUAL_API` + `["1m"]`, no fail-closed reasons, `WITHIN_BUDGET`, complete scope-consistent artifacts, useful strategy-log evidence, and canonical checker result `READY_FOR_OPERATOR_REVIEW`. Runtime remains disabled: no scheduler, no worker, no live ENTRY/EXIT, no automatic PROMOTE/REVERT, and no repair-provenance graduation. Production async enablement is now tracked as a separate PAE slice beginning with repo-side evidence contract/checker work before any scheduled production window. |
+| Working-tree state | **Docs curation branch forked from clean sprint base** - this PR branch was created from `origin/cherry-picked-from-rc-live-trial` at da7fea9. The operator's primary local checkout has separate uncommitted work and is intentionally not used for this docs-only slice. |
 
 If the pin above is not reachable from `HEAD` via fast-forward, this file is stale; if `HEAD` is ahead of the pin, see §"Pin Convention".
 
 ---
 
 ## Currently In Flight
+
+### Active Sequence: Apex Harness And Live Refresh Readiness
+
+| Slice | Status | Owner | Notes |
+|---|---|---|---|
+| APEX-1 - Install Apex harness governance scaffold | **Merged to sprint base** | local | PR #217 landed at da7fea9 after Operator accepted Reviewer signoff for head ae4354df78f1cdb4397b6c27243176827afb426a. |
+| APEX-2 - Curate agent state and README precedence | **In progress** | local | This slice records the post-PR #217 state, fixes the `docs/README.md` precedence ambiguity for `docs/ops/**`, and preserves same-chat sub-agent review as advisory unless the Operator records an explicit exception. |
+| HOST-1 - Hetzner-enabled machine update | **Operator-only pending instructions** | operator | This docs-only curation does not require a service restart. Runtime checkout or deploy on Hetzner must happen from the Hetzner-enabled machine, preserve fail-closed execution posture, and follow `docs/playbooks/hosted-deployment-runbook.md`. |
+| LOCAL-1 - Dirty local follow-ups | **Pending separate slices** | local/remote | Operator-local review context has unresolved code/test follow-ups. Treat them as separate small slices: signal-learning report schema/producer alignment, web TypeScript/test fallout, selected-signal config persistence coverage, and CI blind-spot hardening. Verify each from repo artifacts before editing. |
 
 ### Sprint: Champion-Selection Integrity (docs/26 + docs/27)
 
@@ -32,8 +41,8 @@ Status snapshot of the four slices defined in `docs/26-champion-selection-integr
 |---|---|---|---|
 | Slice A — Separate evaluation from champion presentation | **Committed on sprint base** | local | Verified: schema validation passed; full `cargo test --workspace` passed in pre-push hook (covers `cue_for_pairs_response_*` × 5 + `evaluate_pair_honors_preferred_variant_override`); tsc passed. |
 | Slice B — Make transition accounting complete | **Committed on sprint base** | local | Verified: full `cargo test --workspace` passed in pre-push hook (covers `selection_transition_counts_*` × 3 + `reoptimize_response_serializes_transition_counts_at_top_level` + `update_persist_summary_for_transition_records_all_summary_counts`); clippy clean; reoptimize schema validation passed (0.2.0). |
-| Slice C — Remove incumbent bias in host runtime | **Reconciled on main; host deployed; observation active** | operator/local | PR #177 squash-merged the reviewed GitHub lineage onto `main` at `21286c6`, and operator deployed that exact commit to host. `/metrics` now exposes the projection/transition counters. Keep `STRATEGY_BLOCK_ON_CHAMPION_DRIFT=true` through the observation window. |
-| Slice D — Recanonicalize legacy rows | **Runtime guard deployed; observation active** | operator/local | Operator recanonicalized the 12 1m host rows from `LEGACY_ROW_FALLBACK` to `RECANONICALIZED_LEGACY_ROW`. Deployed `main` treats that source as repair-only and fail-closed (`RECANONICALIZED_LEGACY_ROW_ACTIVE`) until an explicit approved non-repair source replaces it. |
+| Slice C — Remove incumbent bias in host runtime | **Planning merged; implementation blocked on host-lineage import** | operator/local | Design proposal PR #166 (`3a44100`) recommends cherry-picking the host `rc/live-trial` lineage into a reviewable branch, then implementing neutral champion selection behind a rollout flag. Implementation must not start until the operator imports the host lineage and resolves the proposal's open decisions (see §"Blocked / Waiting On" and Slice-C-impl follow-up below). |
+| Slice D — Recanonicalize legacy rows | **Design proposal merged; implementation blocked on Slice C observation/operator approval** | unassigned | PR #174 (`38ccc01`) recommends dry-run-first, operator-confirmed recanonicalization with rollback/pre-image artifacts. Implementation must wait for Slice C neutral-selection observation evidence and operator approval of the proposal's open questions; recanonicalized rows remain repair-only, not trade-eligible. |
 
 ### Immediate Safety Action (still active)
 
@@ -42,93 +51,7 @@ Per `docs/26` §"Immediate Safety Action":
 - Live `ENTRY` / `EXIT` for this strategy runtime MUST stay disabled.
 - Cues are research-visible but NOT execution-trustworthy.
 
-Do not relax these during the 72-hour observation window.
-
-### Project: Bounded Async Reoptimization Runner
-
-Canonical design sources:
-
-- `docs/playbooks/reoptimise-runner-agent-brief.md`
-- `docs/proposals/reoptimise-background-runner-redesign.md`
-- `specs/contracts/strategy_reoptimize_run_*`
-- `specs/examples/strategy_reoptimize_run_*`
-- `docs/proposals/reoptimise-observability-runbook-plan.md`
-- `docs/proposals/reoptimise-api-script-migration-plan.md`
-
-Project objective: replace the unsafe extremes of disabled manual-only
-reoptimization and unbounded background work with a durable, bounded,
-observable, cancelable, fail-closed async reoptimization system.
-
-Hard invariants for every slice:
-
-- Default disabled; no production scheduler enablement without explicit
-  operator approval.
-- Existing `POST /v1/strategy/pairs/reoptimize` remains synchronous and
-  compatible until a separately approved versioned migration.
-- Unknown, stale, invalid, expired, canceled, degraded, or contradictory run
-  state maps to `HOLD` or `OPERATOR_REVIEW_REQUIRED`.
-- Lease loss, budget exhaustion, artifact failure, and missing telemetry fail
-  closed.
-- No automatic `PROMOTE`, no automatic `REVERT`, and no live `ENTRY` / `EXIT`
-  enablement.
-- No automatic graduation of repair-only provenance such as
-  `RECANONICALIZED_LEGACY_ROW`.
-- Host verification remains operator-only; agents must not claim SSH/runtime
-  evidence unless the operator provides it.
-- Heavy workers stay fail-closed by default until leases, budgets,
-  single-flight, observability, and canary evidence are implemented and
-  approved.
-
-Slice tracker:
-
-| Slice | Status | Owner | Notes |
-|---|---|---|---|
-| Slice A — async contracts and examples | **Committed on main** | remote/local | PR #192 / commit c94740e added enqueue, status, cancel, and artifact-manifest contracts and examples without changing runtime behavior. |
-| Slice B — durable run state and lease state machine | **Committed on main** | remote/local | PR #193 squash-merged at 3751ee56f059138e9a11c7238e0e68bc4bea7a71 from head 52fb6f8. Local verification passed: `cargo fmt --all -- --check`, `cargo clippy --workspace --all-targets -- -D warnings`, and `cargo test --workspace`. Explicit local Postgres-backed reoptimize tests were invoked with `--nocapture` and skipped per harness policy because `STRATEGY_TEST_DATABASE_URL` was unset; GitHub CI rust checks were green on the PR head. Scope stayed limited to canonical schema/init path, isolated strategy-service persistence/state-machine helpers, focused unit/Postgres tests, and `CHANGELOG.md`. No routes, scheduler loop, UI, scripts, or synchronous reoptimize behavior changed. |
-| Slice C — bounded runner loop | **Committed on main** | remote/local | PR #195 squash-merged at d38229bd7c2b7b8d174e064a9aa9bae4fd48f458 from reviewed head 78a118e. The implementation remains disabled by default and adds the bounded runner loop on top of Slice B state: durable single-flight enqueue/lease, conservative budgets, checkpointed pair/timeframe work, heartbeats, progress/summary writes, cancellation checks, and fail-closed terminal completion. Local verification passed: `cargo fmt --all -- --check`, `cargo clippy --workspace --all-targets -- -D warnings`, `cargo test --workspace`, explicit `cargo test -p strategy-service --test repository_integration -- --nocapture`, and `git diff --check`; local Postgres-backed test bodies skipped per harness because `STRATEGY_TEST_DATABASE_URL` was unset. GitHub CI was green on PR #195. No public API routes, UI, maintenance scripts, existing synchronous `/v1/strategy/pairs/reoptimize` behavior, automatic promotion, repair-provenance graduation, or host verification claims were added. |
-| Slice D — async API and script migration | **Committed on main** | remote/local | PR #197 / commit 880da1112a66e4ce58fb24cf354be0c82f2df173 landed the read/enqueue-only async run endpoint subset. PR #198 / commit a115ab785479cf54929cd59aee8f3b787f46a993 landed opt-in script modes (`sync`, `async`, `latest-successful`, `skip`) for report/maintenance scripts while preserving synchronous defaults and baseline skip behavior. Async/latest evidence uses bounded polling and fails closed to `HOLD` on timeout, invalid/unknown status, stale or incompatible latest evidence, missing artifacts, critical errors, fail-closed reasons, or unavailable cancellation. The existing synchronous `/v1/strategy/pairs/reoptimize` route remains unchanged; UI changes, production scheduler defaults, automatic promotion/revert, repair-provenance graduation, artifact download routes, and mutating cancellation remain deferred. |
-| Slice E — observability and runbooks | **Committed on main** | remote/local | PR #200 / commit df1690c8832359b316ce3206d16694b2e4c749fc adds bounded async reoptimization metrics, structured runner/API logs, and `docs/playbooks/async-reoptimization-runner-runbook.md` for the merged Slice C/D subset: lifecycle, active runs, enqueue outcomes, lease acquire/heartbeat/loss, budget exhaustion, pair/timeframe progress, cancellation observation/completion, fail-closed reasons, missing/unknown telemetry, terminal recommendations, status inspection, disable/rollback, stuck lease recovery, budget exhaustion response, artifact evidence, and Slice F readiness. Artifact read/download routes and artifact read/download metrics remain deferred. No production scheduler enablement, UI edits, automatic promotion/revert, repair-provenance graduation, or host verification claims are included. |
-| Slice F — production canary | **Complete; evidence accepted, runtime disabled** | operator/local | PRs #202-#213 added repo-side evidence gates/tooling, threshold approval contract, alert templates/checklists, fail-closed readiness checks, no-row status semantics, async artifact writing, scheduler/manual-run separation, PR #207-aligned evidence tooling, full-evidence state curation, pin curation, weak-log blocker curation, and approved evidence-pass curation. The operator accepted bundle `slice_f_approved_manual_logs_20260525T092644Z` as the Slice F passing evidence packet. Its approved bounded manual 1m canary run `reopt_2026-05-25T09-27-53Z_000000` completed `SUCCEEDED` with `MANUAL_API` + `["1m"]`, no fail-closed reasons, `WITHIN_BUDGET`, complete scope-consistent artifacts, useful strategy-log evidence, clean host identity at `bb28a6b`, scheduler enqueue disabled, and worker/scheduler disabled again after rollback. Runtime remains disabled; production enablement is separate future work. |
-| Production Async Enablement (PAE) — scheduled production enablement | **Proposed; not runtime approved** | remote/local + operator | New docs-only slice boundary in `docs/proposals/reoptimise-production-async-enablement-slice.md`. PAE starts with repo-side evidence contract/checker work for before/during/after enabled-window evidence and does not authorize `STRATEGY_REOPT_WORKER_ENABLED=true`, `STRATEGY_REOPT_SCHEDULER_ENQUEUE_ENABLED=true`, live ENTRY/EXIT, automatic PROMOTE/REVERT, or repair-provenance graduation. Operator approval is still required before any host scheduler window. |
-
-Future operator decisions before any separate production enablement:
-
-1. Production enablement evidence shape: new contract/checker or clearly
-   versioned checker mode for before/during/after enabled-window evidence.
-2. Initial runtime budgets: run wall-clock, timeframe wall-clock, pair counts,
-   pair concurrency, DB batch size, artifact bytes, cooldown, lease TTL, and
-   heartbeat interval.
-3. First scheduled canary timeframe, pair scope, scheduler cadence, enabled
-   window duration, and success thresholds.
-4. Cancellation authority and auth/audit boundary.
-5. Host artifact root, retention period, and download/access policy.
-6. Alert deployment/routing evidence and `threshold_approval` artifact.
-7. Canonical request/config fingerprint fields.
-8. Script migration defaults: stay sync, async opt-in, latest-successful, or
-   skip for each maintenance path.
-9. Long-term fate of `POST /v1/strategy/pairs/reoptimize`: compatibility
-   route, admin-only route, async wrapper, or deprecated route.
-
-Next safe sequence:
-
-1. Keep `STRATEGY_REOPT_WORKER_ENABLED=false` and
-   `STRATEGY_REOPT_SCHEDULER_ENQUEUE_ENABLED=false`; Slice F is closed as an
-   evidence-passed manual canary, not as production scheduler enablement.
-2. Do not enable live `ENTRY` / `EXIT`, automatic `PROMOTE` / `REVERT`, or
-   repair-provenance graduation from Slice F evidence.
-3. Any future enablement/canary step is a separate operator-approved slice and
-   must start with PAE-A evidence contract/checker work for before/during/after
-   scheduler-window evidence before any host flags are changed.
-   Preserve bounded scope, disabled defaults, explicit rollback, and evidence
-   capture.
-4. Keep the existing synchronous `/v1/strategy/pairs/reoptimize`
-   compatibility route unchanged unless a separate versioned migration is
-   approved.
-5. Treat public mutating cancellation, artifact download/read surfaces,
-   request/config fingerprint graduation, and production scheduler enablement
-   as separate follow-up decisions unless explicitly assigned.
-6. If implementation needs files
-   outside the slice boundary, stop and escalate per `AGENTS.md` §7.
+Do not relax these until Slice C is verified.
 
 ---
 
@@ -158,147 +81,22 @@ Source of truth for shipped behavior is `CHANGELOG.md` `## Unreleased` section. 
 - **Committed (`94c109e`)**: S6 projection-failed UI fix (PR #173) — Trade and Analytics render `CHAMPION_PROJECTION_FAILED` cues as `BLOCKED` instead of displaying an untrustworthy stored champion variant, with focused frontend coverage for failed, projected, projected-blocked, no-stored-champion, and legacy cue paths.
 - **Committed (`38ccc01`)**: Slice D recanonicalization design proposal (PR #174) — `docs/proposals/SLICE-D-recanonicalize-legacy-rows.md` recommends a dry-run-first, operator-confirmed maintenance action for legacy selected rows, gated on Slice C neutral-selection observation evidence, with row-level eligibility reasons, repair-only provenance, pre-image rollback artifacts, additive/versioned contracts, bounded metrics/logs, and operator-only host verification.
 - **Committed (`2d66495`)**: X3 reporting diagnostics design proposal (PR #175) — `docs/proposals/X3-reporting-alignment-diagnostics.md` recommends optional additive `selection_diagnostics` for backtest, live-z, paper-trades, and opportunity-history surfaces after Slice C observation, while preserving legacy `selected_variant` compatibility and deferring implementation/schema changes to a later PR.
-- **Committed (`21286c6`)**: Live-trial lineage reconciliation (PR #177) — `main` now contains the reviewed selection/Trade Now lineage, the host-deployed historical-quality cast hotfix, `/metrics` projection/transition observability, and the fail-closed `RECANONICALIZED_LEGACY_ROW_ACTIVE` Trade Now provenance block. Rust, Python, contracts, docs, and Vercel checks were green before merge; operator deployed the exact commit to host and verified safety gates stayed fail-closed.
-- **Committed (`d1a3eb9`)**: Reoptimise runner design/contract stack — PR #188 safety base, PR #189 bounded async runner proposal, PR #192 async reoptimization contracts/examples, PR #190 observability/runbook plan, and PR #191 API/script migration plan landed on `main` before Slice B implementation. Heavy workers remained fail-closed by default and host verification remained operator-only.
-- **Committed (`3751ee5`)**: Reoptimise runner Slice B (PR #193) — disabled-by-default durable async reoptimization run-state persistence scaffolding, `strategy_reoptimize_runs` lease/single-flight state, fail-closed expiry/cancellation helpers, artifact-manifest path containment, focused unit coverage, and Postgres-backed repository tests. Local verification passed fmt, clippy, and full workspace tests; local Postgres DB was unavailable, so explicit Postgres-backed tests skipped per harness policy while GitHub CI rust checks were green.
-- **Committed (`d38229b`)**: Reoptimise runner Slice C (PR #195) — disabled-by-default bounded async runner loop on Slice B durable state, with lease-gated mutation work, conservative budgets, checkpointed pair/timeframe processing, heartbeats, cancellation checks, fail-closed budget/cancellation terminal behavior, and focused unit/repository coverage. Local verification passed fmt, clippy, full workspace tests, explicit repository integration invocation, and diff check; local Postgres DB was unavailable so fixture bodies skipped per harness policy while GitHub CI was green. No public API routes, scheduler production enablement, UI, maintenance scripts, synchronous reoptimize behavior change, automatic promotion, repair-provenance graduation, or host verification claim landed.
-- **Committed (`880da11`)**: Reoptimise runner Slice D endpoint subset (PR #197) — strategy-service exposes read/enqueue-only async run APIs (`POST /v1/strategy/reoptimize/runs`, `GET /v1/strategy/reoptimize/runs/latest`, `GET /v1/strategy/reoptimize/runs/{run_id}`) on top of Slice C durable state. Enqueue fails closed while the disabled-by-default async worker is off, compatible active runs can be attached, and the existing synchronous `/v1/strategy/pairs/reoptimize` route remains unchanged. Cancellation, artifact download routes, script migration, UI changes, scheduler production enablement, automatic promotion/revert, repair-provenance graduation, and host verification were deferred.
-- **Committed (`a115ab7`)**: Reoptimise runner Slice D script migration (PR #198) — tuning report and maintenance cycle scripts now support explicit `sync`, `async`, `latest-successful`, and `skip` reoptimization modes while preserving synchronous/default compatibility. Async/latest evidence uses bounded polling and fails closed to `HOLD` on unknown, stale, schema-invalid, timed-out, degraded, canceled, or artifact-missing state. No scheduler production enablement, automatic promotion/revert, repair-provenance graduation, artifact download route, mutating cancellation route, UI change, or host verification claim landed.
-- **Committed (`df1690c`)**: Reoptimise runner Slice E observability and runbooks (PR #200) — strategy-service exposes bounded async reoptimization metrics/logs for lifecycle, active runs, enqueue, leases, budgets, progress, cancellation, fail-closed, missing telemetry, unknown status, terminal timeframe status, and terminal recommendations. `docs/playbooks/async-reoptimization-runner-runbook.md` covers status inspection, disable/rollback, cancellation handling, stuck lease recovery, budget exhaustion, missing telemetry, artifact evidence, and Slice F readiness. Artifact read/download routes and artifact read/download metrics remain deferred; production canary remains operator-only.
-- **Committed (`8524067`)**: Slice F evidence gates (PR #202) — added the Slice F canary evidence manifest contract, pass/fail examples, semantic checker, and capture-only runbook guidance for alert readiness, CPU/hot endpoint threshold evidence, useful strategy logs, status payload checks, live ENTRY/EXIT disabled proof, PROMOTE/REVERT confirmation gates, and repair-provenance blocking. This did not configure host alerting or claim host verification.
-- **Committed (`e28a4df`)**: Slice F evidence tooling hardening — added fail-closed raw bundle manifest generation, alert-rule templates plus template validation, a zero-row repair-provenance example, and stricter semantic checks for dirty host identity, runner/scheduler enablement, fail-closed status, required artifacts, and repair-provenance-active deltas. Repo-side templates are not deployed alert evidence.
-- **Committed (`2394648`)**: Slice F readiness evidence hardening (PR #204) — added the `slice_f_threshold_approval` contract/example, made threshold approval a required artifact, taught the raw bundle generator to consume it, added a deployable-but-not-applied alert checklist, and made missing latest async durable state a schema-valid fail-closed status payload with `OPERATOR_REVIEW_REQUIRED`, `MISSING_TELEMETRY`, and `UNKNOWN_STATUS`.
-- **Committed (`0328b46`)**: Async reoptimization artifact writing (PR #205) — terminal runs now write request, progress, summary, errors, and operator-summary artifacts under `STRATEGY_REOPT_ARTIFACT_ROOT`, compute SHA-256 digests with pinned `sha2` `0.10.9`, persist a contract-shaped manifest in `strategy_reoptimize_runs.artifact_manifest_json`, and fail closed with `ARTIFACT_FAILED` if artifact writing or manifest validation fails. Artifact read/download routes, host verification, scheduler enablement, automatic promotion/revert, and live ENTRY/EXIT remain deferred.
-- **Committed (`905cc08`)**: Slice F rerun state curation (PR #206) — refreshed this state file after the operator-captured canary failed closed, recorded the `MANUAL_API`/`SCHEDULED` scope mismatch and repeated scheduled `DEGRADED` runs, and kept Slice F on `KEEP_DISABLED_KEEP_HOLD` pending a repo-side scheduler/manual-run separation fix.
-- **Committed (`07ee4ed`)**: Scheduler/manual-run separation (PR #207) — added default-off `STRATEGY_REOPT_SCHEDULER_ENQUEUE_ENABLED`, kept `STRATEGY_REOPT_WORKER_ENABLED` as worker-drain only, persisted `trigger_source` and `requested_timeframes` through status/summaries/artifacts/manifests, and fail-closed contradictory scope evidence. Operator-captured reduced manual canary evidence later proved a one-pair `MANUAL_API` + `["1m"]` run could complete `SUCCEEDED` with schema/hash-valid artifacts and no scheduled enqueue.
-- **Committed (`7473da6`)**: Reduced Slice F manual canary state curation (PR #208) — recorded the operator-provided reduced one-pair manual canary evidence while keeping full Slice F readiness blocked pending the complete operator-only evidence gate.
-- **Committed (`97213ba`)**: Slice F evidence tooling alignment (PR #209) — updated the raw bundle generator/checker to recognize `STRATEGY_REOPT_SCHEDULER_ENQUEUE_ENABLED`, keep successful `PROMOTION_CANDIDATE_AVAILABLE` as evidence-only review state, and document that `EXECUTION_DISPATCH_MODE` must be captured from `cryptopairs-execution-service`.
-- **Committed (`0eed63b`)**: Slice F full evidence state curation (PR #210) — recorded the operator-provided full evidence bundle `slice_f_full_evidence_20260525T071215Z`, its canonical checker result `READY_FOR_OPERATOR_REVIEW`, and the continued disabled/operator-only runtime posture.
-- **Committed (`e8a99d0`)**: Slice F evidence pin curation (PR #211) — pinned this state file to the PR #210 full-evidence state and preserved the operator-review-only runtime posture.
-- **Committed (`bb28a6b`)**: Slice F approved-canary log blocker curation (PR #212) — recorded that the first approved bounded manual canary run succeeded but still failed the canonical evidence checker on `WEAK_STRATEGY_LOGS`, preserving `KEEP_DISABLED_KEEP_HOLD` until useful strategy logs were recaptured.
-- **Committed (`9074df9`)**: Slice F approved-canary evidence pass curation (PR #213) — recorded the recaptured approved-log bundle `slice_f_approved_manual_logs_20260525T092644Z`, canonical checker result `READY_FOR_OPERATOR_REVIEW`, no stop conditions, and continued disabled/operator-only runtime posture.
-- **Committed (`de9fee0`)**: Slice F closeout (PR #214) — recorded the operator decision accepting `slice_f_approved_manual_logs_20260525T092644Z` as the Slice F passing evidence packet, closed Slice F as complete, and explicitly kept runtime disabled: no worker, scheduler, live ENTRY/EXIT, automatic PROMOTE/REVERT, or repair-provenance graduation.
+- **Committed (`da7fea9`)**: Apex harness governance scaffold (PR #217) — installs `docs/ops/README.md`, `docs/ops/ai_workflow.md`, `docs/ops/codex_prompt_pack.md`, `docs/research/packets/template.md`, `docs/research/packets/01-agentic-harness.md`, `.github/pull_request_template.md`, and docs index updates. The workflow preserves `AGENTS.md` as highest precedence, keeps required independent review cross-agent under current rules, treats same-chat sub-agent review as advisory unless the Operator records an explicit exception, and leaves protected-path enforcement as a proposal only.
 
 ---
 
-## Completed / Accepted Evidence
-
-### Slice F Production Canary (complete; runtime disabled)
-
-Repo-side Slice F evidence gates, readiness tooling, no-row status semantics,
-async artifact writing, scheduler/manual-run separation, and evidence-tooling
-alignment are merged on `main`, and full-evidence state curation, pin
-curation, weak-log blocker curation, and approved evidence-pass curation are
-recorded as of `de9fee07e1baa0008c6475ac5b5b83323e581877`.
-
-Operator-captured evidence showed:
-
-1. The pre-PR #207 canary failed closed: `DEGRADED`, recommendation `HOLD`,
-   with `BUDGET_EXHAUSTED`; artifact writing passed schema/hash
-   verification, but manual/status scope disagreed with request/artifact
-   scope and the scheduler continued producing scheduled `DEGRADED` runs.
-2. PR #207 landed the repo-side scheduler/manual separation fix.
-3. After PR #207 deployment, a full-pair manual 1m run preserved consistent
-   `MANUAL_API` + `["1m"]` scope across status, DB row, request, summary, and
-   artifact manifest, and proved `SCHEDULED/ENQUEUED=0`; it still failed
-   closed with `DEGRADED` / `HOLD` / `BUDGET_EXHAUSTED`.
-4. A reduced one-pair manual 1m canary then succeeded:
-   `reopt_2026-05-25T01-27-45Z_000000`, `SUCCEEDED`,
-   `PROMOTION_CANDIDATE_AVAILABLE`, no fail-closed reasons,
-   `WITHIN_BUDGET`, `MANUAL_API` + `["1m"]`, schema/hash-valid artifacts,
-   `SCHEDULED/ENQUEUED=0`, `MANUAL_API/ENQUEUED=1`, and active async gauges
-   zero after disable.
-5. Disable proof after the reduced canary restored the full pair list and kept
-   `STRATEGY_REOPT_WORKER_ENABLED=false` and
-   `STRATEGY_REOPT_SCHEDULER_ENQUEUE_ENABLED=false`.
-6. A later full evidence/checker attempt stayed fail-closed before readiness:
-   host evidence showed both reoptimization flags disabled, but exposed
-   repo-side evidence tooling drift from PR #207: the raw-bundle generator
-   looked for legacy scheduler env names, and the operator capture command
-   gathered `EXECUTION_DISPATCH_MODE` from the strategy-service container
-   instead of the execution-service container. Treat this as repo-side evidence
-   tooling/runbook drift, not a reason to relax the checker or hand-edit
-   evidence.
-7. PR #209 fixed that evidence-tooling drift. The operator then captured
-   bundle `slice_f_full_evidence_20260525T071215Z` and provided it locally at
-   `/tmp/cryptopairs-slice-f/slice_f_full_evidence_20260525T071215Z.tgz`.
-   Local verification against current `origin/main` passed:
-   `tools/scripts/slice_f_evidence_check.py --verify-files` returned
-   `pass=true`, `recommended_action=READY_FOR_OPERATOR_REVIEW`, and
-   `errors=[]`. The manifest records clean host identity at `97213ba`, bundle
-   root outside `/opt/cryptopairs`, worker/scheduler disabled before/after,
-   live ENTRY/EXIT disabled, PROMOTE/REVERT confirmation-gated, repair
-   provenance blocked, threshold approval captured, alerting ready, useful
-   disabled-state logs, and no stop conditions.
-8. The operator then explicitly approved a bounded Slice F manual canary:
-   manual API only, 1m timeframe, reduced pair scope, worker drain enabled only
-   for the window, scheduler enqueue disabled, live ENTRY/EXIT disabled,
-   automatic PROMOTE/REVERT disabled, repair-provenance graduation not
-   approved, current conservative budgets, operator rollback/evidence owner,
-   and post-window worker/scheduler disabled.
-9. The approved canary bundle
-   `/tmp/cryptopairs-slice-f/slice_f_approved_manual_20260525T085748Z.tgz`
-   showed the run itself succeeded: `reopt_2026-05-25T08-58-57Z_000000`,
-   terminal `SUCCEEDED`, `MANUAL_API` + `["1m"]`, no fail-closed reasons,
-   `WITHIN_BUDGET`, complete artifact manifest with `MANUAL_API` + `["1m"]`,
-   `total_bytes=3194`, host identity clean at `e8a99d0`, canary flags
-   `STRATEGY_PAIRS=PF_XBTUSD:PF_ETHUSD`,
-   `STRATEGY_TIMEFRAMES=1m`,
-   `STRATEGY_REOPT_WORKER_ENABLED=true`, and
-   `STRATEGY_REOPT_SCHEDULER_ENQUEUE_ENABLED=false`, followed by rollback to
-   `STRATEGY_REOPT_WORKER_ENABLED=false` and
-   `STRATEGY_REOPT_SCHEDULER_ENQUEUE_ENABLED=false`.
-10. The same approved canary bundle did **not** clear the canonical readiness
-    checker. Local verification against current `origin/main` returned
-    `pass=false`, `recommended_action=KEEP_DISABLED_KEEP_HOLD`, and stop
-    condition `WEAK_STRATEGY_LOGS`. The captured `strategy_logs_before.log`
-    contained build/dependency output and lacked required async runtime events
-    such as `reoptimize_run_enqueued`, `reoptimize_lease_acquired`, or
-    `reoptimize_recommendation_finalized`, and it also lacked explicit
-    disabled-state evidence. Treat this as an evidence-capture blocker, not a
-    run failure and not a reason to relax the checker.
-11. The operator then provided recaptured approved-log evidence bundle
-    `/tmp/cryptopairs-slice-f/slice_f_approved_manual_logs_20260525T092644Z.tgz`.
-    Local verification against current `origin/main` passed:
-    `tools/scripts/slice_f_evidence_check.py --verify-files` returned
-    `pass=true`, `recommended_action=READY_FOR_OPERATOR_REVIEW`, and
-    `errors=[]`. The manifest generator returned `overall_pass=true` with
-    `stop_conditions=[]` and `host_verification_claimed_by_agent=false`.
-    Terminal status for run `reopt_2026-05-25T09-27-53Z_000000` was
-    `SUCCEEDED`, `MANUAL_API` + `["1m"]`, no fail-closed reasons,
-    `WITHIN_BUDGET`, and a complete artifact manifest with
-    `trigger_source=MANUAL_API`, `requested_timeframes=["1m"]`, and
-    `total_bytes=3194`. Post-window flags show
-    `STRATEGY_REOPT_WORKER_ENABLED=false` and
-    `STRATEGY_REOPT_SCHEDULER_ENQUEUE_ENABLED=false`.
-
-This clears the bounded manual-run evidence gate for operator review, but it
-does not authorize `STRATEGY_REOPT_WORKER_ENABLED`,
-`STRATEGY_REOPT_SCHEDULER_ENQUEUE_ENABLED`, live `ENTRY` / `EXIT`, automatic
-`PROMOTE`, automatic `REVERT`, or repair-provenance graduation.
-On 2026-05-26, the operator accepted
-`/tmp/cryptopairs-slice-f/slice_f_approved_manual_logs_20260525T092644Z.tgz`
-as the Slice F passing evidence packet and closed Slice F with runtime left
-disabled.
-
-Agents must not SSH to `cryptopairs`, enable `STRATEGY_REOPT_WORKER_ENABLED`,
-enable a production scheduler, start canary jobs, enable live ENTRY/EXIT,
-automate PROMOTE/REVERT, or graduate repair-only provenance from repo state
-alone.
-
 ## Blocked / Waiting On
 
-### B-Host-Lineage (deployed; 72-hour observation active)
+### B-Host-Lineage (planning unblocked; host lineage still divergent)
 
-Operator deployed `origin/main` commit `21286c6b2cf3bce5d951e621ca341ba73d175103` to host on **2026-05-10**. Host tree was clean after deploy, branch was `main`, `/metrics` returned HTTP 200 and exposed `pairs_cue_projection_total`, `strategy_selection_transition_total`, and `strategy_selection_rows_updated_without_transition_total`. Safety remained fail-closed: `STRATEGY_BLOCK_ON_CHAMPION_DRIFT=true`, `EXECUTION_DISPATCH_MODE=fail_closed`, `OPERATOR_PROMOTION` unset, open trade count zero, and no live ENTRY/EXIT activation evidence.
+Operator captured the `docs/27` read-only host verification outputs on **2026-05-05 02:29:31Z**. Those outputs are enough to unblock **Slice C planning** against the live host facts. The host branch is still divergent and dirty, so **host-specific implementation work** remains contingent on pulling the lineage into a reviewable local branch.
 
-T0 Trade Now verification showed `trade_now=0`, `watchlist=0`, `excluded=48`; all 12 `RECANONICALIZED_LEGACY_ROW` rows were excluded with `decision_reason_code=PROVENANCE_POLICY_BLOCKED`, `blocked_reason_code=RECANONICALIZED_LEGACY_ROW_ACTIVE`, and `legacy_fallback_active=false`.
+Remaining operator-only step for implementation, if Slice C planning leads to code work:
+1. Pull the host runtime lineage into a local reviewable branch (or merge it back to `origin`) before any host-specific implementation PR is approved.
 
-T+24 observation on **2026-05-10T22:49Z** showed host still clean at `21286c6b2cf3bce5d951e621ca341ba73d175103`, `/metrics` still healthy, selection accounting gap counters at zero, and Trade Now at `trade_now=0`, `watchlist=8-9`, `excluded=39`. Current blockers are learning/provenance/live-gate conditions, not deployment or metrics. Continue read-only T+48 and T+72 capture; do not enable live ENTRY/EXIT, set `OPERATOR_PROMOTION`, mutate selected rows, or expand the approved universe during the window.
+Neither the local nor any remote agent has SSH access to `cryptopairs`. This is operator-only.
 
-Neither the local nor any remote agent has SSH access to `cryptopairs`. Host verification remains operator-only.
-
-Prior 2026-05-05 repository identity raw output:
+Repository identity raw output:
 
 ```text
 4dd118242414d38ad33ae50bb433d4988d5276da
@@ -675,21 +473,6 @@ Follow-ups carried forward from prior reviews. Ordered by source review then sev
 |---|---|---|---|
 | Slice-C-impl | **HIGH** | Import the host `rc/live-trial` lineage into a reviewable local branch, then implement neutral champion selection so stored champion config is comparison input only, not challenger preselection input. | **blocked on operator import/decisions** — design proposal PR #166 (`3a44100`) recommends a cherry-picked host import branch and feature-flagged neutral selection canary. Operator must choose import path, dirty-host-state handling, rollout path, observation window/success thresholds, and host verification owner before implementation PR review. |
 
-### From Slice F operator rerun evidence
-
-| ID | Severity | Description | Status |
-|---|---|---|---|
-| SF1 | **HIGH** | Implement scheduler/manual-run separation for async reoptimization canaries. Operator-captured evidence showed manual/status scope reporting `MANUAL_API` + `["1m"]` while artifacts/request reflected `SCHEDULED` + `["1m","15m","1h"]`, and the scheduler kept producing repeated scheduled `DEGRADED` runs while enabled. The implementation must make manual canary status, request artifacts, trigger source, and requested timeframes agree; prevent scheduled runs from contaminating manual canary evidence; preserve single-flight, budget, lease, disable, and fail-closed behavior; and include focused Rust tests plus any required contract/example updates. | **resolved by PR #207 (`07ee4ed`) plus PR #209 (`97213ba`) and operator evidence** — scheduler/manual separation landed, evidence tooling was aligned to the new scheduler gate, and bundle `slice_f_full_evidence_20260525T071215Z` passed the canonical checker with `READY_FOR_OPERATOR_REVIEW`. |
-
-### From Production Async Enablement slice
-
-| ID | Severity | Description | Status |
-|---|---|---|---|
-| PAE-A | **HIGH** | Add production async enablement evidence tooling that models before/during/after scheduler windows without relaxing the completed Slice F checker. It should include a new contract or clearly versioned checker mode, pass/fail examples, raw-bundle generation, semantic checker coverage, mandatory artifact-manifest validation, explicit scheduled trigger/timeframe agreement, active-gauge lifecycle checks, and fail-closed behavior for missing/contradictory evidence. | open; first repo-side step before any host scheduler flag changes |
-| PAE-B | **HIGH** | Graduate deterministic request/config fingerprint and service-version evidence for async reoptimization status/artifacts so production enablement and `latest-successful` consumers can reject stale or incompatible successful runs instead of trusting nullable compatibility placeholders. | open; can proceed after or alongside PAE-A if scoped separately |
-| PAE-C | **HIGH** | Operator-only first scheduled canary after PAE-A is merged and explicitly approved. Approval must name timeframe scope, pair scope, scheduler cadence/window, budgets, success threshold, abort rule, rollback owner, evidence owner, and exact runtime flags. Agents validate operator-provided bundles only; they do not SSH or enable host flags. | blocked on PAE-A plus explicit operator approval |
-| PAE-D | medium | Define steady-state ramp criteria after a passing scheduled canary: repeated-run threshold, alert owner, artifact retention/access policy, rollback rehearsal cadence, scheduler cadence, and maintenance/report consumption defaults. | open; blocked on PAE-C evidence |
-
 ### Cross-cutting
 
 | ID | Severity | Description | Status |
@@ -709,14 +492,15 @@ Follow-ups carried forward from prior reviews. Ordered by source review then sev
 
 Pickable items, in priority order:
 
-1. **Remote/local agent: PAE-A production async evidence tooling** — add the separate production enablement contract/checker or versioned checker mode described in `docs/proposals/reoptimise-production-async-enablement-slice.md`. Do not relax the completed Slice F checker and do not enable host flags.
-2. **Remote/local agent: PAE-B async request/config identity** — graduate deterministic request/config fingerprint and service-version evidence before steady-state production scheduler use or `latest-successful` trust expansion.
-3. **Remote/local agent: other async hardening follow-ups** — if separately approved, handle deferred mutating cancellation auth/audit, artifact read/download surfaces, or additional scheduler/canary refinements as separate slices without making legacy or repair-only provenance trade-eligible.
-4. **Operator/local agent: continue any remaining Champion-Selection observation capture** — preserve fail-closed runtime settings and compare Trade Now buckets, blocked reasons, opportunity history, paper trades, and drift events against prior captures.
-5. **Remote/UI agent: Trade Now observation UI** — improve the web UI for the current observation window using existing Trade Now and observability contracts; do not add controls that mutate runtime state.
-6. **Remote/local agent: X3 implementation** — only after reconciled deployment is observed; implement PR #175's optional/additive reporting diagnostics while preserving legacy `selected_variant`.
-7. **Remote/local agent: blocker-specific strategy follow-up** — only after T+72, target the blocker shown by evidence (learning hold/not eligible, live setup/cost gates, or approved-universe policy) rather than weakening Trade Now safety gates.
-8. **Operator-only: future production async enablement** — out of scope for completed Slice F. Any future worker/scheduler enablement requires PAE-A tooling plus a new explicit approval naming scope, budgets, abort rule, rollback owner, evidence owner, and exact runtime flags.
+1. **Local agent: finish APEX-2 curation** - merge the `docs/README.md` precedence cleanup and this `docs/AGENT_STATE.md` refresh only after exact-SHA review and Operator authorization.
+2. **Operator action: Hetzner repo update decision** - decide whether the Hetzner-enabled machine should receive a repo-only checkout update to the accepted sprint-base SHA, or a runtime service refresh. A docs-only update needs no container restart; any runtime refresh must preserve fail-closed settings and follow `docs/playbooks/hosted-deployment-runbook.md`.
+3. **Local/remote agents: local dirty-work cleanup sequence** - split unresolved local follow-ups into separate reviewable PRs: signal-learning report schema/producer alignment, web TypeScript/test fallout, selected-signal config persistence coverage, and CI hardening for web/contract/tools checks. Verify each issue from repo artifacts before claiming it.
+4. **Operator action: Slice C import decision/import** - choose the import path from PR #166 (recommended: cherry-pick host-only `rc/live-trial` commits onto `cherry-picked-from-rc-live-trial`) and import the host lineage into a local reviewable branch before any Slice C implementation PR is approved.
+5. **Remote/local agent: Slice C implementation** - only after host lineage import and operator decisions; implement neutral champion selection behind the approved rollout path, preserve Slice A/B semantics, and add B6 pg-backed tests.
+6. **Operator/local agent: Slice C observation capture** - after Slice C implementation/deployment, capture the neutral-selection observation evidence required by the Slice D and X3 proposals before either follow-up implementation starts.
+7. **Remote/local agent: Slice D implementation** - only after Slice C observation and operator approval of PR #174's open questions; implement dry-run-first recanonicalization without making legacy or repair-only provenance trade-eligible.
+8. **Remote/local agent: X3 implementation** - only after Slice C lands and is observed; implement PR #175's optional/additive reporting diagnostics while preserving legacy `selected_variant`.
+9. **Operator action (long-term cleanup)** - PR the full agent-docs chain from `cherry-picked-from-rc-live-trial` to `main` when ready, then flip Sprint base branch in §Pin to `main`.
 
 ---
 

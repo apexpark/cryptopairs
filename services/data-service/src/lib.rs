@@ -70,8 +70,12 @@ pub fn build_router(state: AppState) -> Router {
         .with_state(state)
 }
 
-async fn health() -> Json<HealthResponse> {
-    Json(HealthResponse { status: "ok" })
+async fn health(State(state): State<AppState>) -> Result<Json<HealthResponse>, ApiError> {
+    state.repository.health_check().await.map_err(|error| {
+        warn!(error = %error, "data-service health repository check failed");
+        ApiError::SourceUnavailable(error.to_string())
+    })?;
+    Ok(Json(HealthResponse { status: "ok" }))
 }
 
 async fn query_data(
@@ -410,9 +414,29 @@ fn normalization_warning_code(
 
 #[cfg(test)]
 mod tests {
-    use super::{align_bounds_to_step, normalize_request_window};
+    use super::{align_bounds_to_step, health, normalize_request_window, AppState};
+    use crate::repository::{MarketDataRepository, UnconfiguredRepository};
+    use axum::{extract::State, http::StatusCode, response::IntoResponse};
     use chrono::{TimeZone, Utc};
     use common_types::{DataQueryRequest, Timeframe};
+    use kraken_adapter::{KrakenFuturesRestClient, MarketDataAdapter};
+    use std::sync::Arc;
+
+    #[tokio::test]
+    async fn health_returns_503_when_repository_check_fails() {
+        let status = request_health_status(Arc::new(UnconfiguredRepository)).await;
+        assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
+    }
+
+    async fn request_health_status(repository: Arc<dyn MarketDataRepository>) -> StatusCode {
+        let state = AppState {
+            repository,
+            adapter: Arc::new(KrakenFuturesRestClient::new("http://127.0.0.1"))
+                as Arc<dyn MarketDataAdapter>,
+            integrity_threshold_pct: 0.95,
+        };
+        health(State(state)).await.into_response().status()
+    }
 
     #[test]
     fn align_bounds_ceil_start_and_floor_end() {
