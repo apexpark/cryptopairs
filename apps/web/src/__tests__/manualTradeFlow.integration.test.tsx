@@ -25,7 +25,6 @@ const api = vi.hoisted(() => ({
   dispatchOrderIntent: vi.fn(),
   fetchExecutionDispatchMode: vi.fn(),
   fetchExecutionDecision: vi.fn(),
-  fetchExecutionOpenTrades: vi.fn(),
   fetchExecutionPortfolioPositions: vi.fn(),
   fetchKillSwitchState: vi.fn(),
   fetchMarketMetrics: vi.fn(),
@@ -40,7 +39,6 @@ const api = vi.hoisted(() => ({
   fetchStrategyTradeNowObservability: vi.fn(),
   fetchStrategyUiAuthStatus: vi.fn(),
   submitOrderIntent: vi.fn(),
-  submitPaperOrderIntent: vi.fn(),
   updateKillSwitchState: vi.fn(),
   verifyStrategyUiAccess: vi.fn(),
 }));
@@ -173,6 +171,7 @@ beforeEach(() => {
         selected_variant: "ROBUST_Z",
         direction_hint: "LONG_SPREAD",
         spread_z: -2.1,
+        entry_distance_z: 0.3,
         opportunity_score: 0.77,
         confidence_band: "MEDIUM",
         expected_hold_bars: 42,
@@ -337,14 +336,12 @@ beforeEach(() => {
     .mockResolvedValueOnce({
       exchange: "kraken_futures",
       account_id: "primary",
-      execution_mode: "PAPER",
       generated_at: "2026-02-20T00:00:00Z",
       positions: [],
     })
     .mockResolvedValue({
       exchange: "kraken_futures",
       account_id: "primary",
-      execution_mode: "PAPER",
       generated_at: "2026-02-20T00:00:10Z",
       positions: [
         {
@@ -356,41 +353,12 @@ beforeEach(() => {
         },
       ],
     });
-  api.fetchExecutionOpenTrades.mockResolvedValue({
-    exchange: "kraken_futures",
-    account_id: "primary",
-    execution_mode: "PAPER",
-    generated_at: "2026-02-20T00:00:00Z",
-    warnings: [],
-    trades: [],
-  });
 
   api.submitOrderIntent.mockImplementation(async (payload: any) => ({
     ...payload,
-    execution_mode: "LIVE",
     decision: "ACCEPTED",
     reason: null,
     evaluated_at: "2026-02-20T00:00:00Z",
-  }));
-  api.submitPaperOrderIntent.mockImplementation(async (payload: any) => ({
-    schema_version: "1.0.0",
-    intent: {
-      ...payload,
-      execution_mode: "PAPER",
-      decision: "ACCEPTED",
-      reason: null,
-      evaluated_at: "2026-02-20T00:00:00Z",
-    },
-    dispatch: {
-      idempotency_key: payload.idempotency_key,
-      result: "ACKNOWLEDGED",
-      from_state: "APPROVED",
-      to_state: "ACKNOWLEDGED",
-      exchange_order_id: `paper-${payload.idempotency_key}`,
-      reason: "paper ack",
-      attempted_at: "2026-02-20T00:00:00Z",
-    },
-    recorded_at: "2026-02-20T00:00:00Z",
   }));
   api.dispatchOrderIntent.mockImplementation(async (payload: any) => ({
     idempotency_key: payload.idempotency_key,
@@ -446,7 +414,7 @@ describe("manual trade flow", () => {
     fireEvent.change(spreadUnitsInput, { target: { value: spreadUnitsInput.min || "1" } });
     fireEvent.blur(spreadUnitsInput);
 
-    fireEvent.click(screen.getByLabelText(/Live Armed/i));
+    fireEvent.click(screen.getByLabelText(/Live Trading Armed/i));
     await waitFor(() => {
       expect(screen.getByRole("button", { name: "Long Spread Entry" })).not.toBeDisabled();
     });
@@ -468,168 +436,8 @@ describe("manual trade flow", () => {
       ).toBeInTheDocument();
       expect(api.fetchExecutionPortfolioPositions).toHaveBeenCalledWith(
         "kraken_futures",
-        "primary",
-        "LIVE"
+        "primary"
       );
     });
-  });
-
-  it("records server paper trades while live execution remains locked", async () => {
-    api.fetchExecutionDispatchMode.mockResolvedValue({
-      mode: "FAIL_CLOSED",
-      requires_live_arm: false,
-    });
-    api.fetchKillSwitchState.mockResolvedValue({
-      active: true,
-      reason: "operator safety hold",
-      updated_at: "2026-02-20T00:00:00Z",
-    });
-    api.fetchExecutionDecision.mockResolvedValue({
-      instrument: LEFT,
-      timeframe: "1m",
-      decision: "BLOCKED",
-      reason: "integrity gate blocked signal: test",
-      min_coverage_pct: 99.5,
-      evaluated_at: "2026-02-20T00:00:00Z",
-    });
-    api.fetchReconcile.mockResolvedValue({
-      reconcile: {
-        exchange: "kraken_futures",
-        account_id: "primary",
-        ts: "2026-02-20T00:00:00Z",
-        status: "NOT_OK",
-        drift_notional: 125,
-        notes: "test drift",
-      },
-    });
-
-    render(<App />);
-
-    await waitFor(() => {
-      expect(api.fetchExecutionDispatchMode).toHaveBeenCalled();
-      expect(screen.getByText("Practice On")).toBeInTheDocument();
-    });
-
-    const longEntryButton = screen.getByRole("button", { name: "Long Spread Entry" });
-    expect(longEntryButton).not.toBeDisabled();
-    expect(screen.getByRole("button", { name: "Stop Practice Mode" })).toBeInTheDocument();
-
-    fireEvent.click(longEntryButton);
-
-    await waitFor(() => {
-      expect(
-        screen.getByText((content) =>
-          content.includes("Last action: Paper trade recorded on the server. No exchange order was sent.")
-        )
-      ).toBeInTheDocument();
-    });
-    expect(api.submitPaperOrderIntent).toHaveBeenCalledTimes(2);
-    expect(api.submitOrderIntent).not.toHaveBeenCalled();
-    expect(api.dispatchOrderIntent).not.toHaveBeenCalled();
-    expect(api.fetchExecutionPortfolioPositions).toHaveBeenCalledWith(
-      "kraken_futures",
-      "primary",
-      "PAPER"
-    );
-  });
-
-  it("records paper close-spread orders with operator audit fields", async () => {
-    api.fetchExecutionDispatchMode.mockResolvedValue({
-      mode: "FAIL_CLOSED",
-      requires_live_arm: false,
-    });
-    api.fetchExecutionPortfolioPositions.mockReset();
-    api.fetchExecutionPortfolioPositions.mockResolvedValue({
-      exchange: "kraken_futures",
-      account_id: "primary",
-      execution_mode: "PAPER",
-      generated_at: "2026-02-20T00:00:00Z",
-      positions: [
-        {
-          pair_id: PAIR_ID,
-          direction: "LONG_SPREAD",
-          total_size: 1.25,
-          avg_entry_z: -2.1,
-          updated_at: "2026-02-20T00:00:10Z",
-        },
-      ],
-    });
-    api.fetchExecutionOpenTrades.mockResolvedValue({
-      exchange: "kraken_futures",
-      account_id: "primary",
-      execution_mode: "PAPER",
-      generated_at: "2026-02-20T00:00:00Z",
-      warnings: [],
-      trades: [
-        {
-          pair_id: PAIR_ID,
-          direction: "LONG_SPREAD",
-          spread_units: 1.25,
-          entry_z: -2.1,
-          updated_at: "2026-02-20T00:00:10Z",
-          pnl_status: "UNAVAILABLE",
-          unrealized_pnl_usd: null,
-          legs: [
-            {
-              instrument: LEFT,
-              side: "BUY",
-              qty: 1.25,
-              entry_ref_price: 67324.3,
-              live_mark: null,
-              mark_time: null,
-              unrealized_pnl_usd: null,
-            },
-            {
-              instrument: RIGHT,
-              side: "SELL",
-              qty: 1.06,
-              entry_ref_price: 3200,
-              live_mark: null,
-              mark_time: null,
-              unrealized_pnl_usd: null,
-            },
-          ],
-        },
-      ],
-    });
-
-    render(<App />);
-
-    const closeButton = await screen.findByRole("button", {
-      name: "Close Spread (all open in pair)",
-    });
-    await waitFor(() => {
-      expect(closeButton).not.toBeDisabled();
-    });
-
-    fireEvent.click(closeButton);
-    fireEvent.click(screen.getByRole("button", { name: "Confirm Close Spread" }));
-
-    await waitFor(() => {
-      expect(api.submitPaperOrderIntent).toHaveBeenCalledTimes(2);
-    });
-
-    expect(api.submitOrderIntent).not.toHaveBeenCalled();
-    expect(api.dispatchOrderIntent).not.toHaveBeenCalled();
-    expect(api.submitPaperOrderIntent.mock.calls.map((call: any[]) => call[0])).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          action: "EMERGENCY_STOP_CLOSE",
-          instrument: LEFT,
-          side: "SELL",
-          qty: 1.25,
-          operator_confirmed: true,
-          operator_id: "operator-kevin",
-        }),
-        expect.objectContaining({
-          action: "EMERGENCY_STOP_CLOSE",
-          instrument: RIGHT,
-          side: "BUY",
-          qty: 1.06,
-          operator_confirmed: true,
-          operator_id: "operator-kevin",
-        }),
-      ])
-    );
   });
 });

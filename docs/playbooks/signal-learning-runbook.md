@@ -18,6 +18,8 @@ This runbook does **not** auto-apply strategy changes.
    - rolling state in `artifacts/signal_learning/state.json`
    - recursive logic recommendations in `artifacts/signal_learning/signal_logic.json`
 4. No writes to runtime selected-signal config or deploy settings.
+5. Hosted cadence runs must execute one cycle per timer tick. Do not use an
+   unmanaged long-running shell loop on the hosted machine.
 
 ## Inputs
 
@@ -48,6 +50,101 @@ cd /Users/kevinsaunders/Documents/Crypto_PairsTrader-signal-redesign
 nohup bash scripts/run_signal_learning_overnight.sh --strategy-url http://127.0.0.1:18083 > /tmp/signal-learning.log 2>&1 &
 tail -f /tmp/signal-learning.log
 ```
+
+## Hosted Trade Now Overlay Cadence
+
+`GET /v1/strategy/pairs/trade-now` treats the latest signal-learning cycle
+artifact as the approved-universe overlay. The strategy service reads the newest
+`*signal-learning-cycle.json` file from `/workspace/artifacts/signal_learning/runs`;
+on the hosted machine this maps to `/opt/cryptopairs/artifacts/signal_learning/runs`
+because `docker-compose.yml` mounts the repo at `/workspace`.
+
+The overlay TTL is 24 hours. If no fresh artifact exists, Trade Now fails closed
+by downgrading learning-selected rows to Watchlist or Excluded. Keep the overlay
+fresh with a timer that runs one read-only learning cycle per tick.
+
+Install or update the hosted systemd timer:
+
+```bash
+cd /opt/cryptopairs
+sudo bash scripts/install_signal_learning_cadence_systemd.sh \
+  --repo-root /opt/cryptopairs \
+  --strategy-url http://127.0.0.1:8083 \
+  --interval-seconds 900
+```
+
+Show timer status:
+
+```bash
+sudo bash scripts/install_signal_learning_cadence_systemd.sh --show
+systemctl list-timers cryptopairs-signal-learning-cadence.timer --all
+```
+
+Run one foreground refresh without installing the timer:
+
+```bash
+cd /opt/cryptopairs
+bash scripts/run_signal_learning_overnight.sh \
+  --strategy-url http://127.0.0.1:8083 \
+  --cycles 1 \
+  --sleep-seconds 0 \
+  --timeframes 1m,15m,1h
+```
+
+Verify that artifacts are current and Trade Now sees a fresh overlay:
+
+```bash
+cd /opt/cryptopairs
+ls -lt artifacts/signal_learning/runs | head
+tail -n 100 artifacts/signal_learning/cadence.log
+
+latest_cycle="$(find artifacts/signal_learning/runs -maxdepth 1 \
+  -name '*-signal-learning-cycle.json' -type f -print | sort | tail -n 1)"
+test -n "${latest_cycle}"
+jq '{
+    generated_at,
+    degraded_timeframes: .summary.degraded_timeframes,
+    timeframe_statuses: [
+      .timeframe_reports[] | {
+        timeframe,
+        status,
+        error_count: (.errors | length),
+        errors
+      }
+    ]
+  }' "${latest_cycle}"
+jq -e '.summary.degraded_timeframes == 0' "${latest_cycle}"
+
+for tf in 1m 15m 1h; do
+  echo "=== $tf ==="
+  curl -fsS "http://127.0.0.1:8083/v1/strategy/pairs/trade-now?timeframe=$tf" \
+    | jq '{
+        learning_overlay_fresh,
+        learning_overlay_age_seconds,
+        tradable_now_count: (.tradable_now | length),
+        watchlist_count: (.watchlist | length),
+        excluded_count: (.excluded | length)
+      }'
+done
+```
+
+Treat any non-zero `summary.degraded_timeframes` as a failed refresh even if the
+artifact timestamp is fresh. The cycle script records partial API failures as
+`DEGRADED` in the artifact so operators can inspect the timeframe-level errors
+without starting a live trading path.
+
+Pause or remove the timer:
+
+```bash
+sudo systemctl stop cryptopairs-signal-learning-cadence.timer
+sudo systemctl stop cryptopairs-signal-learning-cadence.service
+sudo bash scripts/install_signal_learning_cadence_systemd.sh --remove
+```
+
+Failure mode: if the timer fails, the previous artifact ages out and Trade Now
+fails closed when the overlay becomes stale. Inspect
+`artifacts/signal_learning/cadence.log` and `journalctl -u
+cryptopairs-signal-learning-cadence.service` before restarting the timer.
 
 ## Artifact Review
 

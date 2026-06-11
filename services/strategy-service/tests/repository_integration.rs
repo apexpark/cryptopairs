@@ -9,8 +9,6 @@ mod strategy_service_bin {
         use super::*;
         use chrono::{DateTime, TimeZone, Utc};
         use common_types::Timeframe;
-        use std::fs;
-        use std::path::PathBuf;
         use std::sync::atomic::{AtomicUsize, Ordering};
         use std::time::{SystemTime, UNIX_EPOCH};
         use strategy_service::{
@@ -19,7 +17,7 @@ mod strategy_service_bin {
             SignalFlatlineDiagnostics, TradeGateDiagnostics, VariantEvaluation,
         };
         use tokio::task::JoinHandle;
-        use tokio_postgres::{Client, NoTls};
+        use tokio_postgres::{types::ToSql, Client, NoTls};
 
         const TEST_DATABASE_URL_ENV: &str = "STRATEGY_TEST_DATABASE_URL";
         static SCHEMA_COUNTER: AtomicUsize = AtomicUsize::new(0);
@@ -339,647 +337,70 @@ mod strategy_service_bin {
         }
 
         #[tokio::test]
-        async fn reoptimize_lease_acquire_succeeds_once() -> anyhow::Result<()> {
-            let Some(fixture) =
-                PgFixture::connect("reoptimize_lease_acquire_succeeds_once").await?
-            else {
-                return Ok(());
-            };
-            let run_id = "reopt_state_lease_once";
-            let now = test_time(1_779_000_001)?;
-
-            assert!(
-                fixture
-                    .repository
-                    .enqueue_reoptimize_run_state(
-                        run_id,
-                        AsyncReoptimizeTriggerSource::ManualApi,
-                        &[Timeframe::OneMinute],
-                        now,
-                    )
-                    .await?
-            );
-
-            let lease = fixture
-                .repository
-                .acquire_reoptimize_run_lease(run_id, "owner-a", 60, now)
-                .await?
-                .expect("first owner acquires lease");
-            assert_eq!(lease.lease_owner, "owner-a");
-            assert_eq!(lease.lease_generation, 1);
-
-            let second = fixture
-                .repository
-                .acquire_reoptimize_run_lease(run_id, "owner-b", 60, now)
-                .await?;
-            assert!(second.is_none());
-
-            Ok(())
-        }
-
-        #[tokio::test]
-        async fn reoptimize_concurrent_lease_acquire_refuses_second_owner() -> anyhow::Result<()> {
-            let Some(fixture) =
-                PgFixture::connect("reoptimize_concurrent_lease_acquire_refuses_second_owner")
-                    .await?
-            else {
-                return Ok(());
-            };
-            let run_id = "reopt_state_concurrent_lease";
-            let now = test_time(1_779_000_101)?;
-
-            assert!(
-                fixture
-                    .repository
-                    .enqueue_reoptimize_run_state(
-                        run_id,
-                        AsyncReoptimizeTriggerSource::ManualApi,
-                        &[Timeframe::OneMinute],
-                        now,
-                    )
-                    .await?
-            );
-
-            let (owner_a, owner_b) = tokio::join!(
-                fixture
-                    .repository
-                    .acquire_reoptimize_run_lease(run_id, "owner-a", 60, now),
-                fixture
-                    .repository
-                    .acquire_reoptimize_run_lease(run_id, "owner-b", 60, now),
-            );
-            let acquired = [owner_a?, owner_b?]
-                .into_iter()
-                .filter(Option::is_some)
-                .count();
-            assert_eq!(acquired, 1);
-
-            Ok(())
-        }
-
-        #[tokio::test]
-        async fn reoptimize_heartbeat_requires_matching_owner_generation() -> anyhow::Result<()> {
-            let Some(fixture) =
-                PgFixture::connect("reoptimize_heartbeat_requires_matching_owner_generation")
-                    .await?
-            else {
-                return Ok(());
-            };
-            let run_id = "reopt_state_heartbeat_owner_generation";
-            let now = test_time(1_779_000_201)?;
-
-            assert!(
-                fixture
-                    .repository
-                    .enqueue_reoptimize_run_state(
-                        run_id,
-                        AsyncReoptimizeTriggerSource::Scheduled,
-                        &[Timeframe::FifteenMinutes],
-                        now,
-                    )
-                    .await?
-            );
-            let lease = fixture
-                .repository
-                .acquire_reoptimize_run_lease(run_id, "owner-a", 60, now)
-                .await?
-                .expect("lease acquired");
-
-            assert!(
-                !fixture
-                    .repository
-                    .heartbeat_reoptimize_run_lease(
-                        run_id,
-                        "owner-b",
-                        lease.lease_generation,
-                        60,
-                        test_time(1_779_000_211)?,
-                    )
-                    .await?
-            );
-            assert!(
-                !fixture
-                    .repository
-                    .heartbeat_reoptimize_run_lease(
-                        run_id,
-                        "owner-a",
-                        lease.lease_generation + 1,
-                        60,
-                        test_time(1_779_000_212)?,
-                    )
-                    .await?
-            );
-            assert!(
-                fixture
-                    .repository
-                    .heartbeat_reoptimize_run_lease(
-                        run_id,
-                        "owner-a",
-                        lease.lease_generation,
-                        60,
-                        test_time(1_779_000_213)?,
-                    )
-                    .await?
-            );
-
-            let state = fixture
-                .repository
-                .fetch_reoptimize_run_state(run_id)
-                .await?
-                .expect("run state");
-            assert_eq!(state.heartbeat_at, Some(test_time(1_779_000_213)?));
-
-            Ok(())
-        }
-
-        #[tokio::test]
-        async fn reoptimize_checkpoint_requires_matching_lease_and_persists_progress(
-        ) -> anyhow::Result<()> {
+        async fn fetch_trade_now_quality_deserializes_rate_aggregates() -> anyhow::Result<()> {
             let Some(fixture) = PgFixture::connect(
-                "reoptimize_checkpoint_requires_matching_lease_and_persists_progress",
+                "fetch_trade_now_historical_quality_map_deserializes_rates_as_f64",
             )
             .await?
             else {
                 return Ok(());
             };
-            let run_id = "reopt_state_checkpoint_progress";
-            let now = test_time(1_779_000_251)?;
+            let pair_id = "TRADE_NOW_QUALITY";
+            let timeframe = Timeframe::FifteenMinutes;
+            let exit_mode = "mean_revert";
+            let first_entry = test_time(1_778_200_000)?;
+            let first_exit = test_time(1_778_200_900)?;
+            let second_entry = test_time(1_778_201_800)?;
+            let second_exit = test_time(1_778_202_700)?;
 
-            assert!(
-                fixture
-                    .repository
-                    .enqueue_reoptimize_run_state(
-                        run_id,
-                        AsyncReoptimizeTriggerSource::Scheduled,
-                        &[Timeframe::OneMinute],
-                        now,
-                    )
-                    .await?
-            );
-            let lease = fixture
+            insert_paper_trade_history(
+                &fixture,
+                PaperTradeHistoryFixture {
+                    pair_id,
+                    timeframe,
+                    exit_mode,
+                    entry_ts: first_entry,
+                    exit_ts: first_exit,
+                    bars_held: 8,
+                    exit_kind: "target",
+                    net_bps: 12.0,
+                },
+            )
+            .await?;
+            insert_paper_trade_history(
+                &fixture,
+                PaperTradeHistoryFixture {
+                    pair_id,
+                    timeframe,
+                    exit_mode,
+                    entry_ts: second_entry,
+                    exit_ts: second_exit,
+                    bars_held: 12,
+                    exit_kind: "stop",
+                    net_bps: -4.0,
+                },
+            )
+            .await?;
+
+            let quality = fixture
                 .repository
-                .acquire_reoptimize_run_lease(run_id, "owner-a", 60, now)
-                .await?
-                .expect("lease acquired");
-            let progress_json = serde_json::json!({
-                "phase": "PAIR_EVALUATION",
-                "pairs_completed": 2
-            });
-            let summary_json = serde_json::json!({
-                "status": "RUNNING",
-                "budgets": { "budget_state": "WITHIN_BUDGET" }
-            });
-
-            let wrong_owner = fixture
-                .repository
-                .checkpoint_reoptimize_run(AsyncReoptimizeCheckpoint {
-                    run_id,
-                    lease_owner: "owner-b",
-                    lease_generation: lease.lease_generation,
-                    lease_ttl_seconds: 60,
-                    status: AsyncReoptimizeRunStatus::Running,
-                    progress_json: &progress_json,
-                    summary_json: &summary_json,
-                    now: test_time(1_779_000_260)?,
-                })
-                .await?;
-            assert!(wrong_owner.is_none());
-
-            let updated = fixture
-                .repository
-                .checkpoint_reoptimize_run(AsyncReoptimizeCheckpoint {
-                    run_id,
-                    lease_owner: "owner-a",
-                    lease_generation: lease.lease_generation,
-                    lease_ttl_seconds: 60,
-                    status: AsyncReoptimizeRunStatus::Running,
-                    progress_json: &progress_json,
-                    summary_json: &summary_json,
-                    now: test_time(1_779_000_261)?,
-                })
-                .await?
-                .expect("matching owner checkpoints progress");
-            assert_eq!(updated.status, AsyncReoptimizeRunStatus::Running);
-            let persisted_progress: serde_json::Value =
-                serde_json::from_str(&updated.progress_json)?;
-            let persisted_summary: serde_json::Value = serde_json::from_str(&updated.summary_json)?;
-            assert_eq!(persisted_progress["pairs_completed"], 2);
-            assert_eq!(
-                persisted_summary["budgets"]["budget_state"],
-                "WITHIN_BUDGET"
-            );
-
-            Ok(())
-        }
-
-        #[tokio::test]
-        async fn reoptimize_expired_lease_moves_to_expired_fail_closed() -> anyhow::Result<()> {
-            let Some(fixture) =
-                PgFixture::connect("reoptimize_expired_lease_moves_to_expired_fail_closed").await?
-            else {
-                return Ok(());
-            };
-            let run_id = "reopt_state_expired_lease";
-            let now = test_time(1_779_000_301)?;
-
-            assert!(
-                fixture
-                    .repository
-                    .enqueue_reoptimize_run_state(
-                        run_id,
-                        AsyncReoptimizeTriggerSource::Recovery,
-                        &[Timeframe::OneHour],
-                        now,
-                    )
-                    .await?
-            );
-            fixture
-                .repository
-                .acquire_reoptimize_run_lease(run_id, "owner-a", 5, now)
-                .await?
-                .expect("lease acquired");
-
-            let expired = fixture
-                .repository
-                .expire_reoptimize_leases(test_time(1_779_000_307)?)
-                .await?;
-            assert_eq!(expired.len(), 1);
-            assert_eq!(expired[0].run_id, run_id);
-            assert_eq!(expired[0].status, AsyncReoptimizeRunStatus::Expired);
-            assert_eq!(
-                expired[0].recommendation,
-                AsyncReoptimizeRecommendation::Hold.as_str()
-            );
-            assert!(expired[0]
-                .fail_closed_reasons_json
-                .contains(AsyncReoptimizeFailClosedReason::LeaseLost.as_str()));
-
-            Ok(())
-        }
-
-        #[tokio::test]
-        async fn reoptimize_cancellation_transition_cannot_become_succeeded() -> anyhow::Result<()>
-        {
-            let Some(fixture) =
-                PgFixture::connect("reoptimize_cancellation_transition_cannot_become_succeeded")
-                    .await?
-            else {
-                return Ok(());
-            };
-            let run_id = "reopt_state_cancel_not_success";
-            let now = test_time(1_779_000_401)?;
-
-            assert!(
-                fixture
-                    .repository
-                    .enqueue_reoptimize_run_state(
-                        run_id,
-                        AsyncReoptimizeTriggerSource::MaintenanceReport,
-                        &[Timeframe::OneMinute],
-                        now,
-                    )
-                    .await?
-            );
-            let lease = fixture
-                .repository
-                .acquire_reoptimize_run_lease(run_id, "owner-a", 60, now)
-                .await?
-                .expect("lease acquired");
-            let canceled = fixture
-                .repository
-                .request_reoptimize_run_cancel(run_id, test_time(1_779_000_410)?)
-                .await?
-                .expect("cancel accepted");
-            assert_eq!(canceled.status, AsyncReoptimizeRunStatus::CancelRequested);
-
-            let artifact_manifest = serde_json::json!({
-                "status": "SUCCEEDED",
-                "artifacts": []
-            });
-            let progress_json = serde_json::json!({});
-            let summary_json = serde_json::json!({
-                "status": "SUCCEEDED",
-                "budgets": { "budget_state": "WITHIN_BUDGET" }
-            });
-            let finalized = fixture
-                .repository
-                .complete_reoptimize_run(AsyncReoptimizeCompletion {
-                    run_id,
-                    lease_owner: "owner-a",
-                    lease_generation: lease.lease_generation,
-                    requested_status: AsyncReoptimizeRunStatus::Succeeded,
-                    recommendation: AsyncReoptimizeRecommendation::PromotionCandidateAvailable,
-                    fail_closed_reasons: &[],
-                    artifact_manifest_json: &artifact_manifest,
-                    progress_json: &progress_json,
-                    summary_json: &summary_json,
-                    now: test_time(1_779_000_420)?,
-                })
-                .await?
-                .expect("completion observed cancellation");
-            assert_eq!(finalized.status, AsyncReoptimizeRunStatus::Canceled);
-            assert_eq!(
-                finalized.recommendation,
-                AsyncReoptimizeRecommendation::Hold.as_str()
-            );
-            assert!(finalized
-                .fail_closed_reasons_json
-                .contains(AsyncReoptimizeFailClosedReason::Canceled.as_str()));
-            let persisted_summary: serde_json::Value =
-                serde_json::from_str(&finalized.summary_json)?;
-            assert_eq!(persisted_summary["status"], "CANCELED");
-            let persisted_manifest: serde_json::Value =
-                serde_json::from_str(&finalized.artifact_manifest_json)?;
-            assert_eq!(persisted_manifest["status"], "CANCELED");
-
-            Ok(())
-        }
-
-        #[tokio::test]
-        async fn reoptimize_completion_persists_generated_artifact_manifest() -> anyhow::Result<()>
-        {
-            let Some(fixture) =
-                PgFixture::connect("reoptimize_completion_persists_generated_artifact_manifest")
-                    .await?
-            else {
-                return Ok(());
-            };
-            let run_id = "reopt_state_generated_manifest";
-            let now = test_time(1_779_000_451)?;
-            let completed_at = test_time(1_779_000_460)?;
-            let artifact_root = temp_dir("reoptimize-generated-manifest")?;
-            let mut settings = StrategySettings::from_env();
-            settings.reopt_artifacts_root = artifact_root.to_string_lossy().to_string();
-            settings.reopt_max_artifact_bytes = 1024 * 1024;
-            settings.timeframes = vec![Timeframe::OneMinute];
-            settings.pairs = vec![PairSpec {
-                left: "PF_XBTUSD".to_string(),
-                right: "PF_ETHUSD".to_string(),
-            }];
-            let scope = AsyncReoptimizeRunScope {
-                trigger_source: AsyncReoptimizeTriggerSource::Scheduled,
-                requested_timeframes: settings.timeframes.clone(),
-            };
-
-            assert!(
-                fixture
-                    .repository
-                    .enqueue_reoptimize_run_state(
-                        run_id,
-                        AsyncReoptimizeTriggerSource::Scheduled,
-                        &[Timeframe::OneMinute],
-                        now,
-                    )
-                    .await?
-            );
-            let lease = fixture
-                .repository
-                .acquire_reoptimize_run_lease(run_id, "owner-a", 120, now)
-                .await?
-                .expect("lease acquired");
-            let mut progress = AsyncReoptimizeRunnerProgress::new(
-                settings.timeframes.clone(),
-                settings.pairs.len(),
-            );
-            progress.phase = AsyncReoptimizePhase::Terminal;
-            progress.completed_timeframe_count = 1;
-            progress.pairs_completed = 1;
-            progress.last_heartbeat_at = Some(completed_at);
-            let progress_json = progress.to_json();
-            let errors = Vec::<ReoptError>::new();
-            let summary_json = async_reoptimize_summary_json(
-                run_id,
-                AsyncReoptimizeRunStatus::Succeeded,
-                &scope,
-                &settings,
-                &progress_json,
-                &errors,
-                None,
-            );
-            let artifact_manifest =
-                write_async_reoptimize_artifacts(AsyncReoptimizeArtifactWriteInput {
-                    settings: &settings,
-                    run_id,
-                    status: AsyncReoptimizeRunStatus::Succeeded,
-                    trigger_source: AsyncReoptimizeTriggerSource::Scheduled,
-                    requested_timeframes: &scope.requested_timeframes,
-                    progress_json: &progress_json,
-                    summary_json: &summary_json,
-                    errors: &errors,
-                    recommendation: AsyncReoptimizeRecommendation::PromotionCandidateAvailable,
-                    fail_closed_reasons: &[],
-                    generated_at: completed_at,
-                })?;
-
-            let finalized = fixture
-                .repository
-                .complete_reoptimize_run(AsyncReoptimizeCompletion {
-                    run_id,
-                    lease_owner: "owner-a",
-                    lease_generation: lease.lease_generation,
-                    requested_status: AsyncReoptimizeRunStatus::Succeeded,
-                    recommendation: AsyncReoptimizeRecommendation::PromotionCandidateAvailable,
-                    fail_closed_reasons: &[],
-                    artifact_manifest_json: &artifact_manifest,
-                    progress_json: &progress_json,
-                    summary_json: &summary_json,
-                    now: completed_at,
-                })
-                .await?
-                .expect("completion persisted");
-            assert_eq!(finalized.status, AsyncReoptimizeRunStatus::Succeeded);
-            let persisted_manifest: serde_json::Value =
-                serde_json::from_str(&finalized.artifact_manifest_json)?;
-            assert!(async_reoptimize_artifact_manifest_has_contract_shape(
-                &persisted_manifest
-            ));
-            assert_eq!(
-                persisted_manifest["artifact_download_route"],
-                "DEFERRED_NO_DOWNLOAD_ROUTE"
-            );
-            assert!(artifact_root
-                .join(format!("runs/{run_id}/manifest.json"))
-                .is_file());
-
-            let response = async_reoptimize_status_response_from_state(
-                &finalized,
-                &settings,
-                completed_at,
-                &[],
-            );
-            assert_eq!(response.status, "SUCCEEDED");
-            assert!(response.artifact_manifest.is_some());
-            assert_eq!(
-                response.recommendation.decision,
-                AsyncReoptimizeRecommendation::PromotionCandidateAvailable.as_str()
-            );
-
-            fs::remove_dir_all(&artifact_root)?;
-            Ok(())
-        }
-
-        #[tokio::test]
-        async fn reoptimize_active_run_single_flight_refuses_second_queue() -> anyhow::Result<()> {
-            let Some(fixture) =
-                PgFixture::connect("reoptimize_active_run_single_flight_refuses_second_queue")
-                    .await?
-            else {
-                return Ok(());
-            };
-            let now = test_time(1_779_000_501)?;
-
-            assert!(
-                fixture
-                    .repository
-                    .enqueue_reoptimize_run_state(
-                        "reopt_state_single_flight_a",
-                        AsyncReoptimizeTriggerSource::Scheduled,
-                        &[Timeframe::OneMinute],
-                        now,
-                    )
-                    .await?
-            );
-            assert!(
-                !fixture
-                    .repository
-                    .enqueue_reoptimize_run_state(
-                        "reopt_state_single_flight_b",
-                        AsyncReoptimizeTriggerSource::ManualApi,
-                        &[Timeframe::FifteenMinutes],
-                        test_time(1_779_000_502)?,
-                    )
-                    .await?
-            );
-
-            Ok(())
-        }
-
-        #[tokio::test]
-        async fn reoptimize_latest_and_active_state_reads_support_api_status() -> anyhow::Result<()>
-        {
-            let Some(fixture) =
-                PgFixture::connect("reoptimize_latest_and_active_state_reads_support_api_status")
-                    .await?
-            else {
-                return Ok(());
-            };
-            let first_run_id = "reopt_state_api_latest_a";
-            let second_run_id = "reopt_state_api_latest_b";
-            let now = test_time(1_779_000_601)?;
-
-            assert!(
-                fixture
-                    .repository
-                    .enqueue_reoptimize_run_state(
-                        first_run_id,
-                        AsyncReoptimizeTriggerSource::ManualApi,
-                        &[Timeframe::OneMinute],
-                        now,
-                    )
-                    .await?
-            );
-            let latest = fixture
-                .repository
-                .fetch_latest_reoptimize_run_state()
-                .await?
-                .expect("latest run state");
-            assert_eq!(latest.run_id, first_run_id);
-            assert_eq!(latest.requested_timeframes, "1m");
-
-            let canceled = fixture
-                .repository
-                .request_reoptimize_run_cancel(first_run_id, test_time(1_779_000_602)?)
-                .await?
-                .expect("queued run canceled");
-            assert_eq!(canceled.status, AsyncReoptimizeRunStatus::Canceled);
-
-            assert!(
-                fixture
-                    .repository
-                    .enqueue_reoptimize_run_state(
-                        second_run_id,
-                        AsyncReoptimizeTriggerSource::ManualApi,
-                        &[Timeframe::OneMinute, Timeframe::FifteenMinutes],
-                        test_time(1_779_000_603)?,
-                    )
-                    .await?
-            );
-
-            let latest = fixture
-                .repository
-                .fetch_latest_reoptimize_run_state()
-                .await?
-                .expect("latest run state after second enqueue");
-            assert_eq!(latest.run_id, second_run_id);
-            assert_eq!(latest.requested_timeframes, "1m,15m");
-
-            let active = fixture
-                .repository
-                .fetch_active_reoptimize_run_state()
-                .await?
-                .expect("active run state");
-            assert_eq!(active.run_id, second_run_id);
-            assert_eq!(active.status, AsyncReoptimizeRunStatus::Queued);
-
-            Ok(())
-        }
-
-        #[tokio::test]
-        async fn reoptimize_worker_can_discover_api_queued_run_for_lease() -> anyhow::Result<()> {
-            let Some(fixture) =
-                PgFixture::connect("reoptimize_worker_can_discover_api_queued_run_for_lease")
-                    .await?
-            else {
-                return Ok(());
-            };
-            let run_id = "reopt_state_api_worker_pickup";
-            let now = test_time(1_779_000_701)?;
-
-            assert!(
-                fixture
-                    .repository
-                    .enqueue_reoptimize_run_state(
-                        run_id,
-                        AsyncReoptimizeTriggerSource::ManualApi,
-                        &[Timeframe::OneMinute],
-                        now,
-                    )
-                    .await?
-            );
-
-            let queued = fixture
-                .repository
-                .fetch_next_queued_reoptimize_run_state()
-                .await?
-                .expect("worker can find API-created queued run");
-            assert_eq!(queued.run_id, run_id);
-            assert_eq!(queued.trigger_source, "MANUAL_API");
-            let settings = StrategySettings::from_env();
-            let scope = async_reoptimize_run_scope_from_state(&queued, &settings)
-                .expect("queued manual run scope should parse");
-            assert_eq!(
-                scope.trigger_source,
-                AsyncReoptimizeTriggerSource::ManualApi
-            );
-            assert_eq!(scope.requested_timeframes, vec![Timeframe::OneMinute]);
-
-            let lease = fixture
-                .repository
-                .acquire_reoptimize_run_lease(
-                    &queued.run_id,
-                    "strategy-service:reoptimize-worker",
-                    60,
-                    test_time(1_779_000_702)?,
+                .fetch_trade_now_historical_quality_map(
+                    &[pair_id.to_string()],
+                    timeframe,
+                    exit_mode,
+                    first_entry,
                 )
-                .await?
-                .expect("worker can lease queued run");
-            assert_eq!(lease.run_id, run_id);
+                .await?;
 
-            assert!(fixture
-                .repository
-                .fetch_next_queued_reoptimize_run_state()
-                .await?
-                .is_none());
+            let row = quality.get(pair_id).expect("historical quality row");
+            assert_eq!(row.trades, 2);
+            assert!((row.sum_net_bps - 8.0).abs() < f64::EPSILON);
+            assert!((row.avg_net_bps - 4.0).abs() < f64::EPSILON);
+            assert!((row.median_net_bps - 4.0).abs() < f64::EPSILON);
+            assert!((row.win_rate - 0.5).abs() < f64::EPSILON);
+            assert!((row.avg_bars_held - 10.0).abs() < f64::EPSILON);
+            assert!((row.stop_rate - 0.5).abs() < f64::EPSILON);
+            assert_eq!(row.last_exit_ts, second_exit);
 
             Ok(())
         }
@@ -1100,19 +521,97 @@ mod strategy_service_bin {
             }
         }
 
+        struct PaperTradeHistoryFixture<'a> {
+            pair_id: &'a str,
+            timeframe: Timeframe,
+            exit_mode: &'a str,
+            entry_ts: DateTime<Utc>,
+            exit_ts: DateTime<Utc>,
+            bars_held: i32,
+            exit_kind: &'a str,
+            net_bps: f64,
+        }
+
+        async fn insert_paper_trade_history(
+            fixture: &PgFixture,
+            row: PaperTradeHistoryFixture<'_>,
+        ) -> anyhow::Result<()> {
+            let timeframe_str = row.timeframe.as_str();
+            let left_instrument = format!("{}_LEFT", row.pair_id);
+            let right_instrument = format!("{}_RIGHT", row.pair_id);
+            let selected_variant = "ROBUST_Z";
+            let direction = "LONG_SPREAD";
+            let entry_z = 2.0_f64;
+            let exit_z = 0.4_f64;
+            let entry_index = 10_i32;
+            let exit_index = 10_i32 + row.bars_held;
+            let left_entry = 100.0_f64;
+            let left_exit = 101.0_f64;
+            let right_entry = 50.0_f64;
+            let right_exit = 50.25_f64;
+            let left_leg_bps = 6.0_f64;
+            let right_leg_bps = -1.0_f64;
+            let gross_bps = row.net_bps + 1.0;
+            let round_trip_cost_bps = 1.0_f64;
+            let equity_pre_entry = 10_000.0_f64;
+            let equity_exit = equity_pre_entry + row.net_bps;
+            fixture
+                .client
+                .execute(
+                    "INSERT INTO strategy_paper_trades_history (
+                        pair_id, timeframe, exit_mode, left_instrument, right_instrument,
+                        selected_variant, entry_ts, exit_ts, bars_held, direction, exit_kind,
+                        entry_z, exit_z, entry_index, exit_index, left_entry, left_exit,
+                        right_entry, right_exit, left_leg_bps, right_leg_bps, gross_bps,
+                        round_trip_cost_bps, net_bps, equity_pre_entry, equity_exit,
+                        equity_trade_bps
+                     )
+                     VALUES (
+                        $1, $2, $3, $4, $5,
+                        $6, $7, $8, $9, $10, $11,
+                        $12, $13, $14, $15, $16, $17,
+                        $18, $19, $20, $21, $22,
+                        $23, $24, $25, $26,
+                        $27
+                     )",
+                    &[
+                        &row.pair_id as &(dyn ToSql + Sync),
+                        &timeframe_str,
+                        &row.exit_mode,
+                        &left_instrument,
+                        &right_instrument,
+                        &selected_variant,
+                        &row.entry_ts,
+                        &row.exit_ts,
+                        &row.bars_held,
+                        &direction,
+                        &row.exit_kind,
+                        &entry_z,
+                        &exit_z,
+                        &entry_index,
+                        &exit_index,
+                        &left_entry,
+                        &left_exit,
+                        &right_entry,
+                        &right_exit,
+                        &left_leg_bps,
+                        &right_leg_bps,
+                        &gross_bps,
+                        &round_trip_cost_bps,
+                        &row.net_bps,
+                        &equity_pre_entry,
+                        &equity_exit,
+                        &row.net_bps,
+                    ],
+                )
+                .await?;
+            Ok(())
+        }
+
         fn test_time(seconds: i64) -> anyhow::Result<DateTime<Utc>> {
             Utc.timestamp_opt(seconds, 0)
                 .single()
                 .ok_or_else(|| anyhow::anyhow!("invalid test timestamp {}", seconds))
-        }
-
-        fn temp_dir(name: &str) -> anyhow::Result<PathBuf> {
-            let mut path = std::env::temp_dir();
-            let stamp = Utc::now().timestamp_nanos_opt().unwrap_or_default();
-            let counter = SCHEMA_COUNTER.fetch_add(1, Ordering::SeqCst);
-            path.push(format!("cryptopairs-strategy-{name}-{stamp}-{counter:03}"));
-            fs::create_dir_all(&path)?;
-            Ok(path)
         }
 
         fn next_schema_name() -> anyhow::Result<String> {

@@ -34,7 +34,6 @@ import {
   fetchStrategyTradeNow,
   fetchStrategyTradeNowObservability,
   submitOrderIntent,
-  submitPaperOrderIntent,
 } from "./lib/api";
 import {
   emptyPosition,
@@ -51,7 +50,6 @@ import type {
   DispatchIntentResponse,
   DirectionHint,
   ExecutionDispatchModeResponse,
-  ExecutionMode,
   ExecutionOpenTradesResponse,
   ExecutionAction,
   KillSwitchState,
@@ -117,7 +115,7 @@ const NAV_ITEMS: Array<{ id: PageId; label: string }> = [
 
 const TIMEFRAMES: Timeframe[] = ["1m", "15m", "1h"];
 const TRADE_PAIR_STATUS_CUE_LIMIT = 80;
-const TRADE_CHART_PRELOAD_LIMIT = 3;
+const TRADE_CHART_PRELOAD_LIMIT = 16;
 const RESEARCH_Z_METHODS: StrategyZMethod[] = [
   "ROBUST_Z",
   "COINTEGRATION_Z",
@@ -934,6 +932,19 @@ function formatDurationLabel(minutes: number | null): string {
   return `${(hours / 24).toFixed(1)}d`;
 }
 
+function formatEntryDistanceDetail(row: StrategyPairsTradeNowRow): string | null {
+  const entryDistanceZ = row.entry_distance_z;
+  if (
+    row.setup_gate_pass ||
+    typeof entryDistanceZ !== "number" ||
+    !Number.isFinite(entryDistanceZ) ||
+    entryDistanceZ >= 0
+  ) {
+    return null;
+  }
+  return `waiting for ${Math.abs(entryDistanceZ).toFixed(2)} more z`;
+}
+
 function formatPerDayLabel(value: number | null): string {
   if (value == null || !Number.isFinite(value)) {
     return "--";
@@ -952,6 +963,10 @@ function tradeNowDetailLabel(row: StrategyPairsTradeNowRow): string {
   }
   if (row.open_live_trade) {
     detailParts.push("open live trade");
+  }
+  const entryDistanceDetail = formatEntryDistanceDetail(row);
+  if (entryDistanceDetail) {
+    detailParts.push(entryDistanceDetail);
   }
   return detailParts.join(" | ");
 }
@@ -1083,17 +1098,11 @@ function gateBadgeClass(pass: boolean): "gate-badge pass" | "gate-badge fail" {
   return pass ? "gate-badge pass" : "gate-badge fail";
 }
 
-function formatTradingModeLabel(mode: ExecutionDispatchModeResponse["mode"] | null): string {
-  if (mode === "LIVE_KRAKEN") {
-    return "Live Trading";
+function formatDispatchModeLabel(mode: ExecutionDispatchModeResponse["mode"] | null): string {
+  if (!mode) {
+    return "Unknown";
   }
-  if (mode === "SIMULATE_ACK") {
-    return "Server Practice";
-  }
-  if (mode === "FAIL_CLOSED") {
-    return "Live Locked";
-  }
-  return "Unknown";
+  return formatReasonCodeLabel(mode);
 }
 
 function tradeNowObservabilityTotal(
@@ -1438,11 +1447,11 @@ function nowIso(): string {
 function App(): JSX.Element {
   const viewportHeightPx = useViewportHeightPx();
   const tradeZChartHeight = useMemo(
-    () => Math.round(clampNumber(viewportHeightPx * 0.44, 340, 560)),
+    () => Math.round(clampNumber(viewportHeightPx * 0.44, 340, 940)),
     [viewportHeightPx]
   );
   const analyticsChartHeight = useMemo(
-    () => Math.round(clampNumber(viewportHeightPx * 0.4, 320, 520)),
+    () => Math.round(clampNumber(viewportHeightPx * 0.4, 320, 860)),
     [viewportHeightPx]
   );
 
@@ -1569,7 +1578,6 @@ function App(): JSX.Element {
   const [headerMetricsError, setHeaderMetricsError] = useState<string | null>(null);
   const [spreadSize, setSpreadSize] = useState<string>("1");
   const [operatorConfirmed, setOperatorConfirmed] = useState<boolean>(false);
-  const [practiceModeActive, setPracticeModeActive] = useState<boolean>(true);
   const [tradeMessage, setTradeMessage] = useState<string>("No trade submitted yet.");
   const [submitting, setSubmitting] = useState(false);
 
@@ -1651,18 +1659,12 @@ function App(): JSX.Element {
       for (const entry of cuesResponse.cues) {
         const pairId = entry.cue.pair_id;
         const existing = prev[pairId];
-        if (
-          existing &&
-          Number.isFinite(Date.parse(existing.ts)) &&
-          Date.parse(existing.ts) > Date.parse(entry.cue.evaluated_at)
-        ) {
-          next[pairId] = existing;
-        } else {
-          next[pairId] = {
+        next[pairId] =
+          existing ??
+          {
             z: entry.cue.spread_z,
             ts: entry.cue.evaluated_at,
           };
-        }
       }
       return next;
     });
@@ -1986,7 +1988,8 @@ function App(): JSX.Element {
     }),
     [killSwitch?.active, leftDecisionAllowed, rightDecisionAllowed, reconcileResponse]
   );
-  const effectiveGateState = practiceModeActive
+  const simGateBypass = executionDispatchMode?.mode === "SIMULATE_ACK";
+  const effectiveGateState = simGateBypass
     ? {
         killSwitchActive: false,
         leftAllowed: true,
@@ -1995,15 +1998,7 @@ function App(): JSX.Element {
       }
     : gateState;
   const requiresLiveArm = executionDispatchMode?.requires_live_arm ?? true;
-  const effectiveOperatorConfirmed =
-    operatorConfirmed || practiceModeActive || executionDispatchMode?.mode === "SIMULATE_ACK";
-  const activeExecutionMode: ExecutionMode = practiceModeActive ? "PAPER" : "LIVE";
-
-  useEffect(() => {
-    if (executionDispatchMode?.mode !== "LIVE_KRAKEN" && operatorConfirmed) {
-      setOperatorConfirmed(false);
-    }
-  }, [executionDispatchMode?.mode, operatorConfirmed]);
+  const effectiveOperatorConfirmed = operatorConfirmed || !requiresLiveArm;
 
   const baseEntryGuard = {
     operatorConfirmed: effectiveOperatorConfirmed,
@@ -2034,7 +2029,7 @@ function App(): JSX.Element {
     if (coreError) {
       return {
         tone: "bad" as const,
-        text: "Live strategy data is unavailable. Live controls are locked.",
+        text: "Live strategy data is unavailable. Fail-closed mode is active.",
       };
     }
     return {
@@ -2046,8 +2041,8 @@ function App(): JSX.Element {
   const refreshPositions = async (): Promise<void> => {
     const refreshSeq = ++positionsRefreshSeqRef.current;
     const [response, openTrades] = await Promise.all([
-      fetchExecutionPortfolioPositions(exchange, accountId, activeExecutionMode),
-      fetchExecutionOpenTrades(exchange, accountId, undefined, activeExecutionMode),
+      fetchExecutionPortfolioPositions(exchange, accountId),
+      fetchExecutionOpenTrades(exchange, accountId),
     ]);
     if (refreshSeq !== positionsRefreshSeqRef.current) {
       return;
@@ -2167,7 +2162,7 @@ function App(): JSX.Element {
     };
 
     void runCoreRefresh(true);
-    const coreRefreshIntervalMs = analyticsRefreshMs(timeframe);
+    const coreRefreshIntervalMs = page === "trade" ? 3_000 : analyticsRefreshMs(timeframe);
     const intervalId = window.setInterval(() => {
       void runCoreRefresh(false);
     }, coreRefreshIntervalMs);
@@ -2323,7 +2318,7 @@ function App(): JSX.Element {
       cancelled = true;
       window.clearInterval(intervalId);
     };
-  }, [exchange, accountId, uiAccessGranted, page, coreError, activeExecutionMode]);
+  }, [exchange, accountId, uiAccessGranted, page, coreError]);
 
   useEffect(() => {
     if (!uiAccessGranted) {
@@ -2512,6 +2507,74 @@ function App(): JSX.Element {
   ]);
 
   useEffect(() => {
+    if (!uiAccessGranted || page !== "trade" || !cuesResponse?.cues.length) {
+      return;
+    }
+    let cancelled = false;
+    let inFlight = false;
+    const pairIds = cuesResponse.cues.map((entry) => entry.cue.pair_id);
+    const intervalMs = timeframe === "1m" ? 5_000 : 10_000;
+
+    const refreshOpportunityLiveZ = async (): Promise<void> => {
+      if (cancelled || inFlight || !pairIds.length) {
+        return;
+      }
+      inFlight = true;
+      try {
+        const tickerWindowBars = clampAnalyticsChartBars(analyticsChartBars);
+        const responses = await Promise.allSettled(
+          pairIds.map((pairId) =>
+            takerFeeBpsOverride == null
+              ? fetchStrategyLiveZ(timeframe, pairId, 2, tickerWindowBars, undefined, backtestExitMode)
+              : fetchStrategyLiveZ(
+                  timeframe,
+                  pairId,
+                  2,
+                  tickerWindowBars,
+                  takerFeeBpsOverride,
+                  backtestExitMode
+                )
+          )
+        );
+        if (cancelled) {
+          return;
+        }
+        setLiveZByPair((prev) => {
+          const next = { ...prev };
+          for (let i = 0; i < responses.length; i += 1) {
+            const response = responses[i];
+            if (response.status !== "fulfilled" || !response.value.points.length) {
+              continue;
+            }
+            const point = response.value.points[response.value.points.length - 1];
+            next[pairIds[i]] = { z: point.z, ts: point.ts };
+          }
+          return next;
+        });
+      } finally {
+        inFlight = false;
+      }
+    };
+
+    void refreshOpportunityLiveZ();
+    const intervalId = window.setInterval(() => {
+      void refreshOpportunityLiveZ();
+    }, intervalMs);
+    return () => {
+      cancelled = true;
+      window.clearInterval(intervalId);
+    };
+  }, [
+    uiAccessGranted,
+    page,
+    cuesResponse,
+    timeframe,
+    takerFeeBpsOverride,
+    backtestExitMode,
+    analyticsChartBars,
+  ]);
+
+  useEffect(() => {
     if (!uiAccessGranted || page !== "trade" || !selectedCueRow) {
       return;
     }
@@ -2525,7 +2588,7 @@ function App(): JSX.Element {
       }
       inFlight = true;
       try {
-        const tickerWindowBars = Math.min(clampAnalyticsChartBars(analyticsChartBars), 240);
+        const tickerWindowBars = clampAnalyticsChartBars(analyticsChartBars);
         const response =
           takerFeeBpsOverride == null
             ? await fetchStrategyLiveZ(
@@ -2563,7 +2626,7 @@ function App(): JSX.Element {
     void tickLiveZ();
     const intervalId = window.setInterval(() => {
       void tickLiveZ();
-    }, 5000);
+    }, 1500);
     return () => {
       cancelled = true;
       window.clearInterval(intervalId);
@@ -3199,113 +3262,29 @@ function App(): JSX.Element {
       leftLegQty,
       rightLegQty
     );
-    const buildOrderPayload = (leg: { instrument: string; side: TradeSide; qty: number }, index: number) => ({
-      idempotency_key: `${Date.now()}-${pairId}-${command}-${leg.instrument}-${index}`,
-      exchange,
-      account_id: accountId,
-      pair_id: pairId,
-      instrument: leg.instrument,
-      timeframe,
-      action,
-      spread_direction: direction,
-      spread_z: action === "ENTRY" ? currentZ : null,
-      side: leg.side,
-      qty: leg.qty,
-      sizing: action === "EMERGENCY_STOP_CLOSE" ? undefined : sizingPayload,
-      operator_confirmed: practiceModeActive
-        ? true
-        : action === "EMERGENCY_STOP_CLOSE"
-          ? false
-          : effectiveOperatorConfirmed,
-      operator_id: practiceModeActive
-        ? operatorId.trim()
-        : action === "EMERGENCY_STOP_CLOSE"
-          ? null
-          : operatorId,
-      min_coverage_pct: 99.5,
-    });
-
-    if (practiceModeActive) {
-      if (!operatorId.trim().length) {
-        setTradeMessage("Operator ID is required.");
-        return;
-      }
-      setSubmitting(true);
-      try {
-        const responses = await Promise.all(
-          legs.map((leg, index) => submitPaperOrderIntent(buildOrderPayload(leg, index)))
-        );
-        const outcomes: LegExecutionOutcome[] = await Promise.all(
-          responses.map(async (response): Promise<LegExecutionOutcome> => {
-            let history: OrderIntentHistoryResponse | null = null;
-            try {
-              history = await fetchOrderIntentHistory(response.intent.idempotency_key);
-            } catch {
-              history = null;
-            }
-            return {
-              instrument: response.intent.instrument,
-              intentDecision: response.intent.decision,
-              intentReason: response.intent.reason,
-              dispatch: response.dispatch,
-              dispatchError: null,
-              history,
-            };
-          })
-        );
-        const histories = outcomes
-          .map((outcome) => outcome.history)
-          .filter((value): value is OrderIntentHistoryResponse => !!value);
-        upsertIntentHistories(pairId, histories);
-        const allPaperAcknowledged = allAcceptedDispatchAcknowledged(outcomes);
-        addTimelineEvent(pairId, {
-          ts: now,
-          text: `PAPER ${command.toUpperCase()} ${
-            allPaperAcknowledged ? "recorded and acknowledged" : "not fully acknowledged"
-          }`,
-          tone: allPaperAcknowledged ? "ok" : "warn",
-        });
-        for (const outcome of outcomes) {
-          addTimelineEvent(pairId, {
-            ts: nowIso(),
-            text: `${formatInstrumentLabel(outcome.instrument)} paper ${outcome.intentDecision} -> ${
-              outcome.dispatch?.result ?? "NO_ACK"
-            }`,
-            tone:
-              outcome.intentDecision === "ACCEPTED" && outcome.dispatch?.result === "ACKNOWLEDGED"
-                ? "ok"
-                : "warn",
-          });
-        }
-        await refreshPositions().catch(() => {
-          setOpenTradesError("Paper open-trades refresh failed. Retaining last known state.");
-        });
-        const legsText = outcomes
-          .map((outcome) => `${formatInstrumentLabel(outcome.instrument)}: ${outcome.intentDecision}`)
-          .join(" | ");
-        setTradeMessage(
-          allPaperAcknowledged
-            ? `Paper trade recorded on the server. No exchange order was sent. ${legsText}`
-            : `Paper trade was not fully acknowledged. ${legsText}`
-        );
-      } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
-        addTimelineEvent(pairId, {
-          ts: now,
-          text: `PAPER SUBMIT ERROR (${message})`,
-          tone: "bad",
-        });
-        setTradeMessage(`Paper trade error: ${message}`);
-      } finally {
-        setSubmitting(false);
-      }
-      return;
-    }
 
     setSubmitting(true);
     try {
       const responses = await Promise.all(
-        legs.map((leg, index) => submitOrderIntent(buildOrderPayload(leg, index)))
+        legs.map((leg, index) =>
+          submitOrderIntent({
+            idempotency_key: `${Date.now()}-${pairId}-${command}-${leg.instrument}-${index}`,
+            exchange,
+            account_id: accountId,
+            pair_id: pairId,
+            instrument: leg.instrument,
+            timeframe,
+            action,
+            spread_direction: direction,
+            spread_z: action === "ENTRY" ? currentZ : null,
+            side: leg.side,
+            qty: leg.qty,
+            sizing: action === "EMERGENCY_STOP_CLOSE" ? undefined : sizingPayload,
+            operator_confirmed: action === "EMERGENCY_STOP_CLOSE" ? false : effectiveOperatorConfirmed,
+            operator_id: action === "EMERGENCY_STOP_CLOSE" ? null : operatorId,
+            min_coverage_pct: 99.5,
+          })
+        )
       );
 
       const outcomes: LegExecutionOutcome[] = await Promise.all(
@@ -3527,11 +3506,9 @@ function App(): JSX.Element {
           timeline={currentTimeline}
           spreadSize={spreadSize}
           operatorConfirmed={operatorConfirmed}
-          practiceModeActive={practiceModeActive}
           operatorId={operatorId}
           setSpreadSize={setSpreadSize}
           setOperatorConfirmed={setOperatorConfirmed}
-          setPracticeModeActive={setPracticeModeActive}
           setOperatorId={setOperatorId}
           canLongEntry={canLongEntry}
           canShortEntry={canShortEntry}
@@ -3737,12 +3714,10 @@ function App(): JSX.Element {
 
       <footer className="footer-note">
         <span>Global timeframe selector applies to all pages and strategy panels.</span>
-        <span className={practiceModeActive ? "tone-warn" : gateSafe ? "tone-ok" : "tone-bad"}>
-          {practiceModeActive
-            ? "Practice Mode active: no exchange orders sent"
-            : gateSafe
-              ? "Live safety checks healthy"
-              : "Live trading locked until safety checks are healthy"}
+        <span className={gateSafe ? "tone-ok" : "tone-bad"}>
+          {gateSafe
+            ? "Trade gates healthy"
+            : "Fail-closed mode: entry actions blocked until all gates are safe"}
         </span>
         {headerMetricsError ? <span className="tone-warn">{headerMetricsError}</span> : null}
         <span className="small-text" aria-hidden="true">
@@ -3837,6 +3812,7 @@ function SimpleTradeNowPairsSection(props: {
             <tbody>
               {props.rows.map((row) => {
                 const status = simpleTradeNowStatus(row);
+                const entryDistanceDetail = formatEntryDistanceDetail(row);
                 return (
                   <tr
                     key={`${row.pair_id}-${row.timeframe}`}
@@ -3845,7 +3821,9 @@ function SimpleTradeNowPairsSection(props: {
                     onKeyDown={(event) => handleRowKeyDown(event, row.pair_id)}
                     tabIndex={0}
                     role="button"
-                    aria-label={`${formatPairLabel(row.pair_id)} ${status.label}. ${status.why}`}
+                    aria-label={`${formatPairLabel(row.pair_id)} ${status.label}. ${status.why}${
+                      entryDistanceDetail ? ` ${entryDistanceDetail}.` : ""
+                    }`}
                   >
                     <td>
                       <div className="opportunity-pair-stack">
@@ -3856,14 +3834,21 @@ function SimpleTradeNowPairsSection(props: {
                       </div>
                     </td>
                     <td>
-                      <span
-                        className={`simple-status-pill ${status.tone} status-tooltip`}
-                        data-tooltip={status.why}
-                        title={status.why}
-                        tabIndex={0}
-                      >
-                        {status.label}
-                      </span>
+                      <div className="opportunity-status-stack">
+                        <span
+                          className={`simple-status-pill ${status.tone} status-tooltip`}
+                          data-tooltip={status.why}
+                          title={status.why}
+                          tabIndex={0}
+                        >
+                          {status.label}
+                        </span>
+                        {entryDistanceDetail ? (
+                          <span className="small-text simple-status-detail">
+                            {entryDistanceDetail}
+                          </span>
+                        ) : null}
+                      </div>
                     </td>
                     <td>{formatSigned(row.net_edge_bps)}bp</td>
                   </tr>
@@ -4101,15 +4086,15 @@ function TradeNowObservationStrip(props: {
     : "age unknown";
   const liveArmRequirementLabel = props.executionDispatchMode
     ? props.executionDispatchMode.requires_live_arm
-      ? "live confirmation required"
-      : "live confirmation not required"
-    : "live confirmation required until confirmed";
+      ? "live arm required"
+      : "live arm not required"
+    : "live arm required until confirmed";
 
   return (
     <div className="trade-now-status-strip">
       <div className="status-strip-item">
-        <span className="stat-label">Trading mode</span>
-        <strong className={`tone-${dispatchTone}`}>{formatTradingModeLabel(dispatchMode)}</strong>
+        <span className="stat-label">Dispatch mode</span>
+        <strong className={`tone-${dispatchTone}`}>{formatDispatchModeLabel(dispatchMode)}</strong>
         <span className="small-text">{liveArmRequirementLabel}</span>
       </div>
       <div className="status-strip-item">
@@ -4328,11 +4313,9 @@ function TradePage(props: {
   timeline: TimelineEvent[];
   spreadSize: string;
   operatorConfirmed: boolean;
-  practiceModeActive: boolean;
   operatorId: string;
   setSpreadSize: (value: string) => void;
   setOperatorConfirmed: (value: boolean) => void;
-  setPracticeModeActive: (value: boolean) => void;
   setOperatorId: (value: string) => void;
   canLongEntry: boolean;
   canShortEntry: boolean;
@@ -4490,29 +4473,7 @@ function TradePage(props: {
         ...(selectedCue.cue.cost_gate?.rationale_codes ?? []),
       ])
     : new Set<string>();
-  const liveTradingAvailable = props.dispatchMode === "LIVE_KRAKEN";
-  const liveTradingArmed =
-    liveTradingAvailable && (!props.requiresLiveArm || props.operatorConfirmed);
-  const bypassExecutionGates = props.practiceModeActive;
-  const tradingModeBadge = props.practiceModeActive
-    ? "Practice On"
-    : liveTradingArmed
-      ? "Live Armed"
-      : "Live Locked";
-  const tradingModeBadgeClass = props.practiceModeActive
-    ? "sim"
-    : liveTradingArmed
-      ? "live"
-      : "blocked";
-  const modeDisabledReason = (): string | null => {
-    if (props.practiceModeActive || liveTradingArmed) {
-      return null;
-    }
-    if (liveTradingAvailable) {
-      return "Live trading is locked. Turn on Practice Mode to test without exchange orders.";
-    }
-    return "Practice Mode is off. Turn it on to test this trade.";
-  };
+  const bypassExecutionGates = props.dispatchMode === "SIMULATE_ACK";
 
   const sizingReason = (
     result: SpreadSizingPlanResult | null,
@@ -4538,12 +4499,11 @@ function TradePage(props: {
     if (props.submitting) {
       return "Action in progress.";
     }
+    if (props.requiresLiveArm && !props.operatorConfirmed) {
+      return "Execution mode is SIM ONLY. Arm LIVE to enable entry actions.";
+    }
     if (!props.operatorId.trim().length) {
       return "Operator ID is required.";
-    }
-    const localModeDisabledReason = modeDisabledReason();
-    if (localModeDisabledReason) {
-      return localModeDisabledReason;
     }
     const notionalMessage = notionalValidationMessage();
     if (notionalMessage) {
@@ -4554,13 +4514,13 @@ function TradePage(props: {
       return localSizingReason;
     }
     if (!bypassExecutionGates && props.gateState.killSwitchActive) {
-      return "Live trading is paused by the global disable control.";
+      return "Kill switch is ACTIVE.";
     }
     if (!bypassExecutionGates && (!props.gateState.leftAllowed || !props.gateState.rightAllowed)) {
-      return "Live safety checks are not ready for one or both legs.";
+      return "Integrity gate is blocking one or both legs.";
     }
     if (!bypassExecutionGates && !props.gateState.reconcileOk) {
-      return "Live account checks are not ready.";
+      return "Reconcile gate is NOT_OK.";
     }
     return null;
   };
@@ -4570,34 +4530,34 @@ function TradePage(props: {
       return null;
     }
     if (selectedCue.cue.trade_gate?.status === "WAIT" || tradeGateReasons.has("PERFORMANCE_HISTORY_WAIT")) {
-      return "This setup needs more practice history before it is ready.";
+      return "Warning: waiting for minimum paper-trade history.";
     }
     if (selectedCue.cue.trade_gate?.status === "UNAVAILABLE") {
-      return "Trade readiness is unavailable right now.";
+      return "Warning: trade gate is unavailable.";
     }
     if (!tradeGatePass) {
       if (tradeGateReasons.has("AT_OR_BEYOND_STOP_BAND")) {
-        return "This spread has moved too far to start safely.";
+        return "Warning: spread is at or beyond stop band.";
       }
       if (tradeGateReasons.has("RETRACE_COOLDOWN_ACTIVE")) {
-        return "This setup is cooling down after a recent move.";
+        return "Warning: retrace cooldown is active.";
       }
       if (tradeGateReasons.has("BELOW_ENTRY_BAND")) {
-        return "Early setup: entry level not reached yet.";
+        return "Warning: |z| is below the entry threshold.";
       }
       if (tradeGateReasons.has("CHAMPION_DRIFT_BLOCKED")) {
-        return "This pair is under setup review.";
+        return "Warning: champion drift guard is active.";
       }
       if (tradeGateReasons.has("HEDGE_RATIO_UNSTABLE")) {
-        return "The pair relationship is unstable right now.";
+        return "Warning: hedge ratio stability is weak.";
       }
       if (tradeGateReasons.has("PERFORMANCE_GATE_BLOCKED")) {
-        return "Recent practice results are not strong enough yet.";
+        return "Warning: recent paper-trade profitability gate failed.";
       }
       if (tradeGateReasons.has("COST_GATE_BLOCKED")) {
-        return "Estimated costs are too high right now.";
+        return "Warning: estimated costs exceed edge.";
       }
-      return "Setup conditions are not ready yet.";
+      return "Warning: setup/cost conditions are not favorable.";
     }
     return null;
   };
@@ -4610,13 +4570,12 @@ function TradePage(props: {
       ? "No open spread position to add exposure."
       : null);
   const reduceNotionalMessage = notionalValidationMessage();
-  const reduceModeDisabledReason = modeDisabledReason();
   const reduceExposureDisabledReason = props.submitting
     ? "Action in progress."
     : props.currentPosition.direction === "NONE" || props.currentPosition.totalSize <= 0
       ? "No open spread position to reduce."
-      : reduceModeDisabledReason
-        ? reduceModeDisabledReason
+      : props.requiresLiveArm && !props.operatorConfirmed
+        ? "Execution mode is SIM ONLY. Arm LIVE to reduce."
         : !props.operatorId.trim().length
           ? "Operator ID is required."
           : reduceNotionalMessage
@@ -4759,9 +4718,7 @@ function TradePage(props: {
         <div className="timeline-card open-trades-card">
           <h3>Open Trades</h3>
           {props.openTradesError ? <p className="small-text tone-warn">{props.openTradesError}</p> : null}
-          <p className="open-trades-count">
-            Open {props.practiceModeActive ? "paper" : "live"} positions (all pairs): {props.openTradesCount}
-          </p>
+          <p className="open-trades-count">Open positions (all pairs): {props.openTradesCount}</p>
           {props.openTrade ? (
             <>
               <div className="table-wrap open-trades-table-wrap">
@@ -4834,16 +4791,14 @@ function TradePage(props: {
               </div>
             </>
           ) : (
-            <p className="empty-text">
-              {props.practiceModeActive ? "No paper position for selected pair." : "No live position for selected pair."}
-            </p>
+            <p className="empty-text">No live position for selected pair.</p>
           )}
         </div>
       </SectionCard>
 
       <SectionCard
         title="Spread Execution"
-        subtitle="Test trades in Practice Mode. Live trading stays locked unless armed."
+        subtitle="Manual actions with fail-closed execution gates"
         className="execution-panel"
       >
         <div className="execution-grid">
@@ -4851,77 +4806,36 @@ function TradePage(props: {
             <h3>Entry / Add Exposure</h3>
             <div className="execution-mode-card">
               <div className="execution-mode-row">
-                <strong>Trading Mode</strong>
-                <span className={`mode-badge ${tradingModeBadgeClass}`}>{tradingModeBadge}</span>
-              </div>
-              <div className="live-trading-row">
-                <div className="live-trading-copy">
-                  <strong>Live Trading</strong>
-                  <p className="small-text">
-                    {liveTradingAvailable
-                      ? props.requiresLiveArm
-                        ? "Requires explicit arming before live orders."
-                        : "Live order controls are available for this session."
-                      : "Locked for this session."}
-                  </p>
-                </div>
-                {liveTradingAvailable && props.requiresLiveArm ? (
-                  <label className="checkbox-row live-arm-toggle">
-                    <input
-                      type="checkbox"
-                      checked={props.operatorConfirmed}
-                      onChange={(event) => {
-                        props.setOperatorConfirmed(event.target.checked);
-                        if (event.target.checked) {
-                          props.setPracticeModeActive(false);
-                        }
-                      }}
-                    />
-                    Live Armed
-                  </label>
-                ) : null}
-              </div>
-              <div className="execution-mode-meta small-text">
-                Practice orders are saved as paper trades and never submit exchange orders.
-              </div>
-              <div className="practice-mode-row">
-                <div className="practice-mode-copy">
-                  <strong>Practice Mode</strong>
-                  <p className="small-text">
-                    {props.practiceModeActive
-                      ? "On: paper trades are saved for review."
-                      : "Off: live trading remains locked unless explicitly armed."}
-                  </p>
-                </div>
-                <button
-                  type="button"
-                  className={props.practiceModeActive ? "neutral compact-button" : "secondary compact-button"}
-                  disabled={
-                    props.submitting ||
-                    !props.operatorId.trim().length
-                  }
-                  aria-pressed={props.practiceModeActive}
-                  onClick={() => {
-                    const nextPracticeMode = !props.practiceModeActive;
-                    props.setPracticeModeActive(nextPracticeMode);
-                    if (nextPracticeMode) {
-                      props.setOperatorConfirmed(false);
-                    }
-                  }}
+                <strong>Execution Mode</strong>
+                <span
+                  className={`mode-badge ${
+                    props.requiresLiveArm ? (props.operatorConfirmed ? "live" : "sim") : "sim"
+                  }`}
                 >
-                  {props.practiceModeActive ? "Stop Practice Mode" : "Start Practice Mode"}
-                </button>
+                  {props.requiresLiveArm
+                    ? props.operatorConfirmed
+                      ? "LIVE ARMED"
+                      : "SIM ONLY"
+                    : "SIM ENABLED"}
+                </span>
               </div>
-              {!props.operatorId.trim().length ? (
-                <p className="action-disabled-reason">Operator ID is required to start Practice Mode.</p>
-              ) : null}
+              <label className="checkbox-row">
+                <input
+                  type="checkbox"
+                  checked={props.operatorConfirmed}
+                  onChange={(event) => props.setOperatorConfirmed(event.target.checked)}
+                  disabled={!props.requiresLiveArm}
+                />
+                {props.requiresLiveArm ? "Live Trading Armed" : "Live arm not required in SIMULATE_ACK"}
+              </label>
+              <div className="execution-mode-meta small-text">
+                Dispatch mode: {props.dispatchMode}
+              </div>
               <div className="kill-switch-row">
                 <div className="kill-switch-copy">
-                  <strong>Global Disable</strong>
+                  <strong>Global Disable (Kill Switch)</strong>
                   <p className="small-text">
-                    {props.killSwitch?.active
-                      ? "On: live entries are stopped."
-                      : "Off: live order controls follow the mode above."}
+                    {props.killSwitch?.active ? "ON: entries disabled globally." : "OFF: normal operation."}
                   </p>
                 </div>
                 <label className="toggle-switch" aria-label="Global disable kill switch">

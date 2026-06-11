@@ -142,7 +142,6 @@
       "type": "string",
       "enum": [
         "LEGACY_FALLBACK_ACTIVE",
-        "RECANONICALIZED_LEGACY_ROW_ACTIVE",
         "OUTSIDE_APPROVED_UNIVERSE",
         "LEARNING_HOLD",
         "LEARNING_NOT_TRADE_ELIGIBLE",
@@ -186,7 +185,6 @@
         "OPEN_POSITION_CONFLICT",
         "NON_LEGACY_CHAMPION",
         "LEGACY_FALLBACK_ACTIVE",
-        "RECANONICALIZED_LEGACY_ROW_ACTIVE",
         "OPERATOR_PROMOTION_ACTIVE",
         "PENDING_CHALLENGER_REVIEW",
         "OUTSIDE_APPROVED_UNIVERSE",
@@ -243,9 +241,13 @@
           "enum": ["LONG_SPREAD", "SHORT_SPREAD", "NONE"]
         },
         "spread_z": { "type": "number" },
-        "z_score": {
+        "selected_score_z": {
           "type": "number",
-          "description": "Operator-facing alias for spread_z. Kept numerically identical to spread_z for live-z diagnostics."
+          "description": "Latest score from the row's selected signal variant. This may differ from spread_z when the selected variant is not COINTEGRATION_Z."
+        },
+        "entry_distance_z": {
+          "type": "number",
+          "description": "Selected score distance from the configured entry threshold: abs(selected_score_z) - entry_band. Negative values mean the setup is still waiting for that many z units."
         },
         "opportunity_score": { "type": "number" },
         "confidence_band": {
@@ -414,5 +416,5 @@
       ]
     }
   },
-  "version": "0.3.1"
+  "version": "0.5.0"
 }

@@ -7,7 +7,6 @@
   "required": [
     "exchange",
     "account_id",
-    "execution_mode",
     "generated_at",
     "warnings",
     "trades"
@@ -18,10 +17,6 @@
     },
     "account_id": {
       "type": "string"
-    },
-    "execution_mode": {
-      "type": "string",
-      "enum": ["LIVE", "PAPER"]
     },
     "generated_at": {
       "type": "string",
@@ -115,5 +110,5 @@
       }
     }
   },
-  "version": "0.2.0"
+  "version": "0.1.0"
 }

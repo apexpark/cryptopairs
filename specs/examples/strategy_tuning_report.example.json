@@ -135,12 +135,7 @@
     "cues_generated": 9,
     "cost_gate_pass": 21,
     "cost_gate_fail": 27,
-    "errors": [],
-    "mode": "sync",
-    "force_hold": false,
-    "evidence_valid": true,
-    "error_codes": [],
-    "fail_closed_reasons": []
+    "errors": []
   },
   "backtest_insights": [
     {
