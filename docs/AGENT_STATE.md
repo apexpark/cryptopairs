@@ -41,7 +41,7 @@ Status snapshot of the four slices defined in `docs/26-champion-selection-integr
 |---|---|---|---|
 | Slice A — Separate evaluation from champion presentation | **Committed on sprint base** | local | Verified: schema validation passed; full `cargo test --workspace` passed in pre-push hook (covers `cue_for_pairs_response_*` × 5 + `evaluate_pair_honors_preferred_variant_override`); tsc passed. |
 | Slice B — Make transition accounting complete | **Committed on sprint base** | local | Verified: full `cargo test --workspace` passed in pre-push hook (covers `selection_transition_counts_*` × 3 + `reoptimize_response_serializes_transition_counts_at_top_level` + `update_persist_summary_for_transition_records_all_summary_counts`); clippy clean; reoptimize schema validation passed (0.2.0). |
-| Slice C — Remove incumbent bias in host runtime | **Planning merged; implementation blocked on host-lineage import** | operator/local | Design proposal PR #166 (`3a44100`) recommends cherry-picking the host `rc/live-trial` lineage into a reviewable branch, then implementing neutral champion selection behind a rollout flag. Implementation must not start until the operator imports the host lineage and resolves the proposal's open decisions (see §"Blocked / Waiting On" and Slice-C-impl follow-up below). |
+| Slice C — Remove incumbent bias in host runtime | **Planning historical; implementation requires operator re-scope** | operator/local | Design proposal PR #166 (`3a44100`) was written before PR #229 promoted the committed Hetzner runtime tree to `main`. The old host-lineage import gate is no longer the active branch blocker, but Slice C implementation must not start until the operator confirms it still applies under the current `main` baseline and records updated rollout decisions. |
 | Slice D — Recanonicalize legacy rows | **Design proposal merged; implementation blocked on Slice C observation/operator approval** | unassigned | PR #174 (`38ccc01`) recommends dry-run-first, operator-confirmed recanonicalization with rollback/pre-image artifacts. Implementation must wait for Slice C neutral-selection observation evidence and operator approval of the proposal's open questions; recanonicalized rows remain repair-only, not trade-eligible. |
 
 ### Immediate Safety Action (still active)
@@ -90,7 +90,7 @@ Source of truth for shipped behavior is `CHANGELOG.md` `## Unreleased` section. 
 
 ### B-Host-Lineage (cleared by production baseline promotion)
 
-Operator captured the `docs/27` read-only host verification outputs on **2026-05-05 02:29:31Z**. Those outputs remain historical context for Slice C planning. The prior branch-lineage blocker was cleared for new work by PR #229, which promoted the committed Hetzner runtime tree to `main`.
+Operator captured the `docs/27` read-only host verification outputs on **2026-05-05 02:29:31Z**. Those outputs remain historical context for Slice C planning. The prior branch-lineage blocker was cleared for new work by PR #229, which promoted the committed Hetzner runtime tree to `main`. This does not green-light Slice C implementation; that work now requires a fresh operator applicability and rollout decision against the current `main` baseline.
 
 Remaining operator-only step:
 1. If Hetzner's checkout has not yet been switched to `main`, perform the repo-only branch switch from the Hetzner-enabled machine and preserve local dirty files before switching. Do not restart services unless explicitly performing a runtime deploy.
@@ -472,7 +472,7 @@ Follow-ups carried forward from prior reviews. Ordered by source review then sev
 
 | ID | Severity | Description | Status |
 |---|---|---|---|
-| Slice-C-impl | **HIGH** | Import the host `rc/live-trial` lineage into a reviewable local branch, then implement neutral champion selection so stored champion config is comparison input only, not challenger preselection input. | **blocked on operator import/decisions** — design proposal PR #166 (`3a44100`) recommends a cherry-picked host import branch and feature-flagged neutral selection canary. Operator must choose import path, dirty-host-state handling, rollout path, observation window/success thresholds, and host verification owner before implementation PR review. |
+| Slice-C-impl | **HIGH** | Re-scope Slice C against the current `main` baseline before any implementation, then implement neutral champion selection only if the operator confirms the bug model still applies. | **blocked on operator re-scope/decisions** — design proposal PR #166 (`3a44100`) remains historical context, but its host-lineage import premise was superseded by PR #229's production-baseline promotion. Operator must choose whether Slice C still applies, the rollout path, observation window/success thresholds, and host verification owner before implementation PR review. |
 
 ### Cross-cutting
 
