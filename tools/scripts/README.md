@@ -79,6 +79,52 @@ python3 tools/scripts/fail_closed_readiness_check.py \
   --output-json artifacts/fail_closed_readiness_report.json
 ```
 
+## 1m Autopilot Observe-Only Sidecar
+
+Run one observe-only tick that records what a `1m` autopilot would have
+considered. This script never submits execution order intents or dispatches
+orders.
+
+By default it is disabled and an empty allowlist blocks all candidates. Enable
+it explicitly and provide pair/variant allowlist entries as
+`pair_id:selected_variant`.
+
+```bash
+AUTOPILOT_OBSERVE_ENABLED=true \
+AUTOPILOT_OBSERVE_ALLOWED_PAIR_VARIANTS="PF_DOGEUSD__PF_PEPEUSD:ROBUST_Z" \
+AUTOPILOT_OBSERVE_MIN_READY_WINDOW_ROWS=20 \
+AUTOPILOT_OBSERVE_MIN_READY_WINDOW_AVG_NET_BPS=0 \
+python3 tools/scripts/autopilot_observe.py --once
+```
+
+Optional pair-level ready-window quality input:
+
+```json
+[
+  {
+    "pair_id": "PF_DOGEUSD__PF_PEPEUSD",
+    "timeframe": "1m",
+    "selected_variant": "ROBUST_Z",
+    "rows": 64,
+    "profitable_rate": 0.73,
+    "avg_net_bps": 7.4
+  }
+]
+```
+
+Pass it with:
+
+```bash
+AUTOPILOT_OBSERVE_QUALITY_WINDOWS_JSON=artifacts/autopilot_observe/quality_windows.json \
+AUTOPILOT_OBSERVE_ENABLED=true \
+AUTOPILOT_OBSERVE_ALLOWED_PAIR_VARIANTS="PF_DOGEUSD__PF_PEPEUSD:ROBUST_Z" \
+python3 tools/scripts/autopilot_observe.py --once
+```
+
+Outputs append-only JSONL records under `artifacts/autopilot_observe/YYYYMMDD/`.
+Each record validates against
+`specs/contracts/autopilot_observe_record.schema.json`.
+
 ## Signal vs Gate PnL Audit
 
 Audit chart signal markers against gate state at entry time, with leg-level spread PnL attribution:

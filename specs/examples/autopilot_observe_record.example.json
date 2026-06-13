@@ -1,0 +1,54 @@
+{
+  "schema_version": 1,
+  "mode": "observe_only",
+  "run_id": "2026-06-13T05:30:00Z-1m",
+  "observed_at": "2026-06-13T05:30:00Z",
+  "source_generated_at": "2026-06-13T05:29:57Z",
+  "timeframe": "1m",
+  "pair_id": "PF_DOGEUSD__PF_PEPEUSD",
+  "selected_variant": "ROBUST_Z",
+  "approval_source": "LEARNING_SELECTION",
+  "decision_reason_code": "LEARNING_SELECTED_AND_LIVE_GATES_PASS",
+  "setup_gate_pass": true,
+  "cost_gate_pass": true,
+  "trade_gate_pass": true,
+  "spread_z": 2.12,
+  "entry_distance_z": 0.31,
+  "selected_score_z": 2.12,
+  "net_edge_bps": 19.5,
+  "opportunity_score": 35.9,
+  "learning_overlay_fresh": true,
+  "learning_overlay_age_seconds": 30.0,
+  "dispatch_mode": "FAIL_CLOSED",
+  "kill_switch_active": false,
+  "conflicting_live_trade": false,
+  "quality_window": {
+    "rows": 64,
+    "profitable_rate": 0.73,
+    "avg_net_bps": 7.4,
+    "min_rows": 20,
+    "min_avg_net_bps": 0.0,
+    "pass": true
+  },
+  "decision": "OBSERVED_ENTRY_CANDIDATE",
+  "reason_codes": [
+    "TRADE_NOW_LIVE_GATES_PASS",
+    "ALLOWLIST_PAIR_VARIANT",
+    "QUALITY_GATE_PASS"
+  ],
+  "observe_key": "observe-only:v1:1m:PF_DOGEUSD__PF_PEPEUSD:ROBUST_Z:SHORT_SPREAD:2026-06-13T05:30:00Z",
+  "evidence": {
+    "data_health_status": "ok",
+    "strategy_health_status": "ok",
+    "trade_now_status": "ok",
+    "trade_now_observability_status": "ok",
+    "dispatch_mode_status": "ok",
+    "kill_switch_status": "ok",
+    "open_trades_status": "ok",
+    "source_urls": [
+      "http://127.0.0.1:8080/health",
+      "http://127.0.0.1:8083/v1/strategy/pairs/trade-now?timeframe=1m",
+      "http://127.0.0.1:8082/v1/execution/kill-switch"
+    ]
+  }
+}

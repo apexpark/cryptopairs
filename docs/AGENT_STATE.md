@@ -11,12 +11,12 @@
 |---|---|
 | Last updated (UTC) | 2026-06-13 |
 | Updated by | codex |
-| Repo HEAD pin (committed) | `f22c26f04c40b662bed493528357a009027fd8d1` |
+| Repo HEAD pin (committed) | `fc869ea8ec70406a923294169950578b6a513133` |
 | Pin branch | `main` |
 | Sprint base branch | `main` |
-| Pin notes | State refreshed after PR #229 promoted the Hetzner production runtime tree to `main` at f22c26f. The pin records the merged baseline immediately before this curation branch; after this curation commit lands, the pin should lag by one commit per the convention below. `origin/main` tree matched `origin/cherry-picked-from-rc-live-trial` at the PR #229 merge point. |
+| Pin notes | State refreshed after PR #230 landed the AUTO-1 observe-only design proposal and clarified that Slice C requires fresh operator re-scope under the current `main` baseline. The pin records the merged baseline immediately before this implementation branch; after this implementation commit lands, the pin should lag by one commit per the convention below. |
 | Origin | `https://github.com/apexpark/cryptopairs.git` |
-| Working-tree state | **Clean production baseline on `main`** - PR #229 made `main` the canonical committed baseline for the Hetzner runtime tree. This docs-only branch curates state and proposes the next `1m` autopilot observe-only design; it must not enable live `ENTRY` / `EXIT`. |
+| Working-tree state | **AUTO-1A/B implementation branch from clean `main`** - this branch adds the observe-only artifact contract, disabled-by-default sidecar, and tests. It must not create order intents, dispatch orders, alter live `ENTRY` / `EXIT`, or weaken execution-service gating. |
 
 If the pin above is not reachable from `HEAD` via fast-forward, this file is stale; if `HEAD` is ahead of the pin, see §"Pin Convention".
 
@@ -29,8 +29,9 @@ If the pin above is not reachable from `HEAD` via fast-forward, this file is sta
 | Slice | Status | Owner | Notes |
 |---|---|---|---|
 | BASE-1 - Promote Hetzner runtime baseline to `main` | **Merged** | local | PR #229 merged at f22c26f. `origin/main` tree matched `origin/cherry-picked-from-rc-live-trial` after merge, preserving the data-service Postgres-backed health check and the current production runtime tree. |
-| STATE-1 - Curate agent state for `main` baseline | **Ready for review** | local | This curation flips the sprint base to `main`, records PR #229 as the production baseline reconciliation, and clears stale guidance that pointed new work at `cherry-picked-from-rc-live-trial`. |
-| AUTO-1 - 1m autopilot observe-only design proposal | **Ready for review** | codex | Design-proposal-first only in `docs/proposals/AUTO-1-1m-autopilot-observe-only.md`. Scope is observation, decision logging, and safety/readiness design. It must not create order intents, dispatch orders, alter live `ENTRY` / `EXIT`, or weaken execution-service gating. |
+| STATE-1 - Curate agent state for `main` baseline | **Merged** | local | PR #230 flipped the sprint base to `main`, recorded PR #229 as the production baseline reconciliation, and cleared stale guidance that pointed new work at `cherry-picked-from-rc-live-trial`. |
+| AUTO-1 - 1m autopilot observe-only design proposal | **Merged** | codex | PR #230 landed `docs/proposals/AUTO-1-1m-autopilot-observe-only.md`. Scope remains observation, decision logging, and safety/readiness design. It must not create order intents, dispatch orders, alter live `ENTRY` / `EXIT`, or weaken execution-service gating. |
+| AUTO-1A/B - Observe-only contract and sidecar | **Ready for review** | codex | This branch adds `autopilot_observe_record` schema/example, a disabled-by-default Python sidecar under `tools/scripts/autopilot_observe.py`, and focused tests for replay dedupe, fail-closed health/kill-switch/malformed-source behavior, quality-gate blocking, and no execution order-intent URL use. |
 | HOST-1 - Hetzner repo checkout alignment | **Operator-only follow-up** | operator | Runtime was manually verified healthy before PR #229. A repo-only switch to `main` on Hetzner is operator-only and should not restart services. Any runtime refresh must preserve fail-closed settings and follow `docs/playbooks/hosted-deployment-runbook.md`. |
 
 ### Sprint: Champion-Selection Integrity (docs/26 + docs/27)
@@ -493,14 +494,16 @@ Follow-ups carried forward from prior reviews. Ordered by source review then sev
 
 Pickable items, in priority order:
 
-1. **Local/remote agent: review and merge AUTO-1 design proposal** - this PR should remain docs-only and must not alter runtime behavior.
+1. **Local/remote agent: review and merge AUTO-1A/B observe-only implementation** - this PR must remain disabled by default and must not alter live execution behavior.
 2. **Operator action: Hetzner repo checkout alignment** - switch the Hetzner checkout to `main` if not already done. A repo-only checkout update needs no service restart; any runtime refresh must preserve fail-closed settings and follow `docs/playbooks/hosted-deployment-runbook.md`.
-3. **Remote/local agent: AUTO-1 implementation planning** - only after the observe-only design proposal is approved. First implementation should be disabled by default and observe-only.
-4. **Remote/local agent: local dirty-work cleanup sequence** - split unresolved local follow-ups into separate reviewable PRs only if still relevant after PR #229: signal-learning report schema/producer alignment, web TypeScript/test fallout, selected-signal config persistence coverage, and CI hardening for web/contract/tools checks. Verify each issue from repo artifacts before claiming it.
-5. **Remote/local agent: Slice C implementation** - only after operator confirms it still applies under the `main` baseline; preserve Slice A/B semantics and add Postgres-backed tests.
-6. **Operator/local agent: Slice C observation capture** - after Slice C implementation/deployment, capture the neutral-selection observation evidence required by the Slice D and X3 proposals before either follow-up implementation starts.
-7. **Remote/local agent: Slice D implementation** - only after Slice C observation and operator approval of PR #174's open questions; implement dry-run-first recanonicalization without making legacy or repair-only provenance trade-eligible.
-8. **Remote/local agent: X3 implementation** - only after Slice C lands and is observed; implement PR #175's optional/additive reporting diagnostics while preserving legacy `selected_variant`.
+3. **Remote/local agent: AUTO-1C pair-level attribution report** - after AUTO-1A/B lands, add the report that summarizes observed candidates against later ready-window and paper-trade outcomes.
+4. **Remote/local agent: AUTO-1D observe-only runbook** - add hosted commands for one-shot/loop operation, artifact rotation, and 24-72 hour evidence capture.
+5. **Remote/local agent: AUTO-2 exit observation design** - design hypothetical exit observation before any non-observe automation is considered.
+6. **Remote/local agent: local dirty-work cleanup sequence** - split unresolved local follow-ups into separate reviewable PRs only if still relevant after PR #229: signal-learning report schema/producer alignment, web TypeScript/test fallout, selected-signal config persistence coverage, and CI hardening for web/contract/tools checks. Verify each issue from repo artifacts before claiming it.
+7. **Remote/local agent: Slice C implementation** - only after operator confirms it still applies under the `main` baseline; preserve Slice A/B semantics and add Postgres-backed tests.
+8. **Operator/local agent: Slice C observation capture** - after Slice C implementation/deployment, capture the neutral-selection observation evidence required by the Slice D and X3 proposals before either follow-up implementation starts.
+9. **Remote/local agent: Slice D implementation** - only after Slice C observation and operator approval of PR #174's open questions; implement dry-run-first recanonicalization without making legacy or repair-only provenance trade-eligible.
+10. **Remote/local agent: X3 implementation** - only after Slice C lands and is observed; implement PR #175's optional/additive reporting diagnostics while preserving legacy `selected_variant`.
 
 ---
 
