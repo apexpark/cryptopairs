@@ -29,6 +29,7 @@ ALLOWED_APPROVAL_SOURCES = {
     "LEARNING_ELIGIBLE_OVERRIDE",
 }
 KNOWN_DISPATCH_MODES = {"FAIL_CLOSED", "SIMULATE_ACK", "LIVE_KRAKEN"}
+SUPPORTED_TIMEFRAME = "1m"
 
 
 @dataclasses.dataclass(frozen=True)
@@ -288,7 +289,7 @@ def build_observe_key(row: dict[str, Any], observed_at: dt.datetime) -> str:
         [
             "observe-only",
             "v1",
-            str(row.get("timeframe", "1m")),
+            SUPPORTED_TIMEFRAME,
             str(row.get("pair_id", SYSTEM_PAIR_ID)),
             str(row.get("selected_variant", SYSTEM_VARIANT)),
             direction,
@@ -322,6 +323,19 @@ def evidence_status(
     }
 
 
+def blocked_before_poll_evidence() -> dict[str, Any]:
+    return {
+        "data_health_status": "not_requested",
+        "strategy_health_status": "not_requested",
+        "trade_now_status": "not_requested",
+        "trade_now_observability_status": "not_requested",
+        "dispatch_mode_status": "not_requested",
+        "kill_switch_status": "not_requested",
+        "open_trades_status": "not_requested",
+        "source_urls": [],
+    }
+
+
 def health_status(payload: dict[str, Any] | None, fetch_status: str) -> str:
     if fetch_status != "ok" or payload is None:
         return "error"
@@ -340,7 +354,11 @@ def system_record(
     evidence: dict[str, Any],
 ) -> dict[str, Any]:
     return record_from_row(
-        row={"pair_id": SYSTEM_PAIR_ID, "selected_variant": SYSTEM_VARIANT, "timeframe": "1m"},
+        row={
+            "pair_id": SYSTEM_PAIR_ID,
+            "selected_variant": SYSTEM_VARIANT,
+            "timeframe": SUPPORTED_TIMEFRAME,
+        },
         observed_at=observed_at,
         decision=decision,
         reason_codes=reason_codes,
@@ -372,7 +390,7 @@ def record_from_row(
         "run_id": f"{iso(observed_at)}-1m",
         "observed_at": iso(observed_at),
         "source_generated_at": source_generated_at(trade_now),
-        "timeframe": str(row.get("timeframe", "1m")),
+        "timeframe": SUPPORTED_TIMEFRAME,
         "pair_id": str(row.get("pair_id", "")),
         "selected_variant": str(row.get("selected_variant", "")),
         "approval_source": nullable_string(row.get("approval_source")),
@@ -518,10 +536,14 @@ def evaluate_candidate(
 
     stale_reason = signal_age_reason(config, trade_now, observed_at)
     dispatch_mode_name = dispatch_mode_value(dispatch_mode)
+    row_timeframe = str(row.get("timeframe", SUPPORTED_TIMEFRAME))
 
     if source_reasons:
         decision = "BLOCKED_SOURCE_UNAVAILABLE"
         reasons.extend(source_reasons)
+    elif row_timeframe != SUPPORTED_TIMEFRAME:
+        decision = "BLOCKED_TIMEFRAME_OUT_OF_SCOPE"
+        reasons.append("ROW_TIMEFRAME_NOT_1M")
     elif stale_reason is not None:
         decision = "BLOCKED_STALE_INPUT"
         reasons.append(stale_reason)
@@ -588,6 +610,20 @@ def run_once(
 ) -> list[dict[str, Any]]:
     if not config.enabled:
         return []
+
+    if config.timeframe != SUPPORTED_TIMEFRAME:
+        now_value = utc_now() if observed_at is None else observed_at
+        return [
+            system_record(
+                observed_at=now_value,
+                decision="BLOCKED_TIMEFRAME_OUT_OF_SCOPE",
+                reason_codes=["CONFIG_TIMEFRAME_NOT_1M"],
+                trade_now=None,
+                dispatch_mode=None,
+                kill_switch=None,
+                evidence=blocked_before_poll_evidence(),
+            )
+        ]
 
     active_client = JsonGetClient() if client is None else client
     now_value = utc_now() if observed_at is None else observed_at

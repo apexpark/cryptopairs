@@ -82,6 +82,12 @@ def base_routes() -> dict[str, dict[str, Any]]:
     }
 
 
+def with_trade_now_candidate(routes: dict[str, dict[str, Any]], row: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    updated = deepcopy(routes)
+    updated["http://strategy/v1/strategy/pairs/trade-now?timeframe=1m"]["tradable_now"] = [row]
+    return updated
+
+
 class RecordingGetClient:
     def __init__(self, routes: dict[str, dict[str, Any]]) -> None:
         self.routes = routes
@@ -228,3 +234,55 @@ class AutopilotObserveTests(unittest.TestCase):
 
         self.assertEqual(records[0]["decision"], "BLOCKED_NOT_ALLOWLISTED")
         self.assertIn("PAIR_VARIANT_NOT_ALLOWLISTED", records[0]["reason_codes"])
+
+    def test_non_1m_config_blocks_before_polling_trade_now(self) -> None:
+        loaded = observe.load_config(
+            {
+                "AUTOPILOT_OBSERVE_ENABLED": "true",
+                "AUTOPILOT_OBSERVE_TIMEFRAMES": "15m",
+                "AUTOPILOT_OBSERVE_ALLOWED_PAIR_VARIANTS": "PF_DOGEUSD__PF_PEPEUSD:ROBUST_Z",
+            }
+        )
+        client = RecordingGetClient(base_routes())
+
+        records = observe.run_once(
+            loaded.replace(
+                data_service_url="http://data",
+                strategy_service_url="http://strategy",
+                execution_service_url="http://execution",
+                quality_windows={
+                    ("PF_DOGEUSD__PF_PEPEUSD", "1m", "ROBUST_Z"): observe.QualityWindow(
+                        rows=64,
+                        profitable_rate=0.73,
+                        avg_net_bps=7.4,
+                    )
+                },
+                min_ready_window_rows=20,
+                min_ready_window_avg_net_bps=0.0,
+            ),
+            client=client,
+            observed_at=OBSERVED_AT,
+            seen_keys=set(),
+        )
+
+        self.assertEqual(loaded.timeframe, "15m")
+        self.assertEqual(client.urls, [])
+        self.assertEqual(records[0]["pair_id"], "__SYSTEM__")
+        self.assertEqual(records[0]["timeframe"], "1m")
+        self.assertEqual(records[0]["decision"], "BLOCKED_TIMEFRAME_OUT_OF_SCOPE")
+        self.assertIn("CONFIG_TIMEFRAME_NOT_1M", records[0]["reason_codes"])
+
+    def test_non_1m_trade_now_row_blocks_with_schema_valid_timeframe(self) -> None:
+        row = candidate()
+        row["timeframe"] = "15m"
+
+        records = observe.run_once(
+            config(),
+            client=RecordingGetClient(with_trade_now_candidate(base_routes(), row)),
+            observed_at=OBSERVED_AT,
+            seen_keys=set(),
+        )
+
+        self.assertEqual(records[0]["timeframe"], "1m")
+        self.assertEqual(records[0]["decision"], "BLOCKED_TIMEFRAME_OUT_OF_SCOPE")
+        self.assertIn("ROW_TIMEFRAME_NOT_1M", records[0]["reason_codes"])
