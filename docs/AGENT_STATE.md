@@ -29,8 +29,8 @@ If the pin above is not reachable from `HEAD` via fast-forward, this file is sta
 | Slice | Status | Owner | Notes |
 |---|---|---|---|
 | BASE-1 - Promote Hetzner runtime baseline to `main` | **Merged** | local | PR #229 merged at f22c26f. `origin/main` tree matched `origin/cherry-picked-from-rc-live-trial` after merge, preserving the data-service Postgres-backed health check and the current production runtime tree. |
-| STATE-1 - Curate agent state for `main` baseline | **In progress** | local | This curation flips the sprint base to `main`, records PR #229 as the production baseline reconciliation, and clears stale guidance that pointed new work at `cherry-picked-from-rc-live-trial`. |
-| AUTO-1 - 1m autopilot observe-only design proposal | **In progress** | codex | Design-proposal-first only. Scope is observation, decision logging, and safety/readiness design. It must not create order intents, dispatch orders, alter live `ENTRY` / `EXIT`, or weaken execution-service gating. |
+| STATE-1 - Curate agent state for `main` baseline | **Ready for review** | local | This curation flips the sprint base to `main`, records PR #229 as the production baseline reconciliation, and clears stale guidance that pointed new work at `cherry-picked-from-rc-live-trial`. |
+| AUTO-1 - 1m autopilot observe-only design proposal | **Ready for review** | codex | Design-proposal-first only in `docs/proposals/AUTO-1-1m-autopilot-observe-only.md`. Scope is observation, decision logging, and safety/readiness design. It must not create order intents, dispatch orders, alter live `ENTRY` / `EXIT`, or weaken execution-service gating. |
 | HOST-1 - Hetzner repo checkout alignment | **Operator-only follow-up** | operator | Runtime was manually verified healthy before PR #229. A repo-only switch to `main` on Hetzner is operator-only and should not restart services. Any runtime refresh must preserve fail-closed settings and follow `docs/playbooks/hosted-deployment-runbook.md`. |
 
 ### Sprint: Champion-Selection Integrity (docs/26 + docs/27)
