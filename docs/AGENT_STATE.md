@@ -9,14 +9,14 @@
 
 | Field | Value |
 |---|---|
-| Last updated (UTC) | 2026-06-01 |
+| Last updated (UTC) | 2026-06-13 |
 | Updated by | codex |
-| Repo HEAD pin (committed) | `da7fea96835796fd4f16f3e506745a44dffcbcef` |
-| Pin branch | `cherry-picked-from-rc-live-trial` |
-| Sprint base branch | `cherry-picked-from-rc-live-trial` |
-| Pin notes | State refreshed after the Apex harness governance scaffold landed on the sprint base as PR #217 at da7fea9. This curation intentionally records da7fea9 as the pre-curation anchor; after this curation commit lands, the pin should lag by one commit per the convention below. Recent sprint-base commits since the prior AGENT_STATE touch include host-lineage selection work, signal learning monitoring, Trade Now slices, blocked-cue projection classification, and the Apex harness scaffold; verify individual behavior from the referenced commits before claiming runtime details. |
+| Repo HEAD pin (committed) | `f22c26f04c40b662bed493528357a009027fd8d1` |
+| Pin branch | `main` |
+| Sprint base branch | `main` |
+| Pin notes | State refreshed after PR #229 promoted the Hetzner production runtime tree to `main` at f22c26f. The pin records the merged baseline immediately before this curation branch; after this curation commit lands, the pin should lag by one commit per the convention below. `origin/main` tree matched `origin/cherry-picked-from-rc-live-trial` at the PR #229 merge point. |
 | Origin | `https://github.com/apexpark/cryptopairs.git` |
-| Working-tree state | **Docs curation branch forked from clean sprint base** - this PR branch was created from `origin/cherry-picked-from-rc-live-trial` at da7fea9. The operator's primary local checkout has separate uncommitted work and is intentionally not used for this docs-only slice. |
+| Working-tree state | **Clean production baseline on `main`** - PR #229 made `main` the canonical committed baseline for the Hetzner runtime tree. This docs-only branch curates state and proposes the next `1m` autopilot observe-only design; it must not enable live `ENTRY` / `EXIT`. |
 
 If the pin above is not reachable from `HEAD` via fast-forward, this file is stale; if `HEAD` is ahead of the pin, see §"Pin Convention".
 
@@ -24,14 +24,14 @@ If the pin above is not reachable from `HEAD` via fast-forward, this file is sta
 
 ## Currently In Flight
 
-### Active Sequence: Apex Harness And Live Refresh Readiness
+### Active Sequence: Main Baseline And 1m Autopilot Observe-Only Design
 
 | Slice | Status | Owner | Notes |
 |---|---|---|---|
-| APEX-1 - Install Apex harness governance scaffold | **Merged to sprint base** | local | PR #217 landed at da7fea9 after Operator accepted Reviewer signoff for head ae4354df78f1cdb4397b6c27243176827afb426a. |
-| APEX-2 - Curate agent state and README precedence | **In progress** | local | This slice records the post-PR #217 state, fixes the `docs/README.md` precedence ambiguity for `docs/ops/**`, and preserves same-chat sub-agent review as advisory unless the Operator records an explicit exception. |
-| HOST-1 - Hetzner-enabled machine update | **Operator-only pending instructions** | operator | This docs-only curation does not require a service restart. Runtime checkout or deploy on Hetzner must happen from the Hetzner-enabled machine, preserve fail-closed execution posture, and follow `docs/playbooks/hosted-deployment-runbook.md`. |
-| LOCAL-1 - Dirty local follow-ups | **Pending separate slices** | local/remote | Operator-local review context has unresolved code/test follow-ups. Treat them as separate small slices: signal-learning report schema/producer alignment, web TypeScript/test fallout, selected-signal config persistence coverage, and CI blind-spot hardening. Verify each from repo artifacts before editing. |
+| BASE-1 - Promote Hetzner runtime baseline to `main` | **Merged** | local | PR #229 merged at f22c26f. `origin/main` tree matched `origin/cherry-picked-from-rc-live-trial` after merge, preserving the data-service Postgres-backed health check and the current production runtime tree. |
+| STATE-1 - Curate agent state for `main` baseline | **In progress** | local | This curation flips the sprint base to `main`, records PR #229 as the production baseline reconciliation, and clears stale guidance that pointed new work at `cherry-picked-from-rc-live-trial`. |
+| AUTO-1 - 1m autopilot observe-only design proposal | **In progress** | codex | Design-proposal-first only. Scope is observation, decision logging, and safety/readiness design. It must not create order intents, dispatch orders, alter live `ENTRY` / `EXIT`, or weaken execution-service gating. |
+| HOST-1 - Hetzner repo checkout alignment | **Operator-only follow-up** | operator | Runtime was manually verified healthy before PR #229. A repo-only switch to `main` on Hetzner is operator-only and should not restart services. Any runtime refresh must preserve fail-closed settings and follow `docs/playbooks/hosted-deployment-runbook.md`. |
 
 ### Sprint: Champion-Selection Integrity (docs/26 + docs/27)
 
@@ -82,17 +82,18 @@ Source of truth for shipped behavior is `CHANGELOG.md` `## Unreleased` section. 
 - **Committed (`38ccc01`)**: Slice D recanonicalization design proposal (PR #174) — `docs/proposals/SLICE-D-recanonicalize-legacy-rows.md` recommends a dry-run-first, operator-confirmed maintenance action for legacy selected rows, gated on Slice C neutral-selection observation evidence, with row-level eligibility reasons, repair-only provenance, pre-image rollback artifacts, additive/versioned contracts, bounded metrics/logs, and operator-only host verification.
 - **Committed (`2d66495`)**: X3 reporting diagnostics design proposal (PR #175) — `docs/proposals/X3-reporting-alignment-diagnostics.md` recommends optional additive `selection_diagnostics` for backtest, live-z, paper-trades, and opportunity-history surfaces after Slice C observation, while preserving legacy `selected_variant` compatibility and deferring implementation/schema changes to a later PR.
 - **Committed (`da7fea9`)**: Apex harness governance scaffold (PR #217) — installs `docs/ops/README.md`, `docs/ops/ai_workflow.md`, `docs/ops/codex_prompt_pack.md`, `docs/research/packets/template.md`, `docs/research/packets/01-agentic-harness.md`, `.github/pull_request_template.md`, and docs index updates. The workflow preserves `AGENTS.md` as highest precedence, keeps required independent review cross-agent under current rules, treats same-chat sub-agent review as advisory unless the Operator records an explicit exception, and leaves protected-path enforcement as a proposal only.
+- **Committed (`f22c26f`)**: Hetzner runtime baseline promoted to `main` (PR #229) — squash-merged the committed production runtime tree from `origin/cherry-picked-from-rc-live-trial` so `main` became the canonical branch for the running server baseline. Verification recorded in the PR: `git diff --quiet HEAD origin/cherry-picked-from-rc-live-trial`, `git diff --check`, and focused `cargo test -p data-service health_returns_503_when_repository_check_fails`.
 
 ---
 
 ## Blocked / Waiting On
 
-### B-Host-Lineage (planning unblocked; host lineage still divergent)
+### B-Host-Lineage (cleared by production baseline promotion)
 
-Operator captured the `docs/27` read-only host verification outputs on **2026-05-05 02:29:31Z**. Those outputs are enough to unblock **Slice C planning** against the live host facts. The host branch is still divergent and dirty, so **host-specific implementation work** remains contingent on pulling the lineage into a reviewable local branch.
+Operator captured the `docs/27` read-only host verification outputs on **2026-05-05 02:29:31Z**. Those outputs remain historical context for Slice C planning. The prior branch-lineage blocker was cleared for new work by PR #229, which promoted the committed Hetzner runtime tree to `main`.
 
-Remaining operator-only step for implementation, if Slice C planning leads to code work:
-1. Pull the host runtime lineage into a local reviewable branch (or merge it back to `origin`) before any host-specific implementation PR is approved.
+Remaining operator-only step:
+1. If Hetzner's checkout has not yet been switched to `main`, perform the repo-only branch switch from the Hetzner-enabled machine and preserve local dirty files before switching. Do not restart services unless explicitly performing a runtime deploy.
 
 Neither the local nor any remote agent has SSH access to `cryptopairs`. This is operator-only.
 
@@ -492,15 +493,14 @@ Follow-ups carried forward from prior reviews. Ordered by source review then sev
 
 Pickable items, in priority order:
 
-1. **Local agent: finish APEX-2 curation** - merge the `docs/README.md` precedence cleanup and this `docs/AGENT_STATE.md` refresh only after exact-SHA review and Operator authorization.
-2. **Operator action: Hetzner repo update decision** - decide whether the Hetzner-enabled machine should receive a repo-only checkout update to the accepted sprint-base SHA, or a runtime service refresh. A docs-only update needs no container restart; any runtime refresh must preserve fail-closed settings and follow `docs/playbooks/hosted-deployment-runbook.md`.
-3. **Local/remote agents: local dirty-work cleanup sequence** - split unresolved local follow-ups into separate reviewable PRs: signal-learning report schema/producer alignment, web TypeScript/test fallout, selected-signal config persistence coverage, and CI hardening for web/contract/tools checks. Verify each issue from repo artifacts before claiming it.
-4. **Operator action: Slice C import decision/import** - choose the import path from PR #166 (recommended: cherry-pick host-only `rc/live-trial` commits onto `cherry-picked-from-rc-live-trial`) and import the host lineage into a local reviewable branch before any Slice C implementation PR is approved.
-5. **Remote/local agent: Slice C implementation** - only after host lineage import and operator decisions; implement neutral champion selection behind the approved rollout path, preserve Slice A/B semantics, and add B6 pg-backed tests.
+1. **Local/remote agent: review and merge AUTO-1 design proposal** - this PR should remain docs-only and must not alter runtime behavior.
+2. **Operator action: Hetzner repo checkout alignment** - switch the Hetzner checkout to `main` if not already done. A repo-only checkout update needs no service restart; any runtime refresh must preserve fail-closed settings and follow `docs/playbooks/hosted-deployment-runbook.md`.
+3. **Remote/local agent: AUTO-1 implementation planning** - only after the observe-only design proposal is approved. First implementation should be disabled by default and observe-only.
+4. **Remote/local agent: local dirty-work cleanup sequence** - split unresolved local follow-ups into separate reviewable PRs only if still relevant after PR #229: signal-learning report schema/producer alignment, web TypeScript/test fallout, selected-signal config persistence coverage, and CI hardening for web/contract/tools checks. Verify each issue from repo artifacts before claiming it.
+5. **Remote/local agent: Slice C implementation** - only after operator confirms it still applies under the `main` baseline; preserve Slice A/B semantics and add Postgres-backed tests.
 6. **Operator/local agent: Slice C observation capture** - after Slice C implementation/deployment, capture the neutral-selection observation evidence required by the Slice D and X3 proposals before either follow-up implementation starts.
 7. **Remote/local agent: Slice D implementation** - only after Slice C observation and operator approval of PR #174's open questions; implement dry-run-first recanonicalization without making legacy or repair-only provenance trade-eligible.
 8. **Remote/local agent: X3 implementation** - only after Slice C lands and is observed; implement PR #175's optional/additive reporting diagnostics while preserving legacy `selected_variant`.
-9. **Operator action (long-term cleanup)** - PR the full agent-docs chain from `cherry-picked-from-rc-live-trial` to `main` when ready, then flip Sprint base branch in §Pin to `main`.
 
 ---
 
