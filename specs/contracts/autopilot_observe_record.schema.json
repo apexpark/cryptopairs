@@ -1,0 +1,229 @@
+{
+  "$id": "https://cryptopairs/specs/contracts/autopilot_observe_record.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "AutopilotObserveRecord",
+  "description": "Append-only observe-only autopilot decision record. This artifact records what the observer would have considered; it is not an execution intent and must not be submitted to execution-service.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "mode",
+    "run_id",
+    "observed_at",
+    "source_generated_at",
+    "timeframe",
+    "pair_id",
+    "selected_variant",
+    "approval_source",
+    "decision_reason_code",
+    "setup_gate_pass",
+    "cost_gate_pass",
+    "trade_gate_pass",
+    "spread_z",
+    "entry_distance_z",
+    "selected_score_z",
+    "net_edge_bps",
+    "opportunity_score",
+    "learning_overlay_fresh",
+    "learning_overlay_age_seconds",
+    "dispatch_mode",
+    "kill_switch_active",
+    "conflicting_live_trade",
+    "quality_window",
+    "decision",
+    "reason_codes",
+    "observe_key",
+    "evidence"
+  ],
+  "properties": {
+    "schema_version": {
+      "type": "integer",
+      "const": 1
+    },
+    "mode": {
+      "type": "string",
+      "const": "observe_only"
+    },
+    "run_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "observed_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "source_generated_at": {
+      "type": ["string", "null"],
+      "format": "date-time"
+    },
+    "timeframe": {
+      "type": "string",
+      "const": "1m"
+    },
+    "pair_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "selected_variant": {
+      "type": "string",
+      "minLength": 1
+    },
+    "approval_source": {
+      "type": ["string", "null"]
+    },
+    "decision_reason_code": {
+      "type": ["string", "null"]
+    },
+    "setup_gate_pass": {
+      "type": ["boolean", "null"]
+    },
+    "cost_gate_pass": {
+      "type": ["boolean", "null"]
+    },
+    "trade_gate_pass": {
+      "type": ["boolean", "null"]
+    },
+    "spread_z": {
+      "type": ["number", "null"]
+    },
+    "entry_distance_z": {
+      "type": ["number", "null"]
+    },
+    "selected_score_z": {
+      "type": ["number", "null"]
+    },
+    "net_edge_bps": {
+      "type": ["number", "null"]
+    },
+    "opportunity_score": {
+      "type": ["number", "null"]
+    },
+    "learning_overlay_fresh": {
+      "type": ["boolean", "null"]
+    },
+    "learning_overlay_age_seconds": {
+      "type": ["number", "null"],
+      "minimum": 0
+    },
+    "dispatch_mode": {
+      "type": ["string", "null"],
+      "enum": ["FAIL_CLOSED", "SIMULATE_ACK", "LIVE_KRAKEN", null]
+    },
+    "kill_switch_active": {
+      "type": ["boolean", "null"]
+    },
+    "conflicting_live_trade": {
+      "type": ["boolean", "null"]
+    },
+    "quality_window": {
+      "type": ["object", "null"],
+      "additionalProperties": false,
+      "required": [
+        "rows",
+        "profitable_rate",
+        "avg_net_bps",
+        "min_rows",
+        "min_avg_net_bps",
+        "pass"
+      ],
+      "properties": {
+        "rows": {
+          "type": ["integer", "null"],
+          "minimum": 0
+        },
+        "profitable_rate": {
+          "type": ["number", "null"],
+          "minimum": 0,
+          "maximum": 1
+        },
+        "avg_net_bps": {
+          "type": ["number", "null"]
+        },
+        "min_rows": {
+          "type": ["integer", "null"],
+          "minimum": 0
+        },
+        "min_avg_net_bps": {
+          "type": ["number", "null"]
+        },
+        "pass": {
+          "type": "boolean"
+        }
+      }
+    },
+    "decision": {
+      "type": "string",
+      "enum": [
+        "OBSERVED_ENTRY_CANDIDATE",
+        "BLOCKED_STALE_INPUT",
+        "BLOCKED_SOURCE_UNAVAILABLE",
+        "BLOCKED_MALFORMED_RESPONSE",
+        "BLOCKED_KILL_SWITCH",
+        "BLOCKED_DISPATCH_MODE",
+        "BLOCKED_TIMEFRAME_OUT_OF_SCOPE",
+        "BLOCKED_OPEN_LIVE_TRADE",
+        "BLOCKED_NOT_ALLOWLISTED",
+        "BLOCKED_LIVE_GATE",
+        "BLOCKED_LEARNING_OVERLAY_STALE",
+        "BLOCKED_QUALITY_GATE",
+        "BLOCKED_DUPLICATE_OBSERVATION"
+      ]
+    },
+    "reason_codes": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "observe_key": {
+      "type": "string",
+      "pattern": "^observe-only:v1:"
+    },
+    "evidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "data_health_status",
+        "strategy_health_status",
+        "trade_now_status",
+        "trade_now_observability_status",
+        "dispatch_mode_status",
+        "kill_switch_status",
+        "open_trades_status",
+        "source_urls"
+      ],
+      "properties": {
+        "data_health_status": {
+          "type": ["string", "null"]
+        },
+        "strategy_health_status": {
+          "type": ["string", "null"]
+        },
+        "trade_now_status": {
+          "type": ["string", "null"]
+        },
+        "trade_now_observability_status": {
+          "type": ["string", "null"]
+        },
+        "dispatch_mode_status": {
+          "type": ["string", "null"]
+        },
+        "kill_switch_status": {
+          "type": ["string", "null"]
+        },
+        "open_trades_status": {
+          "type": ["string", "null"]
+        },
+        "source_urls": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      }
+    }
+  },
+  "version": "0.1.0"
+}
