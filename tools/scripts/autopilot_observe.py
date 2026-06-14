@@ -848,6 +848,7 @@ def write_records(records: list[dict[str, Any]], output_dir: Path, observed_at: 
         records,
         existing_observed_candidate_keys(path),
     )
+    records[:] = records_to_write
     with path.open("a", encoding="utf-8") as handle:
         for record in records_to_write:
             handle.write(json.dumps(record, sort_keys=True, separators=(",", ":")) + "\n")

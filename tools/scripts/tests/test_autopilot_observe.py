@@ -403,4 +403,5 @@ class AutopilotObserveTests(unittest.TestCase):
                 [record["decision"] for record in records],
                 ["OBSERVED_ENTRY_CANDIDATE", "BLOCKED_DUPLICATE_OBSERVATION"],
             )
+            self.assertEqual(second[0]["decision"], "BLOCKED_DUPLICATE_OBSERVATION")
             self.assertIn("OBSERVE_KEY_ALREADY_WRITTEN", records[1]["reason_codes"])
