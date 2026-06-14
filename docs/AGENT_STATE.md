@@ -11,12 +11,12 @@
 |---|---|
 | Last updated (UTC) | 2026-06-14 |
 | Updated by | codex |
-| Repo HEAD pin (committed) | `c1e031d3102b64bcbeb8815bc12b4e1b2780a28f` |
+| Repo HEAD pin (committed) | `41e70c5a02096ba5031551e32b64c500c66b82e4` |
 | Pin branch | `main` |
 | Sprint base branch | `main` |
-| Pin notes | State refreshed after PR #231 landed AUTO-1A/B observe-only contract and sidecar. The next active move is HOST-1 operator-only Hetzner repo checkout alignment; no runtime deploy, service restart, or automated execution enablement has been performed by this repo update. |
+| Pin notes | State refreshed after PR #232 curated the main baseline and AUTO-1A/B merge. AUTO-1C/AUTO-1D is now in flight as an offline attribution-report plus observe-only runbook/evidence-capture slice; no runtime deploy, service restart, or automated execution enablement has been performed by this repo update. |
 | Origin | `https://github.com/apexpark/cryptopairs.git` |
-| Working-tree state | **Clean `main` after AUTO-1A/B merge** - PR #231 added the observe-only artifact contract, disabled-by-default sidecar, and tests. It creates no order intents, dispatches no orders, does not alter live `ENTRY` / `EXIT`, and preserves execution fail-closed gating. |
+| Working-tree state | **AUTO-1C/AUTO-1D in flight on `codex/auto1c-auto1d-observe-evidence`** - this slice is scoped to offline attribution reporting plus hosted observe-only evidence-capture documentation. It creates no order intents, dispatches no orders, does not alter live `ENTRY` / `EXIT`, and preserves execution fail-closed gating. |
 
 If the pin above is not reachable from `HEAD` via fast-forward, this file is stale; if `HEAD` is ahead of the pin, see §"Pin Convention".
 
@@ -32,6 +32,7 @@ If the pin above is not reachable from `HEAD` via fast-forward, this file is sta
 | STATE-1 - Curate agent state for `main` baseline | **Merged** | local | PR #230 flipped the sprint base to `main`, recorded PR #229 as the production baseline reconciliation, and cleared stale guidance that pointed new work at `cherry-picked-from-rc-live-trial`. |
 | AUTO-1 - 1m autopilot observe-only design proposal | **Merged** | codex | PR #230 landed `docs/proposals/AUTO-1-1m-autopilot-observe-only.md`. Scope remains observation, decision logging, and safety/readiness design. It must not create order intents, dispatch orders, alter live `ENTRY` / `EXIT`, or weaken execution-service gating. |
 | AUTO-1A/B - Observe-only contract and sidecar | **Merged** | codex | PR #231 merged at `c1e031d`. It added the `autopilot_observe_record` schema/example, a disabled-by-default Python sidecar under `tools/scripts/autopilot_observe.py`, and focused tests for replay/persisted dedupe, fail-closed health/kill-switch/dispatch/open-trades/malformed-source behavior, quality-gate blocking, 1m-only enforcement, generated-record schema validation, and no execution order-intent URL use. |
+| AUTO-1C/D - Attribution report and observe-only evidence runbook | **In Flight** | codex | Branch `codex/auto1c-auto1d-observe-evidence` adds an offline AUTO-1C attribution report for observed 1m candidates against later ready-window and simulated paper-trade outcomes, plus AUTO-1D hosted runbook/evidence capture commands. No runtime service behavior or execution path changes are in scope. |
 | HOST-1 - Hetzner repo checkout alignment | **Operator-only follow-up** | operator | Runtime was manually verified healthy before PR #229. A repo-only switch to `main` on Hetzner is operator-only and should not restart services. Any runtime refresh must preserve fail-closed settings and follow `docs/playbooks/hosted-deployment-runbook.md`. |
 
 ### Sprint: Champion-Selection Integrity (docs/26 + docs/27)

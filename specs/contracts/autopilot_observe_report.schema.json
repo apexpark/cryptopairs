@@ -1,0 +1,376 @@
+{
+  "$id": "https://cryptopairs/specs/contracts/autopilot_observe_report.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "AutopilotObserveReport",
+  "description": "Offline AUTO-1C attribution report that compares observe-only 1m entry candidates with later ready-window and simulated paper-trade outcomes. This artifact is not an execution intent or live PnL report.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "mode",
+    "generated_at",
+    "scope",
+    "source_counts",
+    "summary",
+    "by_pair_variant",
+    "observed_candidates",
+    "methodology"
+  ],
+  "properties": {
+    "schema_version": {
+      "type": "integer",
+      "const": 1
+    },
+    "mode": {
+      "type": "string",
+      "const": "observe_only_attribution"
+    },
+    "generated_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "scope": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "timeframe",
+        "candidate_decision",
+        "match_key",
+        "lookahead_minutes"
+      ],
+      "properties": {
+        "timeframe": {
+          "type": "string",
+          "const": "1m"
+        },
+        "candidate_decision": {
+          "type": "string",
+          "const": "OBSERVED_ENTRY_CANDIDATE"
+        },
+        "match_key": {
+          "type": "array",
+          "prefixItems": [
+            {
+              "type": "string",
+              "const": "pair_id"
+            },
+            {
+              "type": "string",
+              "const": "timeframe"
+            },
+            {
+              "type": "string",
+              "const": "selected_variant"
+            },
+            {
+              "type": "string",
+              "const": "direction"
+            }
+          ],
+          "items": false,
+          "minItems": 4,
+          "maxItems": 4
+        },
+        "lookahead_minutes": {
+          "type": "integer",
+          "minimum": 1
+        }
+      }
+    },
+    "source_counts": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "observe_records",
+        "opportunity_rows",
+        "paper_trade_rows"
+      ],
+      "properties": {
+        "observe_records": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "opportunity_rows": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "paper_trade_rows": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "summary": {
+      "$ref": "#/$defs/summary"
+    },
+    "by_pair_variant": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/pair_variant_summary"
+      }
+    },
+    "observed_candidates": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/observed_candidate"
+      }
+    },
+    "methodology": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "ready_window_definition",
+        "paper_trade_definition",
+        "deduplication",
+        "execution_caveat"
+      ],
+      "properties": {
+        "ready_window_definition": {
+          "type": "string",
+          "minLength": 1
+        },
+        "paper_trade_definition": {
+          "type": "string",
+          "minLength": 1
+        },
+        "deduplication": {
+          "type": "string",
+          "minLength": 1
+        },
+        "execution_caveat": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    }
+  },
+  "$defs": {
+    "nullable_number": {
+      "type": [
+        "number",
+        "null"
+      ]
+    },
+    "summary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "observed_candidate_records",
+        "unique_observed_candidate_keys",
+        "observed_candidates_with_later_ready_window",
+        "observed_candidates_with_later_paper_trade",
+        "unique_later_ready_windows",
+        "unique_later_paper_trades",
+        "profitable_unique_later_paper_trades",
+        "sum_unique_later_paper_net_bps",
+        "avg_unique_later_paper_net_bps"
+      ],
+      "properties": {
+        "observed_candidate_records": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "unique_observed_candidate_keys": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "observed_candidates_with_later_ready_window": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "observed_candidates_with_later_paper_trade": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "unique_later_ready_windows": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "unique_later_paper_trades": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "profitable_unique_later_paper_trades": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "sum_unique_later_paper_net_bps": {
+          "type": "number"
+        },
+        "avg_unique_later_paper_net_bps": {
+          "$ref": "#/$defs/nullable_number"
+        }
+      }
+    },
+    "pair_variant_summary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "pair_id",
+        "timeframe",
+        "selected_variant",
+        "direction",
+        "observed_candidate_records",
+        "first_observed_at",
+        "last_observed_at",
+        "observed_candidates_with_later_ready_window",
+        "observed_candidates_with_later_paper_trade",
+        "later_ready_windows",
+        "later_ready_rows",
+        "unique_later_paper_trades",
+        "profitable_unique_later_paper_trades",
+        "sum_unique_later_paper_net_bps",
+        "avg_unique_later_paper_net_bps"
+      ],
+      "properties": {
+        "pair_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "timeframe": {
+          "type": "string",
+          "const": "1m"
+        },
+        "selected_variant": {
+          "type": "string",
+          "minLength": 1
+        },
+        "direction": {
+          "type": "string",
+          "minLength": 1
+        },
+        "observed_candidate_records": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "first_observed_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "last_observed_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "observed_candidates_with_later_ready_window": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "observed_candidates_with_later_paper_trade": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "later_ready_windows": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "later_ready_rows": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "unique_later_paper_trades": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "profitable_unique_later_paper_trades": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "sum_unique_later_paper_net_bps": {
+          "type": "number"
+        },
+        "avg_unique_later_paper_net_bps": {
+          "$ref": "#/$defs/nullable_number"
+        }
+      }
+    },
+    "observed_candidate": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "observe_key",
+        "observed_at",
+        "pair_id",
+        "timeframe",
+        "selected_variant",
+        "direction",
+        "source_generated_at",
+        "quality_window",
+        "later_ready_window_count",
+        "later_ready_row_count",
+        "first_later_ready_at",
+        "later_paper_trade_count",
+        "profitable_later_paper_trade_count",
+        "sum_later_paper_net_bps",
+        "avg_later_paper_net_bps"
+      ],
+      "properties": {
+        "observe_key": {
+          "type": "string",
+          "pattern": "^observe-only:v1:"
+        },
+        "observed_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "pair_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "timeframe": {
+          "type": "string",
+          "const": "1m"
+        },
+        "selected_variant": {
+          "type": "string",
+          "minLength": 1
+        },
+        "direction": {
+          "type": "string",
+          "minLength": 1
+        },
+        "source_generated_at": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "date-time"
+        },
+        "quality_window": {
+          "type": [
+            "object",
+            "null"
+          ]
+        },
+        "later_ready_window_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "later_ready_row_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "first_later_ready_at": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "date-time"
+        },
+        "later_paper_trade_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "profitable_later_paper_trade_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "sum_later_paper_net_bps": {
+          "type": "number"
+        },
+        "avg_later_paper_net_bps": {
+          "$ref": "#/$defs/nullable_number"
+        }
+      }
+    }
+  }
+}

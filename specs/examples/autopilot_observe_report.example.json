@@ -1,0 +1,83 @@
+{
+  "schema_version": 1,
+  "mode": "observe_only_attribution",
+  "generated_at": "2026-06-13T06:00:00Z",
+  "scope": {
+    "timeframe": "1m",
+    "candidate_decision": "OBSERVED_ENTRY_CANDIDATE",
+    "match_key": [
+      "pair_id",
+      "timeframe",
+      "selected_variant",
+      "direction"
+    ],
+    "lookahead_minutes": 60
+  },
+  "source_counts": {
+    "observe_records": 1,
+    "opportunity_rows": 3,
+    "paper_trade_rows": 1
+  },
+  "summary": {
+    "observed_candidate_records": 1,
+    "unique_observed_candidate_keys": 1,
+    "observed_candidates_with_later_ready_window": 1,
+    "observed_candidates_with_later_paper_trade": 1,
+    "unique_later_ready_windows": 1,
+    "unique_later_paper_trades": 1,
+    "profitable_unique_later_paper_trades": 1,
+    "sum_unique_later_paper_net_bps": 12.5,
+    "avg_unique_later_paper_net_bps": 12.5
+  },
+  "by_pair_variant": [
+    {
+      "pair_id": "PF_DOGEUSD__PF_PEPEUSD",
+      "timeframe": "1m",
+      "selected_variant": "ROBUST_Z",
+      "direction": "SHORT_SPREAD",
+      "observed_candidate_records": 1,
+      "first_observed_at": "2026-06-13T05:30:00Z",
+      "last_observed_at": "2026-06-13T05:30:00Z",
+      "observed_candidates_with_later_ready_window": 1,
+      "observed_candidates_with_later_paper_trade": 1,
+      "later_ready_windows": 1,
+      "later_ready_rows": 2,
+      "unique_later_paper_trades": 1,
+      "profitable_unique_later_paper_trades": 1,
+      "sum_unique_later_paper_net_bps": 12.5,
+      "avg_unique_later_paper_net_bps": 12.5
+    }
+  ],
+  "observed_candidates": [
+    {
+      "observe_key": "observe-only:v1:1m:PF_DOGEUSD__PF_PEPEUSD:ROBUST_Z:SHORT_SPREAD:2026-06-13T05:30:00Z",
+      "observed_at": "2026-06-13T05:30:00Z",
+      "pair_id": "PF_DOGEUSD__PF_PEPEUSD",
+      "timeframe": "1m",
+      "selected_variant": "ROBUST_Z",
+      "direction": "SHORT_SPREAD",
+      "source_generated_at": "2026-06-13T05:29:57Z",
+      "quality_window": {
+        "rows": 64,
+        "profitable_rate": 0.73,
+        "avg_net_bps": 7.4,
+        "min_rows": 20,
+        "min_avg_net_bps": 0.0,
+        "pass": true
+      },
+      "later_ready_window_count": 1,
+      "later_ready_row_count": 2,
+      "first_later_ready_at": "2026-06-13T05:31:00Z",
+      "later_paper_trade_count": 1,
+      "profitable_later_paper_trade_count": 1,
+      "sum_later_paper_net_bps": 12.5,
+      "avg_later_paper_net_bps": 12.5
+    }
+  ],
+  "methodology": {
+    "ready_window_definition": "A ready window is a contiguous 1m sequence where opportunity-history rows have actionable=true and cost_gate_pass=true. Gaps over 90 seconds start a new window.",
+    "paper_trade_definition": "Paper trades are matched by pair_id, timeframe, selected_variant, and direction when entry_ts falls inside the observed_at plus lookahead window.",
+    "deduplication": "Aggregate paper-trade counts deduplicate by pair/timeframe/variant/entry/exit/direction/exit_mode so repeated observations do not multiply simulated outcomes.",
+    "execution_caveat": "This report is offline attribution of observe-only records against simulated paper outcomes. It is not an execution audit and does not prove live fillability."
+  }
+}
