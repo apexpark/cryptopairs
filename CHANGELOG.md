@@ -14,6 +14,11 @@ This project follows SemVer as defined in `docs/02-versioning-and-releases.md`.
   preserving local service defaults for localhost development.
 
 ### Operator Tooling
+- Added AUTO-1C/AUTO-1D observe-only attribution tooling and hosted evidence
+  capture docs: an offline `autopilot_observe_report` JSON/Markdown report
+  compares 1m observe-only candidates with later ready windows and simulated
+  paper-trade outcomes, with aggregate paper-trade deduplication and explicit
+  non-execution caveats.
 - Added a disabled-by-default `1m` autopilot observe-only sidecar that polls
   read-only health, Trade Now, kill-switch, dispatch-mode, and open-trade
   surfaces, then writes append-only JSONL "would consider" records without any

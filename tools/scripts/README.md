@@ -129,6 +129,24 @@ Outputs append-only JSONL records under `artifacts/autopilot_observe/YYYYMMDD/`.
 Each record validates against
 `specs/contracts/autopilot_observe_record.schema.json`.
 
+Build an offline AUTO-1C attribution report from observe JSONL plus captured
+strategy opportunity-history and paper-trades JSON:
+
+```bash
+python3 tools/scripts/autopilot_observe_report.py \
+  --observe-dir artifacts/autopilot_observe/runs/<run-id>/records \
+  --opportunity-history-json artifacts/autopilot_observe/runs/<run-id>/opportunity_history_1m.json \
+  --paper-trades-json artifacts/autopilot_observe/runs/<run-id>/paper_trades_1m.json \
+  --lookahead-minutes 240 \
+  --output-json artifacts/autopilot_observe/runs/<run-id>/autopilot_observe_report.json \
+  --output-markdown artifacts/autopilot_observe/runs/<run-id>/autopilot_observe_report.md
+```
+
+The report validates against
+`specs/contracts/autopilot_observe_report.schema.json`. Hosted observe-only
+operation and evidence capture are documented in
+`docs/playbooks/autopilot-observe-only-runbook.md`.
+
 ## Signal vs Gate PnL Audit
 
 Audit chart signal markers against gate state at entry time, with leg-level spread PnL attribution:
