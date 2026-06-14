@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import datetime as dt
+import json
 import pathlib
 import sys
+import tempfile
 import unittest
 from copy import deepcopy
 from typing import Any
@@ -62,7 +64,7 @@ def base_routes() -> dict[str, dict[str, Any]]:
             "learning_selection_cost_override_applied": [],
         },
         "http://execution/v1/execution/dispatch-mode": {
-            "mode": "FAIL_CLOSED",
+            "mode": "SIMULATE_ACK",
             "requires_live_arm": True,
             "sizing_tolerance_notional_drift_pct": 12.0,
             "sizing_tolerance_hedge_ratio_drift_pct": 25.0,
@@ -169,6 +171,50 @@ class AutopilotObserveTests(unittest.TestCase):
         self.assertEqual(records[0]["decision"], "BLOCKED_KILL_SWITCH")
         self.assertIn("KILL_SWITCH_ACTIVE", records[0]["reason_codes"])
 
+    def test_fail_closed_dispatch_mode_blocks_candidate_fail_closed(self) -> None:
+        routes = base_routes()
+        routes["http://execution/v1/execution/dispatch-mode"]["mode"] = "FAIL_CLOSED"
+
+        records = observe.run_once(
+            config(),
+            client=RecordingGetClient(routes),
+            observed_at=OBSERVED_AT,
+            seen_keys=set(),
+        )
+
+        self.assertEqual(records[0]["decision"], "BLOCKED_DISPATCH_MODE")
+        self.assertIn("DISPATCH_MODE_FAIL_CLOSED", records[0]["reason_codes"])
+
+    def test_malformed_kill_switch_blocks_candidate_fail_closed(self) -> None:
+        routes = base_routes()
+        routes["http://execution/v1/execution/kill-switch"] = {"reason": "missing active"}
+
+        records = observe.run_once(
+            config(),
+            client=RecordingGetClient(routes),
+            observed_at=OBSERVED_AT,
+            seen_keys=set(),
+        )
+
+        self.assertEqual(records[0]["decision"], "BLOCKED_KILL_SWITCH")
+        self.assertIn("KILL_SWITCH_ACTIVE_MALFORMED", records[0]["reason_codes"])
+
+    def test_malformed_open_trades_blocks_candidate_fail_closed(self) -> None:
+        routes = base_routes()
+        routes[
+            "http://execution/v1/execution/portfolio/open-trades?exchange=kraken_futures&account_id=primary"
+        ] = {"trades": {}}
+
+        records = observe.run_once(
+            config(),
+            client=RecordingGetClient(routes),
+            observed_at=OBSERVED_AT,
+            seen_keys=set(),
+        )
+
+        self.assertEqual(records[0]["decision"], "BLOCKED_OPEN_LIVE_TRADE")
+        self.assertIn("OPEN_TRADES_MALFORMED", records[0]["reason_codes"])
+
     def test_quality_gate_failure_blocks_candidate(self) -> None:
         records = observe.run_once(
             config(
@@ -206,6 +252,22 @@ class AutopilotObserveTests(unittest.TestCase):
         self.assertEqual(records[0]["pair_id"], "__SYSTEM__")
         self.assertEqual(records[0]["decision"], "BLOCKED_MALFORMED_RESPONSE")
         self.assertIn("TRADE_NOW_TRADABLE_NOW_NOT_LIST", records[0]["reason_codes"])
+
+    def test_malformed_candidate_identity_writes_schema_valid_system_block_record(self) -> None:
+        row = candidate()
+        del row["pair_id"]
+
+        records = observe.run_once(
+            config(),
+            client=RecordingGetClient(with_trade_now_candidate(base_routes(), row)),
+            observed_at=OBSERVED_AT,
+            seen_keys=set(),
+        )
+
+        self.assertEqual(records[0]["pair_id"], "__SYSTEM__")
+        self.assertEqual(records[0]["selected_variant"], "__NONE__")
+        self.assertEqual(records[0]["decision"], "BLOCKED_MALFORMED_RESPONSE")
+        self.assertIn("TRADE_NOW_ROW_IDENTITY_MISSING", records[0]["reason_codes"])
 
     def test_load_config_is_disabled_by_default_and_empty_allowlist_blocks_all(self) -> None:
         loaded = observe.load_config({})
@@ -272,6 +334,32 @@ class AutopilotObserveTests(unittest.TestCase):
         self.assertEqual(records[0]["decision"], "BLOCKED_TIMEFRAME_OUT_OF_SCOPE")
         self.assertIn("CONFIG_TIMEFRAME_NOT_1M", records[0]["reason_codes"])
 
+    def test_mixed_timeframe_config_blocks_before_polling_trade_now(self) -> None:
+        loaded = observe.load_config(
+            {
+                "AUTOPILOT_OBSERVE_ENABLED": "true",
+                "AUTOPILOT_OBSERVE_TIMEFRAMES": "1m,15m",
+                "AUTOPILOT_OBSERVE_ALLOWED_PAIR_VARIANTS": "PF_DOGEUSD__PF_PEPEUSD:ROBUST_Z",
+            }
+        )
+        client = RecordingGetClient(base_routes())
+
+        records = observe.run_once(
+            loaded.replace(
+                data_service_url="http://data",
+                strategy_service_url="http://strategy",
+                execution_service_url="http://execution",
+            ),
+            client=client,
+            observed_at=OBSERVED_AT,
+            seen_keys=set(),
+        )
+
+        self.assertEqual(loaded.timeframe, "1m,15m")
+        self.assertEqual(client.urls, [])
+        self.assertEqual(records[0]["decision"], "BLOCKED_TIMEFRAME_OUT_OF_SCOPE")
+        self.assertIn("CONFIG_TIMEFRAME_NOT_1M", records[0]["reason_codes"])
+
     def test_non_1m_trade_now_row_blocks_with_schema_valid_timeframe(self) -> None:
         row = candidate()
         row["timeframe"] = "15m"
@@ -286,3 +374,33 @@ class AutopilotObserveTests(unittest.TestCase):
         self.assertEqual(records[0]["timeframe"], "1m")
         self.assertEqual(records[0]["decision"], "BLOCKED_TIMEFRAME_OUT_OF_SCOPE")
         self.assertIn("ROW_TIMEFRAME_NOT_1M", records[0]["reason_codes"])
+
+    def test_write_records_blocks_duplicate_candidate_across_process_restarts(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            output_dir = pathlib.Path(tmpdir)
+            first = observe.run_once(
+                config(),
+                client=RecordingGetClient(base_routes()),
+                observed_at=OBSERVED_AT,
+                seen_keys=set(),
+            )
+            second = observe.run_once(
+                config(),
+                client=RecordingGetClient(base_routes()),
+                observed_at=OBSERVED_AT,
+                seen_keys=set(),
+            )
+
+            path = observe.write_records(first, output_dir, OBSERVED_AT)
+            observe.write_records(second, output_dir, OBSERVED_AT)
+
+            records = [
+                json.loads(line)
+                for line in path.read_text(encoding="utf-8").splitlines()
+                if line
+            ]
+            self.assertEqual(
+                [record["decision"] for record in records],
+                ["OBSERVED_ENTRY_CANDIDATE", "BLOCKED_DUPLICATE_OBSERVATION"],
+            )
+            self.assertIn("OBSERVE_KEY_ALREADY_WRITTEN", records[1]["reason_codes"])

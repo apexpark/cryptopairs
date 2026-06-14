@@ -28,7 +28,7 @@ ALLOWED_APPROVAL_SOURCES = {
     "LEARNING_SELECTION",
     "LEARNING_ELIGIBLE_OVERRIDE",
 }
-KNOWN_DISPATCH_MODES = {"FAIL_CLOSED", "SIMULATE_ACK", "LIVE_KRAKEN"}
+ALLOWED_DISPATCH_MODES = {"SIMULATE_ACK", "LIVE_KRAKEN"}
 SUPPORTED_TIMEFRAME = "1m"
 
 
@@ -172,6 +172,17 @@ def parse_allowed_pair_variants(value: str | None) -> set[tuple[str, str]]:
     return parsed
 
 
+def parse_timeframe_config(value: str | None) -> str:
+    if value is None:
+        return SUPPORTED_TIMEFRAME
+    parts = [part.strip() for part in value.split(",") if part.strip()]
+    if not parts:
+        return SUPPORTED_TIMEFRAME
+    if parts == [SUPPORTED_TIMEFRAME]:
+        return SUPPORTED_TIMEFRAME
+    return ",".join(parts)
+
+
 def load_quality_windows(path_value: str | None) -> dict[tuple[str, str, str], QualityWindow]:
     if path_value is None or not path_value.strip():
         return {}
@@ -229,8 +240,7 @@ def load_config(env: Mapping[str, str] | None = None) -> Config:
         execution_service_url=normalize_base_url(execution_url),
         exchange=source.get("AUTOPILOT_OBSERVE_EXCHANGE", "kraken_futures"),
         account_id=source.get("AUTOPILOT_OBSERVE_ACCOUNT_ID", "primary"),
-        timeframe=source.get("AUTOPILOT_OBSERVE_TIMEFRAMES", "1m").split(",")[0].strip()
-        or "1m",
+        timeframe=parse_timeframe_config(source.get("AUTOPILOT_OBSERVE_TIMEFRAMES")),
         interval_seconds=max(
             1, int_env(source.get("AUTOPILOT_OBSERVE_INTERVAL_SECONDS"), 60)
         ),
@@ -343,6 +353,16 @@ def health_status(payload: dict[str, Any] | None, fetch_status: str) -> str:
     return value if isinstance(value, str) else "unknown"
 
 
+def candidate_identity_reason(row: dict[str, Any]) -> str | None:
+    pair_id = row.get("pair_id")
+    selected_variant = row.get("selected_variant")
+    if not isinstance(pair_id, str) or not pair_id.strip():
+        return "TRADE_NOW_ROW_IDENTITY_MISSING"
+    if not isinstance(selected_variant, str) or not selected_variant.strip():
+        return "TRADE_NOW_ROW_IDENTITY_MISSING"
+    return None
+
+
 def system_record(
     *,
     observed_at: dt.datetime,
@@ -439,6 +459,25 @@ def dispatch_mode_value(dispatch_mode: dict[str, Any] | None) -> str | None:
     return value if isinstance(value, str) else None
 
 
+def dispatch_mode_block_reason(dispatch_mode_name: str | None) -> str | None:
+    if dispatch_mode_name == "FAIL_CLOSED":
+        return "DISPATCH_MODE_FAIL_CLOSED"
+    if dispatch_mode_name not in ALLOWED_DISPATCH_MODES:
+        return "DISPATCH_MODE_UNKNOWN"
+    return None
+
+
+def kill_switch_block_reason(kill_switch: dict[str, Any] | None) -> str | None:
+    if kill_switch is None:
+        return "KILL_SWITCH_UNAVAILABLE"
+    active = kill_switch.get("active")
+    if not isinstance(active, bool):
+        return "KILL_SWITCH_ACTIVE_MALFORMED"
+    if active:
+        return "KILL_SWITCH_ACTIVE"
+    return None
+
+
 def source_reason_codes(
     data_health: dict[str, Any] | None,
     strategy_health: dict[str, Any] | None,
@@ -488,14 +527,20 @@ def quality_for_candidate(
     return window.evaluate(config.min_ready_window_rows, config.min_ready_window_avg_net_bps)
 
 
-def has_conflicting_live_trade(open_trades: dict[str, Any] | None, row: dict[str, Any]) -> bool | None:
+def open_trades_conflict_status(
+    open_trades: dict[str, Any] | None,
+    row: dict[str, Any],
+) -> tuple[bool | None, str | None]:
     if open_trades is None:
-        return None
+        return None, None
     trades = open_trades.get("trades")
     if not isinstance(trades, list):
-        return None
+        return None, "OPEN_TRADES_MALFORMED"
     pair_id = row.get("pair_id")
-    return any(isinstance(trade, dict) and trade.get("pair_id") == pair_id for trade in trades)
+    return (
+        any(isinstance(trade, dict) and trade.get("pair_id") == pair_id for trade in trades),
+        None,
+    )
 
 
 def signal_age_reason(
@@ -529,13 +574,14 @@ def evaluate_candidate(
     decision = "OBSERVED_ENTRY_CANDIDATE"
 
     quality_window, quality_reasons = quality_for_candidate(config, row)
-    conflicting_live_trade = bool(row.get("open_live_trade")) or bool(
-        has_conflicting_live_trade(open_trades, row)
-    )
+    open_trades_conflict, open_trades_reason = open_trades_conflict_status(open_trades, row)
+    conflicting_live_trade = bool(row.get("open_live_trade")) or bool(open_trades_conflict)
     observe_key = build_observe_key(row, observed_at)
 
     stale_reason = signal_age_reason(config, trade_now, observed_at)
     dispatch_mode_name = dispatch_mode_value(dispatch_mode)
+    dispatch_reason = dispatch_mode_block_reason(dispatch_mode_name)
+    kill_switch_reason = kill_switch_block_reason(kill_switch)
     row_timeframe = str(row.get("timeframe", SUPPORTED_TIMEFRAME))
 
     if source_reasons:
@@ -547,12 +593,15 @@ def evaluate_candidate(
     elif stale_reason is not None:
         decision = "BLOCKED_STALE_INPUT"
         reasons.append(stale_reason)
-    elif kill_switch is None or kill_switch.get("active") is True:
+    elif kill_switch_reason is not None:
         decision = "BLOCKED_KILL_SWITCH"
-        reasons.append("KILL_SWITCH_ACTIVE")
-    elif dispatch_mode_name not in KNOWN_DISPATCH_MODES:
+        reasons.append(kill_switch_reason)
+    elif dispatch_reason is not None:
         decision = "BLOCKED_DISPATCH_MODE"
-        reasons.append("DISPATCH_MODE_UNKNOWN")
+        reasons.append(dispatch_reason)
+    elif open_trades_reason is not None:
+        decision = "BLOCKED_OPEN_LIVE_TRADE"
+        reasons.append(open_trades_reason)
     elif conflicting_live_trade:
         decision = "BLOCKED_OPEN_LIVE_TRADE"
         reasons.append("CONFLICTING_LIVE_TRADE")
@@ -711,6 +760,20 @@ def run_once(
                 )
             )
             continue
+        identity_reason = candidate_identity_reason(row)
+        if identity_reason is not None:
+            records.append(
+                system_record(
+                    observed_at=now_value,
+                    decision="BLOCKED_MALFORMED_RESPONSE",
+                    reason_codes=[identity_reason],
+                    trade_now=trade_now,
+                    dispatch_mode=payloads["dispatch_mode"],
+                    kill_switch=payloads["kill_switch"],
+                    evidence=evidence,
+                )
+            )
+            continue
         records.append(
             evaluate_candidate(
                 config=config,
@@ -728,13 +791,65 @@ def run_once(
     return records
 
 
+def existing_observed_candidate_keys(path: Path) -> set[str]:
+    if not path.exists():
+        return set()
+    keys: set[str] = set()
+    with path.open("r", encoding="utf-8") as handle:
+        for line in handle:
+            if not line.strip():
+                continue
+            try:
+                payload = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if not isinstance(payload, dict):
+                continue
+            observe_key = payload.get("observe_key")
+            if (
+                payload.get("decision") == "OBSERVED_ENTRY_CANDIDATE"
+                and isinstance(observe_key, str)
+                and observe_key
+            ):
+                keys.add(observe_key)
+    return keys
+
+
+def apply_persisted_duplicate_blocks(
+    records: list[dict[str, Any]],
+    existing_keys: set[str],
+) -> list[dict[str, Any]]:
+    written: list[dict[str, Any]] = []
+    for record in records:
+        next_record = dict(record)
+        observe_key = next_record.get("observe_key")
+        if next_record.get("decision") == "OBSERVED_ENTRY_CANDIDATE" and isinstance(
+            observe_key, str
+        ):
+            if observe_key in existing_keys:
+                next_record["decision"] = "BLOCKED_DUPLICATE_OBSERVATION"
+                reason_codes = next_record.get("reason_codes")
+                reasons = list(reason_codes) if isinstance(reason_codes, list) else []
+                if "OBSERVE_KEY_ALREADY_WRITTEN" not in reasons:
+                    reasons.append("OBSERVE_KEY_ALREADY_WRITTEN")
+                next_record["reason_codes"] = reasons
+            else:
+                existing_keys.add(observe_key)
+        written.append(next_record)
+    return written
+
+
 def write_records(records: list[dict[str, Any]], output_dir: Path, observed_at: dt.datetime) -> Path:
     day = observed_at.strftime("%Y%m%d")
     target_dir = output_dir / day
     target_dir.mkdir(parents=True, exist_ok=True)
     path = target_dir / f"autopilot_observe_{day}.jsonl"
+    records_to_write = apply_persisted_duplicate_blocks(
+        records,
+        existing_observed_candidate_keys(path),
+    )
     with path.open("a", encoding="utf-8") as handle:
-        for record in records:
+        for record in records_to_write:
             handle.write(json.dumps(record, sort_keys=True, separators=(",", ":")) + "\n")
     return path
 

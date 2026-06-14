@@ -17,7 +17,9 @@ This project follows SemVer as defined in `docs/02-versioning-and-releases.md`.
 - Added a disabled-by-default `1m` autopilot observe-only sidecar that polls
   read-only health, Trade Now, kill-switch, dispatch-mode, and open-trade
   surfaces, then writes append-only JSONL "would consider" records without any
-  execution order-intent or dispatch path.
+  execution order-intent or dispatch path. Mixed or non-`1m` timeframe config,
+  execution `FAIL_CLOSED` dispatch mode, malformed safety payloads, and repeated
+  observe keys fail closed into block records.
 - Added a hosted systemd timer installer for read-only signal-learning overlay
   refreshes, keeping Trade Now's approved-universe artifact fresh without a
   long-running shell loop, with artifact/log paths constrained under

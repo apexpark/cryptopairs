@@ -19,7 +19,7 @@
   "opportunity_score": 35.9,
   "learning_overlay_fresh": true,
   "learning_overlay_age_seconds": 30.0,
-  "dispatch_mode": "FAIL_CLOSED",
+  "dispatch_mode": "SIMULATE_ACK",
   "kill_switch_active": false,
   "conflicting_live_trade": false,
   "quality_window": {

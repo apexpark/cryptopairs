@@ -89,6 +89,10 @@ By default it is disabled and an empty allowlist blocks all candidates. Enable
 it explicitly and provide pair/variant allowlist entries as
 `pair_id:selected_variant`.
 
+The observer is scoped to `1m` only. Mixed or non-`1m` timeframe configuration,
+execution `FAIL_CLOSED` dispatch mode, malformed safety-source payloads, and
+duplicate observe keys fail closed into block records.
+
 ```bash
 AUTOPILOT_OBSERVE_ENABLED=true \
 AUTOPILOT_OBSERVE_ALLOWED_PAIR_VARIANTS="PF_DOGEUSD__PF_PEPEUSD:ROBUST_Z" \
