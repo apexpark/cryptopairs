@@ -14,6 +14,10 @@ This project follows SemVer as defined in `docs/02-versioning-and-releases.md`.
   preserving local service defaults for localhost development.
 
 ### Operator Tooling
+- Added the AUTO-2 1m paper-autopilot governance roadmap and Superpowers plan,
+  locking the next automation sequence to focused static paper trial, shadow
+  champion/challenger allowlist, governed dynamic allowlist, dynamic paper
+  trial, and a separate live-design gate before any live automation work.
 - Added AUTO-1C/AUTO-1D observe-only attribution tooling and hosted evidence
   capture docs: an offline `autopilot_observe_report` JSON/Markdown report
   compares 1m observe-only candidates with later ready windows and simulated
