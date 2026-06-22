@@ -172,6 +172,13 @@ The escape hatch `RUST_PREFLIGHT_OVERRIDE=<reason>` exists in `.githooks/pre-pus
 ## Item addressed
 <follow-up ID, e.g. B3 (Slice B follow-up) — link to docs/AGENT_STATE.md row>
 
+## Slice Loop Check
+- New input consumed: <new evidence / operator decision / incident / review finding / accepted design>
+- New state transition: <what state changes when this lands>
+- New artifact/runtime/user value: <concrete new value created>
+- Why this is not repeating the prior slice: <specific prior capability vs this slice>
+- Stop/defer condition: <boundaries that would stop, split, or require Operator approval>
+
 ## Files touched
 <bullet list with one-line per-file rationale>
 
@@ -231,6 +238,7 @@ If the blocker is a `.git/index.lock` file the sandbox cannot remove, escalate i
 When the local agent reviews an inbound PR:
 
 - [ ] Diff stays in the claimed scope. No "broader-worktree" files snuck in (env/* configs, retention/data-horizon files, 4k z-chart UI, etc. unless explicitly part of the claimed item).
+- [ ] Slice Loop Check is present and concrete for implementation, tooling, contracts, runbooks, or governance workflow changes; vague or repetitive hardening should be sent back for re-scope.
 - [ ] Verification commands in the PR description correspond to the changed files (don't approve a tsc-claimed PR with no TS diff).
 - [ ] **Cargo-dependent verification done by the local agent**: if any Rust file changed, the local agent runs `git fetch origin && git checkout <branch> && ./scripts/check-rust-ci.sh` and posts the result in the PR thread before approving. Do not approve a Rust-touching PR on CI-only signal — verify locally too. CI is the backstop, not the only gate.
 - [ ] `AGENT_STATE.md` delta accurately reflects what landed; status flips match.

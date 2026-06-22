@@ -41,6 +41,12 @@ Constraints:
 Create a small-slice plan for this task before editing.
 
 Include:
+- Slice Loop Check:
+  - new input consumed;
+  - new state transition;
+  - new artifact/runtime/user value;
+  - why this is not repeating the prior slice;
+  - stop/defer condition;
 - context and sources consulted;
 - exact files expected to change;
 - affected contracts or public behavior;
@@ -49,6 +55,29 @@ Include:
 - observability impact;
 - versioning/changelog impact;
 - Reviewer handoff plan.
+
+If the Slice Loop Check cannot be answered concretely, stop and propose the
+smallest safe next step instead of coding.
+```
+
+## Slice Loop Check
+
+```text
+Run this before starting a coding slice.
+
+Loop Check:
+- new input consumed:
+- new state transition:
+- new artifact/runtime/user value:
+- why this is not repeating the prior slice:
+- stop/defer condition:
+
+Decision:
+- Proceed only if the first four bullets are concrete and the stop/defer
+  condition is not triggered.
+- Stop, split, or ask the Operator if the slice would become micro-hardening,
+  repeat prior work, broaden scope, touch execution/order paths unexpectedly, or
+  require host/runtime action not already approved.
 ```
 
 ## Reviewer Prompt
@@ -65,6 +94,8 @@ or run destructive commands.
 
 Review for:
 - role separation clarity if governance is touched;
+- Slice Loop Check presence and concrete forward motion if implementation,
+  tooling, contracts, runbooks, or governance workflow are touched;
 - Operator-only merge/signoff authority if workflow is touched;
 - exact-SHA review validity;
 - Coder/Reviewer ownership boundaries;

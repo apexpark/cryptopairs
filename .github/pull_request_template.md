@@ -1,6 +1,13 @@
 ## Summary
 What does this PR change?
 
+## Slice Loop Check
+- New input consumed:
+- New state transition:
+- New artifact/runtime/user value:
+- Why this is not repeating the prior slice:
+- Stop/defer condition:
+
 ## Apex Harness / Agentic Review
 - Role for this PR:
   - [ ] Coder implementation
