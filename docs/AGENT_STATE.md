@@ -9,14 +9,14 @@
 
 | Field | Value |
 |---|---|
-| Last updated (UTC) | 2026-06-14 |
+| Last updated (UTC) | 2026-06-22 |
 | Updated by | codex |
-| Repo HEAD pin (committed) | `41e70c5a02096ba5031551e32b64c500c66b82e4` |
+| Repo HEAD pin (committed) | `94b15b215e00cd1da92d2f6adc651dbc421124ac` |
 | Pin branch | `main` |
 | Sprint base branch | `main` |
-| Pin notes | State refreshed after PR #232 curated the main baseline and AUTO-1A/B merge. AUTO-1C/AUTO-1D is now in flight as an offline attribution-report plus observe-only runbook/evidence-capture slice; no runtime deploy, service restart, or automated execution enablement has been performed by this repo update. |
+| Pin notes | State refreshed after AUTO-1C/AUTO-1D landed on `main` and after operator-provided Hetzner output showed the host checkout fast-forwarded to `94b15b2` with services healthy and the observe sidecar disabled by default. AUTO-2 is now constrained to the paper-autopilot governance sequence: static paper trial, shadow dynamic champion/challenger allowlist, governed dynamic allowlist, dynamic paper trial, then live-design gate only. |
 | Origin | `https://github.com/apexpark/cryptopairs.git` |
-| Working-tree state | **AUTO-1C/AUTO-1D in flight on `codex/auto1c-auto1d-observe-evidence`** - this slice is scoped to offline attribution reporting plus hosted observe-only evidence-capture documentation. It creates no order intents, dispatches no orders, does not alter live `ENTRY` / `EXIT`, and preserves execution fail-closed gating. |
+| Working-tree state | **AUTO-2 roadmap governance in flight on `codex/auto2-roadmap-governance`** - docs-only guardrail work. It creates no runtime behavior, order intents, dispatches, host deployment, background loop, or live `ENTRY` / `EXIT` enablement. |
 
 If the pin above is not reachable from `HEAD` via fast-forward, this file is stale; if `HEAD` is ahead of the pin, see §"Pin Convention".
 
@@ -24,7 +24,7 @@ If the pin above is not reachable from `HEAD` via fast-forward, this file is sta
 
 ## Currently In Flight
 
-### Active Sequence: Main Baseline And 1m Autopilot Observe-Only Design
+### Active Sequence: Main Baseline And 1m Paper-Autopilot Governance
 
 | Slice | Status | Owner | Notes |
 |---|---|---|---|
@@ -32,8 +32,9 @@ If the pin above is not reachable from `HEAD` via fast-forward, this file is sta
 | STATE-1 - Curate agent state for `main` baseline | **Merged** | local | PR #230 flipped the sprint base to `main`, recorded PR #229 as the production baseline reconciliation, and cleared stale guidance that pointed new work at `cherry-picked-from-rc-live-trial`. |
 | AUTO-1 - 1m autopilot observe-only design proposal | **Merged** | codex | PR #230 landed `docs/proposals/AUTO-1-1m-autopilot-observe-only.md`. Scope remains observation, decision logging, and safety/readiness design. It must not create order intents, dispatch orders, alter live `ENTRY` / `EXIT`, or weaken execution-service gating. |
 | AUTO-1A/B - Observe-only contract and sidecar | **Merged** | codex | PR #231 merged at `c1e031d`. It added the `autopilot_observe_record` schema/example, a disabled-by-default Python sidecar under `tools/scripts/autopilot_observe.py`, and focused tests for replay/persisted dedupe, fail-closed health/kill-switch/dispatch/open-trades/malformed-source behavior, quality-gate blocking, 1m-only enforcement, generated-record schema validation, and no execution order-intent URL use. |
-| AUTO-1C/D - Attribution report and observe-only evidence runbook | **In Flight** | codex | Branch `codex/auto1c-auto1d-observe-evidence` adds an offline AUTO-1C attribution report for observed 1m candidates against later ready-window and simulated paper-trade outcomes, plus AUTO-1D hosted runbook/evidence capture commands. No runtime service behavior or execution path changes are in scope. |
-| HOST-1 - Hetzner repo checkout alignment | **Operator-only follow-up** | operator | Runtime was manually verified healthy before PR #229. A repo-only switch to `main` on Hetzner is operator-only and should not restart services. Any runtime refresh must preserve fail-closed settings and follow `docs/playbooks/hosted-deployment-runbook.md`. |
+| AUTO-1C/D - Attribution report and observe-only evidence runbook | **Merged** | codex | PR #233 landed at `94b15b2`. It added the offline attribution report, observe-only runbook, report schema/example, and tests. No runtime service behavior or execution path changes were included. |
+| HOST-1 - Hetzner repo checkout alignment | **Operator reported complete** | operator | Operator-provided Hetzner output showed `/opt/cryptopairs` fast-forwarded to `94b15b2`, data/strategy/execution health probes passed, dispatch mode remained `SIMULATE_ACK`, kill switch was inactive, and `AUTOPILOT_OBSERVE_ENABLED=false python3 tools/scripts/autopilot_observe.py --once` reported disabled-by-default behavior. |
+| AUTO-2 - 1m paper-autopilot governance sequence | **In Flight** | codex | Branch `codex/auto2-roadmap-governance` records the required progression: focused static paper trial, shadow dynamic champion/challenger allowlist, governed dynamic allowlist, dynamic paper trial, then live-automation design gate only. Champion/challenger output remains advisory until the governed dynamic allowlist slice is complete. |
 
 ### Sprint: Champion-Selection Integrity (docs/26 + docs/27)
 
@@ -86,17 +87,19 @@ Source of truth for shipped behavior is `CHANGELOG.md` `## Unreleased` section. 
 - **Committed (`da7fea9`)**: Apex harness governance scaffold (PR #217) — installs `docs/ops/README.md`, `docs/ops/ai_workflow.md`, `docs/ops/codex_prompt_pack.md`, `docs/research/packets/template.md`, `docs/research/packets/01-agentic-harness.md`, `.github/pull_request_template.md`, and docs index updates. The workflow preserves `AGENTS.md` as highest precedence, keeps required independent review cross-agent under current rules, treats same-chat sub-agent review as advisory unless the Operator records an explicit exception, and leaves protected-path enforcement as a proposal only.
 - **Committed (`f22c26f`)**: Hetzner runtime baseline promoted to `main` (PR #229) — squash-merged the committed production runtime tree from `origin/cherry-picked-from-rc-live-trial` so `main` became the canonical branch for the running server baseline. Verification recorded in the PR: `git diff --quiet HEAD origin/cherry-picked-from-rc-live-trial`, `git diff --check`, and focused `cargo test -p data-service health_returns_503_when_repository_check_fails`.
 - **Committed (`c1e031d`)**: AUTO-1A/B observe-only sidecar (PR #231) — added the `autopilot_observe_record` artifact schema/example plus a disabled-by-default `1m` observer sidecar under `tools/scripts/autopilot_observe.py`. The sidecar only performs read-only GETs, writes append-only JSONL records, blocks empty allowlists, mixed/non-`1m` timeframes, `FAIL_CLOSED` dispatch mode, malformed safety payloads, stale/malformed source data, failed live/quality gates, and duplicate observe keys, and has focused tests proving no execution order-intent URL use.
+- **Committed (`94b15b2`)**: AUTO-1C/D attribution report and observe-only runbook (PR #233) — added `tools/scripts/autopilot_observe_report.py`, the `autopilot_observe_report` schema/example, focused report tests, and `docs/playbooks/autopilot-observe-only-runbook.md`. The report compares observed 1m candidates against later ready-window and simulated paper-trade outcomes, including direction-aware attribution. The runbook gives hosted one-shot, loop, monitor, stop, and evidence-capture commands. No execution path or runtime service behavior changed.
 
 ---
 
 ## Blocked / Waiting On
 
-### B-Host-Lineage (cleared by production baseline promotion)
+### B-Host-Lineage (historical; cleared by production baseline promotion)
 
 Operator captured the `docs/27` read-only host verification outputs on **2026-05-05 02:29:31Z**. Those outputs remain historical context for Slice C planning. The prior branch-lineage blocker was cleared for new work by PR #229, which promoted the committed Hetzner runtime tree to `main`. This does not green-light Slice C implementation; that work now requires a fresh operator applicability and rollout decision against the current `main` baseline.
 
-Remaining operator-only step:
-1. If Hetzner's checkout has not yet been switched to `main`, perform the repo-only branch switch from the Hetzner-enabled machine and preserve local dirty files before switching. Do not restart services unless explicitly performing a runtime deploy.
+Hetzner repo checkout alignment was later operator-reported complete after the
+host fast-forwarded to `94b15b2` on `main` and health/disabled-default probes
+passed. This section remains only as historical Slice C context.
 
 Neither the local nor any remote agent has SSH access to `cryptopairs`. This is operator-only.
 
@@ -496,15 +499,17 @@ Follow-ups carried forward from prior reviews. Ordered by source review then sev
 
 Pickable items, in priority order:
 
-1. **Operator action: Hetzner repo checkout alignment** - switch the Hetzner checkout to `main` if not already done. A repo-only checkout update needs no service restart; any runtime refresh must preserve fail-closed settings and follow `docs/playbooks/hosted-deployment-runbook.md`.
-2. **Remote/local agent: AUTO-1C pair-level attribution report** - after HOST-1 alignment, add the report that summarizes observed candidates against later ready-window and paper-trade outcomes.
-3. **Remote/local agent: AUTO-1D observe-only runbook** - add hosted commands for one-shot/loop operation, artifact rotation, and 24-72 hour evidence capture.
-4. **Remote/local agent: AUTO-2 exit observation design** - design hypothetical exit observation before any non-observe automation is considered.
-5. **Remote/local agent: local dirty-work cleanup sequence** - split unresolved local follow-ups into separate reviewable PRs only if still relevant after PR #229: signal-learning report schema/producer alignment, web TypeScript/test fallout, selected-signal config persistence coverage, and CI hardening for web/contract/tools checks. Verify each issue from repo artifacts before claiming it.
-6. **Remote/local agent: Slice C implementation** - only after operator confirms it still applies under the `main` baseline; preserve Slice A/B semantics and add Postgres-backed tests.
-7. **Operator/local agent: Slice C observation capture** - after Slice C implementation/deployment, capture the neutral-selection observation evidence required by the Slice D and X3 proposals before either follow-up implementation starts.
-8. **Remote/local agent: Slice D implementation** - only after Slice C observation and operator approval of PR #174's open questions; implement dry-run-first recanonicalization without making legacy or repair-only provenance trade-eligible.
-9. **Remote/local agent: X3 implementation** - only after Slice C lands and is observed; implement PR #175's optional/additive reporting diagnostics while preserving legacy `selected_variant`.
+1. **Remote/local agent: AUTO-2A focused static paper trial design** - create the paper-only design gate for a small static 1m allowlist. The first implementation must be disabled by default, paper-only, append-only, and must prove duplicate suppression, cooldown, deterministic exits, stale-input blocking, and no execution-service `POST` path.
+2. **Remote/local agent: AUTO-2A contracts and paper ledger** - after the design gate is accepted, add paper decision/position/report contracts, examples, Python tooling, and focused tests. Static allowlist only.
+3. **Remote/local agent: AUTO-2B shadow dynamic allowlist** - record champion/challenger selector output and compare it with the static paper trial, but do not let dynamic output control paper entries.
+4. **Remote/local agent: AUTO-2C governed dynamic allowlist** - add sample, dwell-time, churn, concentration, direction, quarantine, and stale-selector gates between champion/challenger output and paper eligibility.
+5. **Remote/local agent: AUTO-2D dynamic paper trial** - allow only the governed dynamic allowlist, not raw champion/challenger output, to control paper-only eligibility. Keep live execution out of scope.
+6. **Remote/local agent: AUTO-3 live automation design proposal** - design-only, after AUTO-2D evidence and explicit operator approval. No live runtime implementation in the same slice.
+7. **Remote/local agent: local dirty-work cleanup sequence** - split unresolved local follow-ups into separate reviewable PRs only if still relevant after PR #229: signal-learning report schema/producer alignment, web TypeScript/test fallout, selected-signal config persistence coverage, and CI hardening for web/contract/tools checks. Verify each issue from repo artifacts before claiming it.
+8. **Remote/local agent: Slice C implementation** - only after operator confirms it still applies under the `main` baseline; preserve Slice A/B semantics and add Postgres-backed tests.
+9. **Operator/local agent: Slice C observation capture** - after Slice C implementation/deployment, capture the neutral-selection observation evidence required by the Slice D and X3 proposals before either follow-up implementation starts.
+10. **Remote/local agent: Slice D implementation** - only after Slice C observation and operator approval of PR #174's open questions; implement dry-run-first recanonicalization without making legacy or repair-only provenance trade-eligible.
+11. **Remote/local agent: X3 implementation** - only after Slice C lands and is observed; implement PR #175's optional/additive reporting diagnostics while preserving legacy `selected_variant`.
 
 ---
 

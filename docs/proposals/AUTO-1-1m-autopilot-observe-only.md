@@ -429,8 +429,11 @@ Recommended future slices:
    against later ready-window and paper-trade outcomes.
 4. **AUTO-1D - operator runbook**: add Hetzner commands for observe-only
    operation and 24 to 72 hour evidence capture.
-5. **AUTO-2 - exit observation design**: design hypothetical exit observation
-   before any non-observe automation is considered.
+5. **AUTO-2 - paper-autopilot governance sequence**: follow
+   `docs/proposals/AUTO-2-1m-paper-autopilot-governance.md`. The required
+   order is focused static paper trial, shadow dynamic champion/challenger
+   allowlist, governed dynamic allowlist, dynamic paper trial, and only then a
+   separate live-automation design proposal.
 
 No slice in this sequence should enable live automated `ENTRY` or `EXIT`.
 
