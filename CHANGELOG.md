@@ -14,6 +14,10 @@ This project follows SemVer as defined in `docs/02-versioning-and-releases.md`.
   preserving local service defaults for localhost development.
 
 ### Operator Tooling
+- Added a Slice Loop Check to the Apex harness workflow, prompt pack,
+  remote-agent bootstrap, and PR template so coding slices must show new input,
+  state transition, concrete value, non-repetition, and stop/defer boundaries
+  before implementation.
 - Added the AUTO-2 1m paper-autopilot governance roadmap and Superpowers plan,
   locking the next automation sequence to focused static paper trial, shadow
   champion/challenger allowlist, governed dynamic allowlist, dynamic paper

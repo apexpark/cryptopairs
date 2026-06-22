@@ -78,6 +78,8 @@ explicit governance exception for that PR.
 Coders must:
 
 - work in small, reviewable slices;
+- complete the Slice Loop Check before coding unless the task is a trivial
+  answer-only or read-only review;
 - prefer TDD for behavior changes: write a failing test, verify it fails,
   implement, then verify green;
 - keep edits scoped to the claimed files and domain;
@@ -98,6 +100,45 @@ For behavior changes, the minimum slice shape is:
 
 Docs-only governance changes may skip TDD, but still need scoped diffs and
 verification evidence.
+
+## Slice Loop Check
+
+Before starting a coding slice, the Coder must show that the slice creates
+meaningful forward motion instead of another micro-hardening or refinement loop.
+The check is required for implementation, tests, contracts, runbooks, tooling,
+and governance changes unless the task is a trivial answer-only response or a
+read-only review.
+
+The Slice Loop Check has five fields:
+
+1. **New input consumed** - name the new evidence, operator decision, incident,
+   review finding, accepted design, or runtime observation this slice consumes.
+2. **New state transition** - state what project state changes when the slice
+   lands, for example design to contract, observe-only to paper-only, static
+   allowlist to shadow dynamic allowlist, or disabled tool to operator-run
+   command.
+3. **New artifact/runtime/user value** - identify the concrete new value: a
+   schema, test, report, command, runbook, ledger, dashboard, operator decision
+   point, or safer runtime behavior.
+4. **Why this is not repeating the prior slice** - compare against the exact
+   existing capability and explain the material difference.
+5. **Stop/defer condition** - list the boundaries that force the Coder to stop,
+   defer, split the work, or request Operator approval instead of expanding
+   scope.
+
+If the first four fields cannot be answered concretely, do not code the slice.
+If the stop/defer condition is triggered, stop and either split the slice or ask
+the Operator for an explicit decision. The check is not a substitute for
+`AGENTS.md` §2; it is an additional guard before spending implementation time.
+
+Reviewer posture:
+
+- For implementation PRs, Reviewers should treat a missing or vague Slice Loop
+  Check as a process finding.
+- For docs-only governance PRs, the check may be embedded in the PR body or the
+  changed governance doc.
+- A slice that only adds hardening must still identify the new failure mode,
+  user value, and non-repetition boundary.
 
 ## Reviewer Discipline
 
