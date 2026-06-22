@@ -11,12 +11,12 @@
 |---|---|
 | Last updated (UTC) | 2026-06-22 |
 | Updated by | codex |
-| Repo HEAD pin (committed) | `d5b7ebe0d0aa4750de6fe2ec8bf9469492792352` |
+| Repo HEAD pin (committed) | `b5baca4b828db1d8772e8c7081ad07a876ca003e` |
 | Pin branch | `main` |
 | Sprint base branch | `main` |
-| Pin notes | State refreshed after PR #234 merged the AUTO-2 paper-autopilot governance roadmap. AUTO-2 is constrained to the paper-autopilot sequence: static paper trial, shadow dynamic champion/challenger allowlist, governed dynamic allowlist, dynamic paper trial, then live-design gate only. This slice adds the Slice Loop Check to prevent micro-hardening and repetitive coding loops before AUTO-2A starts. |
+| Pin notes | State refreshed after PR #235 merged the Slice Loop Check into the Apex/Superpowers harness. AUTO-2 remains constrained to the paper-autopilot sequence: static paper trial, shadow dynamic champion/challenger allowlist, governed dynamic allowlist, dynamic paper trial, then live-design gate only. Future coding slices must pass the Slice Loop Check before implementation. |
 | Origin | `https://github.com/apexpark/cryptopairs.git` |
-| Working-tree state | **Slice Loop Check governance in flight on `codex/slice-loop-check-governance`** - docs-only Apex/Superpowers harness work. It creates no runtime behavior, order intents, dispatches, host deployment, background loop, or live `ENTRY` / `EXIT` enablement. |
+| Working-tree state | **Ready for AUTO-2A focused static paper trial design** - no runtime behavior, order intents, dispatches, host deployment, background loop, or live `ENTRY` / `EXIT` enablement is in flight. |
 
 If the pin above is not reachable from `HEAD` via fast-forward, this file is stale; if `HEAD` is ahead of the pin, see §"Pin Convention".
 
@@ -35,7 +35,7 @@ If the pin above is not reachable from `HEAD` via fast-forward, this file is sta
 | AUTO-1C/D - Attribution report and observe-only evidence runbook | **Merged** | codex | PR #233 landed at `94b15b2`. It added the offline attribution report, observe-only runbook, report schema/example, and tests. No runtime service behavior or execution path changes were included. |
 | HOST-1 - Hetzner repo checkout alignment | **Operator reported complete** | operator | Operator-provided Hetzner output showed `/opt/cryptopairs` fast-forwarded to `94b15b2`, data/strategy/execution health probes passed, dispatch mode remained `SIMULATE_ACK`, kill switch was inactive, and `AUTOPILOT_OBSERVE_ENABLED=false python3 tools/scripts/autopilot_observe.py --once` reported disabled-by-default behavior. |
 | AUTO-2 - 1m paper-autopilot governance sequence | **Merged** | codex | PR #234 merged at `d5b7ebe`. It records the required progression: focused static paper trial, shadow dynamic champion/challenger allowlist, governed dynamic allowlist, dynamic paper trial, then live-automation design gate only. Champion/challenger output remains advisory until the governed dynamic allowlist slice is complete. |
-| GOV-LOOP - Slice Loop Check governance | **In Flight** | codex | Branch `codex/slice-loop-check-governance` adds the pre-slice anti-loop check to the Apex harness workflow, prompt pack, and PR template so future coding slices must prove new input, state transition, concrete value, non-repetition, and stop/defer boundaries before implementation. |
+| GOV-LOOP - Slice Loop Check governance | **Merged** | codex | PR #235 merged at `b5baca4`. It added the pre-slice anti-loop check to the Apex harness workflow, prompt pack, remote-agent bootstrap, local review checklist, and PR template so future coding slices must prove new input, state transition, concrete value, non-repetition, and stop/defer boundaries before implementation. Test-only slices are explicitly covered. |
 
 ### Sprint: Champion-Selection Integrity (docs/26 + docs/27)
 
@@ -90,6 +90,7 @@ Source of truth for shipped behavior is `CHANGELOG.md` `## Unreleased` section. 
 - **Committed (`c1e031d`)**: AUTO-1A/B observe-only sidecar (PR #231) — added the `autopilot_observe_record` artifact schema/example plus a disabled-by-default `1m` observer sidecar under `tools/scripts/autopilot_observe.py`. The sidecar only performs read-only GETs, writes append-only JSONL records, blocks empty allowlists, mixed/non-`1m` timeframes, `FAIL_CLOSED` dispatch mode, malformed safety payloads, stale/malformed source data, failed live/quality gates, and duplicate observe keys, and has focused tests proving no execution order-intent URL use.
 - **Committed (`94b15b2`)**: AUTO-1C/D attribution report and observe-only runbook (PR #233) — added `tools/scripts/autopilot_observe_report.py`, the `autopilot_observe_report` schema/example, focused report tests, and `docs/playbooks/autopilot-observe-only-runbook.md`. The report compares observed 1m candidates against later ready-window and simulated paper-trade outcomes, including direction-aware attribution. The runbook gives hosted one-shot, loop, monitor, stop, and evidence-capture commands. No execution path or runtime service behavior changed.
 - **Committed (`d5b7ebe`)**: AUTO-2 paper-autopilot governance roadmap (PR #234) — added `docs/proposals/AUTO-2-1m-paper-autopilot-governance.md` plus `docs/superpowers/plans/2026-06-22-auto2-paper-autopilot-sequence.md`, locking the sequence to focused static paper trial, shadow dynamic champion/challenger allowlist, governed dynamic allowlist, dynamic paper trial, and a separate live-design gate before any live automation work.
+- **Committed (`b5baca4`)**: Slice Loop Check governance (PR #235) — added the pre-slice anti-loop check to the Apex harness workflow, Codex prompt pack, remote-agent bootstrap, local review checklist, and GitHub PR template. Future coding slices, including test-only slices, must show new input, state transition, concrete value, non-repetition, and stop/defer boundaries before implementation.
 
 ---
 
