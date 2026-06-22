@@ -95,7 +95,7 @@ or run destructive commands.
 Review for:
 - role separation clarity if governance is touched;
 - Slice Loop Check presence and concrete forward motion if implementation,
-  tooling, contracts, runbooks, or governance workflow are touched;
+  tests, tooling, contracts, runbooks, or governance workflow are touched;
 - Operator-only merge/signoff authority if workflow is touched;
 - exact-SHA review validity;
 - Coder/Reviewer ownership boundaries;

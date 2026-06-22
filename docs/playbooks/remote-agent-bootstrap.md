@@ -238,7 +238,7 @@ If the blocker is a `.git/index.lock` file the sandbox cannot remove, escalate i
 When the local agent reviews an inbound PR:
 
 - [ ] Diff stays in the claimed scope. No "broader-worktree" files snuck in (env/* configs, retention/data-horizon files, 4k z-chart UI, etc. unless explicitly part of the claimed item).
-- [ ] Slice Loop Check is present and concrete for implementation, tooling, contracts, runbooks, or governance workflow changes; vague or repetitive hardening should be sent back for re-scope.
+- [ ] Slice Loop Check is present and concrete for implementation, tests, tooling, contracts, runbooks, or governance workflow changes; vague or repetitive hardening should be sent back for re-scope.
 - [ ] Verification commands in the PR description correspond to the changed files (don't approve a tsc-claimed PR with no TS diff).
 - [ ] **Cargo-dependent verification done by the local agent**: if any Rust file changed, the local agent runs `git fetch origin && git checkout <branch> && ./scripts/check-rust-ci.sh` and posts the result in the PR thread before approving. Do not approve a Rust-touching PR on CI-only signal — verify locally too. CI is the backstop, not the only gate.
 - [ ] `AGENT_STATE.md` delta accurately reflects what landed; status flips match.
