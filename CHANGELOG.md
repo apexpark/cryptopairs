@@ -14,6 +14,10 @@ This project follows SemVer as defined in `docs/02-versioning-and-releases.md`.
   preserving local service defaults for localhost development.
 
 ### Operator Tooling
+- Added the AUTO-2A focused static paper-autopilot design proposal, defining
+  the disabled-by-default static `1m` paper trial, duplicate/cooldown/open
+  paper-position controls, fixed holding-window exits, and no-execution POST
+  boundaries before implementation.
 - Added a Slice Loop Check to the Apex harness workflow, prompt pack,
   remote-agent bootstrap, and PR template so coding slices must show new input,
   state transition, concrete value, non-repetition, and stop/defer boundaries
