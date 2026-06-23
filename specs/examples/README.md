@@ -31,6 +31,8 @@ Current baseline examples:
 - `specs/examples/execution_kraken_normalization_matrix.example.json`
 - `specs/examples/autopilot_observe_record.example.json`
 - `specs/examples/autopilot_observe_report.example.json`
+- `specs/examples/autopilot_paper_decision_record.example.json`
+- `specs/examples/autopilot_paper_position.example.json`
 - `specs/examples/strategy_pairs_cues_response.example.json`
 - `specs/examples/strategy_pairs_backtest_response.example.json`
 - `specs/examples/strategy_pairs_live_z_response.example.json`

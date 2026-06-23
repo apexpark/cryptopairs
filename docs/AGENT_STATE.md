@@ -11,12 +11,12 @@
 |---|---|
 | Last updated (UTC) | 2026-06-23 |
 | Updated by | codex |
-| Repo HEAD pin (committed) | `598a7e62534f84c5ae25da96cbd434321ed363cd` |
+| Repo HEAD pin (committed) | `98dd6f388b46549666f2828b1e98f69ddd872781` |
 | Pin branch | `main` |
 | Sprint base branch | `main` |
-| Pin notes | State refreshed for the AUTO-2A focused static paper-autopilot design gate. AUTO-2 remains constrained to the paper-autopilot sequence: static paper trial, shadow dynamic champion/challenger allowlist, governed dynamic allowlist, dynamic paper trial, then live-design gate only. Future coding slices must pass the Slice Loop Check before implementation. |
+| Pin notes | State refreshed after PR #237 merged the AUTO-2A focused static paper-autopilot design gate. AUTO-2 remains constrained to the paper-autopilot sequence: static paper trial, shadow dynamic champion/challenger allowlist, governed dynamic allowlist, dynamic paper trial, then live-design gate only. Future coding slices must pass the Slice Loop Check before implementation. |
 | Origin | `https://github.com/apexpark/cryptopairs.git` |
-| Working-tree state | **AUTO-2A focused static paper trial design in review** - no runtime behavior, order intents, dispatches, host deployment, background loop, or live `ENTRY` / `EXIT` enablement is in flight. |
+| Working-tree state | **AUTO-2A contracts and static paper ledger in review** - paper-only tooling/contracts are in flight; no runtime service behavior, order intents, dispatches, host deployment, background loop, dynamic allowlist control, or live `ENTRY` / `EXIT` enablement is in flight. |
 
 If the pin above is not reachable from `HEAD` via fast-forward, this file is stale; if `HEAD` is ahead of the pin, see §"Pin Convention".
 
@@ -36,7 +36,8 @@ If the pin above is not reachable from `HEAD` via fast-forward, this file is sta
 | HOST-1 - Hetzner repo checkout alignment | **Operator reported complete** | operator | Operator-provided Hetzner output showed `/opt/cryptopairs` fast-forwarded to `94b15b2`, data/strategy/execution health probes passed, dispatch mode remained `SIMULATE_ACK`, kill switch was inactive, and `AUTOPILOT_OBSERVE_ENABLED=false python3 tools/scripts/autopilot_observe.py --once` reported disabled-by-default behavior. |
 | AUTO-2 - 1m paper-autopilot governance sequence | **Merged** | codex | PR #234 merged at `d5b7ebe`. It records the required progression: focused static paper trial, shadow dynamic champion/challenger allowlist, governed dynamic allowlist, dynamic paper trial, then live-automation design gate only. Champion/challenger output remains advisory until the governed dynamic allowlist slice is complete. |
 | GOV-LOOP - Slice Loop Check governance | **Merged** | codex | PR #235 merged at `b5baca4`. It added the pre-slice anti-loop check to the Apex harness workflow, prompt pack, remote-agent bootstrap, local review checklist, and PR template so future coding slices must prove new input, state transition, concrete value, non-repetition, and stop/defer boundaries before implementation. Test-only slices are explicitly covered. |
-| AUTO-2A - Focused static paper trial design | **In review** | codex | Design proposal defines disabled-by-default static `1m` paper-only lifecycle, duplicate/open-position/cooldown controls, fixed holding-window exit on the next available paper outcome/mark, future paper contracts, and explicit no-execution-service-POST boundaries. No runtime, host, contract, or script changes are included. |
+| AUTO-2A - Focused static paper trial design | **Merged** | codex | PR #237 merged at `98dd6f3`. Design proposal defines disabled-by-default static `1m` paper-only lifecycle, duplicate/open-position/cooldown controls, fixed holding-window exit on the next available paper outcome/mark, future paper contracts, and explicit no-execution-service-POST boundaries. |
+| AUTO-2A - Contracts and static paper ledger | **In review** | codex | First implementation slice adds paper decision/position contracts, examples, disabled-by-default `tools/scripts/autopilot_paper.py`, and focused tests for static allowlist, non-`1m`, stale input, invalid hold-window config, open-position conflict, cooldown, fixed hold-window exit, mark-unavailable deferral, persisted duplicate suppression, generated schema validation, and no execution-service order-intent/dispatch path. No host runbook/report, hosted loop, service behavior, dynamic allowlist control, or live execution change is included. |
 
 ### Sprint: Champion-Selection Integrity (docs/26 + docs/27)
 
@@ -503,8 +504,8 @@ Follow-ups carried forward from prior reviews. Ordered by source review then sev
 
 Pickable items, in priority order:
 
-1. **Operator/local agent: review AUTO-2A focused static paper trial design** - accept or revise the paper-only design gate before contracts or code. No host deployment is part of this review.
-2. **Remote/local agent: AUTO-2A contracts and paper ledger** - after the design gate is accepted, add paper decision/position/report contracts, examples, Python tooling, and focused tests. Static allowlist only.
+1. **Operator/local agent: review AUTO-2A contracts and static paper ledger** - accept or revise the first paper-only implementation slice. No host deployment is part of this review.
+2. **Remote/local agent: AUTO-2A paper report and hosted runbook** - after the ledger/contracts slice is accepted, add the paper report contract/tooling plus run, monitor, stop, and evidence-capture commands. Static allowlist only; no hosted loop until the runbook is reviewed.
 3. **Remote/local agent: AUTO-2B shadow dynamic allowlist** - record champion/challenger selector output and compare it with the static paper trial, but do not let dynamic output control paper entries.
 4. **Remote/local agent: AUTO-2C governed dynamic allowlist** - add sample, dwell-time, churn, concentration, direction, quarantine, and stale-selector gates between champion/challenger output and paper eligibility.
 5. **Remote/local agent: AUTO-2D dynamic paper trial** - allow only the governed dynamic allowlist, not raw champion/challenger output, to control paper-only eligibility. Keep live execution out of scope.

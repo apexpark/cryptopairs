@@ -1,0 +1,35 @@
+{
+  "schema_version": 1,
+  "mode": "paper_only",
+  "run_id": "2026-06-18T06:45:00Z-paper-1m",
+  "observed_at": "2026-06-18T06:45:00Z",
+  "decision_type": "PAPER_ENTRY_OPENED",
+  "decision_reason": "Static allowlist candidate opened one paper-only position.",
+  "reason_codes": [
+    "STATIC_ALLOWLIST_PAIR_VARIANT",
+    "NO_OPEN_PAPER_POSITION",
+    "NO_ACTIVE_COOLDOWN",
+    "HOLD_WINDOW_VALID"
+  ],
+  "pair_id": "PF_DOGEUSD__PF_PEPEUSD",
+  "timeframe": "1m",
+  "selected_variant": "ROBUST_Z",
+  "direction": "SHORT_SPREAD",
+  "source_generated_at": "2026-06-18T06:44:52Z",
+  "observe_key": "observe-only:v1:1m:PF_DOGEUSD__PF_PEPEUSD:ROBUST_Z:SHORT_SPREAD:2026-06-18T06:45:00Z",
+  "paper_position_id": "paper-position:v1:1m:PF_DOGEUSD__PF_PEPEUSD:ROBUST_Z:SHORT_SPREAD:2026-06-18T06:45:00Z",
+  "hold_window_bars": 5,
+  "cooldown_seconds": 300,
+  "exit_eligible_at": "2026-06-18T06:50:00Z",
+  "exit_source_type": null,
+  "exit_source_at": null,
+  "realized_net_bps": null,
+  "evidence": {
+    "static_allowlist_size": 1,
+    "candidate_timeframe": "1m",
+    "candidate_source": "observe_record",
+    "mark_source": null,
+    "existing_open_position": false,
+    "cooldown_until": null
+  }
+}

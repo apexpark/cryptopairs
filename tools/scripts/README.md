@@ -147,6 +147,46 @@ The report validates against
 operation and evidence capture are documented in
 `docs/playbooks/autopilot-observe-only-runbook.md`.
 
+## 1m Autopilot Paper-Only Ledger
+
+Run one disabled-by-default paper ledger tick from observe-only candidate JSONL
+and paper mark/outcome JSON. This tool does not call HTTP services, submit
+execution order intents, or dispatch orders.
+
+```bash
+python3 tools/scripts/autopilot_paper.py --once
+```
+
+Enable it explicitly with a static `pair_id:selected_variant` allowlist and a
+fixed hold window. Empty allowlists, non-`1m` candidates, stale candidates,
+invalid hold-window config, duplicate candidates, open paper-position conflicts,
+and active cooldowns fail closed into append-only decision records.
+
+```bash
+AUTOPILOT_PAPER_ENABLED=true \
+AUTOPILOT_PAPER_ALLOWED_PAIR_VARIANTS="PF_DOGEUSD__PF_PEPEUSD:ROBUST_Z" \
+AUTOPILOT_PAPER_HOLD_WINDOW_BARS=5 \
+python3 tools/scripts/autopilot_paper.py \
+  --once \
+  --candidates-jsonl artifacts/autopilot_observe/runs/<run-id>/records/<yyyymmdd>/autopilot_observe_<yyyymmdd>.jsonl \
+  --marks-json artifacts/autopilot_paper/marks_1m.json \
+  --existing-positions-jsonl artifacts/autopilot_paper/runs/<run-id>/<yyyymmdd>/autopilot_paper_positions_<yyyymmdd>.jsonl \
+  --output-dir artifacts/autopilot_paper/runs/<run-id>
+```
+
+Outputs append-only JSONL records under the configured output directory:
+
+- `autopilot_paper_decisions_<yyyymmdd>.jsonl`
+- `autopilot_paper_positions_<yyyymmdd>.jsonl`
+
+Decision and position records validate against:
+
+- `specs/contracts/autopilot_paper_decision_record.schema.json`
+- `specs/contracts/autopilot_paper_position.schema.json`
+
+Hosted run, monitor, stop, and report commands remain out of this first ledger
+slice and must be added before any Hetzner paper loop is run.
+
 ## Signal vs Gate PnL Audit
 
 Audit chart signal markers against gate state at entry time, with leg-level spread PnL attribution:

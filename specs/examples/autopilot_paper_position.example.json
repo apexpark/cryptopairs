@@ -1,0 +1,21 @@
+{
+  "schema_version": 1,
+  "mode": "paper_only",
+  "paper_position_id": "paper-position:v1:1m:PF_DOGEUSD__PF_PEPEUSD:ROBUST_Z:SHORT_SPREAD:2026-06-18T06:45:00Z",
+  "pair_id": "PF_DOGEUSD__PF_PEPEUSD",
+  "timeframe": "1m",
+  "selected_variant": "ROBUST_Z",
+  "direction": "SHORT_SPREAD",
+  "status": "OPEN",
+  "entry_observed_at": "2026-06-18T06:45:00Z",
+  "entry_score_z": 2.12,
+  "entry_net_edge_bps": 19.5,
+  "source_generated_at": "2026-06-18T06:44:52Z",
+  "entry_observe_key": "observe-only:v1:1m:PF_DOGEUSD__PF_PEPEUSD:ROBUST_Z:SHORT_SPREAD:2026-06-18T06:45:00Z",
+  "hold_window_bars": 5,
+  "exit_eligible_at": "2026-06-18T06:50:00Z",
+  "exit_observed_at": null,
+  "exit_reason": null,
+  "exit_source_type": null,
+  "realized_net_bps": null
+}
