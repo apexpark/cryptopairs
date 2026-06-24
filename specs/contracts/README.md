@@ -37,6 +37,7 @@ Current baseline contracts:
 - `specs/contracts/autopilot_observe_report.schema.json`
 - `specs/contracts/autopilot_paper_decision_record.schema.json`
 - `specs/contracts/autopilot_paper_position.schema.json`
+- `specs/contracts/autopilot_paper_report.schema.json`
 - `specs/contracts/strategy_pairs_cues_response.schema.json`
 - `specs/contracts/strategy_pairs_backtest_response.schema.json`
 - `specs/contracts/strategy_pairs_live_z_response.schema.json`

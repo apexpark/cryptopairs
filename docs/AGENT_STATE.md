@@ -16,7 +16,7 @@
 | Sprint base branch | `main` |
 | Pin notes | State refreshed after PR #238 merged the AUTO-2A paper ledger/contracts slice. AUTO-2 remains constrained to the paper-autopilot sequence: static paper trial, shadow dynamic champion/challenger allowlist, governed dynamic allowlist, dynamic paper trial, then live-design gate only. Future coding slices must pass the Slice Loop Check before implementation. |
 | Origin | `https://github.com/apexpark/cryptopairs.git` |
-| Working-tree state | **AUTO-2A paper report and hosted runbook next** - paper-only reporting/runbook work may proceed from the merged ledger; no runtime service behavior, order intents, dispatches, host deployment, background loop, dynamic allowlist control, or live `ENTRY` / `EXIT` enablement is in flight. |
+| Working-tree state | **AUTO-2A paper report and hosted runbook in review** - paper-only reporting/runbook work is in flight from the merged ledger; no runtime service behavior, order intents, dispatches, host deployment, dynamic allowlist control, or live `ENTRY` / `EXIT` enablement is in flight. |
 
 If the pin above is not reachable from `HEAD` via fast-forward, this file is stale; if `HEAD` is ahead of the pin, see §"Pin Convention".
 
@@ -38,7 +38,7 @@ If the pin above is not reachable from `HEAD` via fast-forward, this file is sta
 | GOV-LOOP - Slice Loop Check governance | **Merged** | codex | PR #235 merged at `b5baca4`. It added the pre-slice anti-loop check to the Apex harness workflow, prompt pack, remote-agent bootstrap, local review checklist, and PR template so future coding slices must prove new input, state transition, concrete value, non-repetition, and stop/defer boundaries before implementation. Test-only slices are explicitly covered. |
 | AUTO-2A - Focused static paper trial design | **Merged** | codex | PR #237 merged at `98dd6f3`. Design proposal defines disabled-by-default static `1m` paper-only lifecycle, duplicate/open-position/cooldown controls, fixed holding-window exit on the next available paper outcome/mark, future paper contracts, and explicit no-execution-service-POST boundaries. |
 | AUTO-2A - Contracts and static paper ledger | **Merged** | codex | PR #238 landed at `daca062`. First implementation slice added paper decision/position contracts, examples, disabled-by-default `tools/scripts/autopilot_paper.py`, and focused tests for static allowlist, non-`1m`, stale/malformed/future input, invalid hold-window config, open-position conflict, cooldown, fixed hold-window exit, mark-unavailable deferral, persisted duplicate suppression, generated schema validation, and no execution-service order-intent/dispatch path. No host runbook/report, hosted loop, service behavior, dynamic allowlist control, or live execution change was included. |
-| AUTO-2A - Paper report and hosted runbook | **Next** | codex | Next slice should add the paper report contract/example/tooling plus hosted run, monitor, stop, and evidence-capture commands. Static allowlist only; no hosted loop should be run until the runbook is reviewed and the operator explicitly starts it on Hetzner. |
+| AUTO-2A - Paper report and hosted runbook | **In review** | codex | This slice adds the paper report contract/example/tooling plus hosted run, monitor, stop, and evidence-capture commands. Static allowlist only; no hosted loop should be run until the runbook is reviewed and the operator explicitly starts it on Hetzner. No service behavior, dynamic allowlist control, or live execution change is included. |
 
 ### Sprint: Champion-Selection Integrity (docs/26 + docs/27)
 
@@ -506,7 +506,7 @@ Follow-ups carried forward from prior reviews. Ordered by source review then sev
 
 Pickable items, in priority order:
 
-1. **Remote/local agent: AUTO-2A paper report and hosted runbook** - add the paper report contract/tooling plus run, monitor, stop, and evidence-capture commands. Static allowlist only; no hosted loop until the runbook is reviewed and the operator explicitly starts it.
+1. **Operator/local agent: review AUTO-2A paper report and hosted runbook** - accept or revise the paper report contract/tooling and hosted runbook before any Hetzner paper loop is started.
 2. **Remote/local agent: AUTO-2B shadow dynamic allowlist** - record champion/challenger selector output and compare it with the static paper trial, but do not let dynamic output control paper entries.
 3. **Remote/local agent: AUTO-2C governed dynamic allowlist** - add sample, dwell-time, churn, concentration, direction, quarantine, and stale-selector gates between champion/challenger output and paper eligibility.
 4. **Remote/local agent: AUTO-2D dynamic paper trial** - allow only the governed dynamic allowlist, not raw champion/challenger output, to control paper-only eligibility. Keep live execution out of scope.

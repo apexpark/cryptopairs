@@ -1,0 +1,451 @@
+{
+  "$id": "https://cryptopairs/specs/contracts/autopilot_paper_report.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "AutopilotPaperReport",
+  "description": "Offline AUTO-2A paper-only trial report aggregating append-only paper decisions and paper positions. This artifact is not live PnL, an execution intent, or permission to enable live automation.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "mode",
+    "generated_at",
+    "run_config",
+    "scope",
+    "source_counts",
+    "summary",
+    "by_pair_variant",
+    "open_positions",
+    "closed_positions",
+    "methodology"
+  ],
+  "properties": {
+    "schema_version": {
+      "type": "integer",
+      "const": 1
+    },
+    "mode": {
+      "type": "string",
+      "const": "paper_only_report"
+    },
+    "generated_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "run_config": {
+      "$ref": "#/$defs/run_config"
+    },
+    "scope": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "timeframe",
+        "position_identity",
+        "run_started_at",
+        "run_ended_at"
+      ],
+      "properties": {
+        "timeframe": {
+          "type": "string",
+          "const": "1m"
+        },
+        "position_identity": {
+          "type": "array",
+          "prefixItems": [
+            {
+              "type": "string",
+              "const": "paper_position_id"
+            },
+            {
+              "type": "string",
+              "const": "pair_id"
+            },
+            {
+              "type": "string",
+              "const": "timeframe"
+            },
+            {
+              "type": "string",
+              "const": "selected_variant"
+            },
+            {
+              "type": "string",
+              "const": "direction"
+            }
+          ],
+          "items": false,
+          "minItems": 5,
+          "maxItems": 5
+        },
+        "run_started_at": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "date-time"
+        },
+        "run_ended_at": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "date-time"
+        }
+      }
+    },
+    "source_counts": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "decision_records",
+        "position_records"
+      ],
+      "properties": {
+        "decision_records": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "position_records": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "summary": {
+      "$ref": "#/$defs/summary"
+    },
+    "by_pair_variant": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/pair_variant_summary"
+      }
+    },
+    "open_positions": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/position_summary"
+      }
+    },
+    "closed_positions": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/position_summary"
+      }
+    },
+    "methodology": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "latest_position_state",
+        "pnl_definition",
+        "execution_caveat"
+      ],
+      "properties": {
+        "latest_position_state": {
+          "type": "string",
+          "minLength": 1
+        },
+        "pnl_definition": {
+          "type": "string",
+          "minLength": 1
+        },
+        "execution_caveat": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    }
+  },
+  "$defs": {
+    "nullable_number": {
+      "type": [
+        "number",
+        "null"
+      ]
+    },
+    "run_config": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "run_id",
+        "timeframe",
+        "static_allowlist",
+        "hold_window_bars",
+        "max_runtime_seconds",
+        "max_observe_candidate_age_seconds"
+      ],
+      "properties": {
+        "run_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "timeframe": {
+          "type": "string",
+          "const": "1m"
+        },
+        "static_allowlist": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/static_allowlist_entry"
+          },
+          "minItems": 1
+        },
+        "hold_window_bars": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 240
+        },
+        "max_runtime_seconds": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 259200
+        },
+        "max_observe_candidate_age_seconds": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 259200
+        }
+      }
+    },
+    "static_allowlist_entry": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "pair_id",
+        "selected_variant"
+      ],
+      "properties": {
+        "pair_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "selected_variant": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "summary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "decision_records",
+        "entry_opened_decisions",
+        "exit_completed_decisions",
+        "exit_deferred_decisions",
+        "blocked_decisions",
+        "block_breakdown",
+        "unique_positions",
+        "open_positions",
+        "closed_positions",
+        "profitable_closed_positions",
+        "sum_realized_net_bps",
+        "avg_realized_net_bps"
+      ],
+      "properties": {
+        "decision_records": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "entry_opened_decisions": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "exit_completed_decisions": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "exit_deferred_decisions": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "blocked_decisions": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "block_breakdown": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "propertyNames": {
+            "pattern": "^BLOCKED_"
+          }
+        },
+        "unique_positions": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "open_positions": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "closed_positions": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "profitable_closed_positions": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "sum_realized_net_bps": {
+          "type": "number"
+        },
+        "avg_realized_net_bps": {
+          "$ref": "#/$defs/nullable_number"
+        }
+      }
+    },
+    "pair_variant_summary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "pair_id",
+        "timeframe",
+        "selected_variant",
+        "direction",
+        "decision_records",
+        "entry_opened_decisions",
+        "exit_completed_decisions",
+        "exit_deferred_decisions",
+        "blocked_decisions",
+        "open_positions",
+        "closed_positions",
+        "profitable_closed_positions",
+        "sum_realized_net_bps",
+        "avg_realized_net_bps"
+      ],
+      "properties": {
+        "pair_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "timeframe": {
+          "type": "string",
+          "const": "1m"
+        },
+        "selected_variant": {
+          "type": "string",
+          "minLength": 1
+        },
+        "direction": {
+          "type": "string",
+          "minLength": 1
+        },
+        "decision_records": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "entry_opened_decisions": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "exit_completed_decisions": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "exit_deferred_decisions": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "blocked_decisions": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "open_positions": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "closed_positions": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "profitable_closed_positions": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "sum_realized_net_bps": {
+          "type": "number"
+        },
+        "avg_realized_net_bps": {
+          "$ref": "#/$defs/nullable_number"
+        }
+      }
+    },
+    "position_summary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "paper_position_id",
+        "pair_id",
+        "timeframe",
+        "selected_variant",
+        "direction",
+        "status",
+        "entry_observed_at",
+        "exit_eligible_at",
+        "exit_observed_at",
+        "exit_source_type",
+        "realized_net_bps"
+      ],
+      "properties": {
+        "paper_position_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "pair_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "timeframe": {
+          "type": "string",
+          "const": "1m"
+        },
+        "selected_variant": {
+          "type": "string",
+          "minLength": 1
+        },
+        "direction": {
+          "type": "string",
+          "minLength": 1
+        },
+        "status": {
+          "type": "string",
+          "enum": [
+            "OPEN",
+            "CLOSED"
+          ]
+        },
+        "entry_observed_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "exit_eligible_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "exit_observed_at": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "date-time"
+        },
+        "exit_source_type": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "enum": [
+            "paper_trade_outcome",
+            "mark_adapter",
+            null
+          ]
+        },
+        "realized_net_bps": {
+          "$ref": "#/$defs/nullable_number"
+        }
+      }
+    }
+  }
+}
