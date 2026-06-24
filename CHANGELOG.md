@@ -14,6 +14,11 @@ This project follows SemVer as defined in `docs/02-versioning-and-releases.md`.
   preserving local service defaults for localhost development.
 
 ### Operator Tooling
+- Added AUTO-2A paper-only ledger contracts and a disabled-by-default static
+  `1m` `autopilot_paper.py` tool that consumes observe-like candidates and
+  paper marks, writes append-only paper decisions/positions, suppresses
+  duplicate/open-position/cooldown re-entry, and uses fixed holding-window
+  exits without any execution-service order-intent or dispatch path.
 - Added the AUTO-2A focused static paper-autopilot design proposal, defining
   the disabled-by-default static `1m` paper trial, duplicate/cooldown/open
   paper-position controls, fixed holding-window exits, and no-execution POST

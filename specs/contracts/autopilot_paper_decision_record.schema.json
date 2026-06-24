@@ -1,0 +1,240 @@
+{
+  "$id": "https://cryptopairs/specs/contracts/autopilot_paper_decision_record.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "AutopilotPaperDecisionRecord",
+  "description": "Append-only paper-only autopilot decision record. This artifact records paper allows, blocks, entries, and exits; it is not an execution intent and must not be submitted to execution-service.",
+  "type": "object",
+  "additionalProperties": false,
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "decision_type": {
+            "const": "PAPER_EXIT_COMPLETED"
+          }
+        },
+        "required": [
+          "decision_type"
+        ]
+      },
+      "then": {
+        "properties": {
+          "paper_position_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "exit_eligible_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "exit_source_type": {
+            "type": "string",
+            "enum": [
+              "paper_trade_outcome",
+              "mark_adapter"
+            ]
+          },
+          "exit_source_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "realized_net_bps": {
+            "type": "number"
+          }
+        }
+      }
+    }
+  ],
+  "required": [
+    "schema_version",
+    "mode",
+    "run_id",
+    "observed_at",
+    "decision_type",
+    "decision_reason",
+    "reason_codes",
+    "pair_id",
+    "timeframe",
+    "selected_variant",
+    "direction",
+    "source_generated_at",
+    "observe_key",
+    "paper_position_id",
+    "hold_window_bars",
+    "cooldown_seconds",
+    "exit_eligible_at",
+    "exit_source_type",
+    "exit_source_at",
+    "realized_net_bps",
+    "evidence"
+  ],
+  "properties": {
+    "schema_version": {
+      "type": "integer",
+      "const": 1
+    },
+    "mode": {
+      "type": "string",
+      "const": "paper_only"
+    },
+    "run_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "observed_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "decision_type": {
+      "type": "string",
+      "enum": [
+        "BLOCKED_STATIC_ALLOWLIST_REQUIRED",
+        "BLOCKED_NOT_ALLOWLISTED",
+        "BLOCKED_TIMEFRAME_OUT_OF_SCOPE",
+        "BLOCKED_STALE_INPUT",
+        "BLOCKED_OBSERVE_DECISION",
+        "BLOCKED_MALFORMED_INPUT",
+        "BLOCKED_MALFORMED_EXISTING_POSITION_STATE",
+        "BLOCKED_INVALID_HOLD_WINDOW",
+        "BLOCKED_OPEN_PAPER_POSITION",
+        "BLOCKED_COOLDOWN",
+        "BLOCKED_DUPLICATE_CANDIDATE",
+        "PAPER_ENTRY_OPENED",
+        "PAPER_EXIT_COMPLETED",
+        "PAPER_EXIT_DEFERRED_MARK_UNAVAILABLE"
+      ]
+    },
+    "decision_reason": {
+      "type": "string",
+      "minLength": 1
+    },
+    "reason_codes": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      },
+      "minItems": 1
+    },
+    "pair_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "timeframe": {
+      "type": "string",
+      "const": "1m"
+    },
+    "selected_variant": {
+      "type": "string",
+      "minLength": 1
+    },
+    "direction": {
+      "type": "string",
+      "minLength": 1
+    },
+    "source_generated_at": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "format": "date-time"
+    },
+    "observe_key": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "paper_position_id": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "hold_window_bars": {
+      "type": [
+        "integer",
+        "null"
+      ]
+    },
+    "cooldown_seconds": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "exit_eligible_at": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "format": "date-time"
+    },
+    "exit_source_type": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "enum": [
+        "paper_trade_outcome",
+        "mark_adapter",
+        null
+      ]
+    },
+    "exit_source_at": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "format": "date-time"
+    },
+    "realized_net_bps": {
+      "type": [
+        "number",
+        "null"
+      ]
+    },
+    "evidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "static_allowlist_size",
+        "candidate_timeframe",
+        "candidate_source",
+        "mark_source",
+        "existing_open_position",
+        "cooldown_until"
+      ],
+      "properties": {
+        "static_allowlist_size": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "candidate_timeframe": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "candidate_source": {
+          "type": "string",
+          "minLength": 1
+        },
+        "mark_source": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "existing_open_position": {
+          "type": "boolean"
+        },
+        "cooldown_until": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "date-time"
+        }
+      }
+    }
+  }
+}
