@@ -14,6 +14,11 @@ This project follows SemVer as defined in `docs/02-versioning-and-releases.md`.
   preserving local service defaults for localhost development.
 
 ### Operator Tooling
+- Added AUTO-2A paper-only report tooling and hosted runbook commands for
+  static `1m` paper trial evidence capture: `autopilot_paper_report.py`
+  summarizes append-only paper decisions/positions, records run configuration
+  and blocked-decision breakdowns, emits JSON/Markdown, and preserves the
+  no-execution-service/no-live-automation boundary.
 - Added AUTO-2A paper-only ledger contracts and a disabled-by-default static
   `1m` `autopilot_paper.py` tool that consumes observe-like candidates and
   paper marks, writes append-only paper decisions/positions, suppresses

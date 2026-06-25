@@ -184,8 +184,21 @@ Decision and position records validate against:
 - `specs/contracts/autopilot_paper_decision_record.schema.json`
 - `specs/contracts/autopilot_paper_position.schema.json`
 
-Hosted run, monitor, stop, and report commands remain out of this first ledger
-slice and must be added before any Hetzner paper loop is run.
+Build an offline AUTO-2A paper report from append-only paper decision and
+position JSONL artifacts:
+
+```bash
+python3 tools/scripts/autopilot_paper_report.py \
+  --paper-dir artifacts/autopilot_paper/runs/<run-id>/records \
+  --run-config-json artifacts/autopilot_paper/runs/<run-id>/run_config.json \
+  --output-json artifacts/autopilot_paper/runs/<run-id>/autopilot_paper_report.json \
+  --output-markdown artifacts/autopilot_paper/runs/<run-id>/autopilot_paper_report.md
+```
+
+The report validates against
+`specs/contracts/autopilot_paper_report.schema.json`. Hosted paper-only run,
+monitor, stop, and evidence-capture commands are documented in
+`docs/playbooks/autopilot-paper-only-runbook.md`.
 
 ## Signal vs Gate PnL Audit
 
