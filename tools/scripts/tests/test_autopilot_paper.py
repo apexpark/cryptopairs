@@ -360,6 +360,34 @@ class AutopilotPaperTests(unittest.TestCase):
         self.assertEqual(second.decisions[0]["decision_type"], "BLOCKED_OPEN_PAPER_POSITION")
         self.assertEqual(second.positions, [])
 
+    def test_observe_record_with_minute_key_and_fractional_source_timestamp_opens_position(
+        self,
+    ) -> None:
+        result = paper.run_once(
+            config(
+                allowed_pair_variants={
+                    ("PF_XBTUSD__PF_BNBUSD", "COINTEGRATION_Z"),
+                }
+            ),
+            candidates=[
+                candidate(
+                    pair_id="PF_XBTUSD__PF_BNBUSD",
+                    selected_variant="COINTEGRATION_Z",
+                    observed_at="2026-06-18T06:45:51Z",
+                    source_generated_at="2026-06-18T06:45:51.265681741Z",
+                    observe_key=(
+                        "observe-only:v1:1m:PF_XBTUSD__PF_BNBUSD:"
+                        "COINTEGRATION_Z:SHORT_SPREAD:2026-06-18T06:45:00Z"
+                    ),
+                )
+            ],
+            marks=[],
+            observed_at=OBSERVED_AT + dt.timedelta(minutes=1),
+        )
+
+        self.assertEqual(result.decisions[0]["decision_type"], "PAPER_ENTRY_OPENED")
+        self.assertEqual(result.positions[0]["status"], "OPEN")
+
     def test_naive_ledger_observed_at_raises_before_opening_position(self) -> None:
         with self.assertRaises(ValueError):
             paper.run_once(
