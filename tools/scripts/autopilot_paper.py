@@ -14,6 +14,7 @@ import datetime as dt
 import json
 import math
 import os
+import re
 import sys
 from pathlib import Path
 from typing import Any, Mapping, Optional, Sequence, Set, Tuple
@@ -34,6 +35,7 @@ OBSERVE_EVIDENCE_FIELDS = (
     "kill_switch_status",
     "open_trades_status",
 )
+LONG_FRACTIONAL_SECONDS_RE = re.compile(r"(\.\d{6})\d+((?:[+-]\d{2}:\d{2})?)$")
 
 Key = Tuple[str, str, str, str]
 
@@ -76,8 +78,10 @@ def iso(value: dt.datetime) -> str:
 def parse_iso(value: Any) -> Optional[dt.datetime]:
     if not isinstance(value, str) or not value:
         return None
+    normalized = value.replace("Z", "+00:00")
+    normalized = LONG_FRACTIONAL_SECONDS_RE.sub(r"\1\2", normalized)
     try:
-        parsed = dt.datetime.fromisoformat(value.replace("Z", "+00:00"))
+        parsed = dt.datetime.fromisoformat(normalized)
     except ValueError:
         return None
     if parsed.tzinfo is None or parsed.utcoffset() is None:
@@ -91,6 +95,14 @@ def normalize_observed_at(value: Optional[dt.datetime]) -> dt.datetime:
     if value.tzinfo is None or value.utcoffset() is None:
         raise ValueError("observed_at must include timezone")
     return value.astimezone(dt.timezone.utc)
+
+
+def second_bucket(value: dt.datetime) -> dt.datetime:
+    return value.astimezone(dt.timezone.utc).replace(microsecond=0)
+
+
+def minute_bucket(value: dt.datetime) -> dt.datetime:
+    return second_bucket(value).replace(second=0)
 
 
 def bool_env(value: Optional[str], default: bool) -> bool:
@@ -217,7 +229,7 @@ def observe_key_reason(
         or parts[3] != key[0]
         or parts[4] != key[2]
         or parts[5] != key[3]
-        or observe_key_time != candidate_observed_at
+        or observe_key_time != minute_bucket(candidate_observed_at)
     ):
         return "CANDIDATE_OBSERVE_KEY_MISMATCH"
     return None
@@ -471,7 +483,9 @@ def valid_open_position_state(position: Mapping[str, Any]) -> bool:
         return False
     source_generated_at = position.get("source_generated_at")
     source_generated = parse_iso(source_generated_at)
-    if source_generated is None or source_generated > entry_observed_at:
+    if source_generated is None or second_bucket(source_generated) > second_bucket(
+        entry_observed_at
+    ):
         return False
     if not isinstance(position.get("entry_observe_key"), str) or not position.get("entry_observe_key"):
         return False
@@ -754,7 +768,7 @@ def evaluate_candidate(
             "Candidate source timestamp is after the current paper ledger tick.",
             ["CANDIDATE_SOURCE_GENERATED_AT_FUTURE"],
         )
-    if source_generated > candidate_observed_at:
+    if second_bucket(source_generated) > second_bucket(candidate_observed_at):
         return block(
             "BLOCKED_STALE_INPUT",
             "Candidate source timestamp is after the candidate observed_at.",

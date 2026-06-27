@@ -5,6 +5,10 @@ This project follows SemVer as defined in `docs/02-versioning-and-releases.md`.
 
 ## Unreleased
 ### Fixed
+- AUTO-2A paper ledger now accepts real observe-only records whose observe key
+  is minute-bucketed and whose strategy `source_generated_at` includes
+  fractional seconds in the same serialized second as `observed_at`, while
+  preserving stale/future candidate blocking.
 - Data-service `/health` now performs a repository-backed Postgres health
   check and returns 503 on repository errors instead of reporting static OK.
 - Trade z-score charts now anchor the initial 16x zoom window on the newest live
