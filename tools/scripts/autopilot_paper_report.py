@@ -18,6 +18,8 @@ PAPER_MODE = "paper_only"
 TIMEFRAME = "1m"
 MAX_HOLD_WINDOW_BARS = 240
 MAX_RUNTIME_SECONDS = 259200
+ALLOWLIST_MODES = {"pair_variant", "pair_variant_direction", "mixed"}
+SUPPORTED_DIRECTIONS = {"LONG_SPREAD", "SHORT_SPREAD"}
 
 Key = tuple[str, str, str, str]
 
@@ -80,6 +82,7 @@ def normalize_run_config(run_config: dict[str, Any]) -> dict[str, Any]:
     allowed_fields = {
         "run_id",
         "timeframe",
+        "static_allowlist_mode",
         "static_allowlist",
         "hold_window_bars",
         "max_runtime_seconds",
@@ -98,12 +101,20 @@ def normalize_run_config(run_config: dict[str, Any]) -> dict[str, Any]:
     if not isinstance(static_allowlist, list) or not static_allowlist:
         raise ValueError("run_config.static_allowlist must be a non-empty array")
 
+    raw_mode = run_config.get("static_allowlist_mode")
+    if raw_mode is not None and raw_mode not in ALLOWLIST_MODES:
+        raise ValueError(
+            "run_config.static_allowlist_mode must be one of "
+            f"{', '.join(sorted(ALLOWLIST_MODES))}"
+        )
+
     normalized_allowlist: list[dict[str, str]] = []
-    seen: set[tuple[str, str]] = set()
+    seen: set[tuple[str, str, str | None]] = set()
+    direction_entries = 0
     for index, entry in enumerate(static_allowlist):
         if not isinstance(entry, dict):
             raise ValueError(f"run_config.static_allowlist[{index}] must be an object")
-        extra_entry_fields = sorted(set(entry) - {"pair_id", "selected_variant"})
+        extra_entry_fields = sorted(set(entry) - {"pair_id", "selected_variant", "direction"})
         if extra_entry_fields:
             raise ValueError(
                 "run_config.static_allowlist[{index}] has unsupported fields: {fields}".format(
@@ -113,23 +124,55 @@ def normalize_run_config(run_config: dict[str, Any]) -> dict[str, Any]:
             )
         pair_id = require_string(entry, "pair_id")
         selected_variant = require_string(entry, "selected_variant")
-        key = (pair_id, selected_variant)
+        direction_value = entry.get("direction")
+        if direction_value is not None:
+            direction = require_string(entry, "direction")
+            if direction not in SUPPORTED_DIRECTIONS:
+                raise ValueError("run_config static allowlist direction must be LONG_SPREAD or SHORT_SPREAD")
+            direction_entries += 1
+        else:
+            direction = None
+        key = (pair_id, selected_variant, direction)
         if key in seen:
-            raise ValueError(
-                "run_config.static_allowlist contains duplicate "
-                f"{pair_id}:{selected_variant}"
-            )
+            rendered_key = f"{pair_id}:{selected_variant}"
+            if direction is not None:
+                rendered_key = f"{rendered_key}:{direction}"
+            raise ValueError(f"run_config.static_allowlist contains duplicate {rendered_key}")
         seen.add(key)
-        normalized_allowlist.append(
-            {
-                "pair_id": pair_id,
-                "selected_variant": selected_variant,
-            }
-        )
+        normalized_entry = {
+            "pair_id": pair_id,
+            "selected_variant": selected_variant,
+        }
+        if direction is not None:
+            normalized_entry["direction"] = direction
+        normalized_allowlist.append(normalized_entry)
+
+    if raw_mode is None:
+        if direction_entries == 0:
+            static_allowlist_mode = "pair_variant"
+        elif direction_entries == len(normalized_allowlist):
+            static_allowlist_mode = "pair_variant_direction"
+        else:
+            static_allowlist_mode = "mixed"
+    else:
+        static_allowlist_mode = str(raw_mode)
+
+    if static_allowlist_mode == "pair_variant" and direction_entries:
+        raise ValueError("run_config direction entries require pair_variant_direction or mixed mode")
+    if (
+        static_allowlist_mode == "pair_variant_direction"
+        and direction_entries != len(normalized_allowlist)
+    ):
+        raise ValueError("run_config pair_variant_direction mode requires direction on every entry")
+    if static_allowlist_mode == "mixed" and (
+        direction_entries == 0 or direction_entries == len(normalized_allowlist)
+    ):
+        raise ValueError("run_config mixed mode requires both pair-level and direction-level entries")
 
     return {
         "run_id": run_id,
         "timeframe": timeframe,
+        "static_allowlist_mode": static_allowlist_mode,
         "static_allowlist": normalized_allowlist,
         "hold_window_bars": require_integer(
             run_config,
@@ -445,6 +488,7 @@ def render_markdown(report: dict[str, Any]) -> str:
     run_config = report["run_config"]
     allowlist = ", ".join(
         f"{row['pair_id']}:{row['selected_variant']}"
+        + (f":{row['direction']}" if row.get("direction") else "")
         for row in run_config["static_allowlist"]
     )
     lines = [
@@ -453,6 +497,7 @@ def render_markdown(report: dict[str, Any]) -> str:
         f"- Generated at: `{report['generated_at']}`",
         f"- Run id: `{run_config['run_id']}`",
         f"- Timeframe: `{report['scope']['timeframe']}`",
+        f"- Static allowlist mode: `{run_config['static_allowlist_mode']}`",
         f"- Static allowlist: `{allowlist}`",
         f"- Hold-window bars: `{run_config['hold_window_bars']}`",
         f"- Max runtime seconds: `{run_config['max_runtime_seconds']}`",

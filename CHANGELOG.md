@@ -18,6 +18,11 @@ This project follows SemVer as defined in `docs/02-versioning-and-releases.md`.
   preserving local service defaults for localhost development.
 
 ### Operator Tooling
+- AUTO-2A paper-only tooling now supports direction-gated static allowlists
+  using `pair_id:selected_variant:direction` entries while preserving legacy
+  `pair_id:selected_variant` behavior. Paper reports record the static
+  allowlist mode so 72h direction-gated trials can distinguish pair-level,
+  direction-level, and mixed eligibility evidence.
 - Added AUTO-2A paper-only report tooling and hosted runbook commands for
   static `1m` paper trial evidence capture: `autopilot_paper_report.py`
   summarizes append-only paper decisions/positions, records run configuration

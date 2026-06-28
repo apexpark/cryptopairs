@@ -23,24 +23,30 @@ def run_config(
     run_id: str = "20260618T064500Z",
     pair_id: str = "PF_DOGEUSD__PF_PEPEUSD",
     selected_variant: str = "ROBUST_Z",
+    direction: str | None = None,
+    static_allowlist_mode: str | None = None,
     timeframe: str = "1m",
     hold_window_bars: int = 5,
     max_runtime_seconds: int = 86400,
     max_observe_candidate_age_seconds: int = 120,
 ) -> dict[str, object]:
-    return {
+    allowlist_entry = {
+        "pair_id": pair_id,
+        "selected_variant": selected_variant,
+    }
+    if direction is not None:
+        allowlist_entry["direction"] = direction
+    result: dict[str, object] = {
         "run_id": run_id,
         "timeframe": timeframe,
-        "static_allowlist": [
-            {
-                "pair_id": pair_id,
-                "selected_variant": selected_variant,
-            }
-        ],
+        "static_allowlist": [allowlist_entry],
         "hold_window_bars": hold_window_bars,
         "max_runtime_seconds": max_runtime_seconds,
         "max_observe_candidate_age_seconds": max_observe_candidate_age_seconds,
     }
+    if static_allowlist_mode is not None:
+        result["static_allowlist_mode"] = static_allowlist_mode
+    return result
 
 
 def decision_record(
@@ -176,6 +182,7 @@ class AutopilotPaperReportTests(unittest.TestCase):
                 }
             ],
         )
+        self.assertEqual(generated["run_config"]["static_allowlist_mode"], "pair_variant")
         self.assertEqual(generated["scope"]["timeframe"], "1m")
         self.assertEqual(generated["summary"]["decision_records"], 3)
         self.assertEqual(generated["summary"]["entry_opened_decisions"], 1)
@@ -194,6 +201,56 @@ class AutopilotPaperReportTests(unittest.TestCase):
         self.assertEqual(pair_row["sum_realized_net_bps"], 7.25)
         self.assertEqual(generated["closed_positions"][0]["realized_net_bps"], 7.25)
         self.assertEqual(generated["open_positions"], [])
+
+    def test_report_records_direction_level_static_allowlist(self) -> None:
+        generated = report.build_report(
+            run_config=run_config(
+                direction="SHORT_SPREAD",
+                static_allowlist_mode="pair_variant_direction",
+            ),
+            paper_decisions=[decision_record()],
+            paper_positions=[position_record(status="OPEN")],
+            generated_at="2026-06-18T07:00:00Z",
+        )
+
+        self.assertEqual(
+            generated["run_config"]["static_allowlist"],
+            [
+                {
+                    "pair_id": "PF_DOGEUSD__PF_PEPEUSD",
+                    "selected_variant": "ROBUST_Z",
+                    "direction": "SHORT_SPREAD",
+                }
+            ],
+        )
+        self.assertEqual(
+            generated["run_config"]["static_allowlist_mode"],
+            "pair_variant_direction",
+        )
+
+    def test_report_rejects_direction_entry_when_mode_is_pair_level(self) -> None:
+        with self.assertRaisesRegex(ValueError, "direction entries require"):
+            report.build_report(
+                run_config=run_config(
+                    direction="SHORT_SPREAD",
+                    static_allowlist_mode="pair_variant",
+                ),
+                paper_decisions=[],
+                paper_positions=[],
+                generated_at="2026-06-18T07:00:00Z",
+            )
+
+    def test_report_rejects_unknown_static_allowlist_direction(self) -> None:
+        with self.assertRaisesRegex(ValueError, "direction must be LONG_SPREAD or SHORT_SPREAD"):
+            report.build_report(
+                run_config=run_config(
+                    direction="UP_ONLY",
+                    static_allowlist_mode="pair_variant_direction",
+                ),
+                paper_decisions=[],
+                paper_positions=[],
+                generated_at="2026-06-18T07:00:00Z",
+            )
 
     def test_report_includes_blocked_decision_breakdown(self) -> None:
         generated = report.build_report(
@@ -321,6 +378,21 @@ class AutopilotPaperReportContractTests(unittest.TestCase):
     def test_generated_report_matches_schema(self) -> None:
         generated = report.build_report(
             run_config=run_config(),
+            paper_decisions=[decision_record()],
+            paper_positions=[position_record(status="OPEN")],
+            generated_at="2026-06-18T07:00:00Z",
+        )
+
+        errors = sorted(self.validator().iter_errors(generated), key=str)
+
+        self.assertEqual(errors, [])
+
+    def test_direction_gated_generated_report_matches_schema(self) -> None:
+        generated = report.build_report(
+            run_config=run_config(
+                direction="SHORT_SPREAD",
+                static_allowlist_mode="pair_variant_direction",
+            ),
             paper_decisions=[decision_record()],
             paper_positions=[position_record(status="OPEN")],
             generated_at="2026-06-18T07:00:00Z",

@@ -5,10 +5,12 @@
   "run_config": {
     "run_id": "20260618T064500Z",
     "timeframe": "1m",
+    "static_allowlist_mode": "pair_variant_direction",
     "static_allowlist": [
       {
         "pair_id": "PF_DOGEUSD__PF_PEPEUSD",
-        "selected_variant": "ROBUST_Z"
+        "selected_variant": "ROBUST_Z",
+        "direction": "SHORT_SPREAD"
       }
     ],
     "hold_window_bars": 5,

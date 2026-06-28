@@ -23,6 +23,7 @@ from typing import Any, Mapping, Optional, Sequence, Set, Tuple
 SCHEMA_VERSION = 1
 MODE = "paper_only"
 SUPPORTED_TIMEFRAME = "1m"
+SUPPORTED_DIRECTIONS = {"LONG_SPREAD", "SHORT_SPREAD"}
 DEFAULT_OUTPUT_DIR = Path("artifacts/autopilot_paper")
 MAX_HOLD_WINDOW_BARS = 240
 OBSERVE_MODE = "observe_only"
@@ -38,12 +39,17 @@ OBSERVE_EVIDENCE_FIELDS = (
 LONG_FRACTIONAL_SECONDS_RE = re.compile(r"(\.\d{6})\d+((?:[+-]\d{2}:\d{2})?)$")
 
 Key = Tuple[str, str, str, str]
+PairVariant = Tuple[str, str]
+PairVariantDirection = Tuple[str, str, str]
 
 
 @dataclasses.dataclass(frozen=True)
 class Config:
     enabled: bool = False
-    allowed_pair_variants: Set[Tuple[str, str]] = dataclasses.field(default_factory=set)
+    allowed_pair_variants: Set[PairVariant] = dataclasses.field(default_factory=set)
+    allowed_pair_variant_directions: Set[PairVariantDirection] = dataclasses.field(
+        default_factory=set
+    )
     hold_window_bars: Optional[int] = None
     cooldown_seconds: int = 300
     max_candidate_age_seconds: int = 120
@@ -123,36 +129,50 @@ def int_env(value: Optional[str], default: int) -> int:
     return int(value)
 
 
-def parse_allowed_pair_variants(value: Optional[str]) -> Set[Tuple[str, str]]:
+def parse_allowed_pair_variants(
+    value: Optional[str],
+) -> tuple[Set[PairVariant], Set[PairVariantDirection]]:
     if value is None or not value.strip():
-        return set()
-    parsed: Set[Tuple[str, str]] = set()
+        return set(), set()
+    pair_variants: Set[PairVariant] = set()
+    pair_variant_directions: Set[PairVariantDirection] = set()
     for raw_item in value.split(","):
         item = raw_item.strip()
         if not item:
             continue
-        if item.count(":") != 1:
+        parts = [part.strip() for part in item.split(":")]
+        if len(parts) not in {2, 3}:
             raise ValueError(
-                "AUTOPILOT_PAPER_ALLOWED_PAIR_VARIANTS entries must be pair_id:selected_variant"
+                "AUTOPILOT_PAPER_ALLOWED_PAIR_VARIANTS entries must be "
+                "pair_id:selected_variant or pair_id:selected_variant:direction"
             )
-        pair_id, selected_variant = item.split(":", 1)
-        pair_id = pair_id.strip()
-        selected_variant = selected_variant.strip()
-        if not pair_id or not selected_variant:
+        if not all(parts):
             raise ValueError(
-                "AUTOPILOT_PAPER_ALLOWED_PAIR_VARIANTS entries must be non-empty"
+                "AUTOPILOT_PAPER_ALLOWED_PAIR_VARIANTS entries must be "
+                "pair_id:selected_variant or pair_id:selected_variant:direction"
             )
-        parsed.add((pair_id, selected_variant))
-    return parsed
+        pair_id, selected_variant = parts[0], parts[1]
+        if len(parts) == 2:
+            pair_variants.add((pair_id, selected_variant))
+        else:
+            if parts[2] not in SUPPORTED_DIRECTIONS:
+                raise ValueError(
+                    "AUTOPILOT_PAPER_ALLOWED_PAIR_VARIANTS direction must be "
+                    "LONG_SPREAD or SHORT_SPREAD"
+                )
+            pair_variant_directions.add((pair_id, selected_variant, parts[2]))
+    return pair_variants, pair_variant_directions
 
 
 def load_config(env: Optional[Mapping[str, str]] = None) -> Config:
     source = os.environ if env is None else env
+    allowed_pair_variants, allowed_pair_variant_directions = parse_allowed_pair_variants(
+        source.get("AUTOPILOT_PAPER_ALLOWED_PAIR_VARIANTS")
+    )
     return Config(
         enabled=bool_env(source.get("AUTOPILOT_PAPER_ENABLED"), False),
-        allowed_pair_variants=parse_allowed_pair_variants(
-            source.get("AUTOPILOT_PAPER_ALLOWED_PAIR_VARIANTS")
-        ),
+        allowed_pair_variants=allowed_pair_variants,
+        allowed_pair_variant_directions=allowed_pair_variant_directions,
         hold_window_bars=optional_int_env(source.get("AUTOPILOT_PAPER_HOLD_WINDOW_BARS")),
         cooldown_seconds=max(0, int_env(source.get("AUTOPILOT_PAPER_COOLDOWN_SECONDS"), 300)),
         max_candidate_age_seconds=max(
@@ -342,7 +362,8 @@ def base_evidence(
     cooldown_until: Optional[dt.datetime] = None,
 ) -> dict[str, Any]:
     return {
-        "static_allowlist_size": len(config.allowed_pair_variants),
+        "static_allowlist_size": len(config.allowed_pair_variants)
+        + len(config.allowed_pair_variant_directions),
         "candidate_timeframe": candidate_timeframe,
         "candidate_source": candidate_source,
         "mark_source": mark_source,
@@ -716,7 +737,7 @@ def evaluate_candidate(
             "Only OBSERVED_ENTRY_CANDIDATE observe records can open paper positions.",
             ["OBSERVE_DECISION_NOT_ENTRY_CANDIDATE"],
         )
-    if not config.allowed_pair_variants:
+    if not config.allowed_pair_variants and not config.allowed_pair_variant_directions:
         return block(
             "BLOCKED_STATIC_ALLOWLIST_REQUIRED",
             "Static paper allowlist is empty.",
@@ -729,11 +750,20 @@ def evaluate_candidate(
             ["CANDIDATE_TIMEFRAME_NOT_1M"],
             candidate_timeframe=key[1],
         )
-    if (key[0], key[2]) not in config.allowed_pair_variants:
+    if (key[0], key[2]) not in config.allowed_pair_variants and (
+        key[0],
+        key[2],
+        key[3],
+    ) not in config.allowed_pair_variant_directions:
+        reason_code = (
+            "PAIR_VARIANT_DIRECTION_NOT_ALLOWLISTED"
+            if config.allowed_pair_variant_directions
+            else "PAIR_VARIANT_NOT_ALLOWLISTED"
+        )
         return block(
             "BLOCKED_NOT_ALLOWLISTED",
-            "Candidate pair/variant is not in the static paper allowlist.",
-            ["PAIR_VARIANT_NOT_ALLOWLISTED"],
+            "Candidate pair/variant/direction is not in the static paper allowlist.",
+            [reason_code],
         )
     hold_reason = validate_hold_window(config)
     if hold_reason is not None:
