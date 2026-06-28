@@ -182,6 +182,14 @@
           "type": "string",
           "const": "1m"
         },
+        "static_allowlist_mode": {
+          "type": "string",
+          "enum": [
+            "pair_variant",
+            "pair_variant_direction",
+            "mixed"
+          ]
+        },
         "static_allowlist": {
           "type": "array",
           "items": {
@@ -221,6 +229,13 @@
         "selected_variant": {
           "type": "string",
           "minLength": 1
+        },
+        "direction": {
+          "type": "string",
+          "enum": [
+            "LONG_SPREAD",
+            "SHORT_SPREAD"
+          ]
         }
       }
     },

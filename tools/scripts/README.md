@@ -157,14 +157,19 @@ execution order intents, or dispatch orders.
 python3 tools/scripts/autopilot_paper.py --once
 ```
 
-Enable it explicitly with a static `pair_id:selected_variant` allowlist and a
-fixed hold window. Empty allowlists, non-`1m` candidates, stale candidates,
-invalid hold-window config, duplicate candidates, open paper-position conflicts,
-and active cooldowns fail closed into append-only decision records.
+Enable it explicitly with a static allowlist and a fixed hold window. Legacy
+`pair_id:selected_variant` entries remain valid, and direction-gated
+`pair_id:selected_variant:direction` entries can be used when paper evidence
+supports one side but not the other. Mixed allowlists are allowed; pair-level
+entries still permit both directions for that pair/variant. Empty allowlists,
+non-`1m` candidates,
+stale candidates, invalid hold-window config, duplicate candidates, open
+paper-position conflicts, opposite-direction candidates, and active cooldowns
+fail closed into append-only decision records.
 
 ```bash
 AUTOPILOT_PAPER_ENABLED=true \
-AUTOPILOT_PAPER_ALLOWED_PAIR_VARIANTS="PF_DOGEUSD__PF_PEPEUSD:ROBUST_Z" \
+AUTOPILOT_PAPER_ALLOWED_PAIR_VARIANTS="PF_DOGEUSD__PF_PEPEUSD:ROBUST_Z:SHORT_SPREAD" \
 AUTOPILOT_PAPER_HOLD_WINDOW_BARS=5 \
 python3 tools/scripts/autopilot_paper.py \
   --once \
@@ -196,8 +201,9 @@ python3 tools/scripts/autopilot_paper_report.py \
 ```
 
 The report validates against
-`specs/contracts/autopilot_paper_report.schema.json`. Hosted paper-only run,
-monitor, stop, and evidence-capture commands are documented in
+`specs/contracts/autopilot_paper_report.schema.json` and records whether the
+static allowlist used pair-level, direction-level, or mixed gating. Hosted
+paper-only run, monitor, stop, and evidence-capture commands are documented in
 `docs/playbooks/autopilot-paper-only-runbook.md`.
 
 ## Signal vs Gate PnL Audit

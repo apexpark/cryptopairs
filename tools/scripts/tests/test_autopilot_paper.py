@@ -132,6 +132,121 @@ class AutopilotPaperTests(unittest.TestCase):
         self.assertEqual(result.decisions[0]["decision_type"], "BLOCKED_STATIC_ALLOWLIST_REQUIRED")
         self.assertEqual(result.positions, [])
 
+    def test_pair_level_static_allowlist_remains_backward_compatible(self) -> None:
+        loaded = paper.load_config(
+            {
+                "AUTOPILOT_PAPER_ENABLED": "true",
+                "AUTOPILOT_PAPER_ALLOWED_PAIR_VARIANTS": "PF_DOGEUSD__PF_PEPEUSD:ROBUST_Z",
+                "AUTOPILOT_PAPER_HOLD_WINDOW_BARS": "5",
+            }
+        )
+
+        result = paper.run_once(
+            loaded,
+            candidates=[candidate()],
+            marks=[],
+            observed_at=OBSERVED_AT,
+        )
+
+        self.assertEqual(result.decisions[0]["decision_type"], "PAPER_ENTRY_OPENED")
+        self.assertEqual(result.positions[0]["direction"], "SHORT_SPREAD")
+
+    def test_pair_level_allowlist_allows_both_directions_in_mixed_config(self) -> None:
+        loaded = paper.load_config(
+            {
+                "AUTOPILOT_PAPER_ENABLED": "true",
+                "AUTOPILOT_PAPER_ALLOWED_PAIR_VARIANTS": (
+                    "PF_DOGEUSD__PF_PEPEUSD:ROBUST_Z,"
+                    "PF_TAOUSD__PF_HYPEUSD:COINTEGRATION_Z:LONG_SPREAD"
+                ),
+                "AUTOPILOT_PAPER_HOLD_WINDOW_BARS": "5",
+            }
+        )
+
+        result = paper.run_once(
+            loaded,
+            candidates=[candidate(direction_hint="SHORT_SPREAD")],
+            marks=[],
+            observed_at=OBSERVED_AT,
+        )
+
+        self.assertEqual(result.decisions[0]["decision_type"], "PAPER_ENTRY_OPENED")
+        self.assertEqual(result.positions[0]["direction"], "SHORT_SPREAD")
+
+    def test_direction_level_static_allowlist_opens_matching_direction(self) -> None:
+        loaded = paper.load_config(
+            {
+                "AUTOPILOT_PAPER_ENABLED": "true",
+                "AUTOPILOT_PAPER_ALLOWED_PAIR_VARIANTS": (
+                    "PF_DOGEUSD__PF_PEPEUSD:ROBUST_Z:SHORT_SPREAD"
+                ),
+                "AUTOPILOT_PAPER_HOLD_WINDOW_BARS": "5",
+            }
+        )
+
+        result = paper.run_once(
+            loaded,
+            candidates=[candidate(direction_hint="SHORT_SPREAD")],
+            marks=[],
+            observed_at=OBSERVED_AT,
+        )
+
+        self.assertEqual(result.decisions[0]["decision_type"], "PAPER_ENTRY_OPENED")
+        self.assertEqual(result.positions[0]["direction"], "SHORT_SPREAD")
+
+    def test_direction_level_static_allowlist_blocks_opposite_direction(self) -> None:
+        loaded = paper.load_config(
+            {
+                "AUTOPILOT_PAPER_ENABLED": "true",
+                "AUTOPILOT_PAPER_ALLOWED_PAIR_VARIANTS": (
+                    "PF_DOGEUSD__PF_PEPEUSD:ROBUST_Z:LONG_SPREAD"
+                ),
+                "AUTOPILOT_PAPER_HOLD_WINDOW_BARS": "5",
+            }
+        )
+
+        result = paper.run_once(
+            loaded,
+            candidates=[candidate(direction_hint="SHORT_SPREAD")],
+            marks=[],
+            observed_at=OBSERVED_AT,
+        )
+
+        self.assertEqual(result.decisions[0]["decision_type"], "BLOCKED_NOT_ALLOWLISTED")
+        self.assertIn("PAIR_VARIANT_DIRECTION_NOT_ALLOWLISTED", result.decisions[0]["reason_codes"])
+        self.assertEqual(result.positions, [])
+
+    def test_malformed_direction_allowlist_entry_fails_closed(self) -> None:
+        with self.assertRaisesRegex(
+            ValueError,
+            "AUTOPILOT_PAPER_ALLOWED_PAIR_VARIANTS entries must be "
+            "pair_id:selected_variant or pair_id:selected_variant:direction",
+        ):
+            paper.load_config(
+                {
+                    "AUTOPILOT_PAPER_ENABLED": "true",
+                    "AUTOPILOT_PAPER_ALLOWED_PAIR_VARIANTS": (
+                        "PF_DOGEUSD__PF_PEPEUSD:ROBUST_Z:"
+                    ),
+                    "AUTOPILOT_PAPER_HOLD_WINDOW_BARS": "5",
+                }
+            )
+
+    def test_unknown_direction_allowlist_entry_fails_closed(self) -> None:
+        with self.assertRaisesRegex(
+            ValueError,
+            "AUTOPILOT_PAPER_ALLOWED_PAIR_VARIANTS direction must be LONG_SPREAD or SHORT_SPREAD",
+        ):
+            paper.load_config(
+                {
+                    "AUTOPILOT_PAPER_ENABLED": "true",
+                    "AUTOPILOT_PAPER_ALLOWED_PAIR_VARIANTS": (
+                        "PF_DOGEUSD__PF_PEPEUSD:ROBUST_Z:UP_ONLY"
+                    ),
+                    "AUTOPILOT_PAPER_HOLD_WINDOW_BARS": "5",
+                }
+            )
+
     def test_non_1m_candidate_blocks_without_opening_position(self) -> None:
         result = paper.run_once(
             config(),

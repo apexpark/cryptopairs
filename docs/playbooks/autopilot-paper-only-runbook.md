@@ -14,7 +14,9 @@ dynamic allowlist.
 
 1. Keep the paper ledger disabled unless the command explicitly sets
    `AUTOPILOT_PAPER_ENABLED=true`.
-2. Use only static `pair_id:selected_variant` allowlists.
+2. Use only static allowlists. Entries may be legacy
+   `pair_id:selected_variant` or direction-gated
+   `pair_id:selected_variant:direction`.
 3. Use only `1m` observe candidates and paper mark/outcome rows.
 4. Keep all output under ignored `artifacts/autopilot_paper/`.
 5. Treat realized net bps as paper simulation, not live PnL or fill evidence.
@@ -60,13 +62,16 @@ Point `OBSERVE_RUN_ROOT` at the reviewed observe-only run that produced
 `autopilot_observe_*.jsonl` records. The observe source must still be running
 or otherwise producing fresh records; a completed/stale observe run is not a
 valid input for the 24-72 hour paper loop. Keep the allowlist static for
-AUTO-2A.
+AUTO-2A. Use `pair_id:selected_variant` for pair-level gating or
+`pair_id:selected_variant:direction` for direction-level gating. Mixed
+allowlists are valid; a pair-level entry remains broad and permits both
+directions for that pair/variant.
 
 ```bash
 OBSERVE_RUN_ROOT="artifacts/autopilot_observe/runs/<observe-run-id>"
-ALLOWLIST="PF_DOGEUSD__PF_PEPEUSD:ROBUST_Z,PF_XBTUSD__PF_BNBUSD:COINTEGRATION_Z,PF_SUIUSD__PF_ARBUSD:ROBUST_Z"
+ALLOWLIST="PF_TAOUSD__PF_HYPEUSD:COINTEGRATION_Z:SHORT_SPREAD,PF_DOGEUSD__PF_PEPEUSD:ROBUST_Z:LONG_SPREAD,PF_DOGEUSD__PF_PEPEUSD:ROBUST_Z:SHORT_SPREAD"
 HOLD_WINDOW_BARS=5
-MAX_RUNTIME_SECONDS=86400
+MAX_RUNTIME_SECONDS=259200
 MAX_OBSERVE_CANDIDATE_AGE_SECONDS=120
 
 test -d "$OBSERVE_RUN_ROOT/records"
@@ -82,20 +87,36 @@ import json
 import os
 
 allowlist = []
+direction_entries = 0
 for item in os.environ["ALLOWLIST"].split(","):
-    pair_id, selected_variant = item.split(":", 1)
-    allowlist.append(
-        {
-            "pair_id": pair_id,
-            "selected_variant": selected_variant,
-        }
-    )
+    parts = item.split(":")
+    if len(parts) not in {2, 3}:
+        raise SystemExit(
+            "ALLOWLIST entries must be pair_id:selected_variant or "
+            "pair_id:selected_variant:direction"
+        )
+    entry = {
+        "pair_id": parts[0],
+        "selected_variant": parts[1],
+    }
+    if len(parts) == 3:
+        entry["direction"] = parts[2]
+        direction_entries += 1
+    allowlist.append(entry)
+
+if direction_entries == 0:
+    static_allowlist_mode = "pair_variant"
+elif direction_entries == len(allowlist):
+    static_allowlist_mode = "pair_variant_direction"
+else:
+    static_allowlist_mode = "mixed"
 
 print(
     json.dumps(
         {
             "run_id": os.environ["RUN_ID"],
             "timeframe": "1m",
+            "static_allowlist_mode": static_allowlist_mode,
             "static_allowlist": allowlist,
             "hold_window_bars": int(os.environ["HOLD_WINDOW_BARS"]),
             "max_runtime_seconds": int(os.environ["MAX_RUNTIME_SECONDS"]),
@@ -124,7 +145,17 @@ cat > "$RUN_ROOT/check_observe_fresh.py" <<'PY'
 import datetime as dt
 import json
 import pathlib
+import re
 import sys
+
+LONG_FRACTIONAL_SECONDS_RE = re.compile(r"(\.\d{6})\d+((?:[+-]\d{2}:\d{2})?)$")
+
+
+def parse_observed_at(value):
+    normalized = value.replace("Z", "+00:00")
+    normalized = LONG_FRACTIONAL_SECONDS_RE.sub(r"\1\2", normalized)
+    return dt.datetime.fromisoformat(normalized).astimezone(dt.timezone.utc)
+
 
 path = pathlib.Path(sys.argv[1])
 max_age_seconds = int(sys.argv[2])
@@ -142,9 +173,7 @@ for line in path.read_text(encoding="utf-8").splitlines():
     source_generated_at = row.get("source_generated_at")
     if not source_generated_at:
         continue
-    observed = dt.datetime.fromisoformat(
-        source_generated_at.replace("Z", "+00:00")
-    ).astimezone(dt.timezone.utc)
+    observed = parse_observed_at(source_generated_at)
     latest = observed if latest is None or observed > latest else latest
 
 if latest is None:
