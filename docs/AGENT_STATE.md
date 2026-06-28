@@ -11,12 +11,12 @@
 |---|---|
 | Last updated (UTC) | 2026-06-28 |
 | Updated by | codex |
-| Repo HEAD pin (committed) | `5f213759d8b41d59d1c83bc1d32d8a6e73c701e3` |
+| Repo HEAD pin (committed) | `a47f52effb200950fc4b16783de8fcbb29cae8dc` |
 | Pin branch | `main` |
 | Sprint base branch | `main` |
-| Pin notes | State refreshed after PR #241 merged the AUTO-2A paper-ledger observe-record compatibility fix. AUTO-2 remains constrained to the paper-autopilot sequence: static paper trial, shadow dynamic champion/challenger allowlist, governed dynamic allowlist, dynamic paper trial, then live-design gate only. Future coding slices must pass the Slice Loop Check before implementation. |
+| Pin notes | State refreshed after PR #242 merged the AUTO-2A direction-level static paper gating slice. AUTO-2 remains constrained to the paper-autopilot sequence: static paper trial, shadow dynamic champion/challenger allowlist, governed dynamic allowlist, dynamic paper trial, then live-design gate only. Future coding slices must pass the Slice Loop Check before implementation. |
 | Origin | `https://github.com/apexpark/cryptopairs.git` |
-| Working-tree state | **AUTO-2A direction-level static paper gating in review** - paper-only tooling and docs are in flight to support static `pair_id:selected_variant:direction` allowlists for a 72h follow-up trial; no runtime service behavior, order intents, dispatches, host deployment, dynamic allowlist control, or live `ENTRY` / `EXIT` enablement is in flight. |
+| Working-tree state | **AUTO-2A direction-gated 72h paper trial ready for operator run** - `main` contains static `pair_id:selected_variant:direction` paper gating, report evidence for pair-level/direction-level/mixed allowlist mode, and hosted runbook commands. No runtime service behavior, order intents, dispatches, host deployment, dynamic allowlist control, or live `ENTRY` / `EXIT` enablement is in flight. |
 
 If the pin above is not reachable from `HEAD` via fast-forward, this file is stale; if `HEAD` is ahead of the pin, see §"Pin Convention".
 
@@ -40,7 +40,7 @@ If the pin above is not reachable from `HEAD` via fast-forward, this file is sta
 | AUTO-2A - Contracts and static paper ledger | **Merged** | codex | PR #238 landed at `daca062`. First implementation slice added paper decision/position contracts, examples, disabled-by-default `tools/scripts/autopilot_paper.py`, and focused tests for static allowlist, non-`1m`, stale/malformed/future input, invalid hold-window config, open-position conflict, cooldown, fixed hold-window exit, mark-unavailable deferral, persisted duplicate suppression, generated schema validation, and no execution-service order-intent/dispatch path. No host runbook/report, hosted loop, service behavior, dynamic allowlist control, or live execution change was included. |
 | AUTO-2A - Paper report and hosted runbook | **Merged** | codex | PR #240 landed at `7e7e38d`. It added the paper report contract/example/tooling plus hosted run, monitor, stop, and evidence-capture commands. Static allowlist only; no service behavior, dynamic allowlist control, or live execution change was included. |
 | AUTO-2A - Paper observe-record compatibility fix | **Merged** | codex | PR #241 landed at `5f21375`. It fixed the paper ledger so real observe-only records with minute-bucketed observe keys and nanosecond `source_generated_at` values can open paper positions while preserving stale/future candidate blocking. |
-| AUTO-2A - Direction-level static paper gating | **In review** | codex | This slice adds direction-aware static allowlist support for AUTO-2A paper-only trials using `pair_id:selected_variant:direction` entries while preserving legacy pair/variant allowlists. It updates paper reports/runbook evidence for allowlist mode and prepares operator-only 72h direction-gated trial commands. No service behavior, dynamic allowlist control, execution-service POST path, or live execution change is included. |
+| AUTO-2A - Direction-level static paper gating | **Merged** | codex | PR #242 landed at `a47f52e`. It added direction-aware static allowlist support for AUTO-2A paper-only trials using `pair_id:selected_variant:direction` entries while preserving legacy pair/variant allowlists. It updates paper reports/runbook evidence for allowlist mode and prepares operator-only 72h direction-gated trial commands. No service behavior, dynamic allowlist control, execution-service POST path, or live execution change is included. |
 
 ### Sprint: Champion-Selection Integrity (docs/26 + docs/27)
 
@@ -99,6 +99,7 @@ Source of truth for shipped behavior is `CHANGELOG.md` `## Unreleased` section. 
 - **Committed (`daca062`)**: AUTO-2A paper ledger/contracts (PR #238) — added the `autopilot_paper_decision_record` and `autopilot_paper_position` contracts/examples plus disabled-by-default static `1m` paper ledger tooling in `tools/scripts/autopilot_paper.py`. The slice is artifact-only and paper-only: no execution-service POST path, live `ENTRY` / `EXIT`, host loop, dynamic allowlist control, runtime service behavior, or Hetzner deployment.
 - **Committed (`7e7e38d`)**: AUTO-2A paper report and hosted runbook (PR #240) — added `tools/scripts/autopilot_paper_report.py`, the `autopilot_paper_report` contract/example, focused tests, and `docs/playbooks/autopilot-paper-only-runbook.md` for paper-only hosted run, monitor, stop, evidence, and report commands.
 - **Committed (`5f21375`)**: AUTO-2A paper observe-record compatibility fix (PR #241) — accepted real observe-only records whose observe key is minute-bucketed and whose strategy `source_generated_at` includes fractional seconds in the same serialized second as `observed_at`, while preserving stale/future candidate blocking.
+- **Committed (`a47f52e`)**: AUTO-2A direction-level static paper gating (PR #242) — added `pair_id:selected_variant:direction` allowlist support for paper-only trials while preserving pair-level entries, report evidence for `pair_variant` / `pair_variant_direction` / `mixed` allowlist mode, and 72h direction-gated runbook commands. No service runtime, dynamic allowlist control, execution-service POST path, or live execution change was included.
 
 ---
 
@@ -510,8 +511,8 @@ Follow-ups carried forward from prior reviews. Ordered by source review then sev
 
 Pickable items, in priority order:
 
-1. **Operator/local agent: review AUTO-2A paper report and hosted runbook** - accept or revise the paper report contract/tooling and hosted runbook before any Hetzner paper loop is started.
-2. **Remote/local agent: AUTO-2B shadow dynamic allowlist** - record champion/challenger selector output and compare it with the static paper trial, but do not let dynamic output control paper entries.
+1. **Operator/local agent: run AUTO-2A direction-gated 72h static paper trial** - fast-forward Hetzner to `main`, run `docs/playbooks/autopilot-paper-only-runbook.md` with the approved direction-gated static allowlist, then capture the paper report/evidence artifacts.
+2. **Remote/local agent: AUTO-2B shadow dynamic allowlist** - **blocked until AUTO-2A static paper evidence is captured and reviewed**. Once unblocked, record champion/challenger selector output and compare it with the static paper trial, but do not let dynamic output control paper entries.
 3. **Remote/local agent: AUTO-2C governed dynamic allowlist** - add sample, dwell-time, churn, concentration, direction, quarantine, and stale-selector gates between champion/challenger output and paper eligibility.
 4. **Remote/local agent: AUTO-2D dynamic paper trial** - allow only the governed dynamic allowlist, not raw champion/challenger output, to control paper-only eligibility. Keep live execution out of scope.
 5. **Remote/local agent: AUTO-3 live automation design proposal** - design-only, after AUTO-2D evidence and explicit operator approval. No live runtime implementation in the same slice.
