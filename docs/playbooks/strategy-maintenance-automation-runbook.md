@@ -49,7 +49,12 @@ cd /opt/cryptopairs
 python3 tools/scripts/strategy_maintenance_cycle.py \
   --env-file /opt/cryptopairs/.env.hosted \
   --output-root artifacts/strategy_tuning/runs \
-  --latest-report artifacts/strategy_tuning/latest_maintenance_report.json
+  --latest-report artifacts/strategy_tuning/latest_maintenance_report.json \
+  --timeout-seconds 900 \
+  --report-timeout-seconds 300 \
+  --deploy-health-retries 90 \
+  --deploy-health-sleep-secs 2 \
+  --print-summary
 ```
 
 ## Verify Outputs
