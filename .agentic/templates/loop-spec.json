@@ -1,0 +1,89 @@
+{
+  "schema_version": "agentic_loop_spec.v1",
+  "loop_id": "cryptopairs-repo-development-example",
+  "objective": "Run one bounded CryptoPairs repository-development loop until the named gate passes or a hard stop is reached.",
+  "trigger": {
+    "type": "operator_instruction",
+    "description": "Manual only. No scheduler, webhook, deployment hook, or background trigger is authorized by this template."
+  },
+  "project_context": {
+    "adapter": ".agentic/project.yaml",
+    "local_policy_wins": true,
+    "highest_precedence": "AGENTS.md, docs/AGENT_STATE.md, docs/playbooks/remote-agent-bootstrap.md, current operator instruction"
+  },
+  "permissions": {
+    "network": "denied_unless_explicitly_authorized_by_operator_and_repo_policy",
+    "secrets": "denied",
+    "writes": "allowed_paths_only",
+    "dependency_installs": "denied_unless_explicitly_authorized_for_this_slice",
+    "external_connectors": "denied",
+    "destructive_commands": "denied"
+  },
+  "allowed_paths": [
+    ".agentic/runs/AG-example/**",
+    ".agentic/registers/loop-runs.md",
+    "path/to/explicit/in-scope/file"
+  ],
+  "state": {
+    "path": ".agentic/runs/AG-example/loop_state.json",
+    "template": ".agentic/templates/loop-state.json"
+  },
+  "success_criteria": [
+    "Slice Loop Check remains concrete and non-repetitive.",
+    "Named gate command exits 0.",
+    "Independent checker finds no unresolved P1/P2 issues.",
+    "No forbidden action is attempted."
+  ],
+  "gates": [
+    {
+      "name": "targeted_verification",
+      "command": "git diff --check",
+      "pass_condition": "exit_code == 0"
+    }
+  ],
+  "checker": {
+    "type": "independent_review",
+    "independent": true,
+    "records_exact_head_sha": true,
+    "read_only": true
+  },
+  "stop_conditions": [
+    {
+      "type": "iteration_cap",
+      "limit": 3
+    },
+    {
+      "type": "no_progress_cap",
+      "limit": 2
+    },
+    {
+      "type": "time_cap",
+      "limit": "PT2H"
+    },
+    {
+      "type": "operator_stop"
+    },
+    {
+      "type": "forbidden_authority_required"
+    }
+  ],
+  "forbidden_actions": [
+    "start_scheduler",
+    "start_background_loop_without_explicit_operator_authority",
+    "deploy_production",
+    "merge_pr",
+    "override_branch_protection",
+    "read_or_write_secrets",
+    "use_external_connector_without_explicit_authority",
+    "ssh_to_host",
+    "start_live_trading",
+    "call_execution_entry_or_exit_path",
+    "force_push_long_lived_branch"
+  ],
+  "quality_metrics": [
+    "accepted_change_rate",
+    "material_rework_rate",
+    "repeated_failure_count",
+    "gate_duration_seconds"
+  ]
+}

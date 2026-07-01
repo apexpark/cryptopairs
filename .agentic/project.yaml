@@ -1,0 +1,60 @@
+schema_version: cryptopairs_agentic_project.v1
+project: cryptopairs
+adapter_status: active
+local_policy_wins: true
+
+highest_precedence:
+  - AGENTS.md
+  - docs/AGENT_STATE.md
+  - docs/playbooks/remote-agent-bootstrap.md
+  - current_operator_instruction
+
+local_governance:
+  apex_workflow: docs/ops/ai_workflow.md
+  pr_template: .github/pull_request_template.md
+  verification_protocol: docs/17-verification-protocol.md
+  guardrails: docs/00-guardrails.md
+  product_scope: docs/01-product-scope.md
+
+adapter_files:
+  policy: .agentic/policies/project-loop-policy.md
+  loop_spec_template: .agentic/templates/loop-spec.json
+  loop_state_template: .agentic/templates/loop-state.json
+  repository_loop_playbook: .agentic/playbooks/repository-development-loop.md
+  loop_run_register: .agentic/registers/loop-runs.md
+
+default_authority:
+  trigger: operator_manual_instruction_only
+  scheduler: denied
+  deployment: denied
+  merge: denied
+  branch_protection_override: denied
+  secrets: denied
+  external_connectors: denied
+  host_access: operator_only
+  live_trading: forbidden
+  production_jobs: denied
+  background_loops: denied_unless_operator_explicitly_authorizes
+  dependency_installs: denied_unless_slice_explicitly_authorizes
+  destructive_commands: denied
+  network: denied_unless_repo_task_and_operator_policy_allow
+
+allowed_harness_paths:
+  - .agentic/runs/**
+  - .agentic/registers/loop-runs.md
+
+required_loop_properties:
+  - objective_gate
+  - durable_state
+  - hard_exit
+  - deterministic_gate
+  - independent_checker
+  - explicit_allowed_paths
+  - explicit_forbidden_actions
+
+verification:
+  preflight_command: python3 /Users/kevinsaunders/.codex/skills/agentic-loop-harness/scripts/loop_preflight.py .agentic/templates/loop-spec.json --format json
+  required_after_template_change:
+    - json_parse_templates
+    - loop_preflight_template
+    - git_diff_check

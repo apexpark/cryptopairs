@@ -18,6 +18,10 @@ This project follows SemVer as defined in `docs/02-versioning-and-releases.md`.
   preserving local service defaults for localhost development.
 
 ### Operator Tooling
+- Added a project-local `.agentic/**` adapter for bounded agentic loops,
+  including default-deny local policy, machine-checkable loop spec/state
+  templates, a repository-development loop playbook, and a loop-run register
+  while preserving existing Apex/AGENTS authority boundaries.
 - AUTO-2A paper-only tooling now supports direction-gated static allowlists
   using `pair_id:selected_variant:direction` entries while preserving legacy
   `pair_id:selected_variant` behavior. Paper reports record the static
