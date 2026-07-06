@@ -9,14 +9,14 @@
 
 | Field | Value |
 |---|---|
-| Last updated (UTC) | 2026-06-28 |
+| Last updated (UTC) | 2026-07-06 |
 | Updated by | codex |
-| Repo HEAD pin (committed) | `a47f52effb200950fc4b16783de8fcbb29cae8dc` |
+| Repo HEAD pin (committed) | `ae93708dd01c5602c0ebe87a14d3934799c3c5e5` |
 | Pin branch | `main` |
 | Sprint base branch | `main` |
-| Pin notes | State refreshed after PR #242 merged the AUTO-2A direction-level static paper gating slice. AUTO-2 remains constrained to the paper-autopilot sequence: static paper trial, shadow dynamic champion/challenger allowlist, governed dynamic allowlist, dynamic paper trial, then live-design gate only. Future coding slices must pass the Slice Loop Check before implementation. |
+| Pin notes | State refreshed after operator-provided AUTO-2A paper evidence unblocked AUTO-2B implementation. AUTO-2 remains constrained to the paper-autopilot sequence: static paper trial, shadow dynamic champion/challenger allowlist, governed dynamic allowlist, dynamic paper trial, then live-design gate only. Future coding slices must pass the Slice Loop Check before implementation. |
 | Origin | `https://github.com/apexpark/cryptopairs.git` |
-| Working-tree state | **AUTO-2A direction-gated 72h paper trial ready for operator run** - `main` contains static `pair_id:selected_variant:direction` paper gating, report evidence for pair-level/direction-level/mixed allowlist mode, and hosted runbook commands. No runtime service behavior, order intents, dispatches, host deployment, dynamic allowlist control, or live `ENTRY` / `EXIT` enablement is in flight. |
+| Working-tree state | **AUTO-2B shadow dynamic allowlist in review** - operator-provided AUTO-2A paper evidence showed positive static paper performance overall and a tail-loss failure in one leg. This slice adds advisory shadow selector artifacts only. No runtime service behavior, order intents, dispatches, host deployment, dynamic allowlist control, paper-entry control, or live `ENTRY` / `EXIT` enablement is in flight. |
 
 If the pin above is not reachable from `HEAD` via fast-forward, this file is stale; if `HEAD` is ahead of the pin, see §"Pin Convention".
 
@@ -41,6 +41,8 @@ If the pin above is not reachable from `HEAD` via fast-forward, this file is sta
 | AUTO-2A - Paper report and hosted runbook | **Merged** | codex | PR #240 landed at `7e7e38d`. It added the paper report contract/example/tooling plus hosted run, monitor, stop, and evidence-capture commands. Static allowlist only; no service behavior, dynamic allowlist control, or live execution change was included. |
 | AUTO-2A - Paper observe-record compatibility fix | **Merged** | codex | PR #241 landed at `5f21375`. It fixed the paper ledger so real observe-only records with minute-bucketed observe keys and nanosecond `source_generated_at` values can open paper positions while preserving stale/future candidate blocking. |
 | AUTO-2A - Direction-level static paper gating | **Merged** | codex | PR #242 landed at `a47f52e`. It added direction-aware static allowlist support for AUTO-2A paper-only trials using `pair_id:selected_variant:direction` entries while preserving legacy pair/variant allowlists. It updates paper reports/runbook evidence for allowlist mode and prepares operator-only 72h direction-gated trial commands. No service behavior, dynamic allowlist control, execution-service POST path, or live execution change is included. |
+| AUTO-2A - Operator paper evidence | **Operator reported complete** | operator | Operator-provided Hetzner evidence for run `20260628T061640Z` showed 83/83 closed paper positions, 57 profitable, +288.9911 realized net bps, and no open positions. `PF_DOGEUSD__PF_PEPEUSD:ROBUST_Z` both directions and `PF_XBTUSD__PF_BNBUSD:COINTEGRATION_Z:LONG_SPREAD` were positive; `PF_TAOUSD__PF_HYPEUSD:COINTEGRATION_Z:SHORT_SPREAD` was negative due to a -118.0464 bps tail loss. Exit-lag analysis showed the edge survived outside long-lag exits but requires caveating. |
+| AUTO-2B - Shadow dynamic allowlist | **In review** | codex | This branch adds the `autopilot_shadow_allowlist_snapshot` contract/example, advisory `tools/scripts/autopilot_shadow_allowlist.py`, focused tests, proposal, Superpowers plan, and runbook. Output is shadow-only and must not control `AUTOPILOT_PAPER_ALLOWED_PAIR_VARIANTS`, paper entries, live entries, execution order intents, dispatch, or exchange calls. |
 
 ### Sprint: Champion-Selection Integrity (docs/26 + docs/27)
 
@@ -100,6 +102,7 @@ Source of truth for shipped behavior is `CHANGELOG.md` `## Unreleased` section. 
 - **Committed (`7e7e38d`)**: AUTO-2A paper report and hosted runbook (PR #240) — added `tools/scripts/autopilot_paper_report.py`, the `autopilot_paper_report` contract/example, focused tests, and `docs/playbooks/autopilot-paper-only-runbook.md` for paper-only hosted run, monitor, stop, evidence, and report commands.
 - **Committed (`5f21375`)**: AUTO-2A paper observe-record compatibility fix (PR #241) — accepted real observe-only records whose observe key is minute-bucketed and whose strategy `source_generated_at` includes fractional seconds in the same serialized second as `observed_at`, while preserving stale/future candidate blocking.
 - **Committed (`a47f52e`)**: AUTO-2A direction-level static paper gating (PR #242) — added `pair_id:selected_variant:direction` allowlist support for paper-only trials while preserving pair-level entries, report evidence for `pair_variant` / `pair_variant_direction` / `mixed` allowlist mode, and 72h direction-gated runbook commands. No service runtime, dynamic allowlist control, execution-service POST path, or live execution change was included.
+- **In review**: AUTO-2B shadow dynamic allowlist — adds advisory selector artifacts over closed `1m` paper evidence, including sample, tail-loss, exit-lag, score, and static-allowlist disagreement data. Output cannot control paper entries; AUTO-2C remains the governor slice.
 
 ---
 
@@ -511,11 +514,11 @@ Follow-ups carried forward from prior reviews. Ordered by source review then sev
 
 Pickable items, in priority order:
 
-1. **Operator/local agent: run AUTO-2A direction-gated 72h static paper trial** - fast-forward Hetzner to `main`, run `docs/playbooks/autopilot-paper-only-runbook.md` with the approved direction-gated static allowlist, then capture the paper report/evidence artifacts.
-2. **Remote/local agent: AUTO-2B shadow dynamic allowlist** - **blocked until AUTO-2A static paper evidence is captured and reviewed**. Once unblocked, record champion/challenger selector output and compare it with the static paper trial, but do not let dynamic output control paper entries.
-3. **Remote/local agent: AUTO-2C governed dynamic allowlist** - add sample, dwell-time, churn, concentration, direction, quarantine, and stale-selector gates between champion/challenger output and paper eligibility.
-4. **Remote/local agent: AUTO-2D dynamic paper trial** - allow only the governed dynamic allowlist, not raw champion/challenger output, to control paper-only eligibility. Keep live execution out of scope.
-5. **Remote/local agent: AUTO-3 live automation design proposal** - design-only, after AUTO-2D evidence and explicit operator approval. No live runtime implementation in the same slice.
+1. **Remote/local agent: review AUTO-2B shadow dynamic allowlist** - verify the advisory-only selector snapshot contract/tooling and preserve the boundary that shadow output cannot control paper entries.
+2. **Remote/local agent: AUTO-2C governed dynamic allowlist** - after AUTO-2B review/merge, add sample, dwell-time, churn, concentration, direction, quarantine, and stale-selector gates between champion/challenger output and paper eligibility.
+3. **Remote/local agent: AUTO-2D dynamic paper trial** - allow only the governed dynamic allowlist, not raw champion/challenger output, to control paper-only eligibility. Keep live execution out of scope.
+4. **Remote/local agent: AUTO-3 live automation design proposal** - design-only, after AUTO-2D evidence and explicit operator approval. No live runtime implementation in the same slice.
+5. **Operator/local agent: optional AUTO-2B host evidence capture** - after AUTO-2B merge and host fast-forward, run `docs/playbooks/autopilot-shadow-allowlist-runbook.md` against completed AUTO-2A evidence. This is artifact-only and must not start loops or alter runtime config.
 6. **Remote/local agent: local dirty-work cleanup sequence** - split unresolved local follow-ups into separate reviewable PRs only if still relevant after PR #229: signal-learning report schema/producer alignment, web TypeScript/test fallout, selected-signal config persistence coverage, and CI hardening for web/contract/tools checks. Verify each issue from repo artifacts before claiming it.
 7. **Remote/local agent: Slice C implementation** - only after operator confirms it still applies under the `main` baseline; preserve Slice A/B semantics and add Postgres-backed tests.
 8. **Operator/local agent: Slice C observation capture** - after Slice C implementation/deployment, capture the neutral-selection observation evidence required by the Slice D and X3 proposals before either follow-up implementation starts.

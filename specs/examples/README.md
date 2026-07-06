@@ -34,6 +34,7 @@ Current baseline examples:
 - `specs/examples/autopilot_paper_decision_record.example.json`
 - `specs/examples/autopilot_paper_position.example.json`
 - `specs/examples/autopilot_paper_report.example.json`
+- `specs/examples/autopilot_shadow_allowlist_snapshot.example.json`
 - `specs/examples/strategy_pairs_cues_response.example.json`
 - `specs/examples/strategy_pairs_backtest_response.example.json`
 - `specs/examples/strategy_pairs_live_z_response.example.json`

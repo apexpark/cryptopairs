@@ -18,6 +18,12 @@ This project follows SemVer as defined in `docs/02-versioning-and-releases.md`.
   preserving local service defaults for localhost development.
 
 ### Operator Tooling
+- Added AUTO-2B shadow dynamic allowlist tooling and contracts. The
+  artifact-only `autopilot_shadow_allowlist.py` scores closed `1m` paper
+  evidence by pair/variant/direction, records selected/rejected/quarantined
+  candidates with tail-loss and exit-lag penalties, compares against the static
+  paper allowlist, and preserves the boundary that shadow output cannot control
+  paper entries or live automation.
 - AUTO-2A paper-only tooling now supports direction-gated static allowlists
   using `pair_id:selected_variant:direction` entries while preserving legacy
   `pair_id:selected_variant` behavior. Paper reports record the static

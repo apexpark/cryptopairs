@@ -1,0 +1,403 @@
+{
+  "$id": "https://cryptopairs/specs/contracts/autopilot_shadow_allowlist_snapshot.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "AutopilotShadowAllowlistSnapshot",
+  "description": "AUTO-2B shadow dynamic allowlist snapshot. This artifact is advisory only and must not control paper entries, live entries, execution order intents, dispatch, or exchange calls.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "mode",
+    "generated_at",
+    "source_cutoff_at",
+    "selector_config",
+    "summary",
+    "selected",
+    "rejected",
+    "quarantined",
+    "static_allowlist_comparison",
+    "methodology"
+  ],
+  "properties": {
+    "schema_version": {
+      "type": "integer",
+      "const": 1
+    },
+    "mode": {
+      "type": "string",
+      "const": "shadow_dynamic_allowlist_snapshot"
+    },
+    "generated_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "source_cutoff_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "selector_config": {
+      "$ref": "#/$defs/selector_config"
+    },
+    "summary": {
+      "$ref": "#/$defs/summary"
+    },
+    "selected": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/candidate"
+      }
+    },
+    "rejected": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/candidate"
+      }
+    },
+    "quarantined": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/candidate"
+      }
+    },
+    "static_allowlist_comparison": {
+      "$ref": "#/$defs/static_allowlist_comparison"
+    },
+    "methodology": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "selection_boundary",
+        "lookahead_policy",
+        "scoring_definition",
+        "execution_caveat"
+      ],
+      "properties": {
+        "selection_boundary": {
+          "type": "string",
+          "minLength": 1
+        },
+        "lookahead_policy": {
+          "type": "string",
+          "minLength": 1
+        },
+        "scoring_definition": {
+          "type": "string",
+          "minLength": 1
+        },
+        "execution_caveat": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    }
+  },
+  "$defs": {
+    "selector_config": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "min_closed_positions",
+        "min_avg_net_bps",
+        "max_tail_loss_bps",
+        "max_avg_exit_lag_seconds",
+        "max_selected",
+        "min_score"
+      ],
+      "properties": {
+        "min_closed_positions": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "min_avg_net_bps": {
+          "type": "number"
+        },
+        "max_tail_loss_bps": {
+          "type": "number"
+        },
+        "max_avg_exit_lag_seconds": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "max_selected": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "min_score": {
+          "type": "number"
+        }
+      }
+    },
+    "summary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "eligible_universe_count",
+        "selected_count",
+        "rejected_count",
+        "quarantined_count",
+        "source_event_count"
+      ],
+      "properties": {
+        "eligible_universe_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "selected_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "rejected_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "quarantined_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "source_event_count": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "candidate": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "pair_id",
+        "timeframe",
+        "selected_variant",
+        "direction",
+        "decision",
+        "reason_codes",
+        "metrics",
+        "score_components"
+      ],
+      "properties": {
+        "pair_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "timeframe": {
+          "type": "string",
+          "const": "1m"
+        },
+        "selected_variant": {
+          "type": "string",
+          "minLength": 1
+        },
+        "direction": {
+          "type": "string",
+          "enum": [
+            "LONG_SPREAD",
+            "SHORT_SPREAD"
+          ]
+        },
+        "decision": {
+          "type": "string",
+          "enum": [
+            "SHADOW_SELECTED",
+            "SHADOW_REJECTED",
+            "SHADOW_QUARANTINED"
+          ]
+        },
+        "reason_codes": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "minItems": 1
+        },
+        "metrics": {
+          "$ref": "#/$defs/metrics"
+        },
+        "score_components": {
+          "$ref": "#/$defs/score_components"
+        }
+      }
+    },
+    "metrics": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "closed_positions",
+        "profitable_closed_positions",
+        "losing_closed_positions",
+        "win_rate",
+        "sum_realized_net_bps",
+        "avg_realized_net_bps",
+        "max_loss_bps",
+        "avg_exit_lag_seconds",
+        "max_exit_lag_seconds",
+        "first_entry_at",
+        "last_exit_at"
+      ],
+      "properties": {
+        "closed_positions": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "profitable_closed_positions": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "losing_closed_positions": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "win_rate": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "sum_realized_net_bps": {
+          "type": "number"
+        },
+        "avg_realized_net_bps": {
+          "type": "number"
+        },
+        "max_loss_bps": {
+          "type": "number"
+        },
+        "avg_exit_lag_seconds": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "max_exit_lag_seconds": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "first_entry_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "last_exit_at": {
+          "type": "string",
+          "format": "date-time"
+        }
+      }
+    },
+    "score_components": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "avg_net_bps",
+        "win_rate_bonus",
+        "sample_size_bonus",
+        "tail_loss_penalty",
+        "exit_lag_penalty",
+        "total_score"
+      ],
+      "properties": {
+        "avg_net_bps": {
+          "type": "number"
+        },
+        "win_rate_bonus": {
+          "type": "number"
+        },
+        "sample_size_bonus": {
+          "type": "number"
+        },
+        "tail_loss_penalty": {
+          "type": "number"
+        },
+        "exit_lag_penalty": {
+          "type": "number"
+        },
+        "total_score": {
+          "type": "number"
+        }
+      }
+    },
+    "key": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "pair_id",
+        "timeframe",
+        "selected_variant",
+        "direction"
+      ],
+      "properties": {
+        "pair_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "timeframe": {
+          "type": "string",
+          "const": "1m"
+        },
+        "selected_variant": {
+          "type": "string",
+          "minLength": 1
+        },
+        "direction": {
+          "type": "string",
+          "enum": [
+            "LONG_SPREAD",
+            "SHORT_SPREAD"
+          ]
+        }
+      }
+    },
+    "static_allowlist_comparison": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "static_allowlist_size",
+        "shadow_selected_size",
+        "overlap_count",
+        "static_only_count",
+        "shadow_only_count",
+        "overlap",
+        "static_only",
+        "shadow_only"
+      ],
+      "properties": {
+        "static_allowlist_size": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "shadow_selected_size": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "overlap_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "static_only_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "shadow_only_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "overlap": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/key"
+          }
+        },
+        "static_only": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/key"
+          }
+        },
+        "shadow_only": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/key"
+          }
+        }
+      }
+    }
+  }
+}
