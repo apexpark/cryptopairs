@@ -86,6 +86,15 @@ def numeric(value: Any, field_name: str) -> float:
     return parsed
 
 
+def optional_identity_string(row: dict[str, Any], field_name: str) -> str:
+    value = row.get(field_name)
+    if value is None:
+        return ""
+    if isinstance(value, str):
+        return value
+    raise ValueError(f"{field_name} must be a string when present")
+
+
 def direction_value(value: Any) -> str:
     if isinstance(value, str) and value in SUPPORTED_DIRECTIONS:
         return value
@@ -178,23 +187,33 @@ def events_from_positions(rows: Iterable[dict[str, Any]]) -> list[TradeEvent]:
 
 
 def events_from_paper_trades(rows: Iterable[dict[str, Any]]) -> list[TradeEvent]:
-    events: list[TradeEvent] = []
+    events: dict[tuple[str, ...], TradeEvent] = {}
     for row in rows:
         if row.get("timeframe") != TIMEFRAME:
             continue
         if row.get("exit_ts") is None or row.get("net_bps") is None:
             continue
         key = row_key(row)
-        events.append(
-            TradeEvent(
-                key=key,
-                entry_at=parse_timestamp(row.get("entry_ts"), "entry_ts"),
-                exit_at=parse_timestamp(row.get("exit_ts"), "exit_ts"),
-                realized_net_bps=numeric(row.get("net_bps"), "net_bps"),
-                exit_lag_seconds=None,
-            )
+        entry_at = parse_timestamp(row.get("entry_ts"), "entry_ts")
+        exit_at = parse_timestamp(row.get("exit_ts"), "exit_ts")
+        identity = (
+            key[0],
+            key[1],
+            key[2],
+            key[3],
+            format_timestamp(entry_at) or "",
+            format_timestamp(exit_at) or "",
+            optional_identity_string(row, "exit_mode"),
+            optional_identity_string(row, "exit_kind"),
         )
-    return events
+        events[identity] = TradeEvent(
+            key=key,
+            entry_at=entry_at,
+            exit_at=exit_at,
+            realized_net_bps=numeric(row.get("net_bps"), "net_bps"),
+            exit_lag_seconds=None,
+        )
+    return list(events.values())
 
 
 def parse_allowlist(value: str | None) -> set[StaticAllowlistEntry]:
@@ -396,6 +415,12 @@ def validate_selector_config(config: SelectorConfig) -> None:
         value = getattr(config, field_name)
         if isinstance(value, bool) or not isinstance(value, int) or value < 1:
             raise ValueError(f"selector_config.{field_name} must be an integer >= 1")
+    for field_name in ["min_avg_net_bps", "max_tail_loss_bps", "min_score"]:
+        value = getattr(config, field_name)
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            raise ValueError(f"selector_config.{field_name} must be numeric")
+        if not math.isfinite(float(value)):
+            raise ValueError(f"selector_config.{field_name} must be finite")
 
 
 def build_snapshot(
@@ -598,6 +623,16 @@ def positive_int(value: str) -> int:
     return parsed
 
 
+def finite_float(value: str) -> float:
+    try:
+        parsed = float(value)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError("must be a finite number") from exc
+    if not math.isfinite(parsed):
+        raise argparse.ArgumentTypeError("must be a finite number")
+    return parsed
+
+
 def parse_args(argv: Sequence[str]) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--paper-trades-json", action="append", default=[])
@@ -608,11 +643,11 @@ def parse_args(argv: Sequence[str]) -> argparse.Namespace:
     parser.add_argument("--source-cutoff-at", required=True)
     parser.add_argument("--generated-at", default=None)
     parser.add_argument("--min-closed-positions", type=positive_int, default=10)
-    parser.add_argument("--min-avg-net-bps", type=float, default=0.0)
-    parser.add_argument("--max-tail-loss-bps", type=float, default=-60.0)
+    parser.add_argument("--min-avg-net-bps", type=finite_float, default=0.0)
+    parser.add_argument("--max-tail-loss-bps", type=finite_float, default=-60.0)
     parser.add_argument("--max-avg-exit-lag-seconds", type=positive_int, default=1800)
     parser.add_argument("--max-selected", type=positive_int, default=8)
-    parser.add_argument("--min-score", type=float, default=0.0)
+    parser.add_argument("--min-score", type=finite_float, default=0.0)
     parser.add_argument("--output-json", default=None)
     parser.add_argument("--output-markdown", default=None)
     return parser.parse_args(list(argv))
@@ -653,7 +688,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         static_allowlist=static_allowlist,
         generated_at=args.generated_at,
     )
-    output = json.dumps(snapshot, indent=2, sort_keys=True)
+    output = json.dumps(snapshot, indent=2, sort_keys=True, allow_nan=False)
     if args.output_json:
         write_text(args.output_json, output + "\n")
     else:

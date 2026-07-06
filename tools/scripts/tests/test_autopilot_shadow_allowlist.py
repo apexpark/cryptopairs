@@ -4,6 +4,7 @@ import contextlib
 import inspect
 import io
 import json
+import math
 import pathlib
 import sys
 import tempfile
@@ -213,6 +214,31 @@ class AutopilotShadowAllowlistTests(unittest.TestCase):
         self.assertEqual(events[0].realized_net_bps, 9.5)
         self.assertEqual(events[0].exit_lag_seconds, 60)
 
+    def test_paper_trades_deduplicate_by_stable_closed_trade_identity(self) -> None:
+        base_row = {
+            "pair_id": "PF_DOGEUSD__PF_PEPEUSD",
+            "timeframe": "1m",
+            "selected_variant": "ROBUST_Z",
+            "direction": "SHORT_SPREAD",
+            "entry_ts": "2026-07-01T00:00:00Z",
+            "exit_ts": "2026-07-01T00:10:00Z",
+            "exit_mode": "mean_revert",
+            "exit_kind": "exit",
+            "net_bps": 12,
+        }
+
+        events = shadow.events_from_paper_trades(
+            [
+                base_row,
+                {**base_row, "net_bps": 9},
+                {**base_row, "exit_kind": "stop", "net_bps": -6},
+            ]
+        )
+
+        self.assertEqual(len(events), 2)
+        realized = sorted(event.realized_net_bps for event in events)
+        self.assertEqual(realized, [-6, 9])
+
     def test_cli_writes_json_and_markdown_outputs(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = pathlib.Path(tmp)
@@ -291,6 +317,31 @@ class AutopilotShadowAllowlistTests(unittest.TestCase):
 
         self.assertEqual(raised.exception.code, 2)
         self.assertIn("must be an integer >= 1", stderr.getvalue())
+
+    def test_non_finite_selector_config_fails_before_snapshot(self) -> None:
+        with self.assertRaisesRegex(ValueError, "min_score"):
+            shadow.build_snapshot(
+                events=[event()],
+                source_cutoff_at="2026-07-02T00:00:00Z",
+                selector_config=shadow.SelectorConfig(min_score=math.nan),
+                generated_at="2026-07-02T00:10:00Z",
+            )
+
+    def test_invalid_cli_finite_float_rejected(self) -> None:
+        stderr = io.StringIO()
+        with contextlib.redirect_stderr(stderr):
+            with self.assertRaises(SystemExit) as raised:
+                shadow.parse_args(
+                    [
+                        "--source-cutoff-at",
+                        "2026-07-02T00:00:00Z",
+                        "--min-score",
+                        "nan",
+                    ]
+                )
+
+        self.assertEqual(raised.exception.code, 2)
+        self.assertIn("must be a finite number", stderr.getvalue())
 
     def test_script_has_no_execution_post_surface(self) -> None:
         source = inspect.getsource(shadow)

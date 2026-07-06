@@ -128,6 +128,11 @@ Snapshot output includes:
   observed directions for the same pair/variant;
 - methodology and caveat text.
 
+Paper-trade inputs are deduplicated by pair, timeframe, variant, direction,
+entry timestamp, exit timestamp, exit mode, and exit kind so overlapping
+captures do not multiply evidence. Selector thresholds must be finite before
+an artifact is emitted.
+
 ## 7. Safety boundaries
 
 AUTO-2B must not:
