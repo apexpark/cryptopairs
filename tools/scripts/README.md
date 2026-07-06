@@ -226,7 +226,9 @@ python3 tools/scripts/autopilot_shadow_allowlist.py \
 ```
 
 The snapshot validates against
-`specs/contracts/autopilot_shadow_allowlist_snapshot.schema.json`. Hosted
+`specs/contracts/autopilot_shadow_allowlist_snapshot.schema.json`. Static
+comparison is direction-equivalent: pair-level static allowlist entries are
+expanded only across observed directions for the same pair/variant. Hosted
 artifact capture is documented in
 `docs/playbooks/autopilot-shadow-allowlist-runbook.md`. AUTO-2C remains the
 first slice allowed to govern dynamic eligibility for paper entries.

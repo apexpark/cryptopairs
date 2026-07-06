@@ -18,7 +18,7 @@ import pathlib
 import re
 import sys
 from collections import defaultdict
-from typing import Any, Iterable, Sequence
+from typing import Any, Iterable, Optional, Sequence
 
 
 SCHEMA_VERSION = 1
@@ -28,6 +28,7 @@ LONG_FRACTIONAL_SECONDS_RE = re.compile(r"(\.\d{6})\d+((?:[+-]\d{2}:\d{2})?)$")
 SUPPORTED_DIRECTIONS = {"LONG_SPREAD", "SHORT_SPREAD"}
 
 Key = tuple[str, str, str, str]
+StaticAllowlistEntry = tuple[str, str, str, Optional[str]]
 
 
 @dataclasses.dataclass(frozen=True)
@@ -196,45 +197,63 @@ def events_from_paper_trades(rows: Iterable[dict[str, Any]]) -> list[TradeEvent]
     return events
 
 
-def parse_allowlist(value: str | None) -> set[Key]:
+def parse_allowlist(value: str | None) -> set[StaticAllowlistEntry]:
     if value is None or not value.strip():
         return set()
-    entries: set[Key] = set()
+    entries: set[StaticAllowlistEntry] = set()
     for raw_item in value.split(","):
         item = raw_item.strip()
         if not item:
             continue
         parts = [part.strip() for part in item.split(":")]
-        if len(parts) != 3 or not all(parts):
+        if len(parts) not in {2, 3} or not all(parts):
             raise ValueError(
-                "static allowlist entries must be pair_id:selected_variant:direction"
+                "static allowlist entries must be pair_id:selected_variant"
+                " or pair_id:selected_variant:direction"
             )
-        entries.add((parts[0], TIMEFRAME, parts[1], direction_value(parts[2])))
+        direction = direction_value(parts[2]) if len(parts) == 3 else None
+        entries.add((parts[0], TIMEFRAME, parts[1], direction))
     return entries
 
 
-def allowlist_from_run_config(path: str | None) -> set[Key]:
+def allowlist_from_run_config(path: str | None) -> set[StaticAllowlistEntry]:
     if path is None:
         return set()
     payload = json.loads(pathlib.Path(path).read_text(encoding="utf-8"))
     if not isinstance(payload, dict):
         raise ValueError("run config must be a JSON object")
-    result: set[Key] = set()
+    result: set[StaticAllowlistEntry] = set()
     for entry in payload.get("static_allowlist", []):
         if not isinstance(entry, dict):
             raise ValueError("run_config.static_allowlist entries must be objects")
         direction = entry.get("direction")
-        if direction is None:
-            continue
         result.add(
             (
                 require_string(entry, "pair_id"),
                 TIMEFRAME,
                 require_string(entry, "selected_variant"),
-                direction_value(direction),
+                direction_value(direction) if direction is not None else None,
             )
         )
     return result
+
+
+def expand_static_allowlist(
+    entries: set[StaticAllowlistEntry],
+    observed_keys: Iterable[Key],
+) -> set[Key]:
+    observed = set(observed_keys)
+    expanded: set[Key] = set()
+    for pair_id, timeframe, selected_variant, direction in entries:
+        if direction is not None:
+            expanded.add((pair_id, timeframe, selected_variant, direction))
+            continue
+        expanded.update(
+            key
+            for key in observed
+            if key[0] == pair_id and key[1] == timeframe and key[2] == selected_variant
+        )
+    return expanded
 
 
 def key_object(key: Key) -> dict[str, str]:
@@ -368,14 +387,26 @@ def static_comparison(static_allowlist: set[Key], shadow_selected: set[Key]) -> 
     }
 
 
+def validate_selector_config(config: SelectorConfig) -> None:
+    for field_name in [
+        "min_closed_positions",
+        "max_avg_exit_lag_seconds",
+        "max_selected",
+    ]:
+        value = getattr(config, field_name)
+        if isinstance(value, bool) or not isinstance(value, int) or value < 1:
+            raise ValueError(f"selector_config.{field_name} must be an integer >= 1")
+
+
 def build_snapshot(
     *,
     events: list[TradeEvent],
     source_cutoff_at: str,
     selector_config: SelectorConfig,
-    static_allowlist: set[Key] | None = None,
+    static_allowlist: set[StaticAllowlistEntry] | None = None,
     generated_at: str | None = None,
 ) -> dict[str, Any]:
+    validate_selector_config(selector_config)
     cutoff = parse_timestamp(source_cutoff_at, "source_cutoff_at")
     generated = (
         parse_timestamp(generated_at, "generated_at")
@@ -433,7 +464,8 @@ def build_snapshot(
         )
         for row in selected
     }
-    static = set() if static_allowlist is None else static_allowlist
+    static_entries = set() if static_allowlist is None else static_allowlist
+    static = expand_static_allowlist(static_entries, buckets.keys())
     return {
         "schema_version": SCHEMA_VERSION,
         "mode": MODE,
@@ -556,6 +588,16 @@ def write_text(path_value: str | None, value: str) -> None:
     path.write_text(value, encoding="utf-8")
 
 
+def positive_int(value: str) -> int:
+    try:
+        parsed = int(value)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError("must be an integer >= 1") from exc
+    if parsed < 1:
+        raise argparse.ArgumentTypeError("must be an integer >= 1")
+    return parsed
+
+
 def parse_args(argv: Sequence[str]) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--paper-trades-json", action="append", default=[])
@@ -565,11 +607,11 @@ def parse_args(argv: Sequence[str]) -> argparse.Namespace:
     parser.add_argument("--static-allowlist", default=None)
     parser.add_argument("--source-cutoff-at", required=True)
     parser.add_argument("--generated-at", default=None)
-    parser.add_argument("--min-closed-positions", type=int, default=10)
+    parser.add_argument("--min-closed-positions", type=positive_int, default=10)
     parser.add_argument("--min-avg-net-bps", type=float, default=0.0)
     parser.add_argument("--max-tail-loss-bps", type=float, default=-60.0)
-    parser.add_argument("--max-avg-exit-lag-seconds", type=int, default=1800)
-    parser.add_argument("--max-selected", type=int, default=8)
+    parser.add_argument("--max-avg-exit-lag-seconds", type=positive_int, default=1800)
+    parser.add_argument("--max-selected", type=positive_int, default=8)
     parser.add_argument("--min-score", type=float, default=0.0)
     parser.add_argument("--output-json", default=None)
     parser.add_argument("--output-markdown", default=None)

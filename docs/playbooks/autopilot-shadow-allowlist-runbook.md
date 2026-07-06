@@ -50,6 +50,10 @@ jq '.static_allowlist_comparison' "$SHADOW_ROOT/autopilot_shadow_allowlist_snaps
 sed -n '1,180p' "$SHADOW_ROOT/autopilot_shadow_allowlist_snapshot.md"
 ```
 
+The static comparison is direction-equivalent. Pair-level static allowlist
+entries from the paper run config are expanded only across directions observed
+in the shadow evidence for the same pair/variant.
+
 ## Build From Captured Strategy Paper Trades
 
 Use this when a broader universe paper-trades capture exists.

@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import contextlib
 import inspect
+import io
 import json
 import pathlib
 import sys
@@ -141,6 +143,52 @@ class AutopilotShadowAllowlistTests(unittest.TestCase):
         self.assertEqual(snapshot["summary"]["selected_count"], 0)
         self.assertEqual(snapshot["rejected"][0]["metrics"]["sum_realized_net_bps"], -12)
 
+    def test_pair_level_static_allowlist_expands_over_observed_directions(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            run_config_path = pathlib.Path(tmp) / "run_config.json"
+            run_config_path.write_text(
+                json.dumps(
+                    {
+                        "static_allowlist": [
+                            {
+                                "pair_id": "PF_DOGEUSD__PF_PEPEUSD",
+                                "selected_variant": "ROBUST_Z",
+                            },
+                            {
+                                "pair_id": "PF_XBTUSD__PF_BNBUSD",
+                                "selected_variant": "COINTEGRATION_Z",
+                                "direction": "LONG_SPREAD",
+                            },
+                        ]
+                    }
+                ),
+                encoding="utf-8",
+            )
+            static_allowlist = shadow.allowlist_from_run_config(str(run_config_path))
+
+        snapshot = shadow.build_snapshot(
+            events=[
+                event(direction="LONG_SPREAD", realized_net_bps=11),
+                event(direction="SHORT_SPREAD", realized_net_bps=12),
+                event(
+                    pair_id="PF_XBTUSD__PF_BNBUSD",
+                    selected_variant="COINTEGRATION_Z",
+                    direction="LONG_SPREAD",
+                    realized_net_bps=13,
+                ),
+            ],
+            source_cutoff_at="2026-07-02T00:00:00Z",
+            selector_config=shadow.SelectorConfig(min_closed_positions=1),
+            static_allowlist=static_allowlist,
+            generated_at="2026-07-02T00:10:00Z",
+        )
+
+        comparison = snapshot["static_allowlist_comparison"]
+        self.assertEqual(comparison["static_allowlist_size"], 3)
+        self.assertEqual(comparison["overlap_count"], 3)
+        self.assertEqual(comparison["static_only_count"], 0)
+        self.assertEqual(comparison["shadow_only_count"], 0)
+
     def test_low_sample_rejects_without_quarantine(self) -> None:
         snapshot = shadow.build_snapshot(
             events=[event(realized_net_bps=20)],
@@ -218,6 +266,31 @@ class AutopilotShadowAllowlistTests(unittest.TestCase):
             payload = json.loads(output_json.read_text(encoding="utf-8"))
             self.assertEqual(payload["summary"]["selected_count"], 1)
             self.assertIn("AUTO-2B Shadow", output_md.read_text(encoding="utf-8"))
+
+    def test_invalid_selector_config_fails_before_snapshot(self) -> None:
+        with self.assertRaisesRegex(ValueError, "max_selected"):
+            shadow.build_snapshot(
+                events=[event()],
+                source_cutoff_at="2026-07-02T00:00:00Z",
+                selector_config=shadow.SelectorConfig(max_selected=0),
+                generated_at="2026-07-02T00:10:00Z",
+            )
+
+    def test_invalid_cli_positive_integer_rejected(self) -> None:
+        stderr = io.StringIO()
+        with contextlib.redirect_stderr(stderr):
+            with self.assertRaises(SystemExit) as raised:
+                shadow.parse_args(
+                    [
+                        "--source-cutoff-at",
+                        "2026-07-02T00:00:00Z",
+                        "--max-selected",
+                        "0",
+                    ]
+                )
+
+        self.assertEqual(raised.exception.code, 2)
+        self.assertIn("must be an integer >= 1", stderr.getvalue())
 
     def test_script_has_no_execution_post_surface(self) -> None:
         source = inspect.getsource(shadow)

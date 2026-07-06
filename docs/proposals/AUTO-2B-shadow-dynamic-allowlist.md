@@ -124,7 +124,8 @@ Snapshot output includes:
 - rejected candidates;
 - quarantined candidates;
 - score components;
-- static allowlist comparison;
+- static allowlist comparison, with pair-level static entries expanded across
+  observed directions for the same pair/variant;
 - methodology and caveat text.
 
 ## 7. Safety boundaries
@@ -148,6 +149,8 @@ but it is not an allowlist for paper entries.
 - Replay test proves `source_cutoff_at` prevents lookahead.
 - Tests prove low sample rejects, tail loss quarantines, and positive evidence
   can shadow-select.
+- Tests prove pair-level and direction-level static allowlists compare against
+  direction-equivalent shadow selector units.
 - Tests prove AUTO-2A position JSONL can be reduced without full decision-row
   loading.
 - Tests scan for execution order-intent/dispatch/HTTP client surfaces.
