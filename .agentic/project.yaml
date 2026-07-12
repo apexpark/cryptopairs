@@ -11,6 +11,7 @@ highest_precedence:
   - current_operator_instruction
 
 local_governance:
+  claude_entry_point: CLAUDE.md # session bootstrap + Autonomy Doctrine; AGENTS.md still wins
   apex_workflow: docs/ops/ai_workflow.md
   pr_template: .github/pull_request_template.md
   verification_protocol: docs/17-verification-protocol.md
