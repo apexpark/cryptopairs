@@ -36,31 +36,44 @@ doubt, the system stays operator-invoked.
 The system's destination is autonomous operation, but its current phase is
 not that. No Claude session may create, start, enable, or leave running: a
 background scheduler, polling daemon, sync loop, hosted loop, or any
-unattended process — except a bounded one-shot script the Operator
-explicitly schedules and can inspect (e.g. cron invoking a script that
-exits). The `.agentic/project.yaml` `default_authority` denials and the
-loop-policy default-deny are authoritative until a component graduates.
+unattended process. The only exception belongs to the Operator, not to
+Claude: the Operator may schedule a bounded one-shot script (e.g. a cron
+entry invoking a script that exits); Claude's part ends at preparing the
+command and step card for the Operator to install. The
+`.agentic/project.yaml` `default_authority` denials and the loop-policy
+default-deny are authoritative until a component graduates.
 
-Everything is built **autonomous-capable, run operator-invoked**: any
-instruction elsewhere to build or run something autonomously reads as
-"build it so it *could* run autonomously; run it operator-invoked" until
-the component's graduation is recorded.
+Everything is built **autonomous-capable, run operator-invoked**:
+"autonomous-capable" means clean structure and interfaces that would allow
+later automation — it never licenses committing a scheduler, daemon, or
+loop in dormant form. Instantiating or wiring such a component is
+"creating" one and is forbidden above. Any instruction elsewhere to build
+or run something autonomously reads as "design for it; run it
+operator-invoked" until the component's graduation is recorded.
 
 ### Graduation: per component, on the native AUTO ladder
 
 Autonomy unlocks per component, never all at once, and only by an Operator
 sign-off recorded in `.agentic/registers/decisions.md` naming the component
-and the exact autonomy granted. The ladder is the repo's own AUTO sequence
-(`docs/proposals/AUTO-2-1m-paper-autopilot-governance.md` §3, the
-"non-negotiable sequence"):
+and the exact autonomy granted. A graduation row is authoritative only once
+it has merged to `main` via the Tier 3 flow and cites the Operator
+instruction that granted it; a branch-local, unmerged, or agent-authored
+row without a cited Operator instruction grants nothing.
 
-| Rung | Component state | Evidence gate before the next rung |
+The predecessor stage AUTO-1 (observe-only sidecar, its own proposal
+`docs/proposals/AUTO-1-1m-autopilot-observe-only.md`) is deployed
+disabled-by-default and operator-run. From there the ladder is the AUTO-2
+proposal's §3 "non-negotiable sequence" — later slices may refine names or
+details but must not skip the ordering without a recorded governance
+exception. Exit criteria below are §3's, verbatim:
+
+| Rung | Purpose | Exit criteria (§3) |
 |---|---|---|
-| AUTO-1 — observe-only sidecar | Live (disabled-by-default, operator-run) | Attribution reports over operator-run windows; fail-closed behavior demonstrated in tests |
-| AUTO-2A — static paper allowlist | Current: operator-run 72h direction-gated trials | Paper reports prove positive evidence and correct gating across pair/direction/mixed allowlist modes |
-| AUTO-2B — shadow dynamic allowlist | Next: champion/challenger output shadows, advisory only | Shadow output matches or explains divergence from static gating over an operator-accepted window |
-| AUTO-2C — governed dynamic allowlist | Safety governor between selector output and paper eligibility | Tests and reports prove dwell-time, sample-size, churn, concentration, quarantine, and stale-selector gates all fail closed |
-| AUTO-3 — live automation | Design gate only | A separate design-only proposal, risk model, kill-switch and rollout/rollback plan, exact-SHA independent review, and explicit Operator approval |
+| AUTO-2A — focused static paper trial | Prove paper-autopilot mechanics with a small static 1m allowlist (status: 72h direction-gated trial commands prepared, ready for operator run) | 24–72h paper ledger evidence, duplicate/cooldown/exits verified, no live path reachable |
+| AUTO-2B — shadow dynamic allowlist | Record what champion/challenger would have selected while the static trial continues; never act on it | Evidence that selector stability, churn, sample quality, and disagreement with static allowlist are measurable |
+| AUTO-2C — governed dynamic allowlist | Safety governor (dwell-time, sample-size, churn, concentration, quarantine, stale-selector gates) between selector output and paper eligibility | Tests and reports prove stale or unstable selector state fails closed |
+| AUTO-2D — dynamic paper trial | Governed dynamic allowlist controls paper-only eligibility, same ledger/risk/exits as AUTO-2A; no live order intents, dispatch, or exchange calls | 24–72h dynamic paper evidence and attribution against static/shadow baselines |
+| AUTO-3 — live automation proposal | Design gate only: design-only PR, risk model, kill switch, rollout/rollback plan | Separate operator-approved proposal and exact-SHA independent review |
 
 Two boundaries this doctrine cannot relax:
 
@@ -72,21 +85,29 @@ Two boundaries this doctrine cannot relax:
   CHALLENGER → PROMOTION_READY → CHAMPION advances to CHAMPION only by
   explicit Operator action.
 
-### Safety invariants (always on, Operator decision 2026-07-12)
+### Safety invariants (always on)
+
+From the Operator decision of 2026-07-12 (`.agentic/registers/decisions.md`
+safety-invariants row — the full set also covers operator-triggered
+promotions and the no-unattended-loops rule stated above):
 
 - The kill switch halts all new order submissions and is never bypassed.
-- Fail closed on missing or stale data and on unknown risk or optimizer
-  state: missing data → WAIT, unknown state → HOLD.
+- Fail closed on missing or stale data and on unknown risk state.
 - Live `ENTRY`/`EXIT` intents require explicit Operator confirmation
   (`docs/12-risk-and-execution-policy.md` rule 8).
 - `STRATEGY_BLOCK_ON_CHAMPION_DRIFT=true` stays set.
+- **Capital protection is never restricted:** once a position exists,
+  paper or live, emergency stop-close action is always automated per the
+  Operator decision row — consistent with `docs/12` rule 9, which permits
+  automated execution *only* for emergency stop-close actions. Autonomy
+  restrictions apply to entries, data collection, selection, and
+  scheduling — never to closing a position to protect capital.
+
+From `docs/23-autonomous-optimizer-roadmap.md` "Safety Rules (Always On)":
+
+- Missing or stale data → `WAIT`; unknown optimizer state → `HOLD`.
 - No autonomous changes to trade-execution behavior, dispatch mode, or
   risk limits.
-- **Capital protection is never restricted:** once a position exists,
-  paper or live, emergency stop-close action is always automated
-  (`docs/12` rule 9). Autonomy restrictions apply to entries, data
-  collection, selection, and scheduling — never to closing a position to
-  protect capital.
 
 ### What a Claude session never does
 

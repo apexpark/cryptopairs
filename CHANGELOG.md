@@ -20,12 +20,13 @@ This project follows SemVer as defined in `docs/02-versioning-and-releases.md`.
 ### Operator Tooling
 - Added `CLAUDE.md`: the Claude session entry point and Autonomy Doctrine.
   Current phase is operator-invoked and evidence-gated (no unattended
-  loops); autonomy graduates per component on the native AUTO ladder
-  (AUTO-1 → 2A → 2B → 2C → AUTO-3 design gate) only by Operator sign-off
-  recorded in the decisions register; AUTO-3 is never grantable by the
-  doctrine; the 2026-07-12 safety invariants are restated verbatim with
-  capital protection never restricted. `AGENTS.md` remains highest
-  precedence.
+  loops); autonomy graduates per component on the AUTO-2 §3 non-negotiable
+  sequence (AUTO-2A → 2B → 2C → 2D → AUTO-3 design gate, with AUTO-1 as
+  the deployed observe-only predecessor) only by Operator sign-off merged
+  via the Tier 3 flow; AUTO-3 is never grantable by the doctrine; the
+  2026-07-12 safety invariants and the docs/23 always-on rules are
+  restated with capital protection never restricted. `AGENTS.md` remains
+  highest precedence.
 - Made the 2026-07-12 merge-authority tiers operative (upon merge of this
   slice): `docs/ops/ai_workflow.md` now defines the four tiers with a
   tier-scoped review/merge protocol, the PR template requires a merge-tier
