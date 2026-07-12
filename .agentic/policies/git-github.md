@@ -31,19 +31,22 @@ Operator decision 2026-07-12 (see `.agentic/registers/decisions.md`).
 | 3 | Protected paths | Independent Reviewer (different model than the author) reviews the exact head SHA and reports CLEAN + green CI + Operator authorization on a plain-English brief. A verdict against a stale SHA does not count. Every repair push requires a fresh review at the new head SHA. |
 | 4 | Live capital, risk limits, paper→live toggle, Hetzner production runtime | Operator only. No delegation, ever. |
 
-**Operative status:** Tiers 1–2 delegated merge became operative with the
-workflow-manual amendment slice: `docs/ops/ai_workflow.md` §Merge Authority
-Tiers now references these tiers and the PR template carries a merge-tier
-declaration. The standing delegation, its conditions, and its
-forbidden-even-when-delegated list are recorded in
-`.agentic/registers/decisions.md` (2026-07-12, OP-7). Delegated merges are
-mechanical execution of that recorded decision, reported after the fact, and
-revocable at any time. Tiers 3–4 add requirements; they never relax under
-any reading.
+**Operative status:** Tiers 1–2 delegated merge becomes operative upon merge
+of the workflow-manual amendment slice (GOV-SCAFFOLD-2), which amends
+`docs/ops/ai_workflow.md` §Merge Authority Tiers and adds a merge-tier
+declaration to the PR template. The standing delegation, its conditions
+(green-checks verification before merge, per-merge record comment and
+same-session report, no merging over failing/pending/bypassed checks), and
+its forbidden-even-when-delegated list are recorded in
+`.agentic/registers/decisions.md` (2026-07-12, OP-7 hardened per OP-8).
+Delegated merges are mechanical execution of that recorded decision and
+revocable at any time. Ambiguous tier → treat as the higher tier. Tiers 3–4
+add requirements; they never relax under any reading.
 
 Protected paths: single source of truth is `.github/CODEOWNERS`. Until the
-CODEOWNERS expansion slice merges, the binding list is the Operator decision
-of 2026-07-12 in `.agentic/registers/decisions.md`.
+CODEOWNERS expansion slice merges, the binding list is the expanded
+protected-path row of 2026-07-12 (OP-8 ratification) in
+`.agentic/registers/decisions.md`.
 
 ## Rules
 

@@ -39,10 +39,14 @@ CI, and narrow technical docs when the task allows it. The Coder must keep work
 scoped to the slice, preserve unrelated user changes, and provide a Reviewer
 prompt after every commit or push.
 
-When the local Claude session acts as Coder it also carries the "Lead Coder"
-and "Operator Interface" duties defined in `.agentic/policies/git-github.md`:
-authoring slices, running multi-angle inner review before any PR, and giving
-the Operator plain-English briefs and paste-ready step cards.
+When the Operator directs the local Claude session to act as Coder for a
+slice, it also carries the "Lead Coder" and "Operator Interface" duties
+defined in `.agentic/policies/git-github.md`: authoring that slice, running
+multi-angle inner review before any PR, and giving the Operator
+plain-English briefs and paste-ready step cards. This is a per-slice
+Operator assignment; the `AGENTS.md` §8 default work allocation (remote
+agents for heavy implementation, local agent for review and curation) is
+unchanged as the default.
 
 ### Independent Reviewer
 
@@ -182,9 +186,9 @@ exception.
 
 ## Merge Authority Tiers
 
-Adopted by Operator decision 2026-07-12 and operative as of the slice that
-added this section (see `.agentic/registers/decisions.md`, which also records
-the standing delegation for Tiers 1–2). The tier table and rules live in
+Adopted by Operator decision 2026-07-12; operative upon merge of the slice
+that added this section (see `.agentic/registers/decisions.md`, which also
+records the standing delegation for Tiers 1–2 and its hardened conditions). The tier table and rules live in
 `.agentic/policies/git-github.md`; summary:
 
 | Tier | Surface | Merge requirement |
@@ -206,13 +210,24 @@ Rules that apply at every tier:
 - Delegated Tier 1–2 merges are mechanical execution of a standing Operator
   decision, not Coder judgment: the delegation is recorded in the decisions
   register, is revocable at any time, and never extends to Tier 3–4
-  surfaces. Every delegated merge is reported to the Operator after the
-  fact.
+  surfaces.
+- Delegated merge mechanics: exactly `gh pr merge <N> --squash
+  --delete-branch` on a qualifying PR, after verifying via `gh pr checks`
+  that every required check passes and via `gh pr view` that the head SHA
+  equals the inner-reviewed SHA. `--admin` may be used solely to satisfy the
+  approval formality GitHub cannot path-scope — never to merge over
+  failing, pending, or bypassed checks or unresolved review threads.
+- Per-merge record: at merge time the Lead Coder posts a merge-record
+  comment on the PR (tier claimed, head SHA verified, checks state,
+  inner-review evidence) and reports to the Operator in the same session or
+  at the next Operator interaction. Batching or deferring reports is
+  forbidden.
 - For Tier 2, the required review is the multi-angle inner review (two or
-  more independent read-only reviewer perspectives). Independent
-  cross-model Reviewer signoff remains required for Tier 3; the same-chat
-  advisory limitation in §Same-Chat Read-Only Advisory Sub-Agent continues
-  to apply there.
+  more distinct read-only reviewer perspectives from the same session;
+  Operator decision of 2026-07-12 confirms this standard for unprotected
+  code). Cross-model Independent Reviewer signoff remains required for
+  Tier 3; the same-chat advisory limitation in §Same-Chat Read-Only
+  Advisory Sub-Agent continues to apply there.
 
 ## Review And Merge Protocol
 

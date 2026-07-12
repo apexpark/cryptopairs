@@ -18,13 +18,19 @@ This project follows SemVer as defined in `docs/02-versioning-and-releases.md`.
   preserving local service defaults for localhost development.
 
 ### Operator Tooling
-- Made the 2026-07-12 merge-authority tiers operative:
-  `docs/ops/ai_workflow.md` now defines the four tiers with a tier-scoped
-  review/merge protocol, the PR template requires a merge-tier declaration,
-  the Codex prompt pack gains a Tier 3 exact-SHA reviewer prompt, and the
-  decisions register records the PR #245 merge authorization plus the
-  standing Tier 1–2 delegated-merge decision (revocable, with a
-  forbidden-even-when-delegated list). Tier 3–4 requirements are unchanged.
+- Made the 2026-07-12 merge-authority tiers operative (upon merge of this
+  slice): `docs/ops/ai_workflow.md` now defines the four tiers with a
+  tier-scoped review/merge protocol, the PR template requires a merge-tier
+  declaration, the Codex prompt pack gains a Tier 3 exact-SHA reviewer
+  prompt, and the decisions register records the PR #245 merge
+  authorization plus the standing Tier 1–2 delegated-merge decision
+  (green-checks-verified merges only, per-merge record comment, revocable,
+  with a forbidden-even-when-delegated list). The Tier 3 protected-path
+  list was expanded after adversarial inner review and Operator
+  ratification: all `services/**`, `scripts/**`, `docs/playbooks/**`,
+  `.githooks/**`, `docker-compose*.yml`, dependency/toolchain manifests,
+  and `.env.example` now require cross-model review plus Operator
+  authorization. Tier 3–4 requirements are unchanged or strengthened.
 - Installed the dual-agent governance scaffold (v0) under `.agentic/**`,
   building on the loop-harness adapter: constitution, worker-tier,
   evidence-ladder, context, and git/merge policies, seeded

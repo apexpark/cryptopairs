@@ -159,8 +159,9 @@ Review against:
    and the protected-path list.
 3. Correctness; behavior-asserting tests where applicable.
 4. Safety invariants: kill switch never bypassed; fail-closed on
-   stale/unknown state; live ENTRY/EXIT operator-confirmed; promotions
-   operator-triggered; emergency stop-close automated per docs/12 rules 8-9.
+   stale/unknown state; live ENTRY/EXIT operator-confirmed (docs/12 rule 8);
+   promotions operator-triggered; emergency stop-close automated (docs/12
+   rule 9).
 
 Report each finding as file:line, severity (P1 blocking / P2 should-fix /
 P3 nit), and confidence. Coverage over precision.
