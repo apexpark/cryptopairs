@@ -18,6 +18,14 @@ This project follows SemVer as defined in `docs/02-versioning-and-releases.md`.
   preserving local service defaults for localhost development.
 
 ### Operator Tooling
+- Installed the dual-agent governance scaffold (v0) under `.agentic/**`,
+  building on the loop-harness adapter: constitution, worker-tier,
+  evidence-ladder, context, and git/merge policies, seeded
+  decisions/risks/assumptions/capabilities/agent-runs registers, nine
+  work-order/review/handoff templates, and intake/dispatch/review/blocked
+  playbooks. Records the 2026-07-12 merge-authority tiers as adopted but
+  non-operative until `docs/ops/ai_workflow.md` is amended; grants no new
+  authority and repo governance wins.
 - Added a project-local `.agentic/**` adapter for bounded agentic loops,
   including default-deny local policy, machine-checkable loop spec/state
   templates, a repository-development loop playbook, and a loop-run register

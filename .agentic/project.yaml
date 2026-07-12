@@ -1,6 +1,7 @@
 schema_version: cryptopairs_agentic_project.v1
 project: cryptopairs
 adapter_status: active
+scaffold_version: v0 # apex-forge dual-agent scaffold, adopted 2026-07-12 (see registers/decisions.md)
 local_policy_wins: true
 
 highest_precedence:
@@ -22,6 +23,71 @@ adapter_files:
   loop_state_template: .agentic/templates/loop-state.json
   repository_loop_playbook: .agentic/playbooks/repository-development-loop.md
   loop_run_register: .agentic/registers/loop-runs.md
+
+scaffold_files:
+  policies:
+    - .agentic/policies/constitution.md
+    - .agentic/policies/permissions.md
+    - .agentic/policies/evidence.md
+    - .agentic/policies/git-github.md
+    - .agentic/policies/context.md
+  registers:
+    - .agentic/registers/decisions.md
+    - .agentic/registers/risks.md
+    - .agentic/registers/assumptions.md
+    - .agentic/registers/capabilities.md
+    - .agentic/registers/agent-runs.md
+  playbooks:
+    - .agentic/playbooks/intake-to-work-order.md
+    - .agentic/playbooks/dispatch-worker.md
+    - .agentic/playbooks/review-and-integrate.md
+    - .agentic/playbooks/blocked-or-escalated.md
+  templates:
+    - .agentic/templates/work-order.md
+    - .agentic/templates/context-pack.md
+    - .agentic/templates/worker-result.md
+    - .agentic/templates/evidence-report.md
+    - .agentic/templates/code-review.md
+    - .agentic/templates/spec-review.md
+    - .agentic/templates/handoff.md
+    - .agentic/templates/exception.md
+    - .agentic/templates/pr-description.md
+  runs: .agentic/runs/ # one folder per work order, AG-YYYYMMDD-NNN-<slug>
+
+merge_authority:
+  # Tiers per Operator decision 2026-07-12. Tiers 1-2 delegated merge is NOT
+  # operative until docs/ops/ai_workflow.md is amended (see the transition
+  # note in policies/git-github.md); default_authority.merge stays denied.
+  source_of_truth: .agentic/policies/git-github.md
+  protected_paths_source: .github/CODEOWNERS # binding once expansion slice merges; until then decisions register row 2026-07-12
+  no_self_merge_above_tier: 2
+  stale_sha_review_verdicts: void
+  repairs_require_fresh_review: true
+
+worker_tiers:
+  default_research: T0
+  default_implementation: T1
+  default_privileged_verification: T2
+  human_authority: T3
+
+# "tier3" below means merge Tier 3 (policies/git-github.md), not worker tier T3.
+never_touch_without_tier3_flow:
+  - services/execution-service/**
+  - specs/contracts/**
+  - specs/examples/**
+  - scripts/deploy.sh
+  - infra/**
+  - AGENTS.md
+  - CLAUDE.md
+  - .agentic/**
+  - .github/**
+  - docs/00-guardrails.md
+  - docs/11-data-integrity-policy.md
+  - docs/12-risk-and-execution-policy.md
+  - docs/13-secrets-and-security.md
+  # plus champion promotion/selection modules in services/strategy-service
+  # (exact module list finalized in the CODEOWNERS expansion slice)
+  - tools/scripts/autopilot_*.py
 
 default_authority:
   trigger: operator_manual_instruction_only
