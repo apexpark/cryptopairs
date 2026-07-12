@@ -1,7 +1,8 @@
 # Context Pack — <work order id>
 
 Minimum context for the worker. Assume nothing outside this pack and the
-mandatory hydration reads (`AGENTS.md`, `docs/AGENT_STATE.md`).
+mandatory hydration reads per `AGENTS.md` §8.4 (`AGENTS.md`,
+`docs/AGENT_STATE.md`, `docs/playbooks/remote-agent-bootstrap.md`).
 
 ## Read first (in order)
 
