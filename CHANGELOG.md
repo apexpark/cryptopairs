@@ -18,6 +18,13 @@ This project follows SemVer as defined in `docs/02-versioning-and-releases.md`.
   preserving local service defaults for localhost development.
 
 ### Operator Tooling
+- Canonicalized `.github/CODEOWNERS` as the single source of truth for
+  merge Tier 3 protected paths: expanded to the full 2026-07-12 list (all
+  services, scripts, playbooks, git hooks, compose files, dependency and
+  toolchain manifests, governance and ops docs, agent state, autopilot
+  tooling) while retaining all legacy protections. Tier 1–2 delegated PRs
+  now touch neither `CHANGELOG.md` nor `docs/AGENT_STATE.md`; both catch
+  up in Tier 3 governance PRs.
 - Added `CLAUDE.md`: the Claude session entry point and Autonomy Doctrine.
   Current phase is operator-invoked and evidence-gated (no unattended
   loops); autonomy graduates per component on the AUTO-2 §3 non-negotiable
