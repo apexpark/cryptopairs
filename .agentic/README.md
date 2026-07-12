@@ -38,7 +38,7 @@ wins.
 
 This harness does not authorize schedulers, deployment, secrets, external
 connectors, host access, production jobs, live trading, or background loops.
-It grants no merge authority: until `docs/ops/ai_workflow.md` is amended to
-reference the merge tiers (see the transition note in
-`policies/git-github.md`), every merge requires per-PR Operator
-authorization.
+Merge authority is governed by the tiers in `policies/git-github.md`
+(operative upon merge of the GOV-SCAFFOLD-2 slice): Tier 1–2 mechanical
+merges are delegated under the hardened standing decision in
+`registers/decisions.md`; Tier 3–4 always require per-PR Operator action.

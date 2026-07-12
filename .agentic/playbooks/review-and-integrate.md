@@ -12,11 +12,13 @@ From a finished worker result to a merged slice.
    re-run affected checks.
 4. Open the PR with the repo template; state the merge tier claimed; fill
    Base/Head SHA.
-5. Tier 1–2: merge after green CI (Tier 2 also requires the clean inner
-   review); report to the Operator after the fact. **Not yet operative** —
-   see the transition note in `policies/git-github.md`; until
-   `docs/ops/ai_workflow.md` is amended, every merge requires per-PR
-   Operator authorization.
+5. Tier 1–2: delegated mechanical merge (operative upon merge of the
+   GOV-SCAFFOLD-2 slice) — verify every required check passes and the head
+   SHA equals the inner-reviewed SHA, squash-merge, post the per-merge
+   record comment on the PR, and report to the Operator in the same
+   session. Never over failing/pending/bypassed checks or unresolved
+   threads; never touching `docs/AGENT_STATE.md` or any protected path.
+   Conditions in `.agentic/registers/decisions.md` (standing delegation).
 6. Tier 3: Operator pastes the Codex reviewer prompt pinned to the exact head
    SHA. A verdict that does not state the SHA it reviewed, or states a stale
    one, does not count. Every repair push → fresh review at the new SHA.

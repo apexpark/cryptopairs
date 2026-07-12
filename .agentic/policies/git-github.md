@@ -15,8 +15,11 @@ Operator decision 2026-07-12 (see `.agentic/registers/decisions.md`).
 ## Roles
 
 - **Lead Coder** — the "Coder" role of `docs/ops/ai_workflow.md`, held by the
-  local Claude session (`AGENTS.md` §8.1 "Local agent"). Authors slices,
-  runs inner review, opens PRs.
+  local Claude session (`AGENTS.md` §8.1 "Local agent") when the Operator
+  assigns it a slice. Authors that slice, runs inner review, opens PRs. This
+  is a per-slice Operator assignment; the `AGENTS.md` §8 default work
+  allocation (remote agents for heavy implementation, local agent for
+  review and curation) is unchanged as the default.
 - **Independent Reviewer** — the ai_workflow.md "Independent Reviewer" role,
   held by Codex. On protected paths the reviewing model must differ from the
   authoring model.

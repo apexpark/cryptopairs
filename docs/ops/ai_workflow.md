@@ -222,6 +222,10 @@ Rules that apply at every tier:
   inner-review evidence) and reports to the Operator in the same session or
   at the next Operator interaction. Batching or deferring reports is
   forbidden.
+- Tier 1–2 PRs must not touch `docs/AGENT_STATE.md` or any other protected
+  path (`docs/AGENT_STATE.md` is protected); the merge-record comment is
+  the immediate record, and Current State catches up in the next Tier 3
+  governance PR.
 - For Tier 2, the required review is the multi-angle inner review (two or
   more distinct read-only reviewer perspectives from the same session;
   Operator decision of 2026-07-12 confirms this standard for unprotected

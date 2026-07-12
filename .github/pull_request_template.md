@@ -30,6 +30,9 @@ What does this PR change?
 - Operator merge authorization:
   - [ ] Pending
   - [ ] Operator accepted Reviewer signoff for exact head SHA and authorized merge
+  - [ ] Tier 1–2 delegated merge under the standing decision of 2026-07-12
+        (green checks verified at inner-reviewed head SHA; merge-record
+        comment posted; no per-PR Operator authorization required)
 - Notes:
 
 ## Context & Policy References
