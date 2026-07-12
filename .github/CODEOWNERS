@@ -62,10 +62,15 @@ docker-compose*.yml @apexpark
 .env.example @apexpark
 
 # Dependency and toolchain manifests (supply chain) — unanchored on purpose:
-# they protect these manifests at ANY depth (crates/**, future services).
+# they protect these manifests at ANY depth (crates/**, apps/**,
+# research/**, future services), across all toolchains per docs/07.
 Cargo.toml @apexpark
 Cargo.lock @apexpark
 rust-toolchain.toml @apexpark
+package.json @apexpark
+package-lock.json @apexpark
+pyproject.toml @apexpark
+requirements.txt @apexpark
 
 # Autopilot paper-trading tooling. The glob is intent; the explicit lines
 # are the guaranteed-supported form — ADD A LINE HERE for every new

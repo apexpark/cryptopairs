@@ -86,6 +86,10 @@ never_touch_without_tier3_flow:
   - Cargo.toml
   - Cargo.lock
   - rust-toolchain.toml
+  - package.json
+  - package-lock.json
+  - pyproject.toml
+  - requirements.txt
   - .env.example
   - AGENTS.md
   - CLAUDE.md
