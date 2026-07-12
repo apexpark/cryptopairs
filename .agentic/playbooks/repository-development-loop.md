@@ -41,11 +41,18 @@ Edit the copied spec to name the real objective, allowed paths, gates, and stop
 conditions. Keep permissions default-deny unless the operator explicitly grants
 more authority for that exact loop.
 
-Validate the copied spec:
+Validate the copied spec. The preflight script comes from the global
+`agentic-loop-harness` skill and is not part of this repository; this check is
+**operator-local and optional**. Run it when the skill is installed; in
+environments without it (remote agents, CI), skip it and record the skipped
+preflight as an E0 limitation in the loop state:
 
 ```bash
-python3 /Users/kevinsaunders/.codex/skills/agentic-loop-harness/scripts/loop_preflight.py .agentic/runs/<run_id>/loop-spec.json --format json
+python3 "$HOME/.codex/skills/agentic-loop-harness/scripts/loop_preflight.py" .agentic/runs/<run_id>/loop-spec.json --format json
 ```
+
+Always run the portable minimum instead/as well: `python3 -m json.tool` on the
+copied spec and state files.
 
 ## 4. Iterate
 

@@ -119,8 +119,11 @@ required_loop_properties:
   - explicit_forbidden_actions
 
 verification:
-  preflight_command: python3 /Users/kevinsaunders/.codex/skills/agentic-loop-harness/scripts/loop_preflight.py .agentic/templates/loop-spec.json --format json
+  # loop_preflight.py ships with the global agentic-loop-harness skill, not
+  # this repo. The preflight is operator-local and optional: run when the
+  # skill is installed; otherwise skip and record an E0 limitation.
+  preflight_command_optional_operator_local: python3 "$HOME/.codex/skills/agentic-loop-harness/scripts/loop_preflight.py" .agentic/templates/loop-spec.json --format json
   required_after_template_change:
     - json_parse_templates
-    - loop_preflight_template
+    - loop_preflight_template_if_available
     - git_diff_check

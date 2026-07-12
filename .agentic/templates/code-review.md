@@ -10,7 +10,9 @@ branch moves, this verdict is void and a fresh review is required.**
 
 - Project invariants (kill switch never bypassed; fail-closed on stale/unknown
   state; no execution-service order-intent paths from tooling; promotions
-  operator-triggered; exits automated once a position exists)
+  operator-triggered; emergency stop-close always automated once a position
+  exists, while discretionary live `EXIT` intents require operator
+  confirmation per `docs/12` rules 8–9)
 - Correctness of the diff; behavior-asserting tests present
 - Protected-path contract compliance (`specs/contracts/**`)
 - Slice Loop Check satisfied (PR template)
