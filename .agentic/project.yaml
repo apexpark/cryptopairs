@@ -61,7 +61,7 @@ merge_authority:
   # standing-delegation conditions in registers/decisions.md.
   # default_authority.merge above stays denied for loop workers.
   source_of_truth: .agentic/policies/git-github.md
-  protected_paths_source: .github/CODEOWNERS # binding once expansion slice merges; until then decisions register row 2026-07-12
+  protected_paths_source: .github/CODEOWNERS # single source of truth (GOV-SCAFFOLD-4); register keeps the adoption trail
   no_self_merge_above_tier: 2
   stale_sha_review_verdicts: void
   repairs_require_fresh_review: true
@@ -100,6 +100,11 @@ never_touch_without_tier3_flow:
   - docs/12-risk-and-execution-policy.md
   - docs/13-secrets-and-security.md
   - docs/17-verification-protocol.md
+  - CHANGELOG.md
+  - docs/02-versioning-and-releases.md
+  - docs/03-contracts-and-compatibility.md
+  - docs/15-observability-and-alerting.md
+  - docs/16-ui-styling-guide.md
   - tools/scripts/autopilot_*.py
 
 default_authority:

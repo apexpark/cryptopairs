@@ -1,23 +1,60 @@
-# CODEOWNERS (role-based placeholders)
-# Temporary ownership mapped to @apexpark until team handles exist.
+# CODEOWNERS — single source of truth for merge Tier 3 protected paths.
+#
+# Every path listed below requires the Tier 3 flow to merge: Independent
+# Reviewer (Codex) CLEAN verdict at the exact head SHA + green CI + Operator
+# authorization on a plain-English brief (docs/ops/ai_workflow.md §Merge
+# Authority Tiers). If this file and any other protected-path list disagree,
+# this file wins; the historical adoption trail lives in
+# .agentic/registers/decisions.md (2026-07-12 rows).
+#
+# Ownership is mapped to @apexpark (Operator) until team handles exist.
 
-# Global defaults
+# Global default — everything routes to the Operator for required review.
 * @apexpark
 
-# Agent and governance
+# Governance and agent-operating rules
 /AGENTS.md @apexpark
+/CLAUDE.md @apexpark
+/.agentic/ @apexpark
+/.github/ @apexpark
+/docs/ops/ @apexpark
+/docs/AGENT_STATE.md @apexpark
+/docs/00-guardrails.md @apexpark
+/docs/05-agent-build-workflow.md @apexpark
+/docs/07-dependency-and-supply-chain-policy.md @apexpark
+/docs/17-verification-protocol.md @apexpark
 /CHANGELOG.md @apexpark
 /docs/02-versioning-and-releases.md @apexpark
 /docs/03-contracts-and-compatibility.md @apexpark
-/docs/17-verification-protocol.md @apexpark
 
-# Policies
+# Safety and security policies
 /docs/11-data-integrity-policy.md @apexpark
 /docs/12-risk-and-execution-policy.md @apexpark
 /docs/13-secrets-and-security.md @apexpark
 /docs/15-observability-and-alerting.md @apexpark
 /docs/16-ui-styling-guide.md @apexpark
 
-# Contracts
+# Operator runbooks (command sheets executed on or against the host)
+/docs/playbooks/ @apexpark
+
+# Contracts and examples
 /specs/contracts/ @apexpark
 /specs/examples/ @apexpark
+
+# Runtime services (all)
+/services/ @apexpark
+
+# Deployment, infra, host-executed code
+/scripts/ @apexpark
+/infra/ @apexpark
+/.githooks/ @apexpark
+docker-compose*.yml @apexpark
+/.env.example @apexpark
+
+# Dependency and toolchain manifests (supply chain)
+/Cargo.toml @apexpark
+/Cargo.lock @apexpark
+/rust-toolchain.toml @apexpark
+
+# Autopilot paper-trading tooling
+/tools/scripts/autopilot_*.py @apexpark

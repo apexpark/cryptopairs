@@ -46,10 +46,12 @@ Delegated merges are mechanical execution of that recorded decision and
 revocable at any time. Ambiguous tier → treat as the higher tier. Tiers 3–4
 add requirements; they never relax under any reading.
 
-Protected paths: single source of truth is `.github/CODEOWNERS`. Until the
-CODEOWNERS expansion slice merges, the binding list is the expanded
-protected-path row of 2026-07-12 (OP-8 ratification) in
-`.agentic/registers/decisions.md`.
+Protected paths: single source of truth is `.github/CODEOWNERS` (expanded
+to the full OP-8 list plus retained legacy protections by the
+GOV-SCAFFOLD-4 slice). The decisions register keeps the adoption trail; on
+any disagreement CODEOWNERS wins. Note: `CHANGELOG.md` and
+`docs/AGENT_STATE.md` are protected, so Tier 1–2 delegated PRs touch
+neither — both catch up in Tier 3 governance PRs.
 
 ## Rules
 
