@@ -15,8 +15,11 @@ Operator decision 2026-07-12 (see `.agentic/registers/decisions.md`).
 ## Roles
 
 - **Lead Coder** — the "Coder" role of `docs/ops/ai_workflow.md`, held by the
-  local Claude session (`AGENTS.md` §8.1 "Local agent"). Authors slices,
-  runs inner review, opens PRs.
+  local Claude session (`AGENTS.md` §8.1 "Local agent") when the Operator
+  assigns it a slice. Authors that slice, runs inner review, opens PRs. This
+  is a per-slice Operator assignment; the `AGENTS.md` §8 default work
+  allocation (remote agents for heavy implementation, local agent for
+  review and curation) is unchanged as the default.
 - **Independent Reviewer** — the ai_workflow.md "Independent Reviewer" role,
   held by Codex. On protected paths the reviewing model must differ from the
   authoring model.
@@ -31,20 +34,22 @@ Operator decision 2026-07-12 (see `.agentic/registers/decisions.md`).
 | 3 | Protected paths | Independent Reviewer (different model than the author) reviews the exact head SHA and reports CLEAN + green CI + Operator authorization on a plain-English brief. A verdict against a stale SHA does not count. Every repair push requires a fresh review at the new head SHA. |
 | 4 | Live capital, risk limits, paper→live toggle, Hetzner production runtime | Operator only. No delegation, ever. |
 
-**Transition note (binding until superseded):** the delegated merge authority
-in Tiers 1–2 was adopted by Operator decision 2026-07-12 but is **not yet
-operative**, because the higher-precedence `docs/ops/ai_workflow.md` ("Only
-the Operator can authorize merge"; "Never merge on Coder judgment alone") and
-the PR-template Operator-authorization checkbox still require per-PR Operator
-authorization for every merge. Tiers 1–2 become operative only when the
-workflow-manual slice amends `docs/ops/ai_workflow.md` and the PR template to
-reference these tiers. Until then, all merges — every tier — require Operator
-authorization. Tiers 3–4 add requirements; they never relax under any
-reading.
+**Operative status:** Tiers 1–2 delegated merge becomes operative upon merge
+of the workflow-manual amendment slice (GOV-SCAFFOLD-2), which amends
+`docs/ops/ai_workflow.md` §Merge Authority Tiers and adds a merge-tier
+declaration to the PR template. The standing delegation, its conditions
+(green-checks verification before merge, per-merge record comment and
+same-session report, no merging over failing/pending/bypassed checks), and
+its forbidden-even-when-delegated list are recorded in
+`.agentic/registers/decisions.md` (2026-07-12, OP-7 hardened per OP-8).
+Delegated merges are mechanical execution of that recorded decision and
+revocable at any time. Ambiguous tier → treat as the higher tier. Tiers 3–4
+add requirements; they never relax under any reading.
 
 Protected paths: single source of truth is `.github/CODEOWNERS`. Until the
-CODEOWNERS expansion slice merges, the binding list is the Operator decision
-of 2026-07-12 in `.agentic/registers/decisions.md`.
+CODEOWNERS expansion slice merges, the binding list is the expanded
+protected-path row of 2026-07-12 (OP-8 ratification) in
+`.agentic/registers/decisions.md`.
 
 ## Rules
 

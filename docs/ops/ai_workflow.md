@@ -24,7 +24,9 @@ higher-precedence file.
 The Operator is the human owner. Only the Operator can:
 
 - accept Reviewer signoff;
-- authorize merge;
+- authorize merge on protected paths and Operator-only surfaces (Tiers 3–4 in
+  §Merge Authority Tiers; Tier 1–2 mechanical merges are delegated there
+  under a standing Operator decision);
 - waive branch protection;
 - approve governance exceptions;
 - authorize live services, production jobs, trading/order paths, sync loops, or
@@ -36,6 +38,15 @@ The Coder is an implementation agent. The Coder may edit source, tests, scripts,
 CI, and narrow technical docs when the task allows it. The Coder must keep work
 scoped to the slice, preserve unrelated user changes, and provide a Reviewer
 prompt after every commit or push.
+
+When the Operator directs the local Claude session to act as Coder for a
+slice, it also carries the "Lead Coder" and "Operator Interface" duties
+defined in `.agentic/policies/git-github.md`: authoring that slice, running
+multi-angle inner review before any PR, and giving the Operator
+plain-English briefs and paste-ready step cards. This is a per-slice
+Operator assignment; the `AGENTS.md` §8 default work allocation (remote
+agents for heavy implementation, local agent for review and curation) is
+unchanged as the default.
 
 ### Independent Reviewer
 
@@ -173,7 +184,60 @@ hydrate as approval. Same-chat advisory review does not satisfy required
 independent Reviewer signoff unless the Operator records an explicit governance
 exception.
 
+## Merge Authority Tiers
+
+Adopted by Operator decision 2026-07-12; operative upon merge of the slice
+that added this section (see `.agentic/registers/decisions.md`, which also
+records the standing delegation for Tiers 1–2 and its hardened conditions). The tier table and rules live in
+`.agentic/policies/git-github.md`; summary:
+
+| Tier | Surface | Merge requirement |
+|---|---|---|
+| 1 | Docs / chore | Green CI. Lead Coder executes the mechanical squash merge under the standing delegation and reports after the fact. |
+| 2 | Code outside protected paths | Clean multi-angle inner review + green CI. Same delegated execution and after-the-fact report. |
+| 3 | Protected paths | Independent Reviewer CLEAN verdict at the exact head SHA + green CI + explicit Operator authorization on a plain-English brief. |
+| 4 | Live capital, risk limits, paper→live toggle, Hetzner production runtime | Operator only. Never delegated. |
+
+Rules that apply at every tier:
+
+- Protected paths: source of truth is `.github/CODEOWNERS` once the
+  expansion slice merges; until then the Operator decision of 2026-07-12 in
+  `.agentic/registers/decisions.md` is binding.
+- A review verdict is valid only for the exact head SHA it names; any push
+  voids it and requires fresh review.
+- Every PR states the merge tier it claims in the PR template. If tier
+  classification is ambiguous, treat the PR as the higher tier.
+- Delegated Tier 1–2 merges are mechanical execution of a standing Operator
+  decision, not Coder judgment: the delegation is recorded in the decisions
+  register, is revocable at any time, and never extends to Tier 3–4
+  surfaces.
+- Delegated merge mechanics: exactly `gh pr merge <N> --squash
+  --delete-branch` on a qualifying PR, after verifying via `gh pr checks`
+  that every required check passes and via `gh pr view` that the head SHA
+  equals the inner-reviewed SHA. `--admin` may be used solely to satisfy the
+  approval formality GitHub cannot path-scope — never to merge over
+  failing, pending, or bypassed checks or unresolved review threads.
+- Per-merge record: at merge time the Lead Coder posts a merge-record
+  comment on the PR (tier claimed, head SHA verified, checks state,
+  inner-review evidence) and reports to the Operator in the same session or
+  at the next Operator interaction. Batching or deferring reports is
+  forbidden.
+- Tier 1–2 PRs must not touch `docs/AGENT_STATE.md` or any other protected
+  path (`docs/AGENT_STATE.md` is protected); the merge-record comment is
+  the immediate record, and Current State catches up in the next Tier 3
+  governance PR.
+- For Tier 2, the required review is the multi-angle inner review (two or
+  more distinct read-only reviewer perspectives from the same session;
+  Operator decision of 2026-07-12 confirms this standard for unprotected
+  code). Cross-model Independent Reviewer signoff remains required for
+  Tier 3; the same-chat advisory limitation in §Same-Chat Read-Only
+  Advisory Sub-Agent continues to apply there.
+
 ## Review And Merge Protocol
+
+Tier 1–2 PRs follow steps 1, 8 (verifying against the inner-review SHA for
+Tier 2), and 9, under the standing delegation above. Tier 3 PRs follow all
+steps. Tier 4 actions are Operator-only and follow the runbooks.
 
 1. Coder opens a PR or prepares a branch.
 2. Coder supplies a Reviewer prompt with exact base/head SHAs.
@@ -186,7 +250,10 @@ exception.
    and checks are passing.
 9. After merge, sync the local base branch and move to the next small slice.
 
-Never merge on Coder judgment alone.
+Never merge on Coder judgment alone: Tier 1–2 merges execute a recorded
+standing Operator decision under its stated conditions; Tier 3–4 merges
+require fresh per-PR Operator action. A merge outside those conditions is a
+governance violation regardless of CI state.
 
 ## Exception Process
 
