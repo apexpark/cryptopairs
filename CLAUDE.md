@@ -65,7 +65,8 @@ The predecessor stage AUTO-1 (observe-only sidecar, its own proposal
 disabled-by-default and operator-run. From there the ladder is the AUTO-2
 proposal's §3 "non-negotiable sequence" — later slices may refine names or
 details but must not skip the ordering without a recorded governance
-exception. Exit criteria below are §3's, verbatim:
+exception. Exit criteria below are §3's, unchanged in substance
+(punctuation lightly normalized; §3 is authoritative on any divergence):
 
 | Rung | Purpose | Exit criteria (§3) |
 |---|---|---|
