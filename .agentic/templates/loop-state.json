@@ -1,0 +1,42 @@
+{
+  "schema_version": "agentic_loop_state.v1",
+  "loop_id": "AG-example",
+  "status": "not_started",
+  "objective": "Replace this with the loop objective from loop-spec.json.",
+  "base_branch": "main",
+  "base_sha": "",
+  "head_sha": "",
+  "started_at": "",
+  "updated_at": "",
+  "current_iteration": 0,
+  "hard_stops": {
+    "iteration_cap": 3,
+    "no_progress_cap": 2,
+    "time_cap": "PT2H"
+  },
+  "allowed_paths": [],
+  "forbidden_actions": [],
+  "slice_loop_check": {
+    "new_input_consumed": "",
+    "new_state_transition": "",
+    "new_artifact_runtime_user_value": "",
+    "why_not_repeating_prior_slice": "",
+    "stop_defer_condition": ""
+  },
+  "iterations": [],
+  "latest_gate_result": {
+    "command": "",
+    "exit_code": null,
+    "output_path": "",
+    "completed_at": ""
+  },
+  "checker": {
+    "type": "independent_review",
+    "status": "pending",
+    "reviewed_head_sha": "",
+    "findings_summary": "",
+    "residual_risks": ""
+  },
+  "stop_reason": "",
+  "next_action": ""
+}

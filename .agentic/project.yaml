@@ -1,0 +1,129 @@
+schema_version: cryptopairs_agentic_project.v1
+project: cryptopairs
+adapter_status: active
+scaffold_version: v0 # apex-forge dual-agent scaffold, adopted 2026-07-12 (see registers/decisions.md)
+local_policy_wins: true
+
+highest_precedence:
+  - AGENTS.md
+  - docs/AGENT_STATE.md
+  - docs/playbooks/remote-agent-bootstrap.md
+  - current_operator_instruction
+
+local_governance:
+  apex_workflow: docs/ops/ai_workflow.md
+  pr_template: .github/pull_request_template.md
+  verification_protocol: docs/17-verification-protocol.md
+  guardrails: docs/00-guardrails.md
+  product_scope: docs/01-product-scope.md
+
+adapter_files:
+  policy: .agentic/policies/project-loop-policy.md
+  loop_spec_template: .agentic/templates/loop-spec.json
+  loop_state_template: .agentic/templates/loop-state.json
+  repository_loop_playbook: .agentic/playbooks/repository-development-loop.md
+  loop_run_register: .agentic/registers/loop-runs.md
+
+scaffold_files:
+  policies:
+    - .agentic/policies/constitution.md
+    - .agentic/policies/permissions.md
+    - .agentic/policies/evidence.md
+    - .agentic/policies/git-github.md
+    - .agentic/policies/context.md
+  registers:
+    - .agentic/registers/decisions.md
+    - .agentic/registers/risks.md
+    - .agentic/registers/assumptions.md
+    - .agentic/registers/capabilities.md
+    - .agentic/registers/agent-runs.md
+  playbooks:
+    - .agentic/playbooks/intake-to-work-order.md
+    - .agentic/playbooks/dispatch-worker.md
+    - .agentic/playbooks/review-and-integrate.md
+    - .agentic/playbooks/blocked-or-escalated.md
+  templates:
+    - .agentic/templates/work-order.md
+    - .agentic/templates/context-pack.md
+    - .agentic/templates/worker-result.md
+    - .agentic/templates/evidence-report.md
+    - .agentic/templates/code-review.md
+    - .agentic/templates/spec-review.md
+    - .agentic/templates/handoff.md
+    - .agentic/templates/exception.md
+    - .agentic/templates/pr-description.md
+  runs: .agentic/runs/ # one folder per work order, AG-YYYYMMDD-NNN-<slug>
+
+merge_authority:
+  # Tiers per Operator decision 2026-07-12. Tiers 1-2 delegated merge is NOT
+  # operative until docs/ops/ai_workflow.md is amended (see the transition
+  # note in policies/git-github.md); default_authority.merge stays denied.
+  source_of_truth: .agentic/policies/git-github.md
+  protected_paths_source: .github/CODEOWNERS # binding once expansion slice merges; until then decisions register row 2026-07-12
+  no_self_merge_above_tier: 2
+  stale_sha_review_verdicts: void
+  repairs_require_fresh_review: true
+
+worker_tiers:
+  default_research: T0
+  default_implementation: T1
+  default_privileged_verification: T2
+  human_authority: T3
+
+# "tier3" below means merge Tier 3 (policies/git-github.md), not worker tier T3.
+never_touch_without_tier3_flow:
+  - services/execution-service/**
+  - specs/contracts/**
+  - specs/examples/**
+  - scripts/deploy.sh
+  - infra/**
+  - AGENTS.md
+  - CLAUDE.md
+  - .agentic/**
+  - .github/**
+  - docs/00-guardrails.md
+  - docs/11-data-integrity-policy.md
+  - docs/12-risk-and-execution-policy.md
+  - docs/13-secrets-and-security.md
+  # plus champion promotion/selection modules in services/strategy-service
+  # (exact module list finalized in the CODEOWNERS expansion slice)
+  - tools/scripts/autopilot_*.py
+
+default_authority:
+  trigger: operator_manual_instruction_only
+  scheduler: denied
+  deployment: denied
+  merge: denied
+  branch_protection_override: denied
+  secrets: denied
+  external_connectors: denied
+  host_access: operator_only
+  live_trading: forbidden
+  production_jobs: denied
+  background_loops: denied_unless_operator_explicitly_authorizes
+  dependency_installs: denied_unless_slice_explicitly_authorizes
+  destructive_commands: denied
+  network: denied_unless_repo_task_and_operator_policy_allow
+
+allowed_harness_paths:
+  - .agentic/runs/**
+  - .agentic/registers/loop-runs.md
+
+required_loop_properties:
+  - objective_gate
+  - durable_state
+  - hard_exit
+  - deterministic_gate
+  - independent_checker
+  - explicit_allowed_paths
+  - explicit_forbidden_actions
+
+verification:
+  # loop_preflight.py ships with the global agentic-loop-harness skill, not
+  # this repo. The preflight is operator-local and optional: run when the
+  # skill is installed; otherwise skip and record an E0 limitation.
+  preflight_command_optional_operator_local: python3 "$HOME/.codex/skills/agentic-loop-harness/scripts/loop_preflight.py" .agentic/templates/loop-spec.json --format json
+  required_after_template_change:
+    - json_parse_templates
+    - loop_preflight_template_if_available
+    - git_diff_check
