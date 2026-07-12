@@ -24,7 +24,9 @@ higher-precedence file.
 The Operator is the human owner. Only the Operator can:
 
 - accept Reviewer signoff;
-- authorize merge;
+- authorize merge on protected paths and Operator-only surfaces (Tiers 3–4 in
+  §Merge Authority Tiers; Tier 1–2 mechanical merges are delegated there
+  under a standing Operator decision);
 - waive branch protection;
 - approve governance exceptions;
 - authorize live services, production jobs, trading/order paths, sync loops, or
@@ -36,6 +38,11 @@ The Coder is an implementation agent. The Coder may edit source, tests, scripts,
 CI, and narrow technical docs when the task allows it. The Coder must keep work
 scoped to the slice, preserve unrelated user changes, and provide a Reviewer
 prompt after every commit or push.
+
+When the local Claude session acts as Coder it also carries the "Lead Coder"
+and "Operator Interface" duties defined in `.agentic/policies/git-github.md`:
+authoring slices, running multi-angle inner review before any PR, and giving
+the Operator plain-English briefs and paste-ready step cards.
 
 ### Independent Reviewer
 
@@ -173,7 +180,45 @@ hydrate as approval. Same-chat advisory review does not satisfy required
 independent Reviewer signoff unless the Operator records an explicit governance
 exception.
 
+## Merge Authority Tiers
+
+Adopted by Operator decision 2026-07-12 and operative as of the slice that
+added this section (see `.agentic/registers/decisions.md`, which also records
+the standing delegation for Tiers 1–2). The tier table and rules live in
+`.agentic/policies/git-github.md`; summary:
+
+| Tier | Surface | Merge requirement |
+|---|---|---|
+| 1 | Docs / chore | Green CI. Lead Coder executes the mechanical squash merge under the standing delegation and reports after the fact. |
+| 2 | Code outside protected paths | Clean multi-angle inner review + green CI. Same delegated execution and after-the-fact report. |
+| 3 | Protected paths | Independent Reviewer CLEAN verdict at the exact head SHA + green CI + explicit Operator authorization on a plain-English brief. |
+| 4 | Live capital, risk limits, paper→live toggle, Hetzner production runtime | Operator only. Never delegated. |
+
+Rules that apply at every tier:
+
+- Protected paths: source of truth is `.github/CODEOWNERS` once the
+  expansion slice merges; until then the Operator decision of 2026-07-12 in
+  `.agentic/registers/decisions.md` is binding.
+- A review verdict is valid only for the exact head SHA it names; any push
+  voids it and requires fresh review.
+- Every PR states the merge tier it claims in the PR template. If tier
+  classification is ambiguous, treat the PR as the higher tier.
+- Delegated Tier 1–2 merges are mechanical execution of a standing Operator
+  decision, not Coder judgment: the delegation is recorded in the decisions
+  register, is revocable at any time, and never extends to Tier 3–4
+  surfaces. Every delegated merge is reported to the Operator after the
+  fact.
+- For Tier 2, the required review is the multi-angle inner review (two or
+  more independent read-only reviewer perspectives). Independent
+  cross-model Reviewer signoff remains required for Tier 3; the same-chat
+  advisory limitation in §Same-Chat Read-Only Advisory Sub-Agent continues
+  to apply there.
+
 ## Review And Merge Protocol
+
+Tier 1–2 PRs follow steps 1, 8 (verifying against the inner-review SHA for
+Tier 2), and 9, under the standing delegation above. Tier 3 PRs follow all
+steps. Tier 4 actions are Operator-only and follow the runbooks.
 
 1. Coder opens a PR or prepares a branch.
 2. Coder supplies a Reviewer prompt with exact base/head SHAs.
@@ -186,7 +231,10 @@ exception.
    and checks are passing.
 9. After merge, sync the local base branch and move to the next small slice.
 
-Never merge on Coder judgment alone.
+Never merge on Coder judgment alone: Tier 1–2 merges execute a recorded
+standing Operator decision under its stated conditions; Tier 3–4 merges
+require fresh per-PR Operator action. A merge outside those conditions is a
+governance violation regardless of CI state.
 
 ## Exception Process
 

@@ -13,6 +13,11 @@ What does this PR change?
   - [ ] Coder implementation
   - [ ] Reviewer read-only review
   - [ ] Operator-authored change
+- Merge tier claimed (see `docs/ops/ai_workflow.md` §Merge Authority Tiers):
+  - [ ] Tier 1 — docs/chore
+  - [ ] Tier 2 — code outside protected paths
+  - [ ] Tier 3 — protected paths (Operator authorization required)
+  - [ ] Tier 4 — Operator-only surface
 - Base SHA:
 - Head SHA:
 - Reviewer prompt provided after latest push:
