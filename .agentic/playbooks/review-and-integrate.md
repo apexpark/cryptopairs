@@ -25,5 +25,9 @@ From a finished worker result to a merged slice.
    Then Operator authorization on a plain-English brief; record the
    authorization (head SHA + merge SHA) in the decisions register.
 7. Tier 4: never yours. Brief the Operator with exact paste text.
-8. After merge: update `docs/AGENT_STATE.md` (pin/state per its Update
-   Protocol), the agent-runs register, and CHANGELOG if user-visible.
+8. After merge, by tier. Tier 3: update `docs/AGENT_STATE.md` (pin/state
+   per its Update Protocol) and the agent-runs register — in that same PR
+   or the next Tier 3 governance PR. Tier 1–2: the per-merge record comment
+   is the record; `docs/AGENT_STATE.md` and the agent-runs register (both
+   protected paths) catch up in the next Tier 3 governance PR. CHANGELOG
+   entries ride in the PR itself pre-merge when user-visible.
