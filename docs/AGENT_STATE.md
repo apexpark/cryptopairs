@@ -16,7 +16,7 @@
 | Sprint base branch | `main` |
 | Pin notes | State refreshed after PR #249 merged the AUTO-2B.2 selector-view design proposal (PR #244 shadow allowlist and the governance scaffold PRs #245-#248 are all on main). AUTO-2 remains constrained to the paper-autopilot sequence: static paper trial, shadow dynamic champion/challenger allowlist, governed dynamic allowlist, dynamic paper trial, then live-design gate only. Future coding slices must pass the Slice Loop Check before implementation. |
 | Origin | `https://github.com/apexpark/cryptopairs.git` |
-| Working-tree state | **AUTO-2B shadow dynamic allowlist in review** - operator-provided AUTO-2A paper evidence showed positive static paper performance overall and a tail-loss failure in one leg. This slice adds advisory shadow selector artifacts only. No runtime service behavior, order intents, dispatches, host deployment, dynamic allowlist control, paper-entry control, or live `ENTRY` / `EXIT` enablement is in flight. |
+| Working-tree state | **Governance records + reboot-resilience slice in review** - books the PR #244/#249 authorizations, OP-24, and OP-25..30 host actions into the registers; adds `restart: unless-stopped` to the six compose services; makes the operator-authorized stale-skip paper loop official runbook text; adds hosted-runbook reboot guidance. On the host: second 72h paper window running (run `20260713T060641Z`), fresh observe capture running. No service code, order intents, dispatches, dynamic allowlist control, or live `ENTRY` / `EXIT` enablement is in flight. |
 
 If the pin above is not reachable from `HEAD` via fast-forward, this file is stale; if `HEAD` is ahead of the pin, see §"Pin Convention".
 
