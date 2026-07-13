@@ -346,7 +346,7 @@ while [ "$(date -u +%s)" -lt "$deadline_epoch" ]; do
     echo "{\"observed_at\":\"$observed_at\",\"status\":\"tick_complete\"}"
   else
     case "$freshness_json" in
-      stale:*|"no fresh-checkable 1m observe candidates found")
+      "latest 1m observe candidate is stale:"*|"no fresh-checkable 1m observe candidates found")
         echo "{\"observed_at\":\"$observed_at\",\"status\":\"tick_skipped_stale_observe\"}"
         printf '%s\n' "$freshness_json"
         ;;
