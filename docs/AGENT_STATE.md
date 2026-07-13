@@ -11,7 +11,7 @@
 |---|---|
 | Last updated (UTC) | 2026-07-13 |
 | Updated by | claude |
-| Repo HEAD pin (committed) | `4bce8e5` |
+| Repo HEAD pin (committed) | `4bce8e5712ca23bbbe670bb870eb5e8159c0cc30` |
 | Pin branch | `main` |
 | Sprint base branch | `main` |
 | Pin notes | State refreshed after PR #248 completed the governance scaffold (CODEOWNERS canonicalized) and operator-provided AUTO-2A paper evidence unblocked AUTO-2B. AUTO-2 remains constrained to the paper-autopilot sequence: static paper trial, shadow dynamic champion/challenger allowlist, governed dynamic allowlist, dynamic paper trial, then live-design gate only. Future coding slices must pass the Slice Loop Check before implementation. |

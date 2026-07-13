@@ -80,3 +80,4 @@ requirements.txt @apexpark
 /tools/scripts/autopilot_observe_report.py @apexpark
 /tools/scripts/autopilot_paper.py @apexpark
 /tools/scripts/autopilot_paper_report.py @apexpark
+/tools/scripts/autopilot_shadow_allowlist.py @apexpark
