@@ -322,22 +322,29 @@ while [ "$(date -u +%s)" -lt "$deadline_epoch" ]; do
     | xargs -0 -r cat \
     | tail -n 500 > "$RUN_ROOT/latest_observe_candidates.jsonl"
 
-  python3 "$RUN_ROOT/check_observe_fresh.py" \
-    "$RUN_ROOT/latest_observe_candidates.jsonl" \
-    "$MAX_OBSERVE_CANDIDATE_AGE_SECONDS" \
-    | tee "$RUN_ROOT/observe_freshness_latest.json"
+  # A stale freshness check SKIPS this tick instead of killing the loop
+  # (adopted 2026-07-13 after a sparse-candidate spell ended a prior run
+  # early). No paper tick ever runs on stale candidates; skips are logged.
+  if freshness_json="$(python3 "$RUN_ROOT/check_observe_fresh.py" \
+      "$RUN_ROOT/latest_observe_candidates.jsonl" \
+      "$MAX_OBSERVE_CANDIDATE_AGE_SECONDS" 2>&1)"; then
+    printf '%s\n' "$freshness_json" | tee "$RUN_ROOT/observe_freshness_latest.json"
 
-  AUTOPILOT_PAPER_ENABLED=true \
-  AUTOPILOT_PAPER_ALLOWED_PAIR_VARIANTS="$ALLOWLIST" \
-  AUTOPILOT_PAPER_HOLD_WINDOW_BARS="$HOLD_WINDOW_BARS" \
-  AUTOPILOT_PAPER_OUTPUT_DIR="$RUN_ROOT/records" \
-  python3 tools/scripts/autopilot_paper.py \
-    --once \
-    --candidates-jsonl "$RUN_ROOT/latest_observe_candidates.jsonl" \
-    --marks-json "$RUN_ROOT/paper_marks_1m.json" \
-    --output-dir "$RUN_ROOT/records"
+    AUTOPILOT_PAPER_ENABLED=true \
+    AUTOPILOT_PAPER_ALLOWED_PAIR_VARIANTS="$ALLOWLIST" \
+    AUTOPILOT_PAPER_HOLD_WINDOW_BARS="$HOLD_WINDOW_BARS" \
+    AUTOPILOT_PAPER_OUTPUT_DIR="$RUN_ROOT/records" \
+    python3 tools/scripts/autopilot_paper.py \
+      --once \
+      --candidates-jsonl "$RUN_ROOT/latest_observe_candidates.jsonl" \
+      --marks-json "$RUN_ROOT/paper_marks_1m.json" \
+      --output-dir "$RUN_ROOT/records"
 
-  echo "{\"observed_at\":\"$observed_at\",\"status\":\"tick_complete\"}"
+    echo "{\"observed_at\":\"$observed_at\",\"status\":\"tick_complete\"}"
+  else
+    echo "{\"observed_at\":\"$observed_at\",\"status\":\"tick_skipped_stale_observe\"}"
+    printf '%s\n' "$freshness_json"
+  fi
   sleep 60
 done
 

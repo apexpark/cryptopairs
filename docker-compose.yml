@@ -2,6 +2,7 @@ services:
   timescaledb:
     image: timescale/timescaledb:2.16.1-pg16
     container_name: cryptopairs-timescaledb
+    restart: unless-stopped
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-cryptopairs}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-cryptopairs}
@@ -24,6 +25,7 @@ services:
   redis:
     image: redis:7.4-alpine
     container_name: cryptopairs-redis
+    restart: unless-stopped
     command: ["redis-server", "--appendonly", "yes"]
     ports:
       - "${REDIS_PORT:-6379}:6379"
@@ -38,6 +40,7 @@ services:
   data-service:
     image: rust:1.93
     container_name: cryptopairs-data-service
+    restart: unless-stopped
     profiles: ["app"]
     working_dir: /workspace
     command: ["bash", "-lc", "source /usr/local/cargo/env && cargo run -p data-service --bin data-service"]
@@ -68,6 +71,7 @@ services:
   account-service:
     image: rust:1.93
     container_name: cryptopairs-account-service
+    restart: unless-stopped
     profiles: ["app"]
     working_dir: /workspace
     command: ["bash", "-lc", "source /usr/local/cargo/env && cargo run -p account-service --bin account-service"]
@@ -88,6 +92,7 @@ services:
   execution-service:
     image: rust:1.93
     container_name: cryptopairs-execution-service
+    restart: unless-stopped
     profiles: ["app"]
     working_dir: /workspace
     command: ["bash", "-lc", "source /usr/local/cargo/env && cargo run -p execution-service --bin execution-service"]
@@ -114,6 +119,7 @@ services:
   strategy-service:
     image: rust:1.93
     container_name: cryptopairs-strategy-service
+    restart: unless-stopped
     profiles: ["app"]
     working_dir: /workspace
     command:

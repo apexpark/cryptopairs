@@ -21,6 +21,19 @@ Provide a controlled, step-by-step rollout path for public browser access with a
 7. Validate fail-closed readiness and data pipeline health.
 8. Enable demo sharing with manual-only controls.
 
+## Host Reboot Notes
+
+1. Compose services carry `restart: unless-stopped`; after a reboot, verify
+   all six containers returned (`docker ps`) and probe the three health
+   endpoints. The Vercel UI stays up during a reboot but shows errors until
+   the backend returns (strategy-service is the slow starter).
+2. A reboot leaves a short gap in 1m capture; integrity auditing records it
+   and staleness gates protect downstream consumers. Backfill later if
+   completeness matters.
+3. Do not reboot mid paper-window: nohup loops (observe capture, paper
+   loop) do not survive a reboot and must be operator-restarted per their
+   runbooks.
+
 ## Preflight Checklist
 
 1. All provider accounts active with billing enabled.
