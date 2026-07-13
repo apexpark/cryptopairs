@@ -84,10 +84,15 @@ buckets — `tradable_now`, `watchlist`, `excluded` — and
   champion/challenger's stated view, not entry candidates.
 - Selector-view rows carry `"capture_profile": "selector_view"` and a
   `"cue_bucket"` field. This is a **versioned** update to the
-  `autopilot_observe_record` contract (its schema is
-  `additionalProperties: false` with `schema_version` pinned, so the
-  version bumps and the example updates — same treatment §4.2 gives the
-  snapshot schema).
+  `autopilot_observe_record` contract, and a larger one than a plain field
+  addition: the current schema's closed `decision` enum and required
+  entry-candidate fields (`quality_window`, `conflicting_live_trade`,
+  `dispatch_mode`, `kill_switch_active`, …) fit entry rows only, so the
+  bump either adds a `SELECTOR_VIEW_OBSERVED` decision member with a
+  conditional (`if/then`) relaxation of entry-only required fields, or
+  splits selector-view rows into their own row type within the versioned
+  contract. B2-a decides between those two shapes; either way the example
+  updates and existing consumers of version-1 records are unaffected.
 - Quality windows: selector-view capture bypasses the entry-candidate
   quality gate entirely (it observes the selector, it does not nominate
   entries), so the wide run needs no per-pair windows. The existing
@@ -112,9 +117,12 @@ Extend `tools/scripts/autopilot_shadow_allowlist.py`:
   new `selector_view` section with its own lists
   (`selector_view_prominent`, `selector_view_marginal`), every row carrying
   `"evidence_kind": "selector_view"`.
-- **No outcome claims**: selector-view rows carry no realized or estimated
-  bps; the realized gates (tail loss, avg net bps) do not apply to them
-  and no aggregate combines the two evidence kinds. The methodology block
+- **No outcome claims**: selector-view metrics carry no realized-outcome
+  bps and no tool-produced outcome estimate. (Selector-view rows may
+  record the selector's own stated `net_edge_bps` as an observation of
+  the selector's view — that figure is never treated as an outcome.) The
+  realized gates (tail loss, avg net bps) do not apply to selector-view
+  rows and no aggregate combines the two evidence kinds. The methodology block
   states selector-view evidence is not PnL, not fill evidence, and not
   permission for any eligibility change.
 - Discovery report: a new `universe` block — selector-view universe size
