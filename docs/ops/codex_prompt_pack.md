@@ -138,6 +138,43 @@ Return P1/P2/P3 findings with file:line references, residual risks,
 verification performed, and whether the PR is acceptable for Operator review.
 ```
 
+## Tier 3 Exact-SHA Reviewer Prompt (Operator pastes into Codex)
+
+```text
+You are the Independent Reviewer for apexpark/cryptopairs PR #<N>.
+<If this follows a repair push, state: "FRESH review after a repair push.
+Your verdict at <old-sha> is void." and list what the repair commits claim
+to fix.>
+
+Review the PR at exactly head SHA <head-sha>.
+Before reviewing, confirm the PR head is still this SHA; if it is not, STOP
+and reply "STALE SHA — request a fresh review prompt" and do nothing else.
+
+Conduct: read-only. Do not fix anything, do not merge, do not push.
+
+Review against:
+1. AGENTS.md, docs/00-guardrails.md, docs/ops/ai_workflow.md — no agent may
+   gain authority these docs withhold.
+2. Internal consistency of the diff with .agentic/registers/decisions.md
+   and the protected-path list.
+3. Correctness; behavior-asserting tests where applicable.
+4. Safety invariants: kill switch never bypassed; fail-closed on
+   stale/unknown state; live ENTRY/EXIT operator-confirmed (docs/12 rule 8);
+   promotions operator-triggered; emergency stop-close automated (docs/12
+   rule 9).
+
+Report each finding as file:line, severity (P1 blocking / P2 should-fix /
+P3 nit), and confidence. Coverage over precision.
+
+End your reply with exactly one verdict line:
+VERDICT: CLEAN at <head-sha>
+or
+VERDICT: FINDINGS at <head-sha>
+```
+
+A verdict that omits the SHA, names a different SHA, or follows a later push
+does not count. Every repair push requires a fresh prompt with the new SHA.
+
 ## Operator Acceptance
 
 ```text

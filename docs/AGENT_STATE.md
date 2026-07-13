@@ -9,12 +9,12 @@
 
 | Field | Value |
 |---|---|
-| Last updated (UTC) | 2026-07-06 |
-| Updated by | codex |
-| Repo HEAD pin (committed) | `ae93708dd01c5602c0ebe87a14d3934799c3c5e5` |
+| Last updated (UTC) | 2026-07-13 |
+| Updated by | claude |
+| Repo HEAD pin (committed) | `4bce8e5` |
 | Pin branch | `main` |
 | Sprint base branch | `main` |
-| Pin notes | State refreshed after operator-provided AUTO-2A paper evidence unblocked AUTO-2B implementation. AUTO-2 remains constrained to the paper-autopilot sequence: static paper trial, shadow dynamic champion/challenger allowlist, governed dynamic allowlist, dynamic paper trial, then live-design gate only. Future coding slices must pass the Slice Loop Check before implementation. |
+| Pin notes | State refreshed after PR #248 completed the governance scaffold (CODEOWNERS canonicalized) and operator-provided AUTO-2A paper evidence unblocked AUTO-2B. AUTO-2 remains constrained to the paper-autopilot sequence: static paper trial, shadow dynamic champion/challenger allowlist, governed dynamic allowlist, dynamic paper trial, then live-design gate only. Future coding slices must pass the Slice Loop Check before implementation. |
 | Origin | `https://github.com/apexpark/cryptopairs.git` |
 | Working-tree state | **AUTO-2B shadow dynamic allowlist in review** - operator-provided AUTO-2A paper evidence showed positive static paper performance overall and a tail-loss failure in one leg. This slice adds advisory shadow selector artifacts only. No runtime service behavior, order intents, dispatches, host deployment, dynamic allowlist control, paper-entry control, or live `ENTRY` / `EXIT` enablement is in flight. |
 
@@ -43,6 +43,10 @@ If the pin above is not reachable from `HEAD` via fast-forward, this file is sta
 | AUTO-2A - Direction-level static paper gating | **Merged** | codex | PR #242 landed at `a47f52e`. It added direction-aware static allowlist support for AUTO-2A paper-only trials using `pair_id:selected_variant:direction` entries while preserving legacy pair/variant allowlists. It updates paper reports/runbook evidence for allowlist mode and prepares operator-only 72h direction-gated trial commands. No service behavior, dynamic allowlist control, execution-service POST path, or live execution change is included. |
 | AUTO-2A - Operator paper evidence | **Operator reported complete** | operator | Operator-provided Hetzner evidence for run `20260628T061640Z` showed 83/83 closed paper positions, 57 profitable, +288.9911 realized net bps, and no open positions. `PF_DOGEUSD__PF_PEPEUSD:ROBUST_Z` both directions and `PF_XBTUSD__PF_BNBUSD:COINTEGRATION_Z:LONG_SPREAD` were positive; `PF_TAOUSD__PF_HYPEUSD:COINTEGRATION_Z:SHORT_SPREAD` was negative due to a -118.0464 bps tail loss. Exit-lag analysis showed the edge survived outside long-lag exits but requires caveating. |
 | AUTO-2B - Shadow dynamic allowlist | **In review** | codex | This branch adds the `autopilot_shadow_allowlist_snapshot` contract/example, advisory `tools/scripts/autopilot_shadow_allowlist.py`, focused tests, proposal, Superpowers plan, and runbook. Output is shadow-only and must not control `AUTOPILOT_PAPER_ALLOWED_PAIR_VARIANTS`, paper entries, live entries, execution order intents, dispatch, or exchange calls. |
+| GOV-SCAFFOLD-1 - Install dual-agent governance scaffold v0 (`.agentic/**`) | **Merged** | claude | PR #245 squash-merged at `2516fc5` (Codex CLEAN at `7c0efe2` after three exact-SHA review cycles; Operator-executed merge, recorded in `.agentic/registers/decisions.md`). Branch `claude/agentic-scaffold-v0` builds on `codex/agentic-loop-harness-adapter` (build-on, not supersede; Operator decision 2026-07-12). Adds constitution/permissions/evidence/git/context policies, seeded decisions/risks/assumptions/capabilities/agent-runs registers, nine work-order/review/handoff templates, and intake/dispatch/review/blocked playbooks. Docs-only; grants no new authority — the 2026-07-12 merge tiers are recorded as adopted but non-operative until `docs/ops/ai_workflow.md` is amended (Slice 2); protected-path list recorded in `.agentic/registers/decisions.md`. Tier 3 flow: Codex exact-SHA review + Operator authorization required. Follow-on slices: dual-agent workflow manual (Slice 2), `CLAUDE.md` Autonomy Doctrine mapped to the AUTO ladder (Slice 3), CODEOWNERS/PR-template expansion (Slice 4). |
+| GOV-SCAFFOLD-2 - Make merge-authority tiers operative | **Merged** | claude | PR #246 squash-merged at `7041b41` (Codex CLEAN at `053da11` after three exact-SHA cycles; Operator-executed merge; authorization recorded in the decisions register). Tiers 1–2 delegated merge operative from that merge under the hardened standing-delegation conditions. |
+| GOV-SCAFFOLD-3 - CLAUDE.md Autonomy Doctrine | **Merged** | claude | PR #247 squash-merged at `b409849` (Codex CLEAN at `a5132ae` after four exact-SHA cycles; Operator-executed merge; authorization recorded in the decisions register). CLAUDE.md is the Claude session entry point: operator-invoked/evidence-gated phase, graduation on the full AUTO-2 §3 sequence with AUTO-2D unskippable, AUTO-3 never grantable, graduation rows valid only when Tier 3-merged citing an Operator instruction. |
+| GOV-SCAFFOLD-4 - CODEOWNERS canonicalization | **Merged** | claude | PR #248 squash-merged at `4bce8e5` (Codex CLEAN at `51baba1` after three exact-SHA cycles; Operator-executed merge; authorization recorded in the decisions register). Scaffold complete — apex-forge audit gaps closed. |
 
 ### Sprint: Champion-Selection Integrity (docs/26 + docs/27)
 

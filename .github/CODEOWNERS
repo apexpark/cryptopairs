@@ -1,23 +1,82 @@
-# CODEOWNERS (role-based placeholders)
-# Temporary ownership mapped to @apexpark until team handles exist.
+# CODEOWNERS — single source of truth for merge Tier 3 protected paths.
+#
+# TIER RULE: the global `*` line below is default review-routing ONLY — it
+# is NOT a Tier 3 designation. Merge Tier 3 consists of the specifically
+# enumerated entries after the global line. A path matched only by the
+# global `*` takes its tier from the Tier 2 enumeration in
+# .agentic/registers/decisions.md (crates/**, apps/web/**, research/**,
+# tools/** except autopilot scripts, plans/**, remaining non-policy docs).
+#
+# Every specifically enumerated path requires the Tier 3 process to merge:
+# Independent Reviewer (Codex) CLEAN verdict at the exact head SHA + green
+# CI + Operator authorization (docs/ops/ai_workflow.md §Merge Authority
+# Tiers). This is a process rule; GitHub-mechanical enforcement
+# additionally requires the Operator to enable "Require review from Code
+# Owners" in branch protection — an Operator-only setting this file cannot
+# grant. If this file and any other protected-path list disagree in the
+# NARROWING direction, the disagreement is a defect to fix, not a
+# relaxation to exploit; the broader protection applies until reconciled.
+#
+# Ownership is mapped to @apexpark (Operator) until team handles exist.
 
-# Global defaults
+# Global default — review-routing only (see TIER RULE above).
 * @apexpark
 
-# Agent and governance
+# Governance and agent-operating rules
 /AGENTS.md @apexpark
-/CHANGELOG.md @apexpark
+/CLAUDE.md @apexpark
+/.agentic/ @apexpark
+/.github/ @apexpark
+/docs/ops/ @apexpark
+/docs/AGENT_STATE.md @apexpark
+/docs/00-guardrails.md @apexpark
+/docs/05-agent-build-workflow.md @apexpark
+/docs/07-dependency-and-supply-chain-policy.md @apexpark
+/docs/17-verification-protocol.md @apexpark
+CHANGELOG.md @apexpark
 /docs/02-versioning-and-releases.md @apexpark
 /docs/03-contracts-and-compatibility.md @apexpark
-/docs/17-verification-protocol.md @apexpark
 
-# Policies
+# Safety and security policies
 /docs/11-data-integrity-policy.md @apexpark
 /docs/12-risk-and-execution-policy.md @apexpark
 /docs/13-secrets-and-security.md @apexpark
 /docs/15-observability-and-alerting.md @apexpark
 /docs/16-ui-styling-guide.md @apexpark
 
-# Contracts
+# Operator runbooks (command sheets executed on or against the host)
+/docs/playbooks/ @apexpark
+
+# Contracts and examples
 /specs/contracts/ @apexpark
 /specs/examples/ @apexpark
+
+# Runtime services (all)
+/services/ @apexpark
+
+# Deployment, infra, host-executed code
+/scripts/ @apexpark
+/infra/ @apexpark
+/.githooks/ @apexpark
+docker-compose*.yml @apexpark
+.env.example @apexpark
+
+# Dependency and toolchain manifests (supply chain) — unanchored on purpose:
+# they protect these manifests at ANY depth (crates/**, apps/**,
+# research/**, future services), across all toolchains per docs/07.
+Cargo.toml @apexpark
+Cargo.lock @apexpark
+rust-toolchain.toml @apexpark
+package.json @apexpark
+package-lock.json @apexpark
+pyproject.toml @apexpark
+requirements.txt @apexpark
+
+# Autopilot paper-trading tooling. The glob is intent; the explicit lines
+# are the guaranteed-supported form — ADD A LINE HERE for every new
+# tools/scripts/autopilot_*.py file (enumeration is part of its review).
+/tools/scripts/autopilot_*.py @apexpark
+/tools/scripts/autopilot_observe.py @apexpark
+/tools/scripts/autopilot_observe_report.py @apexpark
+/tools/scripts/autopilot_paper.py @apexpark
+/tools/scripts/autopilot_paper_report.py @apexpark

@@ -24,6 +24,47 @@ This project follows SemVer as defined in `docs/02-versioning-and-releases.md`.
   candidates with tail-loss and exit-lag penalties, compares against the static
   paper allowlist, and preserves the boundary that shadow output cannot control
   paper entries or live automation.
+- Canonicalized `.github/CODEOWNERS` as the single source of truth for
+  merge Tier 3 protected paths: expanded to the full 2026-07-12 list (all
+  services, scripts, playbooks, git hooks, compose files, dependency and
+  toolchain manifests, governance and ops docs, agent state, autopilot
+  tooling) while retaining all legacy protections. Tier 1–2 delegated PRs
+  now touch neither `CHANGELOG.md` nor `docs/AGENT_STATE.md`; both catch
+  up in Tier 3 governance PRs.
+- Added `CLAUDE.md`: the Claude session entry point and Autonomy Doctrine.
+  Current phase is operator-invoked and evidence-gated (no unattended
+  loops); autonomy graduates per component on the AUTO-2 §3 non-negotiable
+  sequence (AUTO-2A → 2B → 2C → 2D → AUTO-3 design gate, with AUTO-1 as
+  the deployed observe-only predecessor) only by Operator sign-off merged
+  via the Tier 3 flow; AUTO-3 is never grantable by the doctrine; the
+  2026-07-12 safety invariants and the docs/23 always-on rules are
+  restated with capital protection never restricted. `AGENTS.md` remains
+  highest precedence.
+- Made the 2026-07-12 merge-authority tiers operative (upon merge of this
+  slice): `docs/ops/ai_workflow.md` now defines the four tiers with a
+  tier-scoped review/merge protocol, the PR template requires a merge-tier
+  declaration, the Codex prompt pack gains a Tier 3 exact-SHA reviewer
+  prompt, and the decisions register records the PR #245 merge
+  authorization plus the standing Tier 1–2 delegated-merge decision
+  (green-checks-verified merges only, per-merge record comment, revocable,
+  with a forbidden-even-when-delegated list). The Tier 3 protected-path
+  list was expanded after adversarial inner review and Operator
+  ratification: all `services/**`, `scripts/**`, `docs/playbooks/**`,
+  `.githooks/**`, `docker-compose*.yml`, dependency/toolchain manifests,
+  and `.env.example` now require cross-model review plus Operator
+  authorization. Tier 3–4 requirements are unchanged or strengthened.
+- Installed the dual-agent governance scaffold (v0) under `.agentic/**`,
+  building on the loop-harness adapter: constitution, worker-tier,
+  evidence-ladder, context, and git/merge policies, seeded
+  decisions/risks/assumptions/capabilities/agent-runs registers, nine
+  work-order/review/handoff templates, and intake/dispatch/review/blocked
+  playbooks. Records the 2026-07-12 merge-authority tiers as adopted but
+  non-operative until `docs/ops/ai_workflow.md` is amended; grants no new
+  authority and repo governance wins.
+- Added a project-local `.agentic/**` adapter for bounded agentic loops,
+  including default-deny local policy, machine-checkable loop spec/state
+  templates, a repository-development loop playbook, and a loop-run register
+  while preserving existing Apex/AGENTS authority boundaries.
 - AUTO-2A paper-only tooling now supports direction-gated static allowlists
   using `pair_id:selected_variant:direction` entries while preserving legacy
   `pair_id:selected_variant` behavior. Paper reports record the static
