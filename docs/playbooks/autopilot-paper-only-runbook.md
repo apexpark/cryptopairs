@@ -325,6 +325,9 @@ while [ "$(date -u +%s)" -lt "$deadline_epoch" ]; do
   # A stale freshness check SKIPS this tick instead of killing the loop
   # (adopted 2026-07-13 after a sparse-candidate spell ended a prior run
   # early). No paper tick ever runs on stale candidates; skips are logged.
+  # Only the EXPECTED stale/no-candidate outcomes skip; any other checker
+  # failure (corrupt input, missing file, traceback) aborts the loop —
+  # unknown state stays fail-closed.
   if freshness_json="$(python3 "$RUN_ROOT/check_observe_fresh.py" \
       "$RUN_ROOT/latest_observe_candidates.jsonl" \
       "$MAX_OBSERVE_CANDIDATE_AGE_SECONDS" 2>&1)"; then
@@ -342,8 +345,17 @@ while [ "$(date -u +%s)" -lt "$deadline_epoch" ]; do
 
     echo "{\"observed_at\":\"$observed_at\",\"status\":\"tick_complete\"}"
   else
-    echo "{\"observed_at\":\"$observed_at\",\"status\":\"tick_skipped_stale_observe\"}"
-    printf '%s\n' "$freshness_json"
+    case "$freshness_json" in
+      stale:*|"no fresh-checkable 1m observe candidates found")
+        echo "{\"observed_at\":\"$observed_at\",\"status\":\"tick_skipped_stale_observe\"}"
+        printf '%s\n' "$freshness_json"
+        ;;
+      *)
+        echo "{\"observed_at\":\"$observed_at\",\"status\":\"loop_aborted_unexpected_checker_error\"}"
+        printf '%s\n' "$freshness_json" >&2
+        exit 1
+        ;;
+    esac
   fi
   sleep 60
 done

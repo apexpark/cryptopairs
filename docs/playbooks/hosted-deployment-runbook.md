@@ -24,8 +24,9 @@ Provide a controlled, step-by-step rollout path for public browser access with a
 ## Host Reboot Notes
 
 1. Compose services carry `restart: unless-stopped`; after a reboot, verify
-   all six containers returned (`docker ps`) and probe the three health
-   endpoints. The Vercel UI stays up during a reboot but shows errors until
+   all six containers returned (`docker ps`) and probe all four app health
+   endpoints (data 8080, account 8081, execution 8082, strategy 8083 — the
+   same set `scripts/deploy.sh` checks). The Vercel UI stays up during a reboot but shows errors until
    the backend returns (strategy-service is the slow starter). Note:
    `scripts/deploy.sh` recreates only the four app services, so
    timescaledb/redis pick up compose policy changes only on a manual

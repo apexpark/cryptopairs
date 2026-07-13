@@ -108,7 +108,7 @@ Source of truth for shipped behavior is `CHANGELOG.md` `## Unreleased` section. 
 - **Committed (`7e7e38d`)**: AUTO-2A paper report and hosted runbook (PR #240) — added `tools/scripts/autopilot_paper_report.py`, the `autopilot_paper_report` contract/example, focused tests, and `docs/playbooks/autopilot-paper-only-runbook.md` for paper-only hosted run, monitor, stop, evidence, and report commands.
 - **Committed (`5f21375`)**: AUTO-2A paper observe-record compatibility fix (PR #241) — accepted real observe-only records whose observe key is minute-bucketed and whose strategy `source_generated_at` includes fractional seconds in the same serialized second as `observed_at`, while preserving stale/future candidate blocking.
 - **Committed (`a47f52e`)**: AUTO-2A direction-level static paper gating (PR #242) — added `pair_id:selected_variant:direction` allowlist support for paper-only trials while preserving pair-level entries, report evidence for `pair_variant` / `pair_variant_direction` / `mixed` allowlist mode, and 72h direction-gated runbook commands. No service runtime, dynamic allowlist control, execution-service POST path, or live execution change was included.
-- **In review**: AUTO-2B shadow dynamic allowlist — adds advisory selector artifacts over closed `1m` paper evidence, including sample, tail-loss, exit-lag, score, and static-allowlist disagreement data. Output cannot control paper entries; AUTO-2C remains the governor slice.
+- **Merged**: AUTO-2B shadow dynamic allowlist (PR #244 at `632ba80`) — advisory selector artifacts over closed `1m` paper evidence with churn measurability; first snapshot run 2026-07-13. AUTO-2B.2 selector-view design merged (PR #249 at `c1eaf79`); implementation awaits operator go. Output cannot control paper entries; AUTO-2C remains the governor slice.
 
 ---
 
@@ -520,7 +520,7 @@ Follow-ups carried forward from prior reviews. Ordered by source review then sev
 
 Pickable items, in priority order:
 
-1. **Remote/local agent: review AUTO-2B shadow dynamic allowlist** - verify the advisory-only selector snapshot contract/tooling and preserve the boundary that shadow output cannot control paper entries.
+1. **Remote/local agent: AUTO-2B.2 implementation (B2-a contracts slice)** - after operator go and §8 answers, implement the selector-view contract updates per `docs/proposals/AUTO-2B2-full-universe-shadow.md`; preserve the boundary that shadow output cannot control paper entries.
 2. **Remote/local agent: AUTO-2C governed dynamic allowlist** - after AUTO-2B review/merge, add sample, dwell-time, churn, concentration, direction, quarantine, and stale-selector gates between champion/challenger output and paper eligibility.
 3. **Remote/local agent: AUTO-2D dynamic paper trial** - allow only the governed dynamic allowlist, not raw champion/challenger output, to control paper-only eligibility. Keep live execution out of scope.
 4. **Remote/local agent: AUTO-3 live automation design proposal** - design-only, after AUTO-2D evidence and explicit operator approval. No live runtime implementation in the same slice.
