@@ -19,8 +19,9 @@
   and the observe loop's own log shows `BLOCKED_NOT_ALLOWLISTED` at the
   observe layer — **both funnel layers are allowlisted**.
 - `tools/scripts/autopilot_observe.py` (`AUTOPILOT_OBSERVE_ALLOWED_PAIR_VARIANTS`),
-  `tools/scripts/autopilot_observe_report.py` (attribution over observe
-  records with simulated outcomes), `tools/scripts/autopilot_shadow_allowlist.py`
+  `tools/scripts/autopilot_observe_report.py` (attribution of real paper
+  trades to observe candidates — not a simulator; verified in inner
+  review), `tools/scripts/autopilot_shadow_allowlist.py`
   (realized-evidence scorer, PR #244).
 
 ## 2. Slice Loop Check
@@ -30,14 +31,15 @@
 - **New state transition**: shadow selection moves from "re-rank the static
   shortlist" to "select over the observed universe" — the last structural
   gap between AUTO-2B evidence and a genuinely dynamic AUTO-2C governor.
-- **New artifact/runtime/user value**: universe-wide simulated selection
+- **New artifact/runtime/user value**: universe-wide selector-view
   evidence, clearly segregated from realized paper evidence; churn and
-  stability measured over the real candidate universe.
+  stability measured over the real candidate universe; a discovery list
+  with a documented promotion path.
 - **Why this is not repeating the prior slice**: PR #244 cannot discover
   any pair outside the paper allowlist by construction; this proposal adds
   the discovery layer it explicitly deferred.
-- **Stop/defer condition**: any coupling of wide-observe or simulated
-  selection output to paper eligibility or execution → out of scope here,
+- **Stop/defer condition**: any coupling of selector-view output to
+  paper eligibility or execution → out of scope here,
   AUTO-2C+ territory; any host sizing concern (record volume) → stop and
   re-scope with the Operator.
 
