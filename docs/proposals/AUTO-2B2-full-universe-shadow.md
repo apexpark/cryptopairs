@@ -45,8 +45,12 @@
 
 The merged AUTO-2B scorer only sees legs that produced closed paper
 positions, and paper positions only exist for the static allowlist. The
-observe sidecar — the layer that could see everything — is itself gated by
-`AUTOPILOT_OBSERVE_ALLOWED_PAIR_VARIANTS`. Consequently:
+observe sidecar is doubly narrowed: it is gated by
+`AUTOPILOT_OBSERVE_ALLOWED_PAIR_VARIANTS`, and — more fundamentally — it
+reads only the cue endpoint's `tradable_now` bucket, which is the
+selector's already-approved set. The `watchlist` and `excluded` buckets,
+where the rest of the universe and the selector's reasoning live, are
+never recorded. Consequently:
 
 1. The shadow selector can demote shortlist legs but can never surface a
    new pair: `shadow_only_count` is structurally 0.
@@ -58,65 +62,93 @@ observe sidecar — the layer that could see everything — is itself gated by
 ## 4. Design
 
 Two additive, advisory-only changes. Neither grants any new authority; all
-default-deny boundaries hold.
+default-deny boundaries hold. **No simulation layer**: this design claims
+no outcomes for pairs that have never paper-traded; discovered pairs earn
+outcome evidence only via the promotion path in §4.3.
 
-### 4.1 Wide observe capture (observe layer)
+### 4.1 Selector-view capture (observe layer)
 
-Add an explicit opt-in to `tools/scripts/autopilot_observe.py`:
+The cue endpoint (`strategy_pairs_trade_now_response`) reports three
+buckets — `tradable_now`, `watchlist`, `excluded` — and
+`tools/scripts/autopilot_observe.py` currently reads only `tradable_now`
+(the already-selected set). The change:
 
-- New env `AUTOPILOT_OBSERVE_ALLOW_ALL_PAIR_VARIANTS` (default **false**,
-  fail closed). When `true`, the allowlist gate admits every
-  pair/variant/direction the strategy service's cue endpoint reports for
-  the `1m` timeframe; all other gates (quality windows optional per pair,
-  staleness, schema validation, 1m-only) unchanged.
-- Records written by a wide capture carry `"capture_profile": "wide"` (new
-  optional field, additive schema change to `autopilot_observe_record`).
-- The wide capture runs as a **separate operator-started observe run root**
-  alongside (not replacing) the trial-supporting narrow capture, so the
-  paper loop's input stays exactly as reviewed.
-- Sizing guard: the runbook budgets record volume (universe size × cadence)
-  and instructs the Operator to confirm disk headroom; the tool logs a
-  per-tick record count so growth is visible.
+- New env `AUTOPILOT_OBSERVE_CAPTURE_SELECTOR_VIEW` (default **false**,
+  fail closed; unset ⇒ behavior identical to today, proven by test). When
+  `true`, the tool additionally records one **selector-view row per
+  candidate in every bucket** — pair/variant/direction, bucket name, the
+  selector's own reason/gate fields as reported by the endpoint, and
+  `score_z`/edge fields where present. These rows are observations of the
+  champion/challenger's stated view, not entry candidates.
+- Selector-view rows carry `"capture_profile": "selector_view"` and a
+  `"cue_bucket"` field. This is a **versioned** update to the
+  `autopilot_observe_record` contract (its schema is
+  `additionalProperties: false` with `schema_version` pinned, so the
+  version bumps and the example updates — same treatment §4.2 gives the
+  snapshot schema).
+- Quality windows: selector-view capture bypasses the entry-candidate
+  quality gate entirely (it observes the selector, it does not nominate
+  entries), so the wide run needs no per-pair windows. The existing
+  entry-candidate path and its gates are untouched.
+- The capture runs as a **separate, bounded, operator-started run root**
+  alongside (not replacing) the trial-supporting narrow capture, with a
+  `MAX_RUNTIME_SECONDS`-style bound like the paper loop; the paper loop's
+  input stays exactly as reviewed.
+- Sizing guard: the runbook budgets record volume (universe size × cadence
+  × buckets) and instructs the Operator to confirm disk headroom; the tool
+  logs a per-tick row count so growth is visible.
 
-### 4.2 Simulated-evidence input (shadow scorer)
+### 4.2 Selector-view input (shadow scorer)
 
 Extend `tools/scripts/autopilot_shadow_allowlist.py`:
 
-- New optional input `--observe-attribution-json <path>` consuming the
-  attribution artifact produced by `autopilot_observe_report.py` over a
-  wide-capture window (simulated outcomes per pair/variant/direction).
-- Simulated evidence is scored by the **same gates** (min sample, min avg
-  net bps, tail loss, score threshold) but into **separate output lists**:
-  `simulated_selected`, `simulated_rejected`, `simulated_quarantined`,
-  each row carrying `"evidence_kind": "simulated"`. Realized paper rows
-  keep the existing lists untouched.
-- **Never mixed**: no aggregate combines simulated and realized numbers; a
-  candidate present in both streams appears in both, each scored from its
-  own evidence. The methodology block states that simulated selection is
-  not PnL, not fill evidence, and not permission for any eligibility
-  change.
-- Discovery report: a new `universe` block — observed universe size,
-  paper-evidenced subset size, `simulated_only` candidates (the discovery
-  list), overlap with static allowlist — plus churn measured per stream
-  when `--previous-snapshot-json` is supplied.
+- New optional input `--selector-view-jsonl <path...>` consuming
+  selector-view rows from a capture window. From these the tool computes
+  **selector-view metrics only** — per pair/variant/direction: bucket
+  membership over time, time-in-`tradable_now` ratio, candidate frequency,
+  score distribution summary, gate-failure reasons — and emits them in a
+  new `selector_view` section with its own lists
+  (`selector_view_prominent`, `selector_view_marginal`), every row carrying
+  `"evidence_kind": "selector_view"`.
+- **No outcome claims**: selector-view rows carry no realized or estimated
+  bps; the realized gates (tail loss, avg net bps) do not apply to them
+  and no aggregate combines the two evidence kinds. The methodology block
+  states selector-view evidence is not PnL, not fill evidence, and not
+  permission for any eligibility change.
+- Discovery report: a new `universe` block — selector-view universe size
+  per bucket, paper-evidenced subset size, `selector_view_only` candidates
+  (the discovery list: prominent in the selector's view but absent from
+  the static allowlist), overlap with the static allowlist — plus churn
+  measured **per evidence stream** when `--previous-snapshot-json` is
+  supplied (selector-view churn is the §3 "selector stability/churn"
+  quantity measured over the real universe).
 - Contract: additive, versioned update to
   `autopilot_shadow_allowlist_snapshot` (new optional fields; existing
   consumers unaffected; example updated; schema version bumped per
   `docs/03-contracts-and-compatibility.md`).
 
-### 4.3 Explicitly out of scope
+### 4.3 Promotion path and explicit out-of-scope
+
+How a discovered pair earns outcome evidence (the only honest way): the
+Operator reads the discovery report, chooses candidates, and adds them to
+the **static allowlist of the next operator-started paper window**;
+realized paper evidence then accrues and the existing realized scorer
+covers them. That decision is per-window, Operator-only, and outside this
+tooling.
 
 No change to `autopilot_paper.py`, its allowlist, or any eligibility path.
-No scheduler. No service code. Wide-observe output and simulated selection
-feed human review and later AUTO-2C design only.
+No scheduler; the selector-view capture is bounded and operator-started.
+No service code. Selector-view output feeds human review and later AUTO-2C
+design only.
 
 ## 5. Safety boundaries
 
-- Wide capture is observe-only: the observe tool has no execution surface
-  (regression-tested in PR #244's pattern; same test extended to the new
-  env handling).
-- `AUTOPILOT_OBSERVE_ALLOW_ALL_PAIR_VARIANTS=false` default preserves
-  current behavior byte-for-byte when unset.
+- Selector-view capture is observe-only: the observe tool has no execution
+  surface (regression-tested in PR #244's pattern; same test extended to
+  the new env handling), and the capture loop is bounded like the paper
+  loop — no unbounded background loops (AUTO-2 §8).
+- `AUTOPILOT_OBSERVE_CAPTURE_SELECTOR_VIEW=false` default preserves
+  current behavior byte-for-byte when unset (proven by test).
 - Shadow output remains advisory; the §3 "not allowed: acting on dynamic
   selector output" boundary is restated in every new artifact section.
 - The AUTO-2 §8 stop gates apply unchanged; nothing here touches dispatch
@@ -126,24 +158,30 @@ feed human review and later AUTO-2C design only.
 
 | Slice | Content | Evidence |
 |---|---|---|
-| B2-a | Contract/schema updates + examples (observe record `capture_profile`, snapshot `simulated_*`/`universe` blocks) | E2: schema validation + example tests |
-| B2-b | `autopilot_observe.py` allow-all env + tests; runbook sizing guidance | E2 min; E4 for the fail-closed default (test proves unset ⇒ unchanged behavior) |
-| B2-c | `autopilot_shadow_allowlist.py` simulated input + universe/churn blocks + tests; runbook update | E2; E4 for stream segregation (test proves no aggregate mixes kinds) |
-| B2-d | Operator evidence pass: wide capture window on host, first universe snapshot, evidence bundle | E5 (operator-run) |
+| B2-a | Versioned contract updates + examples (observe record: `capture_profile`/`cue_bucket`, version bump; snapshot: `selector_view`/`universe` blocks, version bump) | E2: schema validation + example tests |
+| B2-b | `autopilot_observe.py` selector-view capture (all cue buckets) + tests; runbook sizing guidance | E3 min (autopilot tooling floor per `.agentic/policies/evidence.md`); E4 for the fail-closed default (test proves unset ⇒ unchanged behavior) |
+| B2-c | `autopilot_shadow_allowlist.py` selector-view input + universe/per-stream churn + tests; runbook update | E3 min; E4 for stream segregation (test proves no aggregate mixes evidence kinds) |
+| B2-d | Operator evidence pass: bounded selector-view window on host, first universe snapshot, evidence bundle | E5 (operator-run) |
 
 ## 7. Acceptance criteria (proposal level)
 
 - All four §3 AUTO-2B exit-criteria quantities measurable **over the
-  observed universe**, not only the static shortlist.
-- Simulated and realized evidence never combined in any emitted number.
+  selector's real universe** (all cue buckets), not only the static
+  shortlist.
+- Selector-view and realized evidence never combined in any emitted
+  number; selector-view rows carry no outcome claims.
 - Unset new env ⇒ behavior identical to merged AUTO-2B (proven by test).
-- Discovery output (`simulated_only`) exists and is labeled advisory.
+- Discovery output (`selector_view_only`) exists, is labeled advisory, and
+  the promotion path to real evidence is documented.
 
 ## 8. Open questions for the Operator (to answer before B2-b)
 
-1. Universe source: the strategy cue endpoint's full `1m` pair set, or an
-   operator-curated broad list? (Default proposal: cue endpoint set.)
-2. Wide-capture cadence: 60s like the narrow capture, or slower (e.g.
-   300s) to bound record volume for the first window?
-3. Disk budget: acceptable artifact growth per 72h wide window (estimate
-   provided in B2-b's runbook before any start).
+1. Bucket scope: capture all three cue buckets (`tradable_now`,
+   `watchlist`, `excluded`), or only `tradable_now` + `watchlist`?
+   (Default proposal: all three; `excluded` rows carry the gate-failure
+   reasons that explain selector churn.)
+2. Capture cadence: 60s like the narrow capture, or slower (e.g. 300s) to
+   bound record volume for the first window? (Default proposal: 300s —
+   selector membership changes slowly relative to entry signals.)
+3. Disk budget: acceptable artifact growth per 72h selector-view window
+   (estimate provided in B2-b's runbook before any start).
