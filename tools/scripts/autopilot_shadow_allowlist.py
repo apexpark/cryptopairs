@@ -165,10 +165,17 @@ def latest_positions_by_id(rows: Iterable[dict[str, Any]]) -> dict[str, dict[str
     return {position_id: row for position_id, (_, row) in latest.items()}
 
 
-def events_from_positions(rows: Iterable[dict[str, Any]]) -> list[TradeEvent]:
+def events_from_positions(
+    rows: Iterable[dict[str, Any]],
+    counts: dict[str, int] | None = None,
+) -> list[TradeEvent]:
     events: list[TradeEvent] = []
     for row in latest_positions_by_id(rows).values():
         if row.get("status") != "CLOSED":
+            if counts is not None:
+                counts["position_rows_open_excluded"] = (
+                    counts.get("position_rows_open_excluded", 0) + 1
+                )
             continue
         key = row_key(row)
         entry_at = parse_timestamp(row.get("entry_observed_at"), "entry_observed_at")
@@ -186,13 +193,37 @@ def events_from_positions(rows: Iterable[dict[str, Any]]) -> list[TradeEvent]:
     return events
 
 
-def events_from_paper_trades(rows: Iterable[dict[str, Any]]) -> list[TradeEvent]:
+def events_from_paper_trades(
+    rows: Iterable[dict[str, Any]],
+    counts: dict[str, int] | None = None,
+) -> list[TradeEvent]:
+    """Build trade events from paper-trade rows.
+
+    Rows are deduplicated on the identity tuple (pair, timeframe, variant,
+    direction, entry_ts, exit_ts, exit_mode, exit_kind); the LAST occurrence
+    wins. Two genuinely different trades colliding on this tuple would be
+    silently coalesced — accepted because the paper model cannot produce two
+    distinct closed trades with identical identity fields, and duplicate rows
+    from overlapping /paper-trades/download captures are the expected input
+    hazard. Deduplicated-row counts are reported via `counts` so upstream
+    data-quality duplication remains visible in the snapshot summary.
+    """
     events: dict[tuple[str, ...], TradeEvent] = {}
+    considered = 0
     for row in rows:
         if row.get("timeframe") != TIMEFRAME:
+            if counts is not None:
+                counts["trade_rows_skipped_non_timeframe"] = (
+                    counts.get("trade_rows_skipped_non_timeframe", 0) + 1
+                )
             continue
         if row.get("exit_ts") is None or row.get("net_bps") is None:
+            if counts is not None:
+                counts["trade_rows_skipped_incomplete"] = (
+                    counts.get("trade_rows_skipped_incomplete", 0) + 1
+                )
             continue
+        considered += 1
         key = row_key(row)
         entry_at = parse_timestamp(row.get("entry_ts"), "entry_ts")
         exit_at = parse_timestamp(row.get("exit_ts"), "exit_ts")
@@ -212,6 +243,10 @@ def events_from_paper_trades(rows: Iterable[dict[str, Any]]) -> list[TradeEvent]
             exit_at=exit_at,
             realized_net_bps=numeric(row.get("net_bps"), "net_bps"),
             exit_lag_seconds=None,
+        )
+    if counts is not None and considered > len(events):
+        counts["trade_rows_deduplicated"] = (
+            counts.get("trade_rows_deduplicated", 0) + considered - len(events)
         )
     return list(events.values())
 
@@ -306,8 +341,9 @@ def score_components(
     win_rate_bonus = round(max(0.0, win_rate - 0.5) * 12.0, 4)
     sample_size_bonus = round(min(closed_count, 50) * 0.03, 4)
     tail_loss_penalty = round(min(0.0, max_loss_bps) * 0.08, 4)
+    # Clamp at zero: early exits (negative lag) must not become a score bonus.
     exit_lag_penalty = (
-        round(-(avg_exit_lag_seconds or 0.0) / 900.0, 4)
+        round(-max(0.0, avg_exit_lag_seconds) / 900.0, 4)
         if avg_exit_lag_seconds is not None
         else 0.0
     )
@@ -406,6 +442,46 @@ def static_comparison(static_allowlist: set[Key], shadow_selected: set[Key]) -> 
     }
 
 
+def snapshot_selected_keys(snapshot: dict[str, Any]) -> set[Key]:
+    keys: set[Key] = set()
+    for row in snapshot.get("selected", []):
+        keys.add(
+            (
+                row["pair_id"],
+                row["timeframe"],
+                row["selected_variant"],
+                row["direction"],
+            )
+        )
+    return keys
+
+
+def churn_block(
+    previous_snapshot: dict[str, Any] | None,
+    selected_keys: set[Key],
+) -> dict[str, Any] | None:
+    """Cross-snapshot churn/stability metrics (AUTO-2 §3 exit criteria).
+
+    None when no previous snapshot is supplied; churn and stability are
+    inherently cross-snapshot quantities and require at least two runs.
+    """
+    if previous_snapshot is None:
+        return None
+    previous_keys = snapshot_selected_keys(previous_snapshot)
+    added = sorted(selected_keys - previous_keys)
+    removed = sorted(previous_keys - selected_keys)
+    retained = selected_keys & previous_keys
+    return {
+        "previous_generated_at": previous_snapshot.get("generated_at"),
+        "previous_selected_count": len(previous_keys),
+        "selected_added": [key_object(key) for key in added],
+        "selected_removed": [key_object(key) for key in removed],
+        "selected_retained_count": len(retained),
+        "churn_count": len(added) + len(removed),
+        "stability_ratio": round(len(retained) / max(1, len(previous_keys)), 6),
+    }
+
+
 def validate_selector_config(config: SelectorConfig) -> None:
     for field_name in [
         "min_closed_positions",
@@ -430,6 +506,8 @@ def build_snapshot(
     selector_config: SelectorConfig,
     static_allowlist: set[StaticAllowlistEntry] | None = None,
     generated_at: str | None = None,
+    ingest_counts: dict[str, int] | None = None,
+    previous_snapshot: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     validate_selector_config(selector_config)
     cutoff = parse_timestamp(source_cutoff_at, "source_cutoff_at")
@@ -503,11 +581,25 @@ def build_snapshot(
             "rejected_count": len(rejected),
             "quarantined_count": len(quarantined),
             "source_event_count": len(prior_events),
+            "events_dropped_post_cutoff": len(events) - len(prior_events),
+            "trade_rows_skipped_non_timeframe": (ingest_counts or {}).get(
+                "trade_rows_skipped_non_timeframe", 0
+            ),
+            "trade_rows_skipped_incomplete": (ingest_counts or {}).get(
+                "trade_rows_skipped_incomplete", 0
+            ),
+            "trade_rows_deduplicated": (ingest_counts or {}).get(
+                "trade_rows_deduplicated", 0
+            ),
+            "position_rows_open_excluded": (ingest_counts or {}).get(
+                "position_rows_open_excluded", 0
+            ),
         },
         "selected": selected,
         "rejected": rejected,
         "quarantined": quarantined,
         "static_allowlist_comparison": static_comparison(static, selected_keys),
+        "churn": churn_block(previous_snapshot, selected_keys),
         "methodology": {
             "selection_boundary": (
                 "AUTO-2B output is advisory shadow evidence only and must not control "
@@ -590,6 +682,24 @@ def render_markdown(snapshot: dict[str, Any]) -> str:
         "shadow_only_count",
     ]:
         lines.append(f"| {key} | {comparison[key]} |")
+    if snapshot.get("churn"):
+        churn = snapshot["churn"]
+        lines.extend(
+            [
+                "",
+                "## Churn vs Previous Snapshot",
+                "",
+                "| Metric | Value |",
+                "|---|---:|",
+                f"| previous_generated_at | {churn['previous_generated_at']} |",
+                f"| previous_selected_count | {churn['previous_selected_count']} |",
+                f"| selected_added | {len(churn['selected_added'])} |",
+                f"| selected_removed | {len(churn['selected_removed'])} |",
+                f"| selected_retained_count | {churn['selected_retained_count']} |",
+                f"| churn_count | {churn['churn_count']} |",
+                f"| stability_ratio | {churn['stability_ratio']} |",
+            ]
+        )
     lines.extend(
         [
             "",
@@ -648,6 +758,7 @@ def parse_args(argv: Sequence[str]) -> argparse.Namespace:
     parser.add_argument("--max-avg-exit-lag-seconds", type=positive_int, default=1800)
     parser.add_argument("--max-selected", type=positive_int, default=8)
     parser.add_argument("--min-score", type=finite_float, default=0.0)
+    parser.add_argument("--previous-snapshot-json", default=None)
     parser.add_argument("--output-json", default=None)
     parser.add_argument("--output-markdown", default=None)
     return parser.parse_args(list(argv))
@@ -667,7 +778,10 @@ def main(argv: Sequence[str] | None = None) -> int:
     position_rows: list[dict[str, Any]] = []
     for path in position_paths:
         position_rows.extend(read_jsonl_rows(path))
-    events = events_from_paper_trades(trade_rows) + events_from_positions(position_rows)
+    ingest_counts: dict[str, int] = {}
+    events = events_from_paper_trades(trade_rows, ingest_counts) + events_from_positions(
+        position_rows, ingest_counts
+    )
     if not events:
         raise SystemExit("no closed paper events available for shadow allowlist")
     static_allowlist = parse_allowlist(args.static_allowlist) | allowlist_from_run_config(
@@ -681,12 +795,21 @@ def main(argv: Sequence[str] | None = None) -> int:
         max_selected=args.max_selected,
         min_score=args.min_score,
     )
+    previous_snapshot = None
+    if args.previous_snapshot_json is not None:
+        previous_snapshot = json.loads(
+            pathlib.Path(args.previous_snapshot_json).read_text(encoding="utf-8")
+        )
+        if not isinstance(previous_snapshot, dict):
+            raise SystemExit("previous snapshot must be a JSON object")
     snapshot = build_snapshot(
         events=events,
         source_cutoff_at=args.source_cutoff_at,
         selector_config=selector_config,
         static_allowlist=static_allowlist,
         generated_at=args.generated_at,
+        ingest_counts=ingest_counts,
+        previous_snapshot=previous_snapshot,
     )
     output = json.dumps(snapshot, indent=2, sort_keys=True, allow_nan=False)
     if args.output_json:

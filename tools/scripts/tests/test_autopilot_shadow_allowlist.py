@@ -343,6 +343,198 @@ class AutopilotShadowAllowlistTests(unittest.TestCase):
         self.assertEqual(raised.exception.code, 2)
         self.assertIn("must be a finite number", stderr.getvalue())
 
+    def test_rank_outside_max_selected_demotes_overflow(self) -> None:
+        pairs = ["PF_AUSD__PF_BUSD", "PF_CUSD__PF_DUSD", "PF_EUSD__PF_FUSD"]
+        events = []
+        for rank, pair_id in enumerate(pairs):
+            events.extend(
+                event(
+                    pair_id=pair_id,
+                    realized_net_bps=20.0 - rank * 5,
+                    exit_at=f"2026-07-01T0{rank}:{index + 10:02d}:00Z",
+                )
+                for index in range(5)
+            )
+
+        snapshot = shadow.build_snapshot(
+            events=events,
+            source_cutoff_at="2026-07-02T00:00:00Z",
+            selector_config=shadow.SelectorConfig(min_closed_positions=5, max_selected=2),
+            generated_at="2026-07-02T00:10:00Z",
+        )
+
+        self.assertEqual(len(snapshot["selected"]), 2)
+        overflow = [
+            row
+            for row in snapshot["rejected"]
+            if row["reason_codes"] == ["RANK_OUTSIDE_MAX_SELECTED"]
+        ]
+        self.assertEqual(len(overflow), 1)
+        self.assertEqual(overflow[0]["pair_id"], "PF_EUSD__PF_FUSD")
+        self.assertEqual(
+            snapshot["summary"]["selected_count"]
+            + snapshot["summary"]["rejected_count"]
+            + snapshot["summary"]["quarantined_count"],
+            snapshot["summary"]["eligible_universe_count"],
+        )
+
+    def test_threshold_gates_reject_with_expected_reason_codes(self) -> None:
+        slow_exit = [
+            event(
+                pair_id="PF_SLOWUSD__PF_LAGUSD",
+                realized_net_bps=9.0,
+                exit_lag_seconds=4000.0,
+                exit_at=f"2026-07-01T00:{index + 10:02d}:00Z",
+            )
+            for index in range(5)
+        ]
+        negative_avg = [
+            event(
+                pair_id="PF_NEGUSD__PF_AVGUSD",
+                realized_net_bps=-2.0,
+                exit_at=f"2026-07-01T01:{index + 10:02d}:00Z",
+            )
+            for index in range(5)
+        ]
+
+        snapshot = shadow.build_snapshot(
+            events=slow_exit + negative_avg,
+            source_cutoff_at="2026-07-02T00:00:00Z",
+            selector_config=shadow.SelectorConfig(
+                min_closed_positions=5,
+                max_avg_exit_lag_seconds=1800,
+                min_score=0.0,
+            ),
+            generated_at="2026-07-02T00:10:00Z",
+        )
+
+        reasons_by_pair = {
+            row["pair_id"]: row["reason_codes"] for row in snapshot["rejected"]
+        }
+        self.assertIn(
+            "AVG_EXIT_LAG_LIMIT_BREACHED", reasons_by_pair["PF_SLOWUSD__PF_LAGUSD"]
+        )
+        self.assertIn(
+            "AVG_NET_BPS_BELOW_THRESHOLD", reasons_by_pair["PF_NEGUSD__PF_AVGUSD"]
+        )
+        self.assertIn(
+            "SCORE_BELOW_THRESHOLD", reasons_by_pair["PF_NEGUSD__PF_AVGUSD"]
+        )
+        self.assertEqual(snapshot["selected"], [])
+
+    def test_negative_exit_lag_is_not_a_score_bonus(self) -> None:
+        components = shadow.score_components(
+            closed_count=10,
+            profitable_count=7,
+            avg_net_bps=5.0,
+            max_loss_bps=-10.0,
+            avg_exit_lag_seconds=-120.0,
+        )
+
+        self.assertEqual(components["exit_lag_penalty"], 0.0)
+
+    def test_summary_counts_dropped_and_deduplicated_rows(self) -> None:
+        counts: dict[str, int] = {}
+        trade_rows = [
+            {"timeframe": "5m"},
+            {"timeframe": "1m", "exit_ts": None, "net_bps": 4.0},
+            {
+                "timeframe": "1m",
+                "pair_id": "PF_DOGEUSD__PF_PEPEUSD",
+                "selected_variant": "ROBUST_Z",
+                "direction": "SHORT_SPREAD",
+                "entry_ts": "2026-07-01T00:00:00Z",
+                "exit_ts": "2026-07-01T00:06:00Z",
+                "net_bps": 9.0,
+            },
+            {
+                "timeframe": "1m",
+                "pair_id": "PF_DOGEUSD__PF_PEPEUSD",
+                "selected_variant": "ROBUST_Z",
+                "direction": "SHORT_SPREAD",
+                "entry_ts": "2026-07-01T00:00:00Z",
+                "exit_ts": "2026-07-01T00:06:00Z",
+                "net_bps": 9.0,
+            },
+        ]
+        position_rows = [closed_position(status="OPEN", realized_net_bps=None)]
+
+        events = shadow.events_from_paper_trades(trade_rows, counts)
+        events += shadow.events_from_positions(position_rows, counts)
+        late_event = event(exit_at="2026-07-03T00:00:00Z")
+
+        snapshot = shadow.build_snapshot(
+            events=events + [late_event],
+            source_cutoff_at="2026-07-02T00:00:00Z",
+            selector_config=shadow.SelectorConfig(min_closed_positions=1),
+            generated_at="2026-07-02T00:10:00Z",
+            ingest_counts=counts,
+        )
+
+        summary = snapshot["summary"]
+        self.assertEqual(summary["trade_rows_skipped_non_timeframe"], 1)
+        self.assertEqual(summary["trade_rows_skipped_incomplete"], 1)
+        self.assertEqual(summary["trade_rows_deduplicated"], 1)
+        self.assertEqual(summary["position_rows_open_excluded"], 1)
+        self.assertEqual(summary["events_dropped_post_cutoff"], 1)
+
+    def test_churn_block_measures_stability_against_previous_snapshot(self) -> None:
+        events = [
+            event(realized_net_bps=9.0, exit_at=f"2026-07-01T00:{index + 10:02d}:00Z")
+            for index in range(5)
+        ]
+        previous = {
+            "generated_at": "2026-07-01T00:00:00Z",
+            "selected": [
+                {
+                    "pair_id": "PF_DOGEUSD__PF_PEPEUSD",
+                    "timeframe": "1m",
+                    "selected_variant": "ROBUST_Z",
+                    "direction": "SHORT_SPREAD",
+                },
+                {
+                    "pair_id": "PF_TAOUSD__PF_HYPEUSD",
+                    "timeframe": "1m",
+                    "selected_variant": "COINTEGRATION_Z",
+                    "direction": "SHORT_SPREAD",
+                },
+            ],
+        }
+
+        snapshot = shadow.build_snapshot(
+            events=events,
+            source_cutoff_at="2026-07-02T00:00:00Z",
+            selector_config=shadow.SelectorConfig(min_closed_positions=5),
+            generated_at="2026-07-02T00:10:00Z",
+            previous_snapshot=previous,
+        )
+
+        churn = snapshot["churn"]
+        self.assertEqual(churn["previous_selected_count"], 2)
+        self.assertEqual(churn["selected_added"], [])
+        self.assertEqual(len(churn["selected_removed"]), 1)
+        self.assertEqual(
+            churn["selected_removed"][0]["pair_id"], "PF_TAOUSD__PF_HYPEUSD"
+        )
+        self.assertEqual(churn["selected_retained_count"], 1)
+        self.assertEqual(churn["churn_count"], 1)
+        self.assertEqual(churn["stability_ratio"], 0.5)
+
+    def test_churn_is_null_without_previous_snapshot(self) -> None:
+        events = [
+            event(realized_net_bps=9.0, exit_at=f"2026-07-01T00:{index + 10:02d}:00Z")
+            for index in range(5)
+        ]
+
+        snapshot = shadow.build_snapshot(
+            events=events,
+            source_cutoff_at="2026-07-02T00:00:00Z",
+            selector_config=shadow.SelectorConfig(min_closed_positions=5),
+            generated_at="2026-07-02T00:10:00Z",
+        )
+
+        self.assertIsNone(snapshot["churn"])
+
     def test_script_has_no_execution_post_surface(self) -> None:
         source = inspect.getsource(shadow)
 
@@ -352,6 +544,12 @@ class AutopilotShadowAllowlistTests(unittest.TestCase):
             "urlopen",
             "requests.",
             "http://127.0.0.1:8082",
+            "subprocess",
+            "os.system",
+            "socket",
+            "httpx",
+            "urllib",
+            "os.environ",
         ]
         for needle in forbidden:
             self.assertNotIn(needle, source)

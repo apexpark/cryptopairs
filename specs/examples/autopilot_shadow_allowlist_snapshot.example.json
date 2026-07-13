@@ -113,6 +113,27 @@
     "quarantined_count": 1,
     "rejected_count": 0,
     "selected_count": 1,
-    "source_event_count": 33
+    "source_event_count": 33,
+    "events_dropped_post_cutoff": 0,
+    "trade_rows_skipped_non_timeframe": 0,
+    "trade_rows_skipped_incomplete": 0,
+    "trade_rows_deduplicated": 0,
+    "position_rows_open_excluded": 0
+  },
+  "churn": {
+    "previous_generated_at": "2026-07-05T00:00:00Z",
+    "previous_selected_count": 2,
+    "selected_added": [],
+    "selected_removed": [
+      {
+        "pair_id": "PF_TAOUSD__PF_HYPEUSD",
+        "timeframe": "1m",
+        "selected_variant": "COINTEGRATION_Z",
+        "direction": "SHORT_SPREAD"
+      }
+    ],
+    "selected_retained_count": 1,
+    "churn_count": 1,
+    "stability_ratio": 0.5
   }
 }

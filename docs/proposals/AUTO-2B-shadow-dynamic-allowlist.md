@@ -159,6 +159,15 @@ but it is not an allowlist for paper entries.
 - Tests prove AUTO-2A position JSONL can be reduced without full decision-row
   loading.
 - Tests scan for execution order-intent/dispatch/HTTP client surfaces.
+- Churn and selector stability are measurable across snapshots: an optional
+  `--previous-snapshot-json` input produces a `churn` block
+  (additions/removals/retained/stability ratio vs the prior snapshot), and
+  tests prove it. This covers the AUTO-2 §3 exit-criteria quantities that a
+  single point-in-time snapshot cannot express; the runbook documents the
+  repeated-snapshot procedure.
+- The snapshot summary tallies excluded evidence (non-1m rows, incomplete
+  rows, deduplicated rows, open positions, post-cutoff events) so dropped
+  input remains auditable.
 - README/runbook docs show artifact-only usage.
 - `CHANGELOG.md` and `docs/AGENT_STATE.md` record the slice state.
 

@@ -16,7 +16,8 @@
     "rejected",
     "quarantined",
     "static_allowlist_comparison",
-    "methodology"
+    "methodology",
+    "churn"
   ],
   "properties": {
     "schema_version": {
@@ -89,6 +90,106 @@
           "minLength": 1
         }
       }
+    },
+    "churn": {
+      "description": "Cross-snapshot churn/stability metrics vs a previous snapshot; null when no previous snapshot was supplied.",
+      "oneOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "previous_generated_at",
+            "previous_selected_count",
+            "selected_added",
+            "selected_removed",
+            "selected_retained_count",
+            "churn_count",
+            "stability_ratio"
+          ],
+          "properties": {
+            "previous_generated_at": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "previous_selected_count": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "selected_added": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "pair_id",
+                  "timeframe",
+                  "selected_variant",
+                  "direction"
+                ],
+                "properties": {
+                  "pair_id": {
+                    "type": "string"
+                  },
+                  "timeframe": {
+                    "type": "string"
+                  },
+                  "selected_variant": {
+                    "type": "string"
+                  },
+                  "direction": {
+                    "type": "string"
+                  }
+                }
+              }
+            },
+            "selected_removed": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "pair_id",
+                  "timeframe",
+                  "selected_variant",
+                  "direction"
+                ],
+                "properties": {
+                  "pair_id": {
+                    "type": "string"
+                  },
+                  "timeframe": {
+                    "type": "string"
+                  },
+                  "selected_variant": {
+                    "type": "string"
+                  },
+                  "direction": {
+                    "type": "string"
+                  }
+                }
+              }
+            },
+            "selected_retained_count": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "churn_count": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "stability_ratio": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1
+            }
+          }
+        }
+      ]
     }
   },
   "$defs": {
@@ -135,7 +236,12 @@
         "selected_count",
         "rejected_count",
         "quarantined_count",
-        "source_event_count"
+        "source_event_count",
+        "events_dropped_post_cutoff",
+        "trade_rows_skipped_non_timeframe",
+        "trade_rows_skipped_incomplete",
+        "trade_rows_deduplicated",
+        "position_rows_open_excluded"
       ],
       "properties": {
         "eligible_universe_count": {
@@ -155,6 +261,26 @@
           "minimum": 0
         },
         "source_event_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "events_dropped_post_cutoff": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "trade_rows_skipped_non_timeframe": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "trade_rows_skipped_incomplete": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "trade_rows_deduplicated": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "position_rows_open_excluded": {
           "type": "integer",
           "minimum": 0
         }

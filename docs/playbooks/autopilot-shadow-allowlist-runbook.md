@@ -89,10 +89,47 @@ Keep these files together for review:
 
 Do not merge host evidence into the repository.
 
+## Measure Churn And Stability Across Snapshots
+
+Churn and selector stability (AUTO-2 §3 exit criteria for AUTO-2B) are
+cross-snapshot quantities: they require at least two snapshots over the same
+selector config. After the first snapshot exists, build later snapshots with
+`--previous-snapshot-json` pointing at the most recent prior snapshot:
+
+```bash
+cd /opt/cryptopairs
+
+PREVIOUS_SNAPSHOT="$(ls -1dt artifacts/autopilot_shadow_allowlist/runs/*/autopilot_shadow_allowlist_snapshot.json | head -1)"
+PAPER_RUN_ROOT="${PAPER_RUN_ROOT:-$(ls -1dt artifacts/autopilot_paper/runs/* | head -1)}"
+RUN_ID="$(date -u +%Y%m%dT%H%M%SZ)"
+SHADOW_ROOT="artifacts/autopilot_shadow_allowlist/runs/$RUN_ID"
+SOURCE_CUTOFF_AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+mkdir -p "$SHADOW_ROOT"
+
+python3 tools/scripts/autopilot_shadow_allowlist.py \
+  --paper-dir "$PAPER_RUN_ROOT/records" \
+  --run-config-json "$PAPER_RUN_ROOT/run_config.json" \
+  --source-cutoff-at "$SOURCE_CUTOFF_AT" \
+  --previous-snapshot-json "$PREVIOUS_SNAPSHOT" \
+  --output-json "$SHADOW_ROOT/autopilot_shadow_allowlist_snapshot.json" \
+  --output-markdown "$SHADOW_ROOT/autopilot_shadow_allowlist_snapshot.md"
+
+jq '.churn' "$SHADOW_ROOT/autopilot_shadow_allowlist_snapshot.json"
+```
+
+Interpretation: `stability_ratio` is retained-selected divided by the
+previous selected count; `churn_count` is additions plus removals. Keep the
+selector config identical between compared snapshots — comparing snapshots
+built with different thresholds measures config change, not selector churn.
+
 ## Failure Handling
 
 1. If the tool reports no closed paper events, stop and capture paper evidence
    first.
+1a. The tool is deliberately crash-hard on malformed evidence: one bad row
+   that passes the skip filters aborts the whole snapshot rather than
+   emitting partial output. Treat a traceback as a data-quality signal;
+   capture it in the evidence bundle and do not hand-edit evidence files.
 2. If all candidates reject for insufficient sample, keep AUTO-2B as evidence
    and do not loosen thresholds inside the same run.
 3. If tail-loss quarantine removes a leg, treat it as a selector diagnostic,
