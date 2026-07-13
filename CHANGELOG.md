@@ -18,6 +18,17 @@ This project follows SemVer as defined in `docs/02-versioning-and-releases.md`.
   preserving local service defaults for localhost development.
 
 ### Operator Tooling
+- Added AUTO-2B shadow dynamic allowlist tooling and contracts. The
+  artifact-only `autopilot_shadow_allowlist.py` scores closed `1m` paper
+  evidence by pair/variant/direction, records selected/rejected/quarantined
+  candidates with tail-loss and exit-lag penalties, compares against the static
+  paper allowlist, and preserves the boundary that shadow output cannot control
+  paper entries or live automation. Snapshots additionally tally excluded
+  evidence (non-1m, incomplete, deduplicated, open, post-cutoff rows) and,
+  given `--previous-snapshot-json`, emit a `churn` block (additions,
+  removals, retained count, stability ratio) so the AUTO-2 §3 churn and
+  selector-stability exit criteria are measurable across repeated
+  operator-run snapshots.
 - Canonicalized `.github/CODEOWNERS` as the single source of truth for
   merge Tier 3 protected paths: expanded to the full 2026-07-12 list (all
   services, scripts, playbooks, git hooks, compose files, dependency and

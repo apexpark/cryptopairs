@@ -1,0 +1,139 @@
+{
+  "generated_at": "2026-07-06T00:00:00Z",
+  "methodology": {
+    "execution_caveat": "This artifact is not live PnL, not a fill audit, and not permission to enable dynamic paper or live automation.",
+    "lookahead_policy": "Only closed events with exit timestamps at or before source_cutoff_at are scored.",
+    "scoring_definition": "Score combines average net bps, win-rate bonus, sample-size bonus, tail-loss penalty, and exit-lag penalty.",
+    "selection_boundary": "AUTO-2B output is advisory shadow evidence only and must not control AUTOPILOT_PAPER_ALLOWED_PAIR_VARIANTS."
+  },
+  "mode": "shadow_dynamic_allowlist_snapshot",
+  "quarantined": [
+    {
+      "decision": "SHADOW_QUARANTINED",
+      "direction": "SHORT_SPREAD",
+      "metrics": {
+        "avg_exit_lag_seconds": 914.6,
+        "avg_realized_net_bps": -17.0215,
+        "closed_positions": 5,
+        "first_entry_at": "2026-06-29T03:23:37Z",
+        "last_exit_at": "2026-07-01T19:55:00Z",
+        "losing_closed_positions": 1,
+        "max_exit_lag_seconds": 1617,
+        "max_loss_bps": -118.0464,
+        "profitable_closed_positions": 4,
+        "sum_realized_net_bps": -85.1076,
+        "win_rate": 0.8
+      },
+      "pair_id": "PF_TAOUSD__PF_HYPEUSD",
+      "reason_codes": [
+        "TAIL_LOSS_LIMIT_BREACHED"
+      ],
+      "score_components": {
+        "avg_net_bps": -17.0215,
+        "exit_lag_penalty": -1.0162,
+        "sample_size_bonus": 0.15,
+        "tail_loss_penalty": -9.4437,
+        "total_score": -23.7314,
+        "win_rate_bonus": 3.6
+      },
+      "selected_variant": "COINTEGRATION_Z",
+      "timeframe": "1m"
+    }
+  ],
+  "rejected": [],
+  "schema_version": 1,
+  "selected": [
+    {
+      "decision": "SHADOW_SELECTED",
+      "direction": "SHORT_SPREAD",
+      "metrics": {
+        "avg_exit_lag_seconds": 1236.6786,
+        "avg_realized_net_bps": 5.6546,
+        "closed_positions": 28,
+        "first_entry_at": "2026-06-28T06:15:14Z",
+        "last_exit_at": "2026-07-01T23:38:00Z",
+        "losing_closed_positions": 8,
+        "max_exit_lag_seconds": 3909,
+        "max_loss_bps": -32.2435,
+        "profitable_closed_positions": 20,
+        "sum_realized_net_bps": 158.3284,
+        "win_rate": 0.714286
+      },
+      "pair_id": "PF_DOGEUSD__PF_PEPEUSD",
+      "reason_codes": [
+        "PASSED_SHADOW_SELECTOR_GATES"
+      ],
+      "score_components": {
+        "avg_net_bps": 5.6546,
+        "exit_lag_penalty": -1.3741,
+        "sample_size_bonus": 0.84,
+        "tail_loss_penalty": -2.5795,
+        "total_score": 5.1125,
+        "win_rate_bonus": 2.5714
+      },
+      "selected_variant": "ROBUST_Z",
+      "timeframe": "1m"
+    }
+  ],
+  "selector_config": {
+    "max_avg_exit_lag_seconds": 1800,
+    "max_selected": 8,
+    "max_tail_loss_bps": -60,
+    "min_avg_net_bps": 0,
+    "min_closed_positions": 5,
+    "min_score": 0
+  },
+  "source_cutoff_at": "2026-07-02T00:00:00Z",
+  "static_allowlist_comparison": {
+    "overlap": [
+      {
+        "direction": "SHORT_SPREAD",
+        "pair_id": "PF_DOGEUSD__PF_PEPEUSD",
+        "selected_variant": "ROBUST_Z",
+        "timeframe": "1m"
+      }
+    ],
+    "overlap_count": 1,
+    "shadow_only": [],
+    "shadow_only_count": 0,
+    "shadow_selected_size": 1,
+    "static_allowlist_size": 2,
+    "static_only": [
+      {
+        "direction": "SHORT_SPREAD",
+        "pair_id": "PF_TAOUSD__PF_HYPEUSD",
+        "selected_variant": "COINTEGRATION_Z",
+        "timeframe": "1m"
+      }
+    ],
+    "static_only_count": 1
+  },
+  "summary": {
+    "eligible_universe_count": 2,
+    "quarantined_count": 1,
+    "rejected_count": 0,
+    "selected_count": 1,
+    "source_event_count": 33,
+    "events_dropped_post_cutoff": 0,
+    "trade_rows_skipped_non_timeframe": 0,
+    "trade_rows_skipped_incomplete": 0,
+    "trade_rows_deduplicated": 0,
+    "position_rows_open_excluded": 0
+  },
+  "churn": {
+    "previous_generated_at": "2026-07-05T00:00:00Z",
+    "previous_selected_count": 2,
+    "selected_added": [],
+    "selected_removed": [
+      {
+        "pair_id": "PF_TAOUSD__PF_HYPEUSD",
+        "timeframe": "1m",
+        "selected_variant": "COINTEGRATION_Z",
+        "direction": "SHORT_SPREAD"
+      }
+    ],
+    "selected_retained_count": 1,
+    "churn_count": 1,
+    "stability_ratio": 0.5
+  }
+}

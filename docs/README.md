@@ -66,6 +66,7 @@ If instructions conflict, use this order:
 - `docs/playbooks/secrets-lifecycle-runbook.md`
 - `docs/playbooks/fail-closed-recovery-runbook.md`
 - `docs/playbooks/hosted-deployment-runbook.md`
+- `docs/playbooks/autopilot-shadow-allowlist-runbook.md`
 - `plans/alpha_plan.json`
 - `plans/hosted_deployment_plan.json`
 - `plans/strategy_tuning_plan.json`

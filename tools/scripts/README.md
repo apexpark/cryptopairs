@@ -206,6 +206,33 @@ static allowlist used pair-level, direction-level, or mixed gating. Hosted
 paper-only run, monitor, stop, and evidence-capture commands are documented in
 `docs/playbooks/autopilot-paper-only-runbook.md`.
 
+## AUTO-2B Shadow Dynamic Allowlist
+
+Build an advisory snapshot of what a dynamic `1m` selector would choose from
+closed paper evidence. This tool is artifact-only: it does not call HTTP
+services, does not write runtime config, and must not feed
+`AUTOPILOT_PAPER_ALLOWED_PAIR_VARIANTS`.
+
+```bash
+python3 tools/scripts/autopilot_shadow_allowlist.py \
+  --paper-dir artifacts/autopilot_paper/runs/<run-id>/records \
+  --run-config-json artifacts/autopilot_paper/runs/<run-id>/run_config.json \
+  --source-cutoff-at 2026-07-02T00:00:00Z \
+  --min-closed-positions 5 \
+  --max-tail-loss-bps -60 \
+  --max-avg-exit-lag-seconds 1800 \
+  --output-json artifacts/autopilot_shadow_allowlist/runs/<run-id>/autopilot_shadow_allowlist_snapshot.json \
+  --output-markdown artifacts/autopilot_shadow_allowlist/runs/<run-id>/autopilot_shadow_allowlist_snapshot.md
+```
+
+The snapshot validates against
+`specs/contracts/autopilot_shadow_allowlist_snapshot.schema.json`. Static
+comparison is direction-equivalent: pair-level static allowlist entries are
+expanded only across observed directions for the same pair/variant. Hosted
+artifact capture is documented in
+`docs/playbooks/autopilot-shadow-allowlist-runbook.md`. AUTO-2C remains the
+first slice allowed to govern dynamic eligibility for paper entries.
+
 ## Signal vs Gate PnL Audit
 
 Audit chart signal markers against gate state at entry time, with leg-level spread PnL attribution:
