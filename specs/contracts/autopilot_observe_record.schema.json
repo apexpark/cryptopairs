@@ -467,9 +467,114 @@
         },
         "observe_key": {
           "type": "string"
+        },
+        "left_instrument": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "right_instrument": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "confidence_band": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "expected_hold_bars": {
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "open_live_trade": {
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "portfolio_target_weight": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "portfolio_risk_contribution": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "requires_fresh_overlay": {
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "learning_recommendation": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "learning_trade_eligible": {
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "learning_selection_selected": {
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "learning_reason_codes": {
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": {
+            "type": "string"
+          }
+        },
+        "learning_cycle_generated_at": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "selected_config_source": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "legacy_fallback_active": {
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "decision_bucket": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "enum": [
+            "TRADE_NOW",
+            "WATCHLIST",
+            "EXCLUDED",
+            null
+          ]
         }
       },
-      "description": "Selector-view row: an observation of the champion/challenger selector's stated view for one candidate in one cue bucket. Every numeric field records the selector's own stated figures \u2014 never a realized or tool-estimated outcome. This row is advisory evidence and is not permission for any eligibility change (AUTO-2B.2 \u00a74.2)."
+      "description": "Selector-view row: an observation of the champion/challenger selector's stated view for one candidate in one cue bucket. Every numeric field records the selector's own stated figures \u2014 never a realized or tool-estimated outcome. This row is advisory evidence and is not permission for any eligibility change (AUTO-2B.2 \u00a74.2). Optional fields mirror the cue endpoint's decisionRowBase verbatim as further stated-view observations; all remain optional so B2-b may pass endpoint fields through unchanged."
     }
   ],
   "version": "0.2.0"

@@ -153,12 +153,38 @@ class AutopilotObserveTests(unittest.TestCase):
         )
         self.assertEqual(selector_view_example["capture_profile"], "selector_view")
         self.assertEqual(selector_view_example["decision"], "SELECTOR_VIEW_OBSERVED")
-        # Selector-view rows are observations, never outcomes: no field name in
-        # the selector-view branch may imply a realized outcome.
-        selector_view_branch = schema["oneOf"][1]
-        for field_name in selector_view_branch["properties"]:
-            for forbidden in ("realized", "pnl", "outcome", "fill"):
-                self.assertNotIn(forbidden, field_name.lower())
+        # Selector-view surfaces are observations, never outcomes: no property
+        # name anywhere in the selector-view branch of the observe schema, nor
+        # in the snapshot's selector_view/universe/churn.selector_view blocks,
+        # may imply a realized or estimated outcome.
+        def property_names(node: Any) -> list[str]:
+            names: list[str] = []
+            if isinstance(node, dict):
+                for key, value in node.get("properties", {}).items():
+                    names.append(key)
+                    names.extend(property_names(value))
+                for combinator in ("oneOf", "anyOf", "allOf"):
+                    for sub in node.get(combinator, []):
+                        names.extend(property_names(sub))
+                if "items" in node:
+                    names.extend(property_names(node["items"]))
+            return names
+
+        snapshot_schema = json.loads(
+            (repo_root / "specs/contracts/autopilot_shadow_allowlist_snapshot.schema.json")
+            .read_text(encoding="utf-8")
+        )
+        guarded_nodes = [
+            schema["oneOf"][1],
+            snapshot_schema["properties"]["selector_view"],
+            snapshot_schema["properties"]["universe"],
+            snapshot_schema["properties"]["churn"]["oneOf"][1]["properties"]["selector_view"],
+        ]
+        forbidden_tokens = ("realized", "pnl", "outcome", "fill", "estimated", "simulated")
+        for node in guarded_nodes:
+            for field_name in property_names(node):
+                for forbidden in forbidden_tokens:
+                    self.assertNotIn(forbidden, field_name.lower())
 
     def test_run_once_records_candidate_then_blocks_duplicate_replay(self) -> None:
         client = RecordingGetClient(base_routes())
