@@ -659,6 +659,12 @@ def evaluate_candidate(
 
 
 SELECTOR_VIEW_SCHEMA_VERSION = 2
+
+
+class _SelectorViewRowMalformed(Exception):
+    """Internal sentinel: a cue row cannot be faithfully recorded; omit it."""
+
+
 CUE_BUCKETS = (
     ("tradable_now", "TRADE_NOW"),
     ("watchlist", "WATCHLIST"),
@@ -723,6 +729,20 @@ def selector_view_record(
     def opt_num(value: Any) -> Any:
         return value if isinstance(value, (int, float)) and not isinstance(value, bool) else None
 
+    def str_list(value: Any) -> list[str]:
+        if not isinstance(value, list):
+            return []
+        return [code for code in value if isinstance(code, str)]
+
+    def required_num(value: Any) -> float:
+        # The v2 schema requires these as non-null numbers; an absent or
+        # non-numeric stated figure means the row is malformed. Raise so the
+        # caller omits it (fail closed) rather than fabricating a 0.0.
+        parsed = opt_num(value)
+        if parsed is None:
+            raise _SelectorViewRowMalformed
+        return float(parsed)
+
     record: dict[str, Any] = {
         "schema_version": SELECTOR_VIEW_SCHEMA_VERSION,
         "mode": "observe_only",
@@ -739,15 +759,13 @@ def selector_view_record(
         "decision_reason_code": opt_str(row.get("decision_reason_code")),
         "blocked_reason_code": opt_str(row.get("blocked_reason_code")),
         "watch_reason_code": opt_str(row.get("watch_reason_code")),
-        "rationale_codes": [
-            code for code in (row.get("rationale_codes") or []) if isinstance(code, str)
-        ],
+        "rationale_codes": str_list(row.get("rationale_codes")),
         "setup_gate_pass": bool(row.get("setup_gate_pass")),
         "cost_gate_pass": bool(row.get("cost_gate_pass")),
         "trade_gate_pass": bool(row.get("trade_gate_pass")),
-        "spread_z": opt_num(row.get("spread_z")) or 0.0,
-        "net_edge_bps": opt_num(row.get("net_edge_bps")) or 0.0,
-        "opportunity_score": opt_num(row.get("opportunity_score")) or 0.0,
+        "spread_z": required_num(row.get("spread_z")),
+        "net_edge_bps": required_num(row.get("net_edge_bps")),
+        "opportunity_score": required_num(row.get("opportunity_score")),
         "observe_key": selector_view_observe_key(row, cue_bucket, observed_at),
     }
     for field_name in SELECTOR_VIEW_PASSTHROUGH:
@@ -784,6 +802,40 @@ def selector_view_record(
     return record
 
 
+def malformed_bucket_marker(
+    endpoint_key: str, observed_at: dt.datetime
+) -> dict[str, Any]:
+    return {
+        "schema_version": SELECTOR_VIEW_SCHEMA_VERSION,
+        "mode": "observe_only",
+        "capture_profile": "selector_view",
+        "run_id": iso(observed_at),
+        "observed_at": iso(observed_at),
+        "source_generated_at": iso(observed_at),
+        "timeframe": SUPPORTED_TIMEFRAME,
+        "pair_id": SYSTEM_PAIR_ID,
+        "selected_variant": SYSTEM_VARIANT,
+        "cue_bucket": "TRADE_NOW",
+        "direction_hint": None,
+        "decision": "SELECTOR_VIEW_OBSERVED",
+        "decision_reason_code": None,
+        "blocked_reason_code": f"CUE_BUCKET_MALFORMED:{endpoint_key}",
+        "watch_reason_code": None,
+        "rationale_codes": ["CUE_BUCKET_NOT_LIST"],
+        "setup_gate_pass": False,
+        "cost_gate_pass": False,
+        "trade_gate_pass": False,
+        "spread_z": 0.0,
+        "net_edge_bps": 0.0,
+        "opportunity_score": 0.0,
+        "observe_key": ":".join(
+            ["selector-view", "v2", SUPPORTED_TIMEFRAME, SYSTEM_PAIR_ID,
+             SYSTEM_VARIANT, "NO_DIRECTION", f"MALFORMED_{endpoint_key.upper()}",
+             iso(observed_at.astimezone(dt.timezone.utc).replace(second=0, microsecond=0))],
+        ),
+    }
+
+
 def selector_view_records(
     *,
     trade_now: dict[str, Any],
@@ -792,29 +844,38 @@ def selector_view_records(
     """Emit one selector-view row per candidate across all cue buckets.
 
     These are observations of the champion/challenger selector's stated view,
-    never entry candidates and never outcomes. Malformed buckets/rows are
-    skipped (a bucket that is not a list, or a row that is not an object,
-    fails closed to omission — no partial record is written).
+    never entry candidates and never outcomes. Fail-closed to omission: a row
+    that is not an object, fails identity, or cannot be faithfully recorded
+    (missing/non-numeric required stated figure, or any unexpected shape) is
+    omitted — no partial or fabricated record is written. A bucket that is
+    present but not a list yields a single diagnostic marker record so the
+    malformed response is visible downstream rather than silently empty.
     """
     source_generated = source_generated_at(trade_now)
     records: list[dict[str, Any]] = []
     for endpoint_key, cue_bucket in CUE_BUCKETS:
         bucket = trade_now.get(endpoint_key)
+        if bucket is None:
+            continue
         if not isinstance(bucket, list):
+            records.append(malformed_bucket_marker(endpoint_key, observed_at))
             continue
         for row in bucket:
             if not isinstance(row, dict):
                 continue
             if candidate_identity_reason(row) is not None:
                 continue
-            records.append(
-                selector_view_record(
-                    row=row,
-                    cue_bucket=cue_bucket,
-                    observed_at=observed_at,
-                    source_generated=source_generated,
+            try:
+                records.append(
+                    selector_view_record(
+                        row=row,
+                        cue_bucket=cue_bucket,
+                        observed_at=observed_at,
+                        source_generated=source_generated,
+                    )
                 )
-            )
+            except _SelectorViewRowMalformed:
+                continue
     return records
 
 
@@ -904,8 +965,10 @@ def run_once(
         # buckets and nothing else. The entry-candidate path (below) is not
         # invoked, so a dedicated selector-view run produces a clean,
         # single-purpose artifact and does not double the record volume with
-        # uniformly-blocked entry rows. Fail-closed: source-unavailable and
-        # malformed-response system records above still apply before this point.
+        # uniformly-blocked entry rows. Fail-closed: the source-unavailable
+        # system record above already fired if trade_now was absent; here
+        # trade_now is a dict, and selector_view_records fails closed to
+        # omission per row and marks any non-list bucket.
         return selector_view_records(trade_now=trade_now, observed_at=now_value)
 
     tradable_now = trade_now.get("tradable_now")
@@ -1090,15 +1153,16 @@ def main(argv: list[str] | None = None) -> int:
         observed_at = utc_now()
         records = run_once(config, client=client, observed_at=observed_at, seen_keys=seen_keys)
         output_path = write_records(records, config.output_dir, observed_at)
-        summary = {
+        summary: dict[str, Any] = {
             "generated_at": iso(observed_at),
             "records": len(records),
-            "selector_view_records": sum(
-                1 for record in records if record.get("capture_profile") == "selector_view"
-            ),
             "output_path": str(output_path),
             "decisions": {},
         }
+        if config.capture_selector_view:
+            summary["selector_view_records"] = sum(
+                1 for record in records if record.get("capture_profile") == "selector_view"
+            )
         for record in records:
             decision = record.get("decision", "UNKNOWN")
             summary["decisions"][decision] = summary["decisions"].get(decision, 0) + 1
