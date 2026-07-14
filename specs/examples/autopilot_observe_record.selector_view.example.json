@@ -1,0 +1,31 @@
+{
+  "schema_version": 2,
+  "mode": "observe_only",
+  "capture_profile": "selector_view",
+  "run_id": "20260716T000000Z",
+  "observed_at": "2026-07-16T00:05:00Z",
+  "source_generated_at": "2026-07-16T00:04:52Z",
+  "timeframe": "1m",
+  "pair_id": "PF_SOLUSD__PF_AVAXUSD",
+  "selected_variant": "COINTEGRATION_Z",
+  "cue_bucket": "WATCHLIST",
+  "direction_hint": "LONG_SPREAD",
+  "decision": "SELECTOR_VIEW_OBSERVED",
+  "decision_reason_code": null,
+  "blocked_reason_code": null,
+  "watch_reason_code": "WATCH_ENTRY_DISTANCE",
+  "rationale_codes": [
+    "SPREAD_ZONE_NEAR_ENTRY",
+    "COST_GATE_OK"
+  ],
+  "setup_gate_pass": true,
+  "cost_gate_pass": true,
+  "trade_gate_pass": false,
+  "spread_z": 1.72,
+  "selected_score_z": 1.9,
+  "entry_distance_z": 0.38,
+  "net_edge_bps": 11.2,
+  "opportunity_score": 0.61,
+  "approval_source": "LEARNING_SELECTION",
+  "observe_key": "selector-view:v2:1m:PF_SOLUSD__PF_AVAXUSD:COINTEGRATION_Z:WATCHLIST:2026-07-16T00:05:00Z"
+}

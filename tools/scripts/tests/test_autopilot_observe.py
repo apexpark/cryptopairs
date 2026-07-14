@@ -127,6 +127,36 @@ def config(**overrides: Any) -> observe.Config:
 
 
 class AutopilotObserveTests(unittest.TestCase):
+    def test_observe_record_examples_validate_against_v2_schema(self) -> None:
+        from jsonschema import Draft202012Validator
+
+        repo_root = pathlib.Path(__file__).resolve().parents[3]
+        schema = json.loads(
+            (repo_root / "specs/contracts/autopilot_observe_record.schema.json")
+            .read_text(encoding="utf-8")
+        )
+        Draft202012Validator.check_schema(schema)
+        validator = Draft202012Validator(schema)
+
+        entry_example = json.loads(
+            (repo_root / "specs/examples/autopilot_observe_record.example.json")
+            .read_text(encoding="utf-8")
+        )
+        selector_view_example = json.loads(
+            (repo_root / "specs/examples/autopilot_observe_record.selector_view.example.json")
+            .read_text(encoding="utf-8")
+        )
+
+        self.assertEqual(sorted(validator.iter_errors(entry_example), key=str), [])
+        self.assertEqual(
+            sorted(validator.iter_errors(selector_view_example), key=str), []
+        )
+        self.assertEqual(selector_view_example["capture_profile"], "selector_view")
+        self.assertEqual(selector_view_example["decision"], "SELECTOR_VIEW_OBSERVED")
+        # Selector-view rows are observations, never outcomes: no realized field
+        # may appear in the row shape.
+        self.assertNotIn("realized_net_bps", json.dumps(selector_view_example))
+
     def test_run_once_records_candidate_then_blocks_duplicate_replay(self) -> None:
         client = RecordingGetClient(base_routes())
         seen_keys: set[str] = set()
