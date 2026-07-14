@@ -153,9 +153,12 @@ class AutopilotObserveTests(unittest.TestCase):
         )
         self.assertEqual(selector_view_example["capture_profile"], "selector_view")
         self.assertEqual(selector_view_example["decision"], "SELECTOR_VIEW_OBSERVED")
-        # Selector-view rows are observations, never outcomes: no realized field
-        # may appear in the row shape.
-        self.assertNotIn("realized_net_bps", json.dumps(selector_view_example))
+        # Selector-view rows are observations, never outcomes: no field name in
+        # the selector-view branch may imply a realized outcome.
+        selector_view_branch = schema["oneOf"][1]
+        for field_name in selector_view_branch["properties"]:
+            for forbidden in ("realized", "pnl", "outcome", "fill"):
+                self.assertNotIn(forbidden, field_name.lower())
 
     def test_run_once_records_candidate_then_blocks_duplicate_replay(self) -> None:
         client = RecordingGetClient(base_routes())

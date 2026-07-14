@@ -137,18 +137,18 @@
     "stability_ratio": 0.5,
     "selector_view": {
       "previous_prominent_count": 2,
-      "prominent_added": [
+      "prominent_added": [],
+      "prominent_removed": [
         {
-          "pair_id": "PF_SOLUSD__PF_AVAXUSD",
+          "pair_id": "PF_TAOUSD__PF_HYPEUSD",
           "timeframe": "1m",
           "selected_variant": "COINTEGRATION_Z",
-          "direction": "LONG_SPREAD"
+          "direction": "SHORT_SPREAD"
         }
       ],
-      "prominent_removed": [],
-      "prominent_retained_count": 2,
+      "prominent_retained_count": 1,
       "churn_count": 1,
-      "stability_ratio": 1.0
+      "stability_ratio": 0.5
     }
   },
   "selector_view": {
@@ -201,6 +201,6 @@
         "direction": "LONG_SPREAD"
       }
     ],
-    "static_allowlist_overlap_count": 3
+    "static_allowlist_overlap_count": 2
   }
 }

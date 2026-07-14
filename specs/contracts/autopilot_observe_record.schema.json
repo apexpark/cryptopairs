@@ -392,7 +392,8 @@
             "TRADE_NOW",
             "WATCHLIST",
             "EXCLUDED"
-          ]
+          ],
+          "description": "Normalized label for the cue endpoint's response buckets: tradable_now \u2192 TRADE_NOW, watchlist \u2192 WATCHLIST, excluded \u2192 EXCLUDED (mapping implemented in B2-b)."
         },
         "direction_hint": {
           "type": [
@@ -467,7 +468,9 @@
         "observe_key": {
           "type": "string"
         }
-      }
+      },
+      "description": "Selector-view row: an observation of the champion/challenger selector's stated view for one candidate in one cue bucket. Every numeric field records the selector's own stated figures \u2014 never a realized or tool-estimated outcome. This row is advisory evidence and is not permission for any eligibility change (AUTO-2B.2 \u00a74.2)."
     }
-  ]
+  ],
+  "version": "0.2.0"
 }

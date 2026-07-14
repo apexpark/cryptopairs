@@ -292,7 +292,7 @@
       ]
     },
     "selector_view": {
-      "description": "Selector-view evidence stream (AUTO-2B.2): metrics computed from selector-view capture rows only. No outcome claims; never combined with realized paper evidence. Null/absent when no selector-view input was supplied.",
+      "description": "Selector-view evidence stream (AUTO-2B.2): metrics computed from selector-view capture rows only. No outcome claims; never combined with realized paper evidence; not permission for any eligibility change. Null/absent when no selector-view input was supplied.",
       "oneOf": [
         {
           "type": "null"
@@ -592,7 +592,7 @@
       ]
     },
     "universe": {
-      "description": "Discovery report over the selector-view universe. Null/absent when no selector-view input was supplied.",
+      "description": "Advisory discovery report over the selector-view universe. Nothing in this block is an eligibility input: candidates listed here become tradeable only via the Operator promotion path (AUTO-2B.2 \u00a74.3). Null/absent when no selector-view input was supplied.",
       "oneOf": [
         {
           "type": "null"
