@@ -4,6 +4,15 @@ All notable changes to this project will be documented in this file.
 This project follows SemVer as defined in `docs/02-versioning-and-releases.md`.
 
 ## Unreleased
+### Operator Tooling
+- Compose services now carry `restart: unless-stopped` so the stack
+  survives host reboots (a 2026-07-13 reboot left all six containers down;
+  the Operator applied the policy live via `docker update`, and this
+  change makes it survive container re-creation). The paper runbook's
+  hosted loop now skips-and-logs a stale observe-freshness tick instead of
+  exiting (per-tick fail-closed unchanged), and the hosted deployment
+  runbook gains reboot guidance.
+
 ### Fixed
 - AUTO-2A paper ledger now accepts real observe-only records whose observe key
   is minute-bucketed and whose strategy `source_generated_at` includes
