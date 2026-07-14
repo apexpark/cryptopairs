@@ -148,6 +148,19 @@ def optional_float_env(value: str | None) -> float | None:
     return float(value)
 
 
+def _nonneg_int_or_none(value: int | None) -> int | None:
+    # quality_window.min_rows is schema minimum 0.
+    if value is not None and value < 0:
+        raise ValueError("AUTOPILOT_OBSERVE_MIN_READY_WINDOW_ROWS must be >= 0")
+    return value
+
+
+def _finite_or_none(value: float | None) -> float | None:
+    if value is not None and not math.isfinite(value):
+        raise ValueError("AUTOPILOT_OBSERVE_MIN_READY_WINDOW_AVG_NET_BPS must be finite")
+    return value
+
+
 def normalize_base_url(value: str) -> str:
     return value.rstrip("/")
 
@@ -204,7 +217,7 @@ def load_quality_windows(path_value: str | None) -> dict[tuple[str, str, str], Q
             raise ValueError("quality window rows require pair_id, timeframe, selected_variant")
         windows[(pair_id, timeframe, selected_variant)] = QualityWindow(
             rows=_optional_int(row.get("rows")),
-            profitable_rate=_optional_float(row.get("profitable_rate")),
+            profitable_rate=_rate_float(row.get("profitable_rate")),
             avg_net_bps=_optional_float(row.get("avg_net_bps")),
         )
     return windows
@@ -213,13 +226,32 @@ def load_quality_windows(path_value: str | None) -> dict[tuple[str, str, str], Q
 def _optional_int(value: Any) -> int | None:
     if value is None:
         return None
-    return int(value)
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise ValueError("quality window integer values must be integers")
+    if value < 0:
+        raise ValueError("quality window integer values must be >= 0")
+    return value
 
 
 def _optional_float(value: Any) -> float | None:
     if value is None:
         return None
-    return float(value)
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise ValueError("quality window numeric values must be numbers")
+    try:
+        parsed = float(value)
+    except OverflowError:
+        raise ValueError("quality window numeric values must be finite")
+    if not math.isfinite(parsed):
+        raise ValueError("quality window numeric values must be finite")
+    return parsed
+
+
+def _rate_float(value: Any) -> float | None:
+    parsed = _optional_float(value)
+    if parsed is not None and not (0.0 <= parsed <= 1.0):
+        raise ValueError("profitable_rate must be within [0, 1]")
+    return parsed
 
 
 def load_config(env: Mapping[str, str] | None = None) -> Config:
@@ -259,11 +291,11 @@ def load_config(env: Mapping[str, str] | None = None) -> Config:
         allowed_pair_variants=parse_allowed_pair_variants(
             source.get("AUTOPILOT_OBSERVE_ALLOWED_PAIR_VARIANTS")
         ),
-        min_ready_window_rows=optional_int_env(
-            source.get("AUTOPILOT_OBSERVE_MIN_READY_WINDOW_ROWS")
+        min_ready_window_rows=_nonneg_int_or_none(
+            optional_int_env(source.get("AUTOPILOT_OBSERVE_MIN_READY_WINDOW_ROWS"))
         ),
-        min_ready_window_avg_net_bps=optional_float_env(
-            source.get("AUTOPILOT_OBSERVE_MIN_READY_WINDOW_AVG_NET_BPS")
+        min_ready_window_avg_net_bps=_finite_or_none(
+            optional_float_env(source.get("AUTOPILOT_OBSERVE_MIN_READY_WINDOW_AVG_NET_BPS"))
         ),
         quality_windows=load_quality_windows(
             source.get("AUTOPILOT_OBSERVE_QUALITY_WINDOWS_JSON")
@@ -318,10 +350,15 @@ def build_observe_key(row: dict[str, Any], observed_at: dt.datetime) -> str:
 
 
 def source_generated_at(trade_now: dict[str, Any] | None) -> str | None:
+    # The v1 record field is format:"date-time"; record it only if it is a
+    # valid ISO datetime (with a time component), else null — never a raw
+    # non-timestamp string, even on a BLOCKED_STALE_INPUT record.
     if trade_now is None:
         return None
     value = trade_now.get("generated_at")
-    return value if isinstance(value, str) else None
+    if not isinstance(value, str) or "T" not in value or parse_iso(value) is None:
+        return None
+    return value
 
 
 def evidence_status(
@@ -435,10 +472,10 @@ def record_from_row(
         "learning_overlay_fresh": nullable_bool(
             None if trade_now is None else trade_now.get("learning_overlay_fresh")
         ),
-        "learning_overlay_age_seconds": nullable_number(
+        "learning_overlay_age_seconds": nonneg_number(
             None if trade_now is None else trade_now.get("learning_overlay_age_seconds")
         ),
-        "dispatch_mode": dispatch_mode_value(dispatch_mode),
+        "dispatch_mode": schema_dispatch_mode(dispatch_mode),
         "kill_switch_active": nullable_bool(None if kill_switch is None else kill_switch.get("active")),
         "conflicting_live_trade": conflicting_live_trade,
         "quality_window": quality_window,
@@ -476,6 +513,28 @@ def nullable_number(value: Any) -> float | int | None:
     # or system — can ever serialize invalid JSON. Ints are preserved exactly
     # (no lossy float() conversion) and never overflow.
     return value if is_finite_number(value) else None
+
+
+def nonneg_number(value: Any) -> float | int | None:
+    # The v1 schema requires learning_overlay_age_seconds >= 0. A negative or
+    # non-finite value is not schema-representable, so record null (the block
+    # reason logic reads staleness separately) rather than an invalid record.
+    number = nullable_number(value)
+    if number is None or number < 0:
+        return None
+    return number
+
+
+# The v1 record schema constrains dispatch_mode to this enum (or null).
+SCHEMA_DISPATCH_MODES = frozenset({"FAIL_CLOSED", "SIMULATE_ACK", "LIVE_KRAKEN"})
+
+
+def schema_dispatch_mode(dispatch_mode: dict[str, Any] | None) -> str | None:
+    # Record only a schema-valid dispatch mode; an unknown/garbage upstream
+    # value is recorded as null (the DISPATCH_MODE_UNKNOWN reason is emitted
+    # separately) so the record itself stays schema-valid even fail-closed.
+    name = dispatch_mode_value(dispatch_mode)
+    return name if name in SCHEMA_DISPATCH_MODES else None
 
 
 def dispatch_mode_value(dispatch_mode: dict[str, Any] | None) -> str | None:
@@ -696,9 +755,11 @@ def selector_view_freshness_reason(
     recorded as a fresh selector observation.
     """
     raw = trade_now.get("generated_at")
-    # A date-only value ("2026-06-13") parses to midnight and could read as
-    # fresh; require a real timestamp with a time component.
-    if not isinstance(raw, str) or ":" not in raw:
+    # Require a full ISO datetime with the 'T' date/time separator (the real
+    # cue format, e.g. "2026-06-13T05:29:57Z"). A date-only value, a
+    # date+offset with no time, or a ":"-containing-but-timeless string parses
+    # to something misleading and must not read as fresh.
+    if not isinstance(raw, str) or "T" not in raw:
         return "TRADE_NOW_GENERATED_AT_INVALID"
     generated_at = parse_iso(raw)
     if generated_at is None:
@@ -786,10 +847,15 @@ ALLOWED_CUE_BUCKETS = frozenset({"TRADE_NOW", "WATCHLIST", "EXCLUDED"})
 
 
 def _nullable_cue_bucket(value: Any) -> str | None:
-    # decision_bucket is enum-constrained in the v2 selector-view schema.
+    # decision_bucket is enum-constrained (or null) in the v2 selector-view
+    # schema, but the schema does NOT require it to equal cue_bucket. isinstance
+    # guard first so an unhashable list/dict omits the row rather than raising
+    # on the `in frozenset` test; a present value must be a valid enum member.
+    # A value that legitimately differs from cue_bucket is recorded faithfully
+    # (both the source bucket and the selector's stated bucket are evidence).
     if value is None:
         return None
-    if value not in ALLOWED_CUE_BUCKETS:
+    if not isinstance(value, str) or value not in ALLOWED_CUE_BUCKETS:
         raise _SelectorViewRowMalformed
     return value
 
@@ -977,11 +1043,14 @@ def selector_view_records(
     source_generated = source_generated_at(trade_now)
     records: list[dict[str, Any]] = []
     for endpoint_key, cue_bucket in CUE_BUCKETS:
+        seen = 0
+        recorded = 0
         for row in trade_now[endpoint_key]:  # each bucket validated as a list above
             if not isinstance(row, dict):
                 continue
             if candidate_identity_reason(row) is not None:
                 continue
+            seen += 1
             try:
                 records.append(
                     selector_view_record(
@@ -991,8 +1060,27 @@ def selector_view_records(
                         source_generated=source_generated,
                     )
                 )
+                recorded += 1
             except _SelectorViewRowMalformed:
                 continue
+        # Observability: if any identity-valid row was omitted as malformed,
+        # surface it so a silently under-recorded bucket (e.g. all EXCLUDED
+        # rows dropped) is visible in the capture log rather than looking like
+        # a genuinely empty bucket. Never touches the JSONL artifact.
+        if seen > recorded:
+            print(
+                json.dumps(
+                    {
+                        "observed_at": iso(observed_at),
+                        "selector_view_omitted_malformed": seen - recorded,
+                        "cue_bucket": cue_bucket,
+                        "seen": seen,
+                        "recorded": recorded,
+                    },
+                    sort_keys=True,
+                ),
+                file=sys.stderr,
+            )
     return records
 
 

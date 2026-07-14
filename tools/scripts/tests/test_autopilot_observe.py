@@ -389,6 +389,122 @@ class AutopilotObserveTests(unittest.TestCase):
         self.assertIsNone(safe["b"][2]["c"])
         self.assertEqual(safe["d"], "ok")
 
+    def test_round4_decision_bucket_list_omits_not_crashes(self) -> None:
+        row = deepcopy(candidate())
+        row["decision_bucket"] = ["not", "hashable"]   # would TypeError on `in frozenset`
+        trade_now = {"generated_at": "2026-06-13T05:29:57Z",
+                     "tradable_now": [row], "watchlist": [], "excluded": []}
+        records = observe.selector_view_records(
+            config=config(), trade_now=trade_now, observed_at=OBSERVED_AT,
+            dispatch_mode=None, kill_switch=None,
+            evidence=observe.blocked_before_poll_evidence(), source_reasons=[],
+        )
+        self.assertEqual([r for r in records if r.get("capture_profile") == "selector_view"], [])
+
+    def test_round4_decision_bucket_mismatch_is_recorded_faithfully(self) -> None:
+        # The v2 schema does not require decision_bucket == cue_bucket; a valid
+        # enum value that differs is faithful evidence, recorded not dropped.
+        row = deepcopy(candidate())
+        row["decision_bucket"] = "TRADE_NOW"  # while in the watchlist bucket
+        trade_now = {"generated_at": "2026-06-13T05:29:57Z",
+                     "tradable_now": [], "watchlist": [row], "excluded": []}
+        records = observe.selector_view_records(
+            config=config(), trade_now=trade_now, observed_at=OBSERVED_AT,
+            dispatch_mode=None, kill_switch=None,
+            evidence=observe.blocked_before_poll_evidence(), source_reasons=[],
+        )
+        sel = [r for r in records if r.get("capture_profile") == "selector_view"]
+        self.assertEqual(len(sel), 1)
+        self.assertEqual(sel[0]["cue_bucket"], "WATCHLIST")
+        self.assertEqual(sel[0]["decision_bucket"], "TRADE_NOW")
+        # But a garbage (non-enum) decision_bucket still omits the row.
+        bad = deepcopy(candidate()); bad["decision_bucket"] = "GARBAGE"
+        tn2 = {"generated_at": "2026-06-13T05:29:57Z",
+               "tradable_now": [bad], "watchlist": [], "excluded": []}
+        r2 = observe.selector_view_records(
+            config=config(), trade_now=tn2, observed_at=OBSERVED_AT,
+            dispatch_mode=None, kill_switch=None,
+            evidence=observe.blocked_before_poll_evidence(), source_reasons=[],
+        )
+        self.assertEqual([r for r in r2 if r.get("capture_profile") == "selector_view"], [])
+
+    def test_round4_omitted_rows_are_surfaced_on_stderr(self) -> None:
+        import contextlib, io
+        bad = deepcopy(candidate()); bad["net_edge_bps"] = float("nan")  # omitted
+        trade_now = {"generated_at": "2026-06-13T05:29:57Z",
+                     "tradable_now": [bad], "watchlist": [], "excluded": []}
+        buf = io.StringIO()
+        with contextlib.redirect_stderr(buf):
+            observe.selector_view_records(
+                config=config(), trade_now=trade_now, observed_at=OBSERVED_AT,
+                dispatch_mode=None, kill_switch=None,
+                evidence=observe.blocked_before_poll_evidence(), source_reasons=[],
+            )
+        self.assertIn("selector_view_omitted_malformed", buf.getvalue())
+
+    def test_round4_timeless_timestamps_are_invalid(self) -> None:
+        for bad in ("2026-06-13", "2026-06-13+00:00", "2026-06-13:05:29:57"):
+            trade_now = {"generated_at": bad, "tradable_now": [candidate()],
+                         "watchlist": [], "excluded": []}
+            records = observe.selector_view_records(
+                config=config(), trade_now=trade_now, observed_at=OBSERVED_AT,
+                dispatch_mode=None, kill_switch=None,
+                evidence=observe.blocked_before_poll_evidence(), source_reasons=[],
+            )
+            self.assertEqual(records[0]["decision"], "BLOCKED_MALFORMED_RESPONSE", bad)
+
+    def test_round4_system_record_is_schema_valid_on_garbage_upstream(self) -> None:
+        from jsonschema import Draft202012Validator
+        repo_root = pathlib.Path(__file__).resolve().parents[3]
+        validator = Draft202012Validator(json.loads(
+            (repo_root / "specs/contracts/autopilot_observe_record.schema.json")
+            .read_text(encoding="utf-8")))
+        trade_now = {"generated_at": "2026-06-13T05:29:57Z",
+                     "learning_overlay_age_seconds": -1,
+                     "tradable_now": [candidate()], "watchlist": [], "excluded": []}
+        records = observe.selector_view_records(
+            config=config(), trade_now=trade_now, observed_at=OBSERVED_AT,
+            dispatch_mode={"mode": "GARBAGE"}, kill_switch=None,
+            evidence=observe.blocked_before_poll_evidence(),
+            source_reasons=["DATA_HEALTH_DEGRADED"],
+        )
+        self.assertEqual(records[0]["decision"], "BLOCKED_SOURCE_UNAVAILABLE")
+        self.assertIsNone(records[0]["dispatch_mode"])              # garbage -> null
+        self.assertIsNone(records[0]["learning_overlay_age_seconds"])  # negative -> null
+        self.assertEqual(sorted(validator.iter_errors(records[0]), key=str), [])
+
+    def test_round4_v1_invalid_source_generated_at_is_null(self) -> None:
+        # An entry/system record must not carry a non-timestamp generated_at.
+        self.assertIsNone(observe.source_generated_at({"generated_at": "hello"}))
+        self.assertIsNone(observe.source_generated_at({"generated_at": "2026-06-13"}))
+        self.assertEqual(
+            observe.source_generated_at({"generated_at": "2026-06-13T05:29:57Z"}),
+            "2026-06-13T05:29:57Z",
+        )
+
+    def test_round4_quality_window_range_and_finiteness(self) -> None:
+        import tempfile, os
+        def load(row: dict[str, Any]) -> None:
+            with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as fh:
+                json.dump([{"pair_id": "P", "timeframe": "1m", "selected_variant": "V", **row}], fh)
+                name = fh.name
+            try:
+                observe.load_quality_windows(name)
+            finally:
+                os.unlink(name)
+        base = {"rows": 10, "profitable_rate": 0.9, "avg_net_bps": 5.0}
+        load(base)  # valid
+        for bad in ({"avg_net_bps": float("nan")}, {"rows": -1}, {"rows": 3.9},
+                    {"rows": True}, {"profitable_rate": 1.5}, {"profitable_rate": -0.1}):
+            with self.assertRaises(ValueError, msg=str(bad)):
+                load({**base, **bad})
+
+    def test_round4_min_ready_env_validated(self) -> None:
+        with self.assertRaises(ValueError):
+            observe.load_config({"AUTOPILOT_OBSERVE_MIN_READY_WINDOW_ROWS": "-1"})
+        with self.assertRaises(ValueError):
+            observe.load_config({"AUTOPILOT_OBSERVE_MIN_READY_WINDOW_AVG_NET_BPS": "inf"})
+
     def test_selector_view_refuses_future_timestamp(self) -> None:
         # A future generated_at (negative age beyond tolerance) is not "fresh".
         future = {"generated_at": "2026-06-13T06:00:00Z",  # 30 min ahead of OBSERVED_AT

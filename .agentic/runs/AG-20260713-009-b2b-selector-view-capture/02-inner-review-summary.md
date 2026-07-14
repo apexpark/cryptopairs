@@ -93,4 +93,37 @@ Meta-note: three Codex rounds on one capture tool, all on
 numeric/serialization faithfulness that inner review under-probed. The
 fail-closed review checklist for capture tools now mandates explicit
 huge-int / non-finite / lossy-conversion / enum / timestamp-precision /
-nested-serialization probes. 152 tools/scripts tests green.
+nested-serialization probes. the full tools/scripts suite green (count grows each round as cases are added).
+
+## Codex round 4 + proactive convergence audit (PR #252)
+
+Codex round 4 found four more: (1) an unhashable list/dict `decision_bucket`
+crashed the tick — isinstance-guarded; (2) the ":" timestamp heuristic
+accepted timeless strings — now requires a real "T" ISO datetime; (3) a
+NaN quality-window value passed the gate then wrote a fabricated pass:true —
+rejected at load; (4) system records could be schema-invalid on garbage
+upstream (dispatch mode / negative age) — `schema_dispatch_mode` and
+`nonneg_number` now coerce to schema-valid values.
+
+To stop trading rounds, a **proactive convergence audit** then traced every
+schema-constrained field across the entry, system, and selector record
+paths. It confirmed no remaining crash or invalid-JSON path, and surfaced:
+- A self-correction: my round-4 `decision_bucket == cue_bucket` requirement
+  was OVER-strict (the v2 schema permits them to differ) and dropped
+  schema-valid rows, under-recording the universe. **Relaxed** — a valid
+  differing enum value is now recorded faithfully; a non-enum value still
+  omits the row.
+- Universe under-recording was invisible: omitted malformed rows now emit a
+  per-bucket stderr diagnostic (`selector_view_omitted_malformed`) so B2-d
+  evidence reveals a silently-dropped bucket instead of it looking empty.
+- The v1 `source_generated_at` copied a raw non-timestamp string onto a
+  BLOCKED_STALE_INPUT record — now nulled unless it is a valid "T" datetime.
+- Pre-existing entry-path quality-window/config range holes (rows/min_rows
+  `minimum 0`, profitable_rate `[0,1]`, non-finite thresholds, huge-int
+  overflow, float/bool coercion of `rows`) — all validated/rejected at load,
+  even though selector-view capture does not use quality windows, so no
+  schema-invalid record can be produced from any config.
+
+Every finding has a regression test. The fail-closed review checklist for
+capture tools now mandates an exhaustive per-schema-field trace across all
+record-building paths before first external review.
