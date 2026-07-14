@@ -41,3 +41,29 @@ follow-up commit. 143 tools/scripts tests green.
 
 Verdict after repairs: P2 closed with a regression test; all actioned P3s
 fixed; one P3 (execution GETs) consciously left with rationale.
+
+## Codex Tier 3 review round (PR #252) — two P1s the inner review missed
+
+Codex's adversarial probing found two P1s the inner review did not:
+- P1: a 400-digit number raised `OverflowError` in `float()` (escaping the
+  narrow sentinel catch) and crashed the capture tick; NaN/inf passed and
+  would serialize as invalid JSON.
+- P1: lenient coercion FABRICATED rows — `setup_gate_pass: "false"` became
+  `True`, a string `rationale_codes` became `[]` — producing schema-valid
+  but semantically false selector evidence.
+
+Fix: `selector_view_record` rewritten to strict all-or-nothing transcription
+(finite numbers only, real bools only, string-lists only, timeframe==1m;
+any wrong-typed field omits the row). Malformed responses (bad
+`generated_at`) and non-list buckets now emit an honest
+`BLOCKED_MALFORMED_RESPONSE` system record, not a fake selector observation.
+Comprehensive malformed-input tests added (huge/NaN/inf/bool-as-string/
+str-as-list/wrong-timeframe/missing-number/non-list-bucket/invalid-
+generated-at); `json.dumps(allow_nan=False)` guards the artifact. P2s:
+runbook disk figure corrected to a measured ~1.4–1.7 KB/row (was 0.6–1.0).
+145 tools/scripts tests green.
+
+Lesson recorded: the inner-review claim "every unexpected shape is omitted,
+proven by a regression test" was an overclaim — adversarial numeric/type
+probing (huge/NaN/coercion) is now part of the fail-closed review checklist
+for capture tools.

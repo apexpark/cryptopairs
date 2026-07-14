@@ -153,7 +153,8 @@ curl -fsS "http://127.0.0.1:8083/v1/strategy/pairs/trade-now?timeframe=1m" \
 ```
 
 Projection at 300s cadence (12 ticks/hour): `rows_per_window = total × 12 ×
-hours`. A selector-view row serializes to roughly 0.6–1.0 KB. Confirm free
+hours`. A fully-populated selector-view row serializes to roughly 1.4–1.7 KB
+(use 1.8 KB per row for a safety-margin estimate). Confirm free
 space with `df -h /opt/cryptopairs` before starting; do not start if the
 projected artifact would exceed available headroom — re-scope the cadence or
 window with the Operator instead.
