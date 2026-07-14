@@ -1,229 +1,582 @@
 {
-  "$id": "https://cryptopairs/specs/contracts/autopilot_observe_record.schema.json",
   "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://cryptopairs/specs/contracts/autopilot_observe_record.schema.json",
   "title": "AutopilotObserveRecord",
-  "description": "Append-only observe-only autopilot decision record. This artifact records what the observer would have considered; it is not an execution intent and must not be submitted to execution-service.",
-  "type": "object",
-  "additionalProperties": false,
-  "required": [
-    "schema_version",
-    "mode",
-    "run_id",
-    "observed_at",
-    "source_generated_at",
-    "timeframe",
-    "pair_id",
-    "selected_variant",
-    "approval_source",
-    "decision_reason_code",
-    "setup_gate_pass",
-    "cost_gate_pass",
-    "trade_gate_pass",
-    "spread_z",
-    "entry_distance_z",
-    "selected_score_z",
-    "net_edge_bps",
-    "opportunity_score",
-    "learning_overlay_fresh",
-    "learning_overlay_age_seconds",
-    "dispatch_mode",
-    "kill_switch_active",
-    "conflicting_live_trade",
-    "quality_window",
-    "decision",
-    "reason_codes",
-    "observe_key",
-    "evidence"
-  ],
-  "properties": {
-    "schema_version": {
-      "type": "integer",
-      "const": 1
-    },
-    "mode": {
-      "type": "string",
-      "const": "observe_only"
-    },
-    "run_id": {
-      "type": "string",
-      "minLength": 1
-    },
-    "observed_at": {
-      "type": "string",
-      "format": "date-time"
-    },
-    "source_generated_at": {
-      "type": ["string", "null"],
-      "format": "date-time"
-    },
-    "timeframe": {
-      "type": "string",
-      "const": "1m"
-    },
-    "pair_id": {
-      "type": "string",
-      "minLength": 1
-    },
-    "selected_variant": {
-      "type": "string",
-      "minLength": 1
-    },
-    "approval_source": {
-      "type": ["string", "null"]
-    },
-    "decision_reason_code": {
-      "type": ["string", "null"]
-    },
-    "setup_gate_pass": {
-      "type": ["boolean", "null"]
-    },
-    "cost_gate_pass": {
-      "type": ["boolean", "null"]
-    },
-    "trade_gate_pass": {
-      "type": ["boolean", "null"]
-    },
-    "spread_z": {
-      "type": ["number", "null"]
-    },
-    "entry_distance_z": {
-      "type": ["number", "null"]
-    },
-    "selected_score_z": {
-      "type": ["number", "null"]
-    },
-    "net_edge_bps": {
-      "type": ["number", "null"]
-    },
-    "opportunity_score": {
-      "type": ["number", "null"]
-    },
-    "learning_overlay_fresh": {
-      "type": ["boolean", "null"]
-    },
-    "learning_overlay_age_seconds": {
-      "type": ["number", "null"],
-      "minimum": 0
-    },
-    "dispatch_mode": {
-      "type": ["string", "null"],
-      "enum": ["FAIL_CLOSED", "SIMULATE_ACK", "LIVE_KRAKEN", null]
-    },
-    "kill_switch_active": {
-      "type": ["boolean", "null"]
-    },
-    "conflicting_live_trade": {
-      "type": ["boolean", "null"]
-    },
-    "quality_window": {
-      "type": ["object", "null"],
-      "additionalProperties": false,
-      "required": [
-        "rows",
-        "profitable_rate",
-        "avg_net_bps",
-        "min_rows",
-        "min_avg_net_bps",
-        "pass"
-      ],
-      "properties": {
-        "rows": {
-          "type": ["integer", "null"],
-          "minimum": 0
-        },
-        "profitable_rate": {
-          "type": ["number", "null"],
-          "minimum": 0,
-          "maximum": 1
-        },
-        "avg_net_bps": {
-          "type": ["number", "null"]
-        },
-        "min_rows": {
-          "type": ["integer", "null"],
-          "minimum": 0
-        },
-        "min_avg_net_bps": {
-          "type": ["number", "null"]
-        },
-        "pass": {
-          "type": "boolean"
-        }
-      }
-    },
-    "decision": {
-      "type": "string",
-      "enum": [
-        "OBSERVED_ENTRY_CANDIDATE",
-        "BLOCKED_STALE_INPUT",
-        "BLOCKED_SOURCE_UNAVAILABLE",
-        "BLOCKED_MALFORMED_RESPONSE",
-        "BLOCKED_KILL_SWITCH",
-        "BLOCKED_DISPATCH_MODE",
-        "BLOCKED_TIMEFRAME_OUT_OF_SCOPE",
-        "BLOCKED_OPEN_LIVE_TRADE",
-        "BLOCKED_NOT_ALLOWLISTED",
-        "BLOCKED_LIVE_GATE",
-        "BLOCKED_LEARNING_OVERLAY_STALE",
-        "BLOCKED_QUALITY_GATE",
-        "BLOCKED_DUPLICATE_OBSERVATION"
-      ]
-    },
-    "reason_codes": {
-      "type": "array",
-      "items": {
-        "type": "string",
-        "minLength": 1
-      }
-    },
-    "observe_key": {
-      "type": "string",
-      "pattern": "^observe-only:v1:"
-    },
-    "evidence": {
+  "description": "Append-only observe-only autopilot decision record. This artifact records what the observer would have considered; it is not an execution intent and must not be submitted to execution-service. Version 2 splits records into two row types: entry rows (the version-1 shape, unchanged) and selector-view rows (capture_profile=selector_view) recording the cue endpoint's stated view per bucket with no outcome claims (AUTO-2B.2 \u00a74.1).",
+  "oneOf": [
+    {
       "type": "object",
       "additionalProperties": false,
       "required": [
-        "data_health_status",
-        "strategy_health_status",
-        "trade_now_status",
-        "trade_now_observability_status",
-        "dispatch_mode_status",
-        "kill_switch_status",
-        "open_trades_status",
-        "source_urls"
+        "schema_version",
+        "mode",
+        "run_id",
+        "observed_at",
+        "source_generated_at",
+        "timeframe",
+        "pair_id",
+        "selected_variant",
+        "approval_source",
+        "decision_reason_code",
+        "setup_gate_pass",
+        "cost_gate_pass",
+        "trade_gate_pass",
+        "spread_z",
+        "entry_distance_z",
+        "selected_score_z",
+        "net_edge_bps",
+        "opportunity_score",
+        "learning_overlay_fresh",
+        "learning_overlay_age_seconds",
+        "dispatch_mode",
+        "kill_switch_active",
+        "conflicting_live_trade",
+        "quality_window",
+        "decision",
+        "reason_codes",
+        "observe_key",
+        "evidence"
       ],
       "properties": {
-        "data_health_status": {
-          "type": ["string", "null"]
+        "schema_version": {
+          "type": "integer",
+          "enum": [
+            1,
+            2
+          ]
         },
-        "strategy_health_status": {
-          "type": ["string", "null"]
+        "mode": {
+          "type": "string",
+          "const": "observe_only"
         },
-        "trade_now_status": {
-          "type": ["string", "null"]
+        "run_id": {
+          "type": "string",
+          "minLength": 1
         },
-        "trade_now_observability_status": {
-          "type": ["string", "null"]
+        "observed_at": {
+          "type": "string",
+          "format": "date-time"
         },
-        "dispatch_mode_status": {
-          "type": ["string", "null"]
+        "source_generated_at": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "date-time"
         },
-        "kill_switch_status": {
-          "type": ["string", "null"]
+        "timeframe": {
+          "type": "string",
+          "const": "1m"
         },
-        "open_trades_status": {
-          "type": ["string", "null"]
+        "pair_id": {
+          "type": "string",
+          "minLength": 1
         },
-        "source_urls": {
+        "selected_variant": {
+          "type": "string",
+          "minLength": 1
+        },
+        "approval_source": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "decision_reason_code": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "setup_gate_pass": {
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "cost_gate_pass": {
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "trade_gate_pass": {
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "spread_z": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "entry_distance_z": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "selected_score_z": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "net_edge_bps": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "opportunity_score": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "learning_overlay_fresh": {
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "learning_overlay_age_seconds": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "dispatch_mode": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "enum": [
+            "FAIL_CLOSED",
+            "SIMULATE_ACK",
+            "LIVE_KRAKEN",
+            null
+          ]
+        },
+        "kill_switch_active": {
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "conflicting_live_trade": {
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "quality_window": {
+          "type": [
+            "object",
+            "null"
+          ],
+          "additionalProperties": false,
+          "required": [
+            "rows",
+            "profitable_rate",
+            "avg_net_bps",
+            "min_rows",
+            "min_avg_net_bps",
+            "pass"
+          ],
+          "properties": {
+            "rows": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "minimum": 0
+            },
+            "profitable_rate": {
+              "type": [
+                "number",
+                "null"
+              ],
+              "minimum": 0,
+              "maximum": 1
+            },
+            "avg_net_bps": {
+              "type": [
+                "number",
+                "null"
+              ]
+            },
+            "min_rows": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "minimum": 0
+            },
+            "min_avg_net_bps": {
+              "type": [
+                "number",
+                "null"
+              ]
+            },
+            "pass": {
+              "type": "boolean"
+            }
+          }
+        },
+        "decision": {
+          "type": "string",
+          "enum": [
+            "OBSERVED_ENTRY_CANDIDATE",
+            "BLOCKED_STALE_INPUT",
+            "BLOCKED_SOURCE_UNAVAILABLE",
+            "BLOCKED_MALFORMED_RESPONSE",
+            "BLOCKED_KILL_SWITCH",
+            "BLOCKED_DISPATCH_MODE",
+            "BLOCKED_TIMEFRAME_OUT_OF_SCOPE",
+            "BLOCKED_OPEN_LIVE_TRADE",
+            "BLOCKED_NOT_ALLOWLISTED",
+            "BLOCKED_LIVE_GATE",
+            "BLOCKED_LEARNING_OVERLAY_STALE",
+            "BLOCKED_QUALITY_GATE",
+            "BLOCKED_DUPLICATE_OBSERVATION"
+          ]
+        },
+        "reason_codes": {
           "type": "array",
           "items": {
             "type": "string",
             "minLength": 1
           }
+        },
+        "observe_key": {
+          "type": "string",
+          "pattern": "^observe-only:v1:"
+        },
+        "evidence": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "data_health_status",
+            "strategy_health_status",
+            "trade_now_status",
+            "trade_now_observability_status",
+            "dispatch_mode_status",
+            "kill_switch_status",
+            "open_trades_status",
+            "source_urls"
+          ],
+          "properties": {
+            "data_health_status": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "strategy_health_status": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "trade_now_status": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "trade_now_observability_status": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "dispatch_mode_status": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "kill_switch_status": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "open_trades_status": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "source_urls": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1
+              }
+            }
+          }
+        },
+        "capture_profile": {
+          "type": "string",
+          "const": "entry"
         }
-      }
+      },
+      "version": "0.1.0"
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "mode",
+        "capture_profile",
+        "run_id",
+        "observed_at",
+        "source_generated_at",
+        "timeframe",
+        "pair_id",
+        "selected_variant",
+        "cue_bucket",
+        "decision",
+        "decision_reason_code",
+        "blocked_reason_code",
+        "watch_reason_code",
+        "rationale_codes",
+        "setup_gate_pass",
+        "cost_gate_pass",
+        "trade_gate_pass",
+        "spread_z",
+        "net_edge_bps",
+        "opportunity_score",
+        "observe_key",
+        "direction_hint"
+      ],
+      "properties": {
+        "schema_version": {
+          "type": "integer",
+          "const": 2
+        },
+        "mode": {
+          "type": "string",
+          "const": "observe_only"
+        },
+        "capture_profile": {
+          "type": "string",
+          "const": "selector_view"
+        },
+        "run_id": {
+          "type": "string"
+        },
+        "observed_at": {
+          "type": "string"
+        },
+        "source_generated_at": {
+          "type": "string"
+        },
+        "timeframe": {
+          "type": "string"
+        },
+        "pair_id": {
+          "type": "string"
+        },
+        "selected_variant": {
+          "type": "string"
+        },
+        "cue_bucket": {
+          "type": "string",
+          "enum": [
+            "TRADE_NOW",
+            "WATCHLIST",
+            "EXCLUDED"
+          ],
+          "description": "Normalized label for the cue endpoint's response buckets: tradable_now \u2192 TRADE_NOW, watchlist \u2192 WATCHLIST, excluded \u2192 EXCLUDED (mapping implemented in B2-b)."
+        },
+        "direction_hint": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "decision": {
+          "type": "string",
+          "const": "SELECTOR_VIEW_OBSERVED"
+        },
+        "decision_reason_code": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "blocked_reason_code": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "watch_reason_code": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "rationale_codes": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "setup_gate_pass": {
+          "type": "boolean"
+        },
+        "cost_gate_pass": {
+          "type": "boolean"
+        },
+        "trade_gate_pass": {
+          "type": "boolean"
+        },
+        "spread_z": {
+          "type": "number"
+        },
+        "selected_score_z": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "entry_distance_z": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "net_edge_bps": {
+          "type": "number"
+        },
+        "opportunity_score": {
+          "type": "number"
+        },
+        "approval_source": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "observe_key": {
+          "type": "string"
+        },
+        "left_instrument": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "right_instrument": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "confidence_band": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "expected_hold_bars": {
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "open_live_trade": {
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "portfolio_target_weight": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "portfolio_risk_contribution": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "requires_fresh_overlay": {
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "learning_recommendation": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "learning_trade_eligible": {
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "learning_selection_selected": {
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "learning_reason_codes": {
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": {
+            "type": "string"
+          }
+        },
+        "learning_cycle_generated_at": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "selected_config_source": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "legacy_fallback_active": {
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "decision_bucket": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "enum": [
+            "TRADE_NOW",
+            "WATCHLIST",
+            "EXCLUDED",
+            null
+          ]
+        }
+      },
+      "description": "Selector-view row: an observation of the champion/challenger selector's stated view for one candidate in one cue bucket. Every numeric field records the selector's own stated figures \u2014 never a realized or tool-estimated outcome. This row is advisory evidence and is not permission for any eligibility change (AUTO-2B.2 \u00a74.2). Optional fields mirror the cue endpoint's decisionRowBase verbatim as further stated-view observations; all remain optional so B2-b may pass endpoint fields through unchanged."
     }
-  },
-  "version": "0.1.0"
+  ],
+  "version": "0.2.0"
 }

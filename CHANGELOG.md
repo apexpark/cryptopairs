@@ -5,6 +5,12 @@ This project follows SemVer as defined in `docs/02-versioning-and-releases.md`.
 
 ## Unreleased
 ### Operator Tooling
+- AUTO-2B.2 B2-a contracts: `autopilot_observe_record` version 2 splits
+  into entry rows (version-1 shape unchanged) and selector-view rows
+  (`SELECTOR_VIEW_OBSERVED`, cue bucket + selector-stated fields, no
+  outcome fields); `autopilot_shadow_allowlist_snapshot` gains optional
+  `selector_view`, `universe` (discovery), and per-stream churn blocks.
+  Examples and validation tests included; no tool behavior changes.
 - Compose services now carry `restart: unless-stopped` so the stack
   survives host reboots (a 2026-07-13 reboot left all six containers down;
   the Operator applied the policy live via `docker update`, and this

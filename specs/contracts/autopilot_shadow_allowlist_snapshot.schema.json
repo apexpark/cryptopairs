@@ -22,7 +22,10 @@
   "properties": {
     "schema_version": {
       "type": "integer",
-      "const": 1
+      "enum": [
+        1,
+        2
+      ]
     },
     "mode": {
       "type": "string",
@@ -186,6 +189,484 @@
               "type": "number",
               "minimum": 0,
               "maximum": 1
+            },
+            "selector_view": {
+              "description": "Selector-view-stream churn vs the previous snapshot; null/absent when either snapshot lacks selector-view data.",
+              "oneOf": [
+                {
+                  "type": "null"
+                },
+                {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "previous_prominent_count",
+                    "prominent_added",
+                    "prominent_removed",
+                    "prominent_retained_count",
+                    "churn_count",
+                    "stability_ratio"
+                  ],
+                  "properties": {
+                    "previous_prominent_count": {
+                      "type": "integer",
+                      "minimum": 0
+                    },
+                    "prominent_added": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "additionalProperties": false,
+                        "required": [
+                          "pair_id",
+                          "timeframe",
+                          "selected_variant"
+                        ],
+                        "properties": {
+                          "pair_id": {
+                            "type": "string"
+                          },
+                          "timeframe": {
+                            "type": "string"
+                          },
+                          "selected_variant": {
+                            "type": "string"
+                          },
+                          "direction": {
+                            "type": [
+                              "string",
+                              "null"
+                            ]
+                          }
+                        }
+                      }
+                    },
+                    "prominent_removed": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "additionalProperties": false,
+                        "required": [
+                          "pair_id",
+                          "timeframe",
+                          "selected_variant"
+                        ],
+                        "properties": {
+                          "pair_id": {
+                            "type": "string"
+                          },
+                          "timeframe": {
+                            "type": "string"
+                          },
+                          "selected_variant": {
+                            "type": "string"
+                          },
+                          "direction": {
+                            "type": [
+                              "string",
+                              "null"
+                            ]
+                          }
+                        }
+                      }
+                    },
+                    "prominent_retained_count": {
+                      "type": "integer",
+                      "minimum": 0
+                    },
+                    "churn_count": {
+                      "type": "integer",
+                      "minimum": 0
+                    },
+                    "stability_ratio": {
+                      "type": "number",
+                      "minimum": 0,
+                      "maximum": 1
+                    }
+                  }
+                }
+              ]
+            }
+          }
+        }
+      ]
+    },
+    "selector_view": {
+      "description": "Selector-view evidence stream (AUTO-2B.2): metrics computed from selector-view capture rows only. No outcome claims; never combined with realized paper evidence; not permission for any eligibility change. Null/absent when no selector-view input was supplied.",
+      "oneOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "selector_view_prominent",
+            "selector_view_marginal"
+          ],
+          "properties": {
+            "selector_view_prominent": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "pair_id",
+                  "timeframe",
+                  "selected_variant",
+                  "direction",
+                  "evidence_kind",
+                  "metrics"
+                ],
+                "properties": {
+                  "pair_id": {
+                    "type": "string"
+                  },
+                  "timeframe": {
+                    "type": "string"
+                  },
+                  "selected_variant": {
+                    "type": "string"
+                  },
+                  "direction": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "evidence_kind": {
+                    "type": "string",
+                    "const": "selector_view"
+                  },
+                  "metrics": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": [
+                      "rows_observed",
+                      "time_in_tradable_now_ratio",
+                      "bucket_counts",
+                      "top_gate_failure_reasons"
+                    ],
+                    "properties": {
+                      "rows_observed": {
+                        "type": "integer",
+                        "minimum": 0
+                      },
+                      "time_in_tradable_now_ratio": {
+                        "type": "number",
+                        "minimum": 0,
+                        "maximum": 1
+                      },
+                      "bucket_counts": {
+                        "type": "object",
+                        "additionalProperties": false,
+                        "required": [
+                          "TRADE_NOW",
+                          "WATCHLIST",
+                          "EXCLUDED"
+                        ],
+                        "properties": {
+                          "TRADE_NOW": {
+                            "type": "integer",
+                            "minimum": 0
+                          },
+                          "WATCHLIST": {
+                            "type": "integer",
+                            "minimum": 0
+                          },
+                          "EXCLUDED": {
+                            "type": "integer",
+                            "minimum": 0
+                          }
+                        }
+                      },
+                      "score_z_summary": {
+                        "type": [
+                          "object",
+                          "null"
+                        ],
+                        "additionalProperties": false,
+                        "properties": {
+                          "min": {
+                            "type": [
+                              "number",
+                              "null"
+                            ]
+                          },
+                          "max": {
+                            "type": [
+                              "number",
+                              "null"
+                            ]
+                          },
+                          "mean": {
+                            "type": [
+                              "number",
+                              "null"
+                            ]
+                          }
+                        }
+                      },
+                      "stated_net_edge_bps_summary": {
+                        "type": [
+                          "object",
+                          "null"
+                        ],
+                        "additionalProperties": false,
+                        "description": "Summary of the selector's own stated net_edge_bps \u2014 an observation of the selector's view, never an outcome.",
+                        "properties": {
+                          "min": {
+                            "type": [
+                              "number",
+                              "null"
+                            ]
+                          },
+                          "max": {
+                            "type": [
+                              "number",
+                              "null"
+                            ]
+                          },
+                          "mean": {
+                            "type": [
+                              "number",
+                              "null"
+                            ]
+                          }
+                        }
+                      },
+                      "top_gate_failure_reasons": {
+                        "type": "array",
+                        "items": {
+                          "type": "string"
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            },
+            "selector_view_marginal": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "pair_id",
+                  "timeframe",
+                  "selected_variant",
+                  "direction",
+                  "evidence_kind",
+                  "metrics"
+                ],
+                "properties": {
+                  "pair_id": {
+                    "type": "string"
+                  },
+                  "timeframe": {
+                    "type": "string"
+                  },
+                  "selected_variant": {
+                    "type": "string"
+                  },
+                  "direction": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "evidence_kind": {
+                    "type": "string",
+                    "const": "selector_view"
+                  },
+                  "metrics": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": [
+                      "rows_observed",
+                      "time_in_tradable_now_ratio",
+                      "bucket_counts",
+                      "top_gate_failure_reasons"
+                    ],
+                    "properties": {
+                      "rows_observed": {
+                        "type": "integer",
+                        "minimum": 0
+                      },
+                      "time_in_tradable_now_ratio": {
+                        "type": "number",
+                        "minimum": 0,
+                        "maximum": 1
+                      },
+                      "bucket_counts": {
+                        "type": "object",
+                        "additionalProperties": false,
+                        "required": [
+                          "TRADE_NOW",
+                          "WATCHLIST",
+                          "EXCLUDED"
+                        ],
+                        "properties": {
+                          "TRADE_NOW": {
+                            "type": "integer",
+                            "minimum": 0
+                          },
+                          "WATCHLIST": {
+                            "type": "integer",
+                            "minimum": 0
+                          },
+                          "EXCLUDED": {
+                            "type": "integer",
+                            "minimum": 0
+                          }
+                        }
+                      },
+                      "score_z_summary": {
+                        "type": [
+                          "object",
+                          "null"
+                        ],
+                        "additionalProperties": false,
+                        "properties": {
+                          "min": {
+                            "type": [
+                              "number",
+                              "null"
+                            ]
+                          },
+                          "max": {
+                            "type": [
+                              "number",
+                              "null"
+                            ]
+                          },
+                          "mean": {
+                            "type": [
+                              "number",
+                              "null"
+                            ]
+                          }
+                        }
+                      },
+                      "stated_net_edge_bps_summary": {
+                        "type": [
+                          "object",
+                          "null"
+                        ],
+                        "additionalProperties": false,
+                        "description": "Summary of the selector's own stated net_edge_bps \u2014 an observation of the selector's view, never an outcome.",
+                        "properties": {
+                          "min": {
+                            "type": [
+                              "number",
+                              "null"
+                            ]
+                          },
+                          "max": {
+                            "type": [
+                              "number",
+                              "null"
+                            ]
+                          },
+                          "mean": {
+                            "type": [
+                              "number",
+                              "null"
+                            ]
+                          }
+                        }
+                      },
+                      "top_gate_failure_reasons": {
+                        "type": "array",
+                        "items": {
+                          "type": "string"
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      ]
+    },
+    "universe": {
+      "description": "Advisory discovery report over the selector-view universe. Nothing in this block is an eligibility input: candidates listed here become tradeable only via the Operator promotion path (AUTO-2B.2 \u00a74.3). Null/absent when no selector-view input was supplied.",
+      "oneOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "bucket_universe_counts",
+            "paper_evidenced_count",
+            "selector_view_only",
+            "static_allowlist_overlap_count"
+          ],
+          "properties": {
+            "bucket_universe_counts": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "TRADE_NOW",
+                "WATCHLIST",
+                "EXCLUDED"
+              ],
+              "properties": {
+                "TRADE_NOW": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "WATCHLIST": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "EXCLUDED": {
+                  "type": "integer",
+                  "minimum": 0
+                }
+              }
+            },
+            "paper_evidenced_count": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "selector_view_only": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "pair_id",
+                  "timeframe",
+                  "selected_variant"
+                ],
+                "properties": {
+                  "pair_id": {
+                    "type": "string"
+                  },
+                  "timeframe": {
+                    "type": "string"
+                  },
+                  "selected_variant": {
+                    "type": "string"
+                  },
+                  "direction": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  }
+                }
+              },
+              "description": "Advisory discovery list: prominent in the selector's view, absent from the static allowlist. Not permission for any eligibility change."
+            },
+            "static_allowlist_overlap_count": {
+              "type": "integer",
+              "minimum": 0
             }
           }
         }
@@ -525,5 +1006,81 @@
         }
       }
     }
-  }
+  },
+  "allOf": [
+    {
+      "if": {
+        "required": [
+          "selector_view"
+        ],
+        "properties": {
+          "selector_view": {
+            "type": "object"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "schema_version": {
+            "const": 2
+          }
+        },
+        "required": [
+          "schema_version"
+        ]
+      }
+    },
+    {
+      "if": {
+        "required": [
+          "universe"
+        ],
+        "properties": {
+          "universe": {
+            "type": "object"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "schema_version": {
+            "const": 2
+          }
+        },
+        "required": [
+          "schema_version"
+        ]
+      }
+    },
+    {
+      "if": {
+        "required": [
+          "churn"
+        ],
+        "properties": {
+          "churn": {
+            "type": "object",
+            "required": [
+              "selector_view"
+            ],
+            "properties": {
+              "selector_view": {
+                "type": "object"
+              }
+            }
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "schema_version": {
+            "const": 2
+          }
+        },
+        "required": [
+          "schema_version"
+        ]
+      }
+    }
+  ]
 }
