@@ -61,7 +61,7 @@ Comprehensive malformed-input tests added (huge/NaN/inf/bool-as-string/
 str-as-list/wrong-timeframe/missing-number/non-list-bucket/invalid-
 generated-at); `json.dumps(allow_nan=False)` guards the artifact. P2s:
 runbook disk figure corrected to a measured ~1.4–1.7 KB/row (was 0.6–1.0).
-145 tools/scripts tests green.
+the tools/scripts suite green.
 
 Lesson recorded: the inner-review claim "every unexpected shape is omitted,
 proven by a regression test" was an overclaim — adversarial numeric/type

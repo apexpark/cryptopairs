@@ -458,7 +458,11 @@ def nullable_bool(value: Any) -> bool | None:
 
 
 def nullable_number(value: Any) -> float | int | None:
-    return value if isinstance(value, (float, int)) and not isinstance(value, bool) else None
+    # Reject bools and non-finite (NaN/inf) so no record — entry, selector,
+    # or system — can ever serialize invalid JSON.
+    if isinstance(value, bool) or not isinstance(value, (float, int)):
+        return None
+    return value if math.isfinite(value) else None
 
 
 def dispatch_mode_value(dispatch_mode: dict[str, Any] | None) -> str | None:
@@ -666,6 +670,31 @@ class _SelectorViewRowMalformed(Exception):
     """Internal sentinel: a cue row cannot be faithfully recorded; omit it."""
 
 
+_MISSING = object()
+
+
+def selector_view_freshness_reason(
+    config: Config, trade_now: dict[str, Any], observed_at: dt.datetime
+) -> str | None:
+    """Reject an invalid, stale, OR future cue timestamp.
+
+    Unlike the entry path's one-sided staleness check, a future generated_at
+    (clock skew / bad data) is also rejected — a negative age must not be
+    recorded as a fresh selector observation.
+    """
+    generated_at = parse_iso(trade_now.get("generated_at"))
+    if generated_at is None:
+        return "TRADE_NOW_GENERATED_AT_INVALID"
+    age_seconds = (observed_at.astimezone(dt.timezone.utc) - generated_at).total_seconds()
+    if age_seconds > config.max_signal_age_seconds:
+        return "TRADE_NOW_SIGNAL_STALE"
+    if age_seconds < -config.max_signal_age_seconds:
+        return "TRADE_NOW_SIGNAL_FUTURE"
+    return None
+
+
+
+
 CUE_BUCKETS = (
     ("tradable_now", "TRADE_NOW"),
     ("watchlist", "WATCHLIST"),
@@ -751,9 +780,8 @@ def _nullable_str(value: Any) -> str | None:
     return value or None
 
 
-def _str_list(value: Any) -> list[str]:
-    if value is None:
-        return []
+def _required_str_list(value: Any) -> list[str]:
+    # decisionRowBase requires rationale_codes as a non-null array of strings.
     if not isinstance(value, list) or any(not isinstance(item, str) for item in value):
         raise _SelectorViewRowMalformed
     return list(value)
@@ -762,7 +790,7 @@ def _str_list(value: Any) -> list[str]:
 def _nullable_str_list(value: Any) -> list[str] | None:
     if value is None:
         return None
-    return _str_list(value)
+    return _required_str_list(value)
 
 
 def _nullable_int(value: Any) -> int | None:
@@ -788,8 +816,12 @@ def selector_view_record(
     unexpected timeframe) raises _SelectorViewRowMalformed so the caller omits
     the row. Nothing is coerced or fabricated.
     """
-    row_timeframe = row.get("timeframe")
-    if row_timeframe is not None and row_timeframe != SUPPORTED_TIMEFRAME:
+    # Fabrication guards: timeframe is written as the constant "1m", so an
+    # absent or non-1m source timeframe must omit the row rather than invent
+    # one; rationale_codes is a required non-null array (below), so an absent
+    # or null value omits rather than fabricating []. Every stated number/bool
+    # is strictly validated by its helper and omits the row on any wrong type.
+    if row.get("timeframe") != SUPPORTED_TIMEFRAME:
         raise _SelectorViewRowMalformed
 
     record: dict[str, Any] = {
@@ -808,7 +840,7 @@ def selector_view_record(
         "decision_reason_code": _nullable_str(row.get("decision_reason_code")),
         "blocked_reason_code": _nullable_str(row.get("blocked_reason_code")),
         "watch_reason_code": _nullable_str(row.get("watch_reason_code")),
-        "rationale_codes": _str_list(row.get("rationale_codes")),
+        "rationale_codes": _required_str_list(row.get("rationale_codes")),
         "setup_gate_pass": _required_bool(row.get("setup_gate_pass")),
         "cost_gate_pass": _required_bool(row.get("cost_gate_pass")),
         "trade_gate_pass": _required_bool(row.get("trade_gate_pass")),
@@ -872,60 +904,51 @@ def selector_view_records(
     churn/stability as false stability):
       - degraded source health / another read-only fetch failed → the same
         ``source_reasons`` the entry path computes → ``BLOCKED_SOURCE_UNAVAILABLE``;
-      - invalid ``generated_at`` or a signal older than
-        ``max_signal_age_seconds`` → ``BLOCKED_STALE_INPUT``;
-      - a bucket present-but-not-a-list → ``BLOCKED_MALFORMED_RESPONSE``.
+      - invalid/stale/future ``generated_at`` (outside ±``max_signal_age_seconds``)
+        → ``BLOCKED_STALE_INPUT`` / ``BLOCKED_MALFORMED_RESPONSE``;
+      - ANY of the three cue buckets absent or not-a-list → the whole tick is
+        refused with a single ``BLOCKED_MALFORMED_RESPONSE`` and NO selector
+        rows, so a partial universe can never be mistaken for real churn.
     """
-    if source_reasons:
-        return [
-            system_record(
-                observed_at=observed_at,
-                decision="BLOCKED_SOURCE_UNAVAILABLE",
-                reason_codes=source_reasons,
-                trade_now=trade_now,
-                dispatch_mode=dispatch_mode,
-                kill_switch=kill_switch,
-                evidence=evidence,
-            )
-        ]
-    stale_reason = signal_age_reason(config, trade_now, observed_at)
-    if stale_reason is not None:
-        decision = (
-            "BLOCKED_MALFORMED_RESPONSE"
-            if stale_reason == "TRADE_NOW_GENERATED_AT_INVALID"
-            else "BLOCKED_STALE_INPUT"
-        )
+
+    def refuse(decision: str, reasons: list[str]) -> list[dict[str, Any]]:
         return [
             system_record(
                 observed_at=observed_at,
                 decision=decision,
-                reason_codes=[stale_reason],
+                reason_codes=reasons,
                 trade_now=trade_now,
                 dispatch_mode=dispatch_mode,
                 kill_switch=kill_switch,
                 evidence=evidence,
             )
         ]
+
+    if source_reasons:
+        return refuse("BLOCKED_SOURCE_UNAVAILABLE", source_reasons)
+    freshness_reason = selector_view_freshness_reason(config, trade_now, observed_at)
+    if freshness_reason is not None:
+        decision = (
+            "BLOCKED_MALFORMED_RESPONSE"
+            if freshness_reason == "TRADE_NOW_GENERATED_AT_INVALID"
+            else "BLOCKED_STALE_INPUT"
+        )
+        return refuse(decision, [freshness_reason])
+    # Whole-tick bucket validation up front: the endpoint must return all three
+    # buckets as lists. Any missing or non-list bucket makes the universe
+    # partial, so refuse the entire tick rather than record a partial universe
+    # (which reads downstream as false churn/stability).
+    for endpoint_key, _cue_bucket in CUE_BUCKETS:
+        bucket = trade_now.get(endpoint_key, _MISSING)
+        if bucket is _MISSING:
+            return refuse("BLOCKED_MALFORMED_RESPONSE", [f"CUE_BUCKET_MISSING:{endpoint_key}"])
+        if not isinstance(bucket, list):
+            return refuse("BLOCKED_MALFORMED_RESPONSE", [f"CUE_BUCKET_NOT_LIST:{endpoint_key}"])
+
     source_generated = source_generated_at(trade_now)
     records: list[dict[str, Any]] = []
     for endpoint_key, cue_bucket in CUE_BUCKETS:
-        bucket = trade_now.get(endpoint_key)
-        if bucket is None:
-            continue
-        if not isinstance(bucket, list):
-            records.append(
-                system_record(
-                    observed_at=observed_at,
-                    decision="BLOCKED_MALFORMED_RESPONSE",
-                    reason_codes=[f"CUE_BUCKET_NOT_LIST:{endpoint_key}"],
-                    trade_now=trade_now,
-                    dispatch_mode=dispatch_mode,
-                    kill_switch=kill_switch,
-                    evidence=evidence,
-                )
-            )
-            continue
-        for row in bucket:
+        for row in trade_now[endpoint_key]:  # each bucket validated as a list above
             if not isinstance(row, dict):
                 continue
             if candidate_identity_reason(row) is not None:

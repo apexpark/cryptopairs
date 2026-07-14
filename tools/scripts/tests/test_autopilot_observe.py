@@ -39,6 +39,7 @@ def candidate() -> dict[str, Any]:
         "open_live_trade": False,
         "approval_source": "LEARNING_SELECTION",
         "decision_reason_code": "LEARNING_SELECTED_AND_LIVE_GATES_PASS",
+        "rationale_codes": ["LEARNING_SELECTED"],
     }
 
 
@@ -267,13 +268,17 @@ class AutopilotObserveTests(unittest.TestCase):
             variant("PF_INF__PF_NUM", opportunity_score=float("inf")),
             variant("PF_STR__PF_BOOL", setup_gate_pass="false"),    # bool-as-string
             variant("PF_STR__PF_CODES", rationale_codes="COST_PASS"),  # str not list
+            variant("PF_ABSENT__PF_CODES", rationale_codes=observe._MISSING),  # absent -> omit
             variant("PF_BAD__PF_TF", timeframe="5m"),               # wrong timeframe
-            variant("PF_MISS__PF_NUM", opportunity_score=None),     # missing required number
+            {k: v for k, v in candidate().items() if k != "timeframe"} | {"pair_id": "PF_NO__PF_TF"},  # absent timeframe -> omit
+            variant("PF_MISS__PF_NUM", opportunity_score=None),     # null required number
         ]
+        # Strip the _MISSING sentinel to actually delete the key for that row.
+        rows[6].pop("rationale_codes")
         trade_now = {
             "generated_at": "2026-06-13T05:29:57Z",
             "tradable_now": rows,
-            "watchlist": "not-a-list",
+            "watchlist": [],
             "excluded": [],
         }
 
@@ -288,19 +293,63 @@ class AutopilotObserveTests(unittest.TestCase):
         )
 
         selector_rows = [r for r in records if r.get("capture_profile") == "selector_view"]
-        system_rows = [r for r in records if r.get("decision") == "BLOCKED_MALFORMED_RESPONSE"]
         # Only the one good row survives; every malformed row is omitted, not coerced.
         self.assertEqual(len(selector_rows), 1)
         self.assertEqual(selector_rows[0]["pair_id"], "PF_DOGEUSD__PF_PEPEUSD")
-        # The non-list bucket emits an honest malformed-response system record.
-        self.assertEqual(len(system_rows), 1)
-        self.assertIn("CUE_BUCKET_NOT_LIST:watchlist", system_rows[0]["reason_codes"])
         # Everything written is schema-valid (no NaN/inf, no fabricated fields).
         serialized = json.dumps(records, allow_nan=False)  # raises if any NaN/inf slipped through
         self.assertNotIn("NaN", serialized)
         self.assertNotIn("Infinity", serialized)
         for record in records:
             self.assertEqual(sorted(validator.iter_errors(record), key=str), [])
+
+    def test_selector_view_refuses_whole_tick_on_bad_or_missing_bucket(self) -> None:
+        # A non-list bucket refuses the whole tick (no partial universe).
+        for trade_now, reason in (
+            ({"generated_at": "2026-06-13T05:29:57Z", "tradable_now": [candidate()],
+              "watchlist": "not-a-list", "excluded": []}, "CUE_BUCKET_NOT_LIST:watchlist"),
+            ({"generated_at": "2026-06-13T05:29:57Z", "tradable_now": [candidate()],
+              "excluded": []}, "CUE_BUCKET_MISSING:watchlist"),
+        ):
+            records = observe.selector_view_records(
+                config=config(), trade_now=trade_now, observed_at=OBSERVED_AT,
+                dispatch_mode=None, kill_switch=None,
+                evidence=observe.blocked_before_poll_evidence(), source_reasons=[],
+            )
+            self.assertEqual(len(records), 1)
+            self.assertEqual(records[0]["decision"], "BLOCKED_MALFORMED_RESPONSE")
+            self.assertIn(reason, records[0]["reason_codes"])
+            self.assertNotIn("selector_view", [r.get("capture_profile") for r in records])
+
+    def test_selector_view_degraded_source_record_is_nan_free(self) -> None:
+        # A degraded response carrying a non-finite learning_overlay_age_seconds
+        # must still serialize as valid JSON (nullable_number rejects NaN/inf).
+        trade_now = {
+            "generated_at": "2026-06-13T05:29:57Z",
+            "learning_overlay_age_seconds": float("nan"),
+            "tradable_now": [candidate()], "watchlist": [], "excluded": [],
+        }
+        records = observe.selector_view_records(
+            config=config(), trade_now=trade_now, observed_at=OBSERVED_AT,
+            dispatch_mode=None, kill_switch=None,
+            evidence=observe.blocked_before_poll_evidence(),
+            source_reasons=["DATA_HEALTH_DEGRADED"],
+        )
+        json.dumps(records, allow_nan=False)  # raises if any record carries NaN/inf
+        self.assertEqual(records[0]["decision"], "BLOCKED_SOURCE_UNAVAILABLE")
+
+    def test_selector_view_refuses_future_timestamp(self) -> None:
+        # A future generated_at (negative age beyond tolerance) is not "fresh".
+        future = {"generated_at": "2026-06-13T06:00:00Z",  # 30 min ahead of OBSERVED_AT
+                  "tradable_now": [candidate()], "watchlist": [], "excluded": []}
+        records = observe.selector_view_records(
+            config=config(), trade_now=future, observed_at=OBSERVED_AT,
+            dispatch_mode=None, kill_switch=None,
+            evidence=observe.blocked_before_poll_evidence(), source_reasons=[],
+        )
+        self.assertEqual(len(records), 1)
+        self.assertEqual(records[0]["decision"], "BLOCKED_STALE_INPUT")
+        self.assertIn("TRADE_NOW_SIGNAL_FUTURE", records[0]["reason_codes"])
 
     def test_selector_view_invalid_generated_at_marks_malformed_response(self) -> None:
         trade_now = {"tradable_now": [candidate()], "watchlist": [], "excluded": []}
