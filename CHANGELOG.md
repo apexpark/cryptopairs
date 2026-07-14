@@ -5,6 +5,15 @@ This project follows SemVer as defined in `docs/02-versioning-and-releases.md`.
 
 ## Unreleased
 ### Operator Tooling
+- AUTO-2B.2 B2-b: `autopilot_observe.py` gains a disabled-by-default
+  selector-view capture mode (`AUTOPILOT_OBSERVE_CAPTURE_SELECTOR_VIEW`)
+  that records the cue endpoint's full view across all three buckets
+  (`tradable_now`/`watchlist`/`excluded`) as observation-only v2
+  selector-view rows — no outcome fields, no eligibility or execution
+  path, entry-candidate behaviour byte-identical when disabled. Adds a
+  `MAX_RUNTIME_SECONDS` loop bound, a per-tick selector-view row count,
+  and a runbook section with a required read-only disk estimate before any
+  capture starts.
 - AUTO-2B.2 B2-a contracts: `autopilot_observe_record` version 2 splits
   into entry rows (version-1 shape unchanged) and selector-view rows
   (`SELECTOR_VIEW_OBSERVED`, cue bucket + selector-stated fields, no

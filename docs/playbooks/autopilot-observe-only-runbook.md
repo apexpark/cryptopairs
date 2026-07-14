@@ -133,6 +133,67 @@ sleep 2
 tail -n 100 "$RUN_ROOT/autopilot_observe.log"
 ```
 
+## Selector-View Capture (AUTO-2B.2, wide universe)
+
+Selector-view capture records the cue endpoint's full view across all three
+buckets (`tradable_now`, `watchlist`, `excluded`) as observation-only rows —
+never entry candidates, never outcomes. It is disabled by default; the
+narrow paper-feeding capture is unaffected. Run it as a **separate, bounded,
+operator-started run root**.
+
+### Step 1 — Estimate disk before starting (required)
+
+Selector-view volume ≈ (candidates across all buckets) × (ticks over the
+window). Read the current universe size, then project. This is read-only:
+
+```bash
+cd /opt/cryptopairs
+curl -fsS "http://127.0.0.1:8083/v1/strategy/pairs/trade-now?timeframe=1m" \
+  | jq '{tradable_now: (.tradable_now|length), watchlist: (.watchlist|length), excluded: (.excluded|length), total: ((.tradable_now|length)+(.watchlist|length)+(.excluded|length))}'
+```
+
+Projection at 300s cadence (12 ticks/hour): `rows_per_window = total × 12 ×
+hours`. A selector-view row serializes to roughly 0.6–1.0 KB. Confirm free
+space with `df -h /opt/cryptopairs` before starting; do not start if the
+projected artifact would exceed available headroom — re-scope the cadence or
+window with the Operator instead.
+
+### Step 2 — Bounded selector-view run
+
+```bash
+cd /opt/cryptopairs
+
+SV_ID="$(date -u +%Y%m%dT%H%M%SZ)"
+SV_ROOT="artifacts/autopilot_observe_selector_view/runs/$SV_ID"
+mkdir -p "$SV_ROOT/records"
+git rev-parse HEAD | tee "$SV_ROOT/git_head.txt"
+
+nohup env \
+  AUTOPILOT_OBSERVE_ENABLED=true \
+  AUTOPILOT_OBSERVE_CAPTURE_SELECTOR_VIEW=true \
+  AUTOPILOT_OBSERVE_OUTPUT_DIR="$SV_ROOT/records" \
+  AUTOPILOT_OBSERVE_LOOP=true \
+  AUTOPILOT_OBSERVE_INTERVAL_SECONDS=300 \
+  AUTOPILOT_OBSERVE_MAX_RUNTIME_SECONDS=259200 \
+  python3 tools/scripts/autopilot_observe.py \
+  > "$SV_ROOT/autopilot_observe_selector_view.log" 2>&1 &
+echo "$!" | tee "$SV_ROOT/autopilot_observe_selector_view.pid"
+echo "SV_ROOT=$SV_ROOT"
+```
+
+The loop exits itself at `MAX_RUNTIME_SECONDS` (bounded, 72h cap). Each tick
+logs a `selector_view_records` count so growth is visible. No allowlist and
+no quality windows are needed — selector-view capture bypasses the
+entry-candidate gates entirely and drives no eligibility or execution path.
+
+### Monitor
+
+```bash
+tail -n 20 "$SV_ROOT/autopilot_observe_selector_view.log"
+find "$SV_ROOT/records" -name 'autopilot_observe_*.jsonl' -exec wc -l {} \;
+du -sh "$SV_ROOT"
+```
+
 ## Capture Attribution Inputs
 
 Capture strategy-service history after the observation window. The service caps

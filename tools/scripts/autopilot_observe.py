@@ -85,6 +85,8 @@ class Config:
     )
     output_dir: Path = Path("artifacts/autopilot_observe")
     loop: bool = False
+    capture_selector_view: bool = False
+    max_runtime_seconds: int | None = None
 
     def replace(self, **changes: Any) -> "Config":
         return dataclasses.replace(self, **changes)
@@ -269,6 +271,12 @@ def load_config(env: Mapping[str, str] | None = None) -> Config:
             source.get("AUTOPILOT_OBSERVE_OUTPUT_DIR", "artifacts/autopilot_observe")
         ),
         loop=bool_env(source.get("AUTOPILOT_OBSERVE_LOOP"), False),
+        capture_selector_view=bool_env(
+            source.get("AUTOPILOT_OBSERVE_CAPTURE_SELECTOR_VIEW"), False
+        ),
+        max_runtime_seconds=optional_int_env(
+            source.get("AUTOPILOT_OBSERVE_MAX_RUNTIME_SECONDS")
+        ),
     )
 
 
@@ -650,6 +658,166 @@ def evaluate_candidate(
     )
 
 
+SELECTOR_VIEW_SCHEMA_VERSION = 2
+CUE_BUCKETS = (
+    ("tradable_now", "TRADE_NOW"),
+    ("watchlist", "WATCHLIST"),
+    ("excluded", "EXCLUDED"),
+)
+# decisionRowBase passthrough fields recorded verbatim as stated-view
+# observations. These are the selector's own stated figures, never outcomes.
+SELECTOR_VIEW_PASSTHROUGH = (
+    "left_instrument",
+    "right_instrument",
+    "confidence_band",
+    "expected_hold_bars",
+    "open_live_trade",
+    "portfolio_target_weight",
+    "portfolio_risk_contribution",
+    "requires_fresh_overlay",
+    "learning_recommendation",
+    "learning_trade_eligible",
+    "learning_selection_selected",
+    "learning_reason_codes",
+    "learning_cycle_generated_at",
+    "selected_config_source",
+    "legacy_fallback_active",
+    "decision_bucket",
+    "selected_score_z",
+    "entry_distance_z",
+    "approval_source",
+)
+
+
+def selector_view_observe_key(
+    row: dict[str, Any], cue_bucket: str, observed_at: dt.datetime
+) -> str:
+    minute_bucket = observed_at.astimezone(dt.timezone.utc).replace(second=0, microsecond=0)
+    direction = row.get("direction_hint")
+    if not isinstance(direction, str) or not direction:
+        direction = "NO_DIRECTION"
+    return ":".join(
+        [
+            "selector-view",
+            "v2",
+            SUPPORTED_TIMEFRAME,
+            str(row.get("pair_id", SYSTEM_PAIR_ID)),
+            str(row.get("selected_variant", SYSTEM_VARIANT)),
+            direction,
+            cue_bucket,
+            iso(minute_bucket),
+        ]
+    )
+
+
+def selector_view_record(
+    *,
+    row: dict[str, Any],
+    cue_bucket: str,
+    observed_at: dt.datetime,
+    source_generated: str | None,
+) -> dict[str, Any]:
+    def opt_str(value: Any) -> Any:
+        return value if isinstance(value, str) and value else None
+
+    def opt_num(value: Any) -> Any:
+        return value if isinstance(value, (int, float)) and not isinstance(value, bool) else None
+
+    record: dict[str, Any] = {
+        "schema_version": SELECTOR_VIEW_SCHEMA_VERSION,
+        "mode": "observe_only",
+        "capture_profile": "selector_view",
+        "run_id": iso(observed_at),
+        "observed_at": iso(observed_at),
+        "source_generated_at": source_generated if isinstance(source_generated, str) else iso(observed_at),
+        "timeframe": SUPPORTED_TIMEFRAME,
+        "pair_id": str(row.get("pair_id", SYSTEM_PAIR_ID)),
+        "selected_variant": str(row.get("selected_variant", SYSTEM_VARIANT)),
+        "cue_bucket": cue_bucket,
+        "direction_hint": opt_str(row.get("direction_hint")),
+        "decision": "SELECTOR_VIEW_OBSERVED",
+        "decision_reason_code": opt_str(row.get("decision_reason_code")),
+        "blocked_reason_code": opt_str(row.get("blocked_reason_code")),
+        "watch_reason_code": opt_str(row.get("watch_reason_code")),
+        "rationale_codes": [
+            code for code in (row.get("rationale_codes") or []) if isinstance(code, str)
+        ],
+        "setup_gate_pass": bool(row.get("setup_gate_pass")),
+        "cost_gate_pass": bool(row.get("cost_gate_pass")),
+        "trade_gate_pass": bool(row.get("trade_gate_pass")),
+        "spread_z": opt_num(row.get("spread_z")) or 0.0,
+        "net_edge_bps": opt_num(row.get("net_edge_bps")) or 0.0,
+        "opportunity_score": opt_num(row.get("opportunity_score")) or 0.0,
+        "observe_key": selector_view_observe_key(row, cue_bucket, observed_at),
+    }
+    for field_name in SELECTOR_VIEW_PASSTHROUGH:
+        if field_name in ("decision_bucket",):
+            record[field_name] = opt_str(row.get(field_name))
+        elif field_name in (
+            "open_live_trade",
+            "requires_fresh_overlay",
+            "learning_trade_eligible",
+            "learning_selection_selected",
+            "legacy_fallback_active",
+        ):
+            value = row.get(field_name)
+            record[field_name] = bool(value) if isinstance(value, bool) else None
+        elif field_name in ("expected_hold_bars",):
+            value = row.get(field_name)
+            record[field_name] = value if isinstance(value, int) and not isinstance(value, bool) else None
+        elif field_name in (
+            "portfolio_target_weight",
+            "portfolio_risk_contribution",
+            "selected_score_z",
+            "entry_distance_z",
+        ):
+            record[field_name] = opt_num(row.get(field_name))
+        elif field_name == "learning_reason_codes":
+            value = row.get(field_name)
+            record[field_name] = (
+                [code for code in value if isinstance(code, str)]
+                if isinstance(value, list)
+                else None
+            )
+        else:
+            record[field_name] = opt_str(row.get(field_name))
+    return record
+
+
+def selector_view_records(
+    *,
+    trade_now: dict[str, Any],
+    observed_at: dt.datetime,
+) -> list[dict[str, Any]]:
+    """Emit one selector-view row per candidate across all cue buckets.
+
+    These are observations of the champion/challenger selector's stated view,
+    never entry candidates and never outcomes. Malformed buckets/rows are
+    skipped (a bucket that is not a list, or a row that is not an object,
+    fails closed to omission — no partial record is written).
+    """
+    source_generated = source_generated_at(trade_now)
+    records: list[dict[str, Any]] = []
+    for endpoint_key, cue_bucket in CUE_BUCKETS:
+        bucket = trade_now.get(endpoint_key)
+        if not isinstance(bucket, list):
+            continue
+        for row in bucket:
+            if not isinstance(row, dict):
+                continue
+            if candidate_identity_reason(row) is not None:
+                continue
+            records.append(
+                selector_view_record(
+                    row=row,
+                    cue_bucket=cue_bucket,
+                    observed_at=observed_at,
+                    source_generated=source_generated,
+                )
+            )
+    return records
+
+
 def run_once(
     config: Config,
     *,
@@ -730,6 +898,15 @@ def run_once(
                 evidence=evidence,
             )
         ]
+
+    if config.capture_selector_view:
+        # Pure observational mode: emit selector-view rows across all three cue
+        # buckets and nothing else. The entry-candidate path (below) is not
+        # invoked, so a dedicated selector-view run produces a clean,
+        # single-purpose artifact and does not double the record volume with
+        # uniformly-blocked entry rows. Fail-closed: source-unavailable and
+        # malformed-response system records above still apply before this point.
+        return selector_view_records(trade_now=trade_now, observed_at=now_value)
 
     tradable_now = trade_now.get("tradable_now")
     if not isinstance(tradable_now, list):
@@ -862,6 +1039,17 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument("--enabled", action="store_true", help="override env and enable observer")
     parser.add_argument("--output-dir", default=None)
     parser.add_argument("--quality-windows-json", default=None)
+    parser.add_argument(
+        "--capture-selector-view",
+        action="store_true",
+        help="record the cue endpoint's full selector view across all buckets (observation only)",
+    )
+    parser.add_argument(
+        "--max-runtime-seconds",
+        type=int,
+        default=None,
+        help="bound a looped run; exit after this many seconds",
+    )
     return parser.parse_args(argv)
 
 
@@ -878,6 +1066,10 @@ def main(argv: list[str] | None = None) -> int:
         config = config.replace(loop=True)
     if args.once:
         config = config.replace(loop=False)
+    if args.capture_selector_view:
+        config = config.replace(capture_selector_view=True)
+    if args.max_runtime_seconds is not None:
+        config = config.replace(max_runtime_seconds=args.max_runtime_seconds)
 
     if not config.enabled:
         print(
@@ -893,6 +1085,7 @@ def main(argv: list[str] | None = None) -> int:
 
     seen_keys: set[str] = set()
     client = JsonGetClient()
+    started_at = utc_now()
     while True:
         observed_at = utc_now()
         records = run_once(config, client=client, observed_at=observed_at, seen_keys=seen_keys)
@@ -900,6 +1093,9 @@ def main(argv: list[str] | None = None) -> int:
         summary = {
             "generated_at": iso(observed_at),
             "records": len(records),
+            "selector_view_records": sum(
+                1 for record in records if record.get("capture_profile") == "selector_view"
+            ),
             "output_path": str(output_path),
             "decisions": {},
         }
@@ -909,6 +1105,16 @@ def main(argv: list[str] | None = None) -> int:
         print(json.dumps(summary, sort_keys=True))
         if not config.loop:
             return 0
+        if config.max_runtime_seconds is not None:
+            elapsed = (utc_now() - started_at).total_seconds()
+            if elapsed + config.interval_seconds >= config.max_runtime_seconds:
+                print(
+                    json.dumps(
+                        {"generated_at": iso(utc_now()), "status": "max_runtime_reached"},
+                        sort_keys=True,
+                    )
+                )
+                return 0
         time.sleep(config.interval_seconds)
 
 

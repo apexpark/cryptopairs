@@ -186,6 +186,62 @@ class AutopilotObserveTests(unittest.TestCase):
                 for forbidden in forbidden_tokens:
                     self.assertNotIn(forbidden, field_name.lower())
 
+    def test_selector_view_mode_captures_all_buckets_and_is_schema_valid(self) -> None:
+        from jsonschema import Draft202012Validator
+
+        repo_root = pathlib.Path(__file__).resolve().parents[3]
+        schema = json.loads(
+            (repo_root / "specs/contracts/autopilot_observe_record.schema.json")
+            .read_text(encoding="utf-8")
+        )
+        validator = Draft202012Validator(schema)
+
+        routes = base_routes()
+        payload = routes["http://strategy/v1/strategy/pairs/trade-now?timeframe=1m"]
+        watch = deepcopy(candidate())
+        watch["pair_id"] = "PF_SOLUSD__PF_AVAXUSD"
+        watch["decision_bucket"] = "WATCHLIST"
+        watch["watch_reason_code"] = "WATCH_ENTRY_DISTANCE"
+        excluded = deepcopy(candidate())
+        excluded["pair_id"] = "PF_XBTUSD__PF_BNBUSD"
+        excluded["decision_bucket"] = "EXCLUDED"
+        excluded["blocked_reason_code"] = "COST_GATE_FAIL"
+        payload["watchlist"] = [watch]
+        payload["excluded"] = [excluded, "not-an-object"]
+        client = RecordingGetClient(routes)
+
+        records = observe.run_once(
+            config(capture_selector_view=True), client=client, observed_at=OBSERVED_AT
+        )
+
+        self.assertEqual(len(records), 3)  # malformed excluded row skipped
+        self.assertEqual(
+            sorted(r["cue_bucket"] for r in records),
+            ["EXCLUDED", "TRADE_NOW", "WATCHLIST"],
+        )
+        for record in records:
+            self.assertEqual(record["decision"], "SELECTOR_VIEW_OBSERVED")
+            self.assertEqual(record["capture_profile"], "selector_view")
+            self.assertEqual(sorted(validator.iter_errors(record), key=str), [])
+            self.assertNotIn("realized_net_bps", record)
+            self.assertTrue(record["observe_key"].startswith("selector-view:v2:"))
+
+    def test_selector_view_disabled_by_default_leaves_behavior_unchanged(self) -> None:
+        routes = base_routes()
+        payload = routes["http://strategy/v1/strategy/pairs/trade-now?timeframe=1m"]
+        payload["watchlist"] = [deepcopy(candidate())]
+        payload["excluded"] = [deepcopy(candidate())]
+
+        default_records = observe.run_once(
+            config(), client=RecordingGetClient(routes), observed_at=OBSERVED_AT, seen_keys=set()
+        )
+
+        # Default (capture_selector_view=False): only the tradable_now entry row
+        # is evaluated; watchlist/excluded are ignored exactly as before.
+        self.assertEqual(len(default_records), 1)
+        self.assertEqual(default_records[0]["decision"], "OBSERVED_ENTRY_CANDIDATE")
+        self.assertNotIn("capture_profile", default_records[0])
+
     def test_run_once_records_candidate_then_blocks_duplicate_replay(self) -> None:
         client = RecordingGetClient(base_routes())
         seen_keys: set[str] = set()
