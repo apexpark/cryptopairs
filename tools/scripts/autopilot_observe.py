@@ -457,12 +457,25 @@ def nullable_bool(value: Any) -> bool | None:
     return value if isinstance(value, bool) else None
 
 
+def is_finite_number(value: Any) -> bool:
+    """True for a finite JSON number (not bool). Never raises.
+
+    Python ints cannot be NaN/inf and never overflow, so they are always
+    finite — but ``math.isfinite`` on a huge int raises OverflowError, so
+    ints are short-circuited before any float conversion.
+    """
+    if isinstance(value, bool):
+        return False
+    if isinstance(value, int):
+        return True
+    return isinstance(value, float) and math.isfinite(value)
+
+
 def nullable_number(value: Any) -> float | int | None:
     # Reject bools and non-finite (NaN/inf) so no record — entry, selector,
-    # or system — can ever serialize invalid JSON.
-    if isinstance(value, bool) or not isinstance(value, (float, int)):
-        return None
-    return value if math.isfinite(value) else None
+    # or system — can ever serialize invalid JSON. Ints are preserved exactly
+    # (no lossy float() conversion) and never overflow.
+    return value if is_finite_number(value) else None
 
 
 def dispatch_mode_value(dispatch_mode: dict[str, Any] | None) -> str | None:
@@ -682,7 +695,12 @@ def selector_view_freshness_reason(
     (clock skew / bad data) is also rejected — a negative age must not be
     recorded as a fresh selector observation.
     """
-    generated_at = parse_iso(trade_now.get("generated_at"))
+    raw = trade_now.get("generated_at")
+    # A date-only value ("2026-06-13") parses to midnight and could read as
+    # fresh; require a real timestamp with a time component.
+    if not isinstance(raw, str) or ":" not in raw:
+        return "TRADE_NOW_GENERATED_AT_INVALID"
+    generated_at = parse_iso(raw)
     if generated_at is None:
         return "TRADE_NOW_GENERATED_AT_INVALID"
     age_seconds = (observed_at.astimezone(dt.timezone.utc) - generated_at).total_seconds()
@@ -746,23 +764,34 @@ def selector_view_observe_key(
     )
 
 
-def _finite_number(value: Any) -> float:
-    """A finite JSON number (not bool). Raise on absent/non-numeric/non-finite/overflow."""
-    if isinstance(value, bool) or not isinstance(value, (int, float)):
+def _finite_number(value: Any) -> float | int:
+    """A finite JSON number (not bool); omit the row otherwise.
+
+    The value is preserved as-is — an int stays an int (no lossy float()
+    conversion that would silently round values above 2**53) — and ints
+    never overflow, so no OverflowError is possible.
+    """
+    if not is_finite_number(value):
         raise _SelectorViewRowMalformed
-    try:
-        parsed = float(value)
-    except (OverflowError, ValueError):
-        raise _SelectorViewRowMalformed
-    if not math.isfinite(parsed):
-        raise _SelectorViewRowMalformed
-    return parsed
+    return value
 
 
-def _nullable_finite_number(value: Any) -> float | None:
+def _nullable_finite_number(value: Any) -> float | int | None:
     if value is None:
         return None
     return _finite_number(value)
+
+
+ALLOWED_CUE_BUCKETS = frozenset({"TRADE_NOW", "WATCHLIST", "EXCLUDED"})
+
+
+def _nullable_cue_bucket(value: Any) -> str | None:
+    # decision_bucket is enum-constrained in the v2 selector-view schema.
+    if value is None:
+        return None
+    if value not in ALLOWED_CUE_BUCKETS:
+        raise _SelectorViewRowMalformed
+    return value
 
 
 def _required_bool(value: Any) -> bool:
@@ -865,7 +894,7 @@ def selector_view_record(
     for field_name in SELECTOR_VIEW_PASSTHROUGH:
         raw = row.get(field_name)
         if field_name == "decision_bucket":
-            record[field_name] = _nullable_str(raw)
+            record[field_name] = _nullable_cue_bucket(raw)
         elif field_name in bool_fields:
             record[field_name] = None if raw is None else _required_bool(raw)
         elif field_name == "expected_hold_bars":
@@ -1177,6 +1206,24 @@ def apply_persisted_duplicate_blocks(
     return written
 
 
+def json_safe(value: Any) -> Any:
+    """Recursively replace any non-finite float (NaN/inf) with None.
+
+    A final, whole-record guarantee that the writer can never emit invalid
+    JSON, even if a non-finite value is nested somewhere a per-field helper
+    did not reach. Applied to every record before serialization; combined
+    with ``allow_nan=False`` this makes an invalid write impossible without
+    ever crashing the tick (the sanitize runs first).
+    """
+    if isinstance(value, float):
+        return value if math.isfinite(value) else None
+    if isinstance(value, dict):
+        return {key: json_safe(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [json_safe(item) for item in value]
+    return value
+
+
 def write_records(records: list[dict[str, Any]], output_dir: Path, observed_at: dt.datetime) -> Path:
     day = observed_at.strftime("%Y%m%d")
     target_dir = output_dir / day
@@ -1189,7 +1236,12 @@ def write_records(records: list[dict[str, Any]], output_dir: Path, observed_at: 
     records[:] = records_to_write
     with path.open("a", encoding="utf-8") as handle:
         for record in records_to_write:
-            handle.write(json.dumps(record, sort_keys=True, separators=(",", ":")) + "\n")
+            handle.write(
+                json.dumps(
+                    json_safe(record), sort_keys=True, separators=(",", ":"), allow_nan=False
+                )
+                + "\n"
+            )
     return path
 
 

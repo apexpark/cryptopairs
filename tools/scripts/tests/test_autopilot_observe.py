@@ -261,20 +261,24 @@ class AutopilotObserveTests(unittest.TestCase):
             base.update(overrides)
             return base
 
+        huge = int("9" * 400)
+        absent_codes = variant("PF_ABSENT__PF_CODES", rationale_codes=None)
+        absent_codes.pop("rationale_codes")  # key genuinely absent
+        absent_tf = {k: v for k, v in candidate().items() if k != "timeframe"}
+        absent_tf["pair_id"] = "PF_NO__PF_TF"
         rows = [
             candidate(),                                            # the one good row
-            variant("PF_HUGE__PF_NUM", spread_z=int("9" * 400)),    # float() OverflowError
-            variant("PF_NAN__PF_NUM", net_edge_bps=float("nan")),   # non-finite
-            variant("PF_INF__PF_NUM", opportunity_score=float("inf")),
-            variant("PF_STR__PF_BOOL", setup_gate_pass="false"),    # bool-as-string
-            variant("PF_STR__PF_CODES", rationale_codes="COST_PASS"),  # str not list
-            variant("PF_ABSENT__PF_CODES", rationale_codes=observe._MISSING),  # absent -> omit
-            variant("PF_BAD__PF_TF", timeframe="5m"),               # wrong timeframe
-            {k: v for k, v in candidate().items() if k != "timeframe"} | {"pair_id": "PF_NO__PF_TF"},  # absent timeframe -> omit
-            variant("PF_MISS__PF_NUM", opportunity_score=None),     # null required number
+            variant("PF_HUGE__PF_NUM", spread_z=huge),             # big int: preserved, not rounded
+            variant("PF_NAN__PF_NUM", net_edge_bps=float("nan")),   # non-finite -> omit
+            variant("PF_INF__PF_NUM", opportunity_score=float("inf")),  # -> omit
+            variant("PF_STR__PF_BOOL", setup_gate_pass="false"),    # bool-as-string -> omit
+            variant("PF_STR__PF_CODES", rationale_codes="COST_PASS"),  # str not list -> omit
+            variant("PF_BAD__PF_BUCKET", decision_bucket="GARBAGE"),  # bad enum -> omit
+            absent_codes,                                           # absent codes -> omit
+            variant("PF_BAD__PF_TF", timeframe="5m"),               # wrong timeframe -> omit
+            absent_tf,                                              # absent timeframe -> omit
+            variant("PF_MISS__PF_NUM", opportunity_score=None),     # null required number -> omit
         ]
-        # Strip the _MISSING sentinel to actually delete the key for that row.
-        rows[6].pop("rationale_codes")
         trade_now = {
             "generated_at": "2026-06-13T05:29:57Z",
             "tradable_now": rows,
@@ -293,9 +297,12 @@ class AutopilotObserveTests(unittest.TestCase):
         )
 
         selector_rows = [r for r in records if r.get("capture_profile") == "selector_view"]
-        # Only the one good row survives; every malformed row is omitted, not coerced.
-        self.assertEqual(len(selector_rows), 1)
-        self.assertEqual(selector_rows[0]["pair_id"], "PF_DOGEUSD__PF_PEPEUSD")
+        # The good row and the big-int row survive (big int preserved exactly,
+        # not rounded); every genuinely malformed row is omitted, not coerced.
+        self.assertEqual({r["pair_id"] for r in selector_rows},
+                         {"PF_DOGEUSD__PF_PEPEUSD", "PF_HUGE__PF_NUM"})
+        huge_row = next(r for r in selector_rows if r["pair_id"] == "PF_HUGE__PF_NUM")
+        self.assertEqual(huge_row["spread_z"], huge)  # exact, no float rounding
         # Everything written is schema-valid (no NaN/inf, no fabricated fields).
         serialized = json.dumps(records, allow_nan=False)  # raises if any NaN/inf slipped through
         self.assertNotIn("NaN", serialized)
@@ -337,6 +344,50 @@ class AutopilotObserveTests(unittest.TestCase):
         )
         json.dumps(records, allow_nan=False)  # raises if any record carries NaN/inf
         self.assertEqual(records[0]["decision"], "BLOCKED_SOURCE_UNAVAILABLE")
+
+    def test_huge_number_does_not_crash_entry_or_system_paths(self) -> None:
+        self.assertIsNone(observe.nullable_number(float("nan")))
+        self.assertIsNone(observe.nullable_number(float("inf")))
+        huge = int("9" * 400)
+        self.assertEqual(observe.nullable_number(huge), huge)  # preserved, no overflow
+        routes = base_routes()
+        routes["http://strategy/v1/strategy/pairs/trade-now?timeframe=1m"][
+            "learning_overlay_age_seconds"
+        ] = huge
+        records = observe.run_once(
+            config(), client=RecordingGetClient(routes), observed_at=OBSERVED_AT, seen_keys=set()
+        )
+        json.dumps([observe.json_safe(r) for r in records], allow_nan=False)
+
+    def test_date_only_generated_at_is_not_fresh(self) -> None:
+        trade_now = {"generated_at": "2026-06-13", "tradable_now": [candidate()],
+                     "watchlist": [], "excluded": []}
+        records = observe.selector_view_records(
+            config=config(), trade_now=trade_now, observed_at=OBSERVED_AT,
+            dispatch_mode=None, kill_switch=None,
+            evidence=observe.blocked_before_poll_evidence(), source_reasons=[],
+        )
+        self.assertEqual(len(records), 1)
+        self.assertEqual(records[0]["decision"], "BLOCKED_MALFORMED_RESPONSE")
+        self.assertIn("TRADE_NOW_GENERATED_AT_INVALID", records[0]["reason_codes"])
+
+    def test_writer_finite_records_byte_identical(self) -> None:
+        # json_safe + allow_nan=False must not change the bytes written for a
+        # finite record (guards disabled-default byte-identity).
+        record = {"b": 2.5, "a": "x", "n": 7, "nested": {"z": 1.0, "y": [3, "q"]}}
+        direct = json.dumps(record, sort_keys=True, separators=(",", ":"))
+        guarded = json.dumps(observe.json_safe(record), sort_keys=True,
+                             separators=(",", ":"), allow_nan=False)
+        self.assertEqual(direct, guarded)
+
+    def test_writer_sanitizes_nested_non_finite(self) -> None:
+        record = {"a": float("nan"), "b": [1.0, float("inf"), {"c": float("-inf")}], "d": "ok"}
+        safe = observe.json_safe(record)
+        json.dumps(safe, allow_nan=False)
+        self.assertIsNone(safe["a"])
+        self.assertIsNone(safe["b"][1])
+        self.assertIsNone(safe["b"][2]["c"])
+        self.assertEqual(safe["d"], "ok")
 
     def test_selector_view_refuses_future_timestamp(self) -> None:
         # A future generated_at (negative age beyond tolerance) is not "fresh".

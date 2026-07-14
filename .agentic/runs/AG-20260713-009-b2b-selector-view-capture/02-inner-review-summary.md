@@ -67,3 +67,30 @@ Lesson recorded: the inner-review claim "every unexpected shape is omitted,
 proven by a regression test" was an overclaim — adversarial numeric/type
 probing (huge/NaN/coercion) is now part of the fail-closed review checklist
 for capture tools.
+
+## Codex Tier 3 review round 3 (PR #252) — five more numeric/serialization P1s
+
+Codex's third pass found five deeper correctness holes, all now fixed:
+- `nullable_number` OverflowError on a huge int (entry + system paths) —
+  `math.isfinite` on a large int raises. **Fix:** `is_finite_number`
+  short-circuits ints (always finite, never overflow) before any float
+  conversion; used by both `nullable_number` and `_finite_number`.
+- lossy `float()` rounding of ints above 2**53. **Fix:** `_finite_number`
+  preserves the value as-is (int stays int) — exact, tested.
+- unvalidated `decision_bucket` could emit a v2-enum-invalid record.
+  **Fix:** `_nullable_cue_bucket` validates against {TRADE_NOW, WATCHLIST,
+  EXCLUDED} or null; bad value omits the row.
+- date-only `generated_at` ("2026-06-13") parsed as fresh. **Fix:** the
+  freshness gate requires a real time component (rejects strings without
+  ":") → BLOCKED_MALFORMED_RESPONSE.
+- the writer itself permitted nested non-finite JSON. **Fix:** `json_safe`
+  recursively replaces NaN/inf with None on every record before
+  `json.dumps(..., allow_nan=False)` — an invalid write is now impossible
+  without any crash risk; a byte-identity test proves finite records are
+  unchanged.
+
+Meta-note: three Codex rounds on one capture tool, all on
+numeric/serialization faithfulness that inner review under-probed. The
+fail-closed review checklist for capture tools now mandates explicit
+huge-int / non-finite / lossy-conversion / enum / timestamp-precision /
+nested-serialization probes. 152 tools/scripts tests green.
