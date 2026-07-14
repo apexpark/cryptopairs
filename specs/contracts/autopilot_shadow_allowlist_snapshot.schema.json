@@ -1051,6 +1051,36 @@
           "schema_version"
         ]
       }
+    },
+    {
+      "if": {
+        "required": [
+          "churn"
+        ],
+        "properties": {
+          "churn": {
+            "type": "object",
+            "required": [
+              "selector_view"
+            ],
+            "properties": {
+              "selector_view": {
+                "type": "object"
+              }
+            }
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "schema_version": {
+            "const": 2
+          }
+        },
+        "required": [
+          "schema_version"
+        ]
+      }
     }
   ]
 }
