@@ -242,6 +242,77 @@ class AutopilotObserveTests(unittest.TestCase):
         self.assertEqual(default_records[0]["decision"], "OBSERVED_ENTRY_CANDIDATE")
         self.assertNotIn("capture_profile", default_records[0])
 
+    def test_selector_view_malformed_inputs_fail_closed_to_omission(self) -> None:
+        from jsonschema import Draft202012Validator
+
+        repo_root = pathlib.Path(__file__).resolve().parents[3]
+        validator = Draft202012Validator(
+            json.loads(
+                (repo_root / "specs/contracts/autopilot_observe_record.schema.json")
+                .read_text(encoding="utf-8")
+            )
+        )
+        evidence = observe.blocked_before_poll_evidence()
+
+        def variant(pair: str, **overrides: Any) -> dict[str, Any]:
+            base = deepcopy(candidate())
+            base["pair_id"] = pair
+            base.update(overrides)
+            return base
+
+        rows = [
+            candidate(),                                            # the one good row
+            variant("PF_HUGE__PF_NUM", spread_z=int("9" * 400)),    # float() OverflowError
+            variant("PF_NAN__PF_NUM", net_edge_bps=float("nan")),   # non-finite
+            variant("PF_INF__PF_NUM", opportunity_score=float("inf")),
+            variant("PF_STR__PF_BOOL", setup_gate_pass="false"),    # bool-as-string
+            variant("PF_STR__PF_CODES", rationale_codes="COST_PASS"),  # str not list
+            variant("PF_BAD__PF_TF", timeframe="5m"),               # wrong timeframe
+            variant("PF_MISS__PF_NUM", opportunity_score=None),     # missing required number
+        ]
+        trade_now = {
+            "generated_at": "2026-06-13T05:29:57Z",
+            "tradable_now": rows,
+            "watchlist": "not-a-list",
+            "excluded": [],
+        }
+
+        records = observe.selector_view_records(
+            trade_now=trade_now,
+            observed_at=OBSERVED_AT,
+            dispatch_mode=None,
+            kill_switch=None,
+            evidence=evidence,
+        )
+
+        selector_rows = [r for r in records if r.get("capture_profile") == "selector_view"]
+        system_rows = [r for r in records if r.get("decision") == "BLOCKED_MALFORMED_RESPONSE"]
+        # Only the one good row survives; every malformed row is omitted, not coerced.
+        self.assertEqual(len(selector_rows), 1)
+        self.assertEqual(selector_rows[0]["pair_id"], "PF_DOGEUSD__PF_PEPEUSD")
+        # The non-list bucket emits an honest malformed-response system record.
+        self.assertEqual(len(system_rows), 1)
+        self.assertIn("CUE_BUCKET_NOT_LIST:watchlist", system_rows[0]["reason_codes"])
+        # Everything written is schema-valid (no NaN/inf, no fabricated fields).
+        serialized = json.dumps(records, allow_nan=False)  # raises if any NaN/inf slipped through
+        self.assertNotIn("NaN", serialized)
+        self.assertNotIn("Infinity", serialized)
+        for record in records:
+            self.assertEqual(sorted(validator.iter_errors(record), key=str), [])
+
+    def test_selector_view_invalid_generated_at_marks_malformed_response(self) -> None:
+        trade_now = {"tradable_now": [candidate()], "watchlist": [], "excluded": []}
+        records = observe.selector_view_records(
+            trade_now=trade_now,
+            observed_at=OBSERVED_AT,
+            dispatch_mode=None,
+            kill_switch=None,
+            evidence=observe.blocked_before_poll_evidence(),
+        )
+        self.assertEqual(len(records), 1)
+        self.assertEqual(records[0]["decision"], "BLOCKED_MALFORMED_RESPONSE")
+        self.assertIn("TRADE_NOW_GENERATED_AT_INVALID", records[0]["reason_codes"])
+
     def test_run_once_records_candidate_then_blocks_duplicate_replay(self) -> None:
         client = RecordingGetClient(base_routes())
         seen_keys: set[str] = set()

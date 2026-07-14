@@ -11,6 +11,7 @@ import argparse
 import dataclasses
 import datetime as dt
 import json
+import math
 import os
 import sys
 import time
@@ -716,32 +717,80 @@ def selector_view_observe_key(
     )
 
 
+def _finite_number(value: Any) -> float:
+    """A finite JSON number (not bool). Raise on absent/non-numeric/non-finite/overflow."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise _SelectorViewRowMalformed
+    try:
+        parsed = float(value)
+    except (OverflowError, ValueError):
+        raise _SelectorViewRowMalformed
+    if not math.isfinite(parsed):
+        raise _SelectorViewRowMalformed
+    return parsed
+
+
+def _nullable_finite_number(value: Any) -> float | None:
+    if value is None:
+        return None
+    return _finite_number(value)
+
+
+def _required_bool(value: Any) -> bool:
+    # Strict: only a real JSON bool. "false"/0/None are NOT coerced.
+    if not isinstance(value, bool):
+        raise _SelectorViewRowMalformed
+    return value
+
+
+def _nullable_str(value: Any) -> str | None:
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        raise _SelectorViewRowMalformed
+    return value or None
+
+
+def _str_list(value: Any) -> list[str]:
+    if value is None:
+        return []
+    if not isinstance(value, list) or any(not isinstance(item, str) for item in value):
+        raise _SelectorViewRowMalformed
+    return list(value)
+
+
+def _nullable_str_list(value: Any) -> list[str] | None:
+    if value is None:
+        return None
+    return _str_list(value)
+
+
+def _nullable_int(value: Any) -> int | None:
+    if value is None:
+        return None
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise _SelectorViewRowMalformed
+    return value
+
+
 def selector_view_record(
     *,
     row: dict[str, Any],
     cue_bucket: str,
     observed_at: dt.datetime,
-    source_generated: str | None,
+    source_generated: str,
 ) -> dict[str, Any]:
-    def opt_str(value: Any) -> Any:
-        return value if isinstance(value, str) and value else None
+    """Faithfully transcribe one cue row into a selector-view record.
 
-    def opt_num(value: Any) -> Any:
-        return value if isinstance(value, (int, float)) and not isinstance(value, bool) else None
-
-    def str_list(value: Any) -> list[str]:
-        if not isinstance(value, list):
-            return []
-        return [code for code in value if isinstance(code, str)]
-
-    def required_num(value: Any) -> float:
-        # The v2 schema requires these as non-null numbers; an absent or
-        # non-numeric stated figure means the row is malformed. Raise so the
-        # caller omits it (fail closed) rather than fabricating a 0.0.
-        parsed = opt_num(value)
-        if parsed is None:
-            raise _SelectorViewRowMalformed
-        return float(parsed)
+    Strict, all-or-nothing: every field must already be the correct JSON type
+    the v2 contract requires. Any wrong-typed field (a bool-as-string, a
+    non-finite or overflowing number, a non-string in a code list, an
+    unexpected timeframe) raises _SelectorViewRowMalformed so the caller omits
+    the row. Nothing is coerced or fabricated.
+    """
+    row_timeframe = row.get("timeframe")
+    if row_timeframe is not None and row_timeframe != SUPPORTED_TIMEFRAME:
+        raise _SelectorViewRowMalformed
 
     record: dict[str, Any] = {
         "schema_version": SELECTOR_VIEW_SCHEMA_VERSION,
@@ -749,116 +798,105 @@ def selector_view_record(
         "capture_profile": "selector_view",
         "run_id": iso(observed_at),
         "observed_at": iso(observed_at),
-        "source_generated_at": source_generated if isinstance(source_generated, str) else iso(observed_at),
+        "source_generated_at": source_generated,
         "timeframe": SUPPORTED_TIMEFRAME,
-        "pair_id": str(row.get("pair_id", SYSTEM_PAIR_ID)),
-        "selected_variant": str(row.get("selected_variant", SYSTEM_VARIANT)),
+        "pair_id": row["pair_id"],
+        "selected_variant": row["selected_variant"],
         "cue_bucket": cue_bucket,
-        "direction_hint": opt_str(row.get("direction_hint")),
+        "direction_hint": _nullable_str(row.get("direction_hint")),
         "decision": "SELECTOR_VIEW_OBSERVED",
-        "decision_reason_code": opt_str(row.get("decision_reason_code")),
-        "blocked_reason_code": opt_str(row.get("blocked_reason_code")),
-        "watch_reason_code": opt_str(row.get("watch_reason_code")),
-        "rationale_codes": str_list(row.get("rationale_codes")),
-        "setup_gate_pass": bool(row.get("setup_gate_pass")),
-        "cost_gate_pass": bool(row.get("cost_gate_pass")),
-        "trade_gate_pass": bool(row.get("trade_gate_pass")),
-        "spread_z": required_num(row.get("spread_z")),
-        "net_edge_bps": required_num(row.get("net_edge_bps")),
-        "opportunity_score": required_num(row.get("opportunity_score")),
+        "decision_reason_code": _nullable_str(row.get("decision_reason_code")),
+        "blocked_reason_code": _nullable_str(row.get("blocked_reason_code")),
+        "watch_reason_code": _nullable_str(row.get("watch_reason_code")),
+        "rationale_codes": _str_list(row.get("rationale_codes")),
+        "setup_gate_pass": _required_bool(row.get("setup_gate_pass")),
+        "cost_gate_pass": _required_bool(row.get("cost_gate_pass")),
+        "trade_gate_pass": _required_bool(row.get("trade_gate_pass")),
+        "spread_z": _finite_number(row.get("spread_z")),
+        "net_edge_bps": _finite_number(row.get("net_edge_bps")),
+        "opportunity_score": _finite_number(row.get("opportunity_score")),
         "observe_key": selector_view_observe_key(row, cue_bucket, observed_at),
     }
-    for field_name in SELECTOR_VIEW_PASSTHROUGH:
-        if field_name in ("decision_bucket",):
-            record[field_name] = opt_str(row.get(field_name))
-        elif field_name in (
-            "open_live_trade",
-            "requires_fresh_overlay",
-            "learning_trade_eligible",
-            "learning_selection_selected",
-            "legacy_fallback_active",
-        ):
-            value = row.get(field_name)
-            record[field_name] = bool(value) if isinstance(value, bool) else None
-        elif field_name in ("expected_hold_bars",):
-            value = row.get(field_name)
-            record[field_name] = value if isinstance(value, int) and not isinstance(value, bool) else None
-        elif field_name in (
-            "portfolio_target_weight",
-            "portfolio_risk_contribution",
-            "selected_score_z",
-            "entry_distance_z",
-        ):
-            record[field_name] = opt_num(row.get(field_name))
-        elif field_name == "learning_reason_codes":
-            value = row.get(field_name)
-            record[field_name] = (
-                [code for code in value if isinstance(code, str)]
-                if isinstance(value, list)
-                else None
-            )
-        else:
-            record[field_name] = opt_str(row.get(field_name))
-    return record
-
-
-def malformed_bucket_marker(
-    endpoint_key: str, observed_at: dt.datetime
-) -> dict[str, Any]:
-    return {
-        "schema_version": SELECTOR_VIEW_SCHEMA_VERSION,
-        "mode": "observe_only",
-        "capture_profile": "selector_view",
-        "run_id": iso(observed_at),
-        "observed_at": iso(observed_at),
-        "source_generated_at": iso(observed_at),
-        "timeframe": SUPPORTED_TIMEFRAME,
-        "pair_id": SYSTEM_PAIR_ID,
-        "selected_variant": SYSTEM_VARIANT,
-        "cue_bucket": "TRADE_NOW",
-        "direction_hint": None,
-        "decision": "SELECTOR_VIEW_OBSERVED",
-        "decision_reason_code": None,
-        "blocked_reason_code": f"CUE_BUCKET_MALFORMED:{endpoint_key}",
-        "watch_reason_code": None,
-        "rationale_codes": ["CUE_BUCKET_NOT_LIST"],
-        "setup_gate_pass": False,
-        "cost_gate_pass": False,
-        "trade_gate_pass": False,
-        "spread_z": 0.0,
-        "net_edge_bps": 0.0,
-        "opportunity_score": 0.0,
-        "observe_key": ":".join(
-            ["selector-view", "v2", SUPPORTED_TIMEFRAME, SYSTEM_PAIR_ID,
-             SYSTEM_VARIANT, "NO_DIRECTION", f"MALFORMED_{endpoint_key.upper()}",
-             iso(observed_at.astimezone(dt.timezone.utc).replace(second=0, microsecond=0))],
-        ),
+    bool_fields = {
+        "open_live_trade",
+        "requires_fresh_overlay",
+        "learning_trade_eligible",
+        "learning_selection_selected",
+        "legacy_fallback_active",
     }
+    num_fields = {
+        "portfolio_target_weight",
+        "portfolio_risk_contribution",
+        "selected_score_z",
+        "entry_distance_z",
+    }
+    for field_name in SELECTOR_VIEW_PASSTHROUGH:
+        raw = row.get(field_name)
+        if field_name == "decision_bucket":
+            record[field_name] = _nullable_str(raw)
+        elif field_name in bool_fields:
+            record[field_name] = None if raw is None else _required_bool(raw)
+        elif field_name == "expected_hold_bars":
+            record[field_name] = _nullable_int(raw)
+        elif field_name in num_fields:
+            record[field_name] = _nullable_finite_number(raw)
+        elif field_name == "learning_reason_codes":
+            record[field_name] = _nullable_str_list(raw)
+        else:
+            record[field_name] = _nullable_str(raw)
+    return record
 
 
 def selector_view_records(
     *,
     trade_now: dict[str, Any],
     observed_at: dt.datetime,
+    dispatch_mode: dict[str, Any] | None,
+    kill_switch: dict[str, Any] | None,
+    evidence: dict[str, Any],
 ) -> list[dict[str, Any]]:
     """Emit one selector-view row per candidate across all cue buckets.
 
     These are observations of the champion/challenger selector's stated view,
     never entry candidates and never outcomes. Fail-closed to omission: a row
     that is not an object, fails identity, or cannot be faithfully recorded
-    (missing/non-numeric required stated figure, or any unexpected shape) is
-    omitted — no partial or fabricated record is written. A bucket that is
-    present but not a list yields a single diagnostic marker record so the
-    malformed response is visible downstream rather than silently empty.
+    (any wrong-typed, non-finite, or overflowing field) is omitted — no
+    partial, coerced, or fabricated record is written. A malformed response
+    (invalid ``generated_at``) or a bucket present-but-not-a-list emits an
+    honest ``BLOCKED_MALFORMED_RESPONSE`` system record (entry-branch shape),
+    not a fake selector observation, so the malformed response is visible
+    downstream instead of silently empty.
     """
     source_generated = source_generated_at(trade_now)
+    if not isinstance(source_generated, str) or parse_iso(source_generated) is None:
+        return [
+            system_record(
+                observed_at=observed_at,
+                decision="BLOCKED_MALFORMED_RESPONSE",
+                reason_codes=["TRADE_NOW_GENERATED_AT_INVALID"],
+                trade_now=trade_now,
+                dispatch_mode=dispatch_mode,
+                kill_switch=kill_switch,
+                evidence=evidence,
+            )
+        ]
     records: list[dict[str, Any]] = []
     for endpoint_key, cue_bucket in CUE_BUCKETS:
         bucket = trade_now.get(endpoint_key)
         if bucket is None:
             continue
         if not isinstance(bucket, list):
-            records.append(malformed_bucket_marker(endpoint_key, observed_at))
+            records.append(
+                system_record(
+                    observed_at=observed_at,
+                    decision="BLOCKED_MALFORMED_RESPONSE",
+                    reason_codes=[f"CUE_BUCKET_NOT_LIST:{endpoint_key}"],
+                    trade_now=trade_now,
+                    dispatch_mode=dispatch_mode,
+                    kill_switch=kill_switch,
+                    evidence=evidence,
+                )
+            )
             continue
         for row in bucket:
             if not isinstance(row, dict):
@@ -968,8 +1006,15 @@ def run_once(
         # uniformly-blocked entry rows. Fail-closed: the source-unavailable
         # system record above already fired if trade_now was absent; here
         # trade_now is a dict, and selector_view_records fails closed to
-        # omission per row and marks any non-list bucket.
-        return selector_view_records(trade_now=trade_now, observed_at=now_value)
+        # omission per row and emits an honest BLOCKED_MALFORMED_RESPONSE
+        # system record for an invalid generated_at or a non-list bucket.
+        return selector_view_records(
+            trade_now=trade_now,
+            observed_at=now_value,
+            dispatch_mode=payloads["dispatch_mode"],
+            kill_switch=payloads["kill_switch"],
+            evidence=evidence,
+        )
 
     tradable_now = trade_now.get("tradable_now")
     if not isinstance(tradable_now, list):
