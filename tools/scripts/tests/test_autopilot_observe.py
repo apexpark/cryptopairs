@@ -278,11 +278,13 @@ class AutopilotObserveTests(unittest.TestCase):
         }
 
         records = observe.selector_view_records(
+            config=config(),
             trade_now=trade_now,
             observed_at=OBSERVED_AT,
             dispatch_mode=None,
             kill_switch=None,
             evidence=evidence,
+            source_reasons=[],
         )
 
         selector_rows = [r for r in records if r.get("capture_profile") == "selector_view"]
@@ -303,15 +305,45 @@ class AutopilotObserveTests(unittest.TestCase):
     def test_selector_view_invalid_generated_at_marks_malformed_response(self) -> None:
         trade_now = {"tradable_now": [candidate()], "watchlist": [], "excluded": []}
         records = observe.selector_view_records(
+            config=config(),
             trade_now=trade_now,
             observed_at=OBSERVED_AT,
             dispatch_mode=None,
             kill_switch=None,
             evidence=observe.blocked_before_poll_evidence(),
+            source_reasons=[],
         )
         self.assertEqual(len(records), 1)
         self.assertEqual(records[0]["decision"], "BLOCKED_MALFORMED_RESPONSE")
         self.assertIn("TRADE_NOW_GENERATED_AT_INVALID", records[0]["reason_codes"])
+
+    def test_selector_view_refuses_stale_or_degraded_source(self) -> None:
+        cfg = config()
+        # Stale: generated_at older than max_signal_age_seconds (120s default).
+        stale = {"generated_at": "2026-06-13T05:20:00Z",
+                 "tradable_now": [candidate()], "watchlist": [], "excluded": []}
+        stale_records = observe.selector_view_records(
+            config=cfg, trade_now=stale, observed_at=OBSERVED_AT,
+            dispatch_mode=None, kill_switch=None,
+            evidence=observe.blocked_before_poll_evidence(), source_reasons=[],
+        )
+        self.assertEqual(len(stale_records), 1)
+        self.assertEqual(stale_records[0]["decision"], "BLOCKED_STALE_INPUT")
+        self.assertNotIn("SELECTOR_VIEW_OBSERVED",
+                         [r["decision"] for r in stale_records])
+
+        # Degraded source: non-empty source_reasons blocks the whole tick.
+        fresh = {"generated_at": "2026-06-13T05:29:57Z",
+                 "tradable_now": [candidate()], "watchlist": [], "excluded": []}
+        degraded = observe.selector_view_records(
+            config=cfg, trade_now=fresh, observed_at=OBSERVED_AT,
+            dispatch_mode=None, kill_switch=None,
+            evidence=observe.blocked_before_poll_evidence(),
+            source_reasons=["DATA_HEALTH_DEGRADED"],
+        )
+        self.assertEqual(len(degraded), 1)
+        self.assertEqual(degraded[0]["decision"], "BLOCKED_SOURCE_UNAVAILABLE")
+        self.assertIn("DATA_HEALTH_DEGRADED", degraded[0]["reason_codes"])
 
     def test_run_once_records_candidate_then_blocks_duplicate_replay(self) -> None:
         client = RecordingGetClient(base_routes())

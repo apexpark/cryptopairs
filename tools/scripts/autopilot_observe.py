@@ -849,11 +849,13 @@ def selector_view_record(
 
 def selector_view_records(
     *,
+    config: Config,
     trade_now: dict[str, Any],
     observed_at: dt.datetime,
     dispatch_mode: dict[str, Any] | None,
     kill_switch: dict[str, Any] | None,
     evidence: dict[str, Any],
+    source_reasons: list[str],
 ) -> list[dict[str, Any]]:
     """Emit one selector-view row per candidate across all cue buckets.
 
@@ -861,25 +863,50 @@ def selector_view_records(
     never entry candidates and never outcomes. Fail-closed to omission: a row
     that is not an object, fails identity, or cannot be faithfully recorded
     (any wrong-typed, non-finite, or overflowing field) is omitted — no
-    partial, coerced, or fabricated record is written. A malformed response
-    (invalid ``generated_at``) or a bucket present-but-not-a-list emits an
-    honest ``BLOCKED_MALFORMED_RESPONSE`` system record (entry-branch shape),
-    not a fake selector observation, so the malformed response is visible
-    downstream instead of silently empty.
+    partial, coerced, or fabricated record is written.
+
+    A whole tick is refused (a single system record, no selector rows) when
+    the source is degraded or the view cannot be trusted as current — mirroring
+    the entry path's fail-closed posture so a stale or degraded cue response is
+    never recorded as a fresh, trustworthy observation (which would pollute
+    churn/stability as false stability):
+      - degraded source health / another read-only fetch failed → the same
+        ``source_reasons`` the entry path computes → ``BLOCKED_SOURCE_UNAVAILABLE``;
+      - invalid ``generated_at`` or a signal older than
+        ``max_signal_age_seconds`` → ``BLOCKED_STALE_INPUT``;
+      - a bucket present-but-not-a-list → ``BLOCKED_MALFORMED_RESPONSE``.
     """
-    source_generated = source_generated_at(trade_now)
-    if not isinstance(source_generated, str) or parse_iso(source_generated) is None:
+    if source_reasons:
         return [
             system_record(
                 observed_at=observed_at,
-                decision="BLOCKED_MALFORMED_RESPONSE",
-                reason_codes=["TRADE_NOW_GENERATED_AT_INVALID"],
+                decision="BLOCKED_SOURCE_UNAVAILABLE",
+                reason_codes=source_reasons,
                 trade_now=trade_now,
                 dispatch_mode=dispatch_mode,
                 kill_switch=kill_switch,
                 evidence=evidence,
             )
         ]
+    stale_reason = signal_age_reason(config, trade_now, observed_at)
+    if stale_reason is not None:
+        decision = (
+            "BLOCKED_MALFORMED_RESPONSE"
+            if stale_reason == "TRADE_NOW_GENERATED_AT_INVALID"
+            else "BLOCKED_STALE_INPUT"
+        )
+        return [
+            system_record(
+                observed_at=observed_at,
+                decision=decision,
+                reason_codes=[stale_reason],
+                trade_now=trade_now,
+                dispatch_mode=dispatch_mode,
+                kill_switch=kill_switch,
+                evidence=evidence,
+            )
+        ]
+    source_generated = source_generated_at(trade_now)
     records: list[dict[str, Any]] = []
     for endpoint_key, cue_bucket in CUE_BUCKETS:
         bucket = trade_now.get(endpoint_key)
@@ -1005,15 +1032,18 @@ def run_once(
         # single-purpose artifact and does not double the record volume with
         # uniformly-blocked entry rows. Fail-closed: the source-unavailable
         # system record above already fired if trade_now was absent; here
-        # trade_now is a dict, and selector_view_records fails closed to
-        # omission per row and emits an honest BLOCKED_MALFORMED_RESPONSE
-        # system record for an invalid generated_at or a non-list bucket.
+        # trade_now is a dict here; selector_view_records applies the same
+        # source-health and staleness gates the entry path uses (refusing the
+        # tick when degraded/stale so nothing is recorded as a fresh view),
+        # then fails closed to omission per malformed row.
         return selector_view_records(
+            config=config,
             trade_now=trade_now,
             observed_at=now_value,
             dispatch_mode=payloads["dispatch_mode"],
             kill_switch=payloads["kill_switch"],
             evidence=evidence,
+            source_reasons=source_reasons,
         )
 
     tradable_now = trade_now.get("tradable_now")
