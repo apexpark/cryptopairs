@@ -353,7 +353,8 @@
         "spread_z",
         "net_edge_bps",
         "opportunity_score",
-        "observe_key"
+        "observe_key",
+        "direction_hint"
       ],
       "properties": {
         "schema_version": {
