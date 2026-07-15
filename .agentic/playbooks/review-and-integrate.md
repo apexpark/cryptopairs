@@ -19,9 +19,12 @@ From a finished worker result to a merged slice.
    session. Never over failing/pending/bypassed checks or unresolved
    threads; never touching `docs/AGENT_STATE.md` or any protected path.
    Conditions in `.agentic/registers/decisions.md` (standing delegation).
-6. Tier 3: Operator pastes the Codex reviewer prompt pinned to the exact head
-   SHA. A verdict that does not state the SHA it reviewed, or states a stale
-   one, does not count. Every repair push → fresh review at the new SHA.
+6. Tier 3: Operator pastes the Independent Reviewer's exact-SHA prompt (the
+   reviewer is the model NOT holding the Coder role — Codex before OP-44,
+   Claude after; see `.agentic/policies/git-github.md` §Roles) pinned to the
+   exact head SHA. A verdict that does not state the SHA it reviewed, or
+   states a stale one, does not count. Every repair push → fresh review at
+   the new SHA.
    Then Operator authorization on a plain-English brief; record the
    authorization (head SHA + merge SHA) in the decisions register.
 7. Tier 4: never yours. Brief the Operator with exact paste text.
