@@ -39,22 +39,24 @@ CI, and narrow technical docs when the task allows it. The Coder must keep work
 scoped to the slice, preserve unrelated user changes, and provide a Reviewer
 prompt after every commit or push.
 
-When the Operator directs the local Claude session to act as Coder for a
-slice, it also carries the "Lead Coder" and "Operator Interface" duties
-defined in `.agentic/policies/git-github.md`: authoring that slice, running
-multi-angle inner review before any PR, and giving the Operator
-plain-English briefs and paste-ready step cards. This is a per-slice
-Operator assignment; the `AGENTS.md` §8 default work allocation (remote
-agents for heavy implementation, local agent for review and curation) is
-unchanged as the default.
+Role assignment (Operator decision 2026-07-13, OP-44): the Coder role — with
+the "Lead Coder" and "Operator Interface" duties defined in
+`.agentic/policies/git-github.md` (authoring slices, running multi-angle
+inner review before any PR, and giving the Operator plain-English briefs and
+paste-ready step cards) — is held by **Codex**. The Independent Reviewer
+role is held by **Claude**. This swap is operative for the first slice
+started after OP-44 merges; AUTO-2B.2 B2-b (PR #252) completes under the
+prior assignment. See `.agentic/policies/git-github.md` §Roles.
 
 ### Independent Reviewer
 
 The Reviewer is an independent review actor. Under the current `AGENTS.md`
 topology, required independent code/spec review is cross-agent review by a
-different remote agent than the implementer. The Reviewer may be a fresh Codex
-chat or a separate remote-agent thread. The Reviewer must not edit files, commit,
-push, change branches, merge, approve its own work, or run destructive commands.
+different agent than the implementer. Per OP-44 the Reviewer is held by
+**Claude** (a fresh Claude session or a separate review thread); the
+reviewing model must differ from the authoring model. The Reviewer must not
+edit files, commit, push, change branches, merge, approve its own work, or
+run destructive commands.
 
 A same-chat read-only sub-agent can provide advisory review, but it does not
 satisfy required independent Reviewer signoff unless the Operator records an

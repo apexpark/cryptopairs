@@ -8,9 +8,9 @@
 # tools/** except autopilot scripts, plans/**, remaining non-policy docs).
 #
 # Every specifically enumerated path requires the Tier 3 process to merge:
-# Independent Reviewer (Codex) CLEAN verdict at the exact head SHA + green
-# CI + Operator authorization (docs/ops/ai_workflow.md §Merge Authority
-# Tiers). This is a process rule; GitHub-mechanical enforcement
+# Independent Reviewer CLEAN verdict at the exact head SHA (the reviewing
+# model differs from the author per §Roles / OP-44) + green CI + Operator
+# authorization (docs/ops/ai_workflow.md §Merge Authority Tiers). This is a process rule; GitHub-mechanical enforcement
 # additionally requires the Operator to enable "Require review from Code
 # Owners" in branch protection — an Operator-only setting this file cannot
 # grant. If this file and any other protected-path list disagree in the
@@ -25,6 +25,7 @@
 # Governance and agent-operating rules
 /AGENTS.md @apexpark
 /CLAUDE.md @apexpark
+/CODEX.md @apexpark
 /.agentic/ @apexpark
 /.github/ @apexpark
 /docs/ops/ @apexpark
