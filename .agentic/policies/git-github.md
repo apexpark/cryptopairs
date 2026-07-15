@@ -29,12 +29,22 @@ prior Claude/Codex assignments) is:
   its own).
 - **Operator** — the human authority (T3). Same role in both vocabularies.
 
+`AGENTS.md` §8 reconciliation: §8.3 assigns *Independent code/spec review*
+to a remote agent different from the implementer, and *Final acceptance
+review* to the local agent. OP-44 is consistent with — indeed closer to —
+that default: Codex (remote) implements, and Claude reviews as a different
+agent than the author, satisfying the cross-agent requirement whether it
+runs locally or as a separate review thread. Role assignment is an Operator
+authority (roles are "by function and reassignable by Operator decision"),
+so where OP-44 and the §8 default work-allocation differ, OP-44 governs the
+assignment; no governance exception is required.
+
 Transition: this swap is operative for the first slice started after
-Operator decision OP-44 merges. AUTO-2B.2 B2-b (PR #252), already in flight
-under the prior assignment (Claude author, Codex reviewer), completes under
-the prior assignment. Interaction model after the swap: the Operator directs
-Codex to author/implement and receives Codex's briefs and step cards, and
-brings Codex's protected-path PRs to Claude for exact-SHA review.
+Operator decision OP-44 merges (which is after AUTO-2B.2 B2-b / PR #252
+completes under the prior assignment — Claude author, Codex reviewer).
+Interaction model after the swap: the Operator directs Codex to
+author/implement and receives Codex's briefs and step cards, and brings
+Codex's protected-path PRs to Claude for exact-SHA review.
 
 ## Merge authority tiers (Operator decision 2026-07-12)
 

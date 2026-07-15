@@ -9,7 +9,7 @@ template itself is unchanged and authoritative):
 | Work order id + run folder | Summary (link) |
 | Worker result verification table | Test Plan |
 | Evidence report | Test Plan / Observability |
-| Inner review verdict | Apex Harness / Agentic Review → Reviewer signoff (advisory unless Tier 3 Codex review) |
+| Inner review verdict | Apex Harness / Agentic Review → Reviewer signoff (advisory unless the Tier 3 cross-model Independent Reviewer signs off) |
 | Merge tier claimed | Apex Harness / Agentic Review (state Tier 1–4 explicitly) |
 | Base/Head SHA | Base SHA / Head SHA fields |
 | Register rows added | Context & Policy References |

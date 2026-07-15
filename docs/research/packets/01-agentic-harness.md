@@ -52,7 +52,7 @@ Reviewer:
 - returns P1/P2/P3 findings with file:line references;
 - is a different remote agent than the implementer for required independent
   code/spec review under current `AGENTS.md`;
-- may be a fresh Codex chat or separate remote-agent thread;
+- is the model not holding the Coder role (Codex before OP-44, Claude after; see docs/ops/ai_workflow.md §Roles);
 - must not edit, commit, push, change branches, merge, or approve its own work.
 
 A same-chat read-only sub-agent can provide advisory review, but it does not
