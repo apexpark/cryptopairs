@@ -25,6 +25,7 @@
 # Governance and agent-operating rules
 /AGENTS.md @apexpark
 /CLAUDE.md @apexpark
+/CODEX.md @apexpark
 /.agentic/ @apexpark
 /.github/ @apexpark
 /docs/ops/ @apexpark

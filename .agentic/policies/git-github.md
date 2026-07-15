@@ -14,16 +14,27 @@ Operator decision 2026-07-12 (see `.agentic/registers/decisions.md`).
 
 ## Roles
 
-- **Lead Coder** — the "Coder" role of `docs/ops/ai_workflow.md`, held by the
-  local Claude session (`AGENTS.md` §8.1 "Local agent") when the Operator
-  assigns it a slice. Authors that slice, runs inner review, opens PRs. This
-  is a per-slice Operator assignment; the `AGENTS.md` §8 default work
-  allocation (remote agents for heavy implementation, local agent for
-  review and curation) is unchanged as the default.
+Role assignments are by function and reassignable by Operator decision. The
+current assignment (Operator decision 2026-07-13, OP-44 — a swap of the
+prior Claude/Codex assignments) is:
+
+- **Lead Coder** and **Operator Interface** — the "Coder" role of
+  `docs/ops/ai_workflow.md`, held by **Codex**. Authors slices, runs inner
+  review, opens PRs; and gives the Operator plain-English briefs and
+  paste-ready step cards, and records Operator decisions in the registers.
 - **Independent Reviewer** — the ai_workflow.md "Independent Reviewer" role,
-  held by Codex. On protected paths the reviewing model must differ from the
-  authoring model.
+  held by **Claude**. Reviews protected-path PRs at the exact head SHA,
+  read-only. On protected paths the reviewing model must differ from the
+  authoring model (Claude reviews Codex's work; neither model sole-reviews
+  its own).
 - **Operator** — the human authority (T3). Same role in both vocabularies.
+
+Transition: this swap is operative for the first slice started after
+Operator decision OP-44 merges. AUTO-2B.2 B2-b (PR #252), already in flight
+under the prior assignment (Claude author, Codex reviewer), completes under
+the prior assignment. Interaction model after the swap: the Operator directs
+Codex to author/implement and receives Codex's briefs and step cards, and
+brings Codex's protected-path PRs to Claude for exact-SHA review.
 
 ## Merge authority tiers (Operator decision 2026-07-12)
 

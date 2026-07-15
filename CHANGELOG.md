@@ -4,6 +4,16 @@ All notable changes to this project will be documented in this file.
 This project follows SemVer as defined in `docs/02-versioning-and-releases.md`.
 
 ## Unreleased
+### Governance
+- Swapped the Claude/Codex role assignments (Operator decision OP-44,
+  effective for the first slice after it merges; AUTO-2B.2 B2-b / PR #252
+  completes under the prior roles): Codex becomes Lead Coder + Operator
+  Interface, Claude becomes Independent Reviewer. Added `CODEX.md` (Codex
+  session entry point) alongside `CLAUDE.md`; the Autonomy Doctrine is
+  model-agnostic and binds whoever holds the Coder role. Updated
+  ai_workflow.md / git-github.md / CLAUDE.md role sections, the Codex
+  prompt-pack note, CODEOWNERS, and the project.yaml protected mirror.
+
 ### Operator Tooling
 - AUTO-2B.2 B2-a contracts: `autopilot_observe_record` version 2 splits
   into entry rows (version-1 shape unchanged) and selector-view rows

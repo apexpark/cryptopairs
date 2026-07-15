@@ -3,6 +3,12 @@
 Reusable prompts for the CryptoPairs Apex harness. Replace placeholders before
 use. `AGENTS.md` remains highest precedence.
 
+Role assignment (OP-44, 2026-07-13, effective after PR #252): **Codex** is
+the Lead Coder + Operator Interface and uses the Coder Startup / Slice Plan
+prompts below; **Claude** is the Independent Reviewer and receives the
+Tier 3 exact-SHA reviewer prompt. The reviewing model must differ from the
+authoring model.
+
 ## Coder Startup
 
 ```text
@@ -138,7 +144,7 @@ Return P1/P2/P3 findings with file:line references, residual risks,
 verification performed, and whether the PR is acceptable for Operator review.
 ```
 
-## Tier 3 Exact-SHA Reviewer Prompt (Operator pastes into Codex)
+## Tier 3 Exact-SHA Reviewer Prompt (Operator pastes to the Independent Reviewer — Claude per OP-44)
 
 ```text
 You are the Independent Reviewer for apexpark/cryptopairs PR #<N>.

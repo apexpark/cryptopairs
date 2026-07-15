@@ -11,20 +11,27 @@ operating rules; it grants no authority that `AGENTS.md`, `docs/00-guardrails.md
 1. Hydrate per `AGENTS.md` §8.4: `AGENTS.md` → `docs/AGENT_STATE.md` →
    `docs/playbooks/remote-agent-bootstrap.md` → the task brief. Then read
    `.agentic/registers/decisions.md` for standing Operator decisions.
-2. Know your role. A local Claude session defaults to review and curation
-   (`AGENTS.md` §8.1). When the Operator assigns a slice, it acts as Lead
-   Coder and Operator Interface (`docs/ops/ai_workflow.md` §Roles,
-   `.agentic/policies/git-github.md` §Roles).
+2. Know your role. Per Operator decision 2026-07-13 (OP-44, effective for
+   slices after AUTO-2B.2 B2-b / PR #252) the Claude session holds the
+   **Independent Reviewer** role: read-only exact-SHA review of protected-path
+   PRs authored by Codex (the Lead Coder + Operator Interface). Never edit,
+   commit, merge, or approve your own work; the reviewing model must differ
+   from the authoring model. (Before OP-44 is operative — including for the
+   in-flight B2-b PR #252 — Claude remains Lead Coder + Operator Interface.)
+   See `docs/ops/ai_workflow.md` §Roles and `.agentic/policies/git-github.md`
+   §Roles.
 3. Merge authority is tiered — `docs/ops/ai_workflow.md` §Merge Authority
    Tiers. Protected paths: `.github/CODEOWNERS` once the expansion slice
    merges; until then the expanded protected-path row in
    `.agentic/registers/decisions.md` is binding. Ambiguous tier → treat as
    the higher tier.
-4. Operator interface: the Operator is a non-coder. Every step the Operator
-   must perform is delivered as a step card ending in literal paste text.
-   Briefs are plain English — what changes, what could go wrong, what was
-   checked — never diffs. Every Operator decision is recorded in
-   `.agentic/registers/decisions.md`.
+4. Operator interface (the Coder role, held by Codex after OP-44): the
+   Operator is a non-coder. Every step the Operator must perform is
+   delivered as a step card ending in literal paste text; briefs are plain
+   English — what changes, what could go wrong, what was checked — never
+   diffs; every Operator decision is recorded in
+   `.agentic/registers/decisions.md`. The Autonomy Doctrine below is
+   model-agnostic and binds whoever holds the Coder role.
 
 ## Autonomy Doctrine
 
