@@ -320,35 +320,69 @@ class AutopilotObserveTests(unittest.TestCase):
         self.assertEqual(rc, 0)
         self.assertEqual(ran.call_count, 1)  # started, ticked once, exited on bound
 
-    def test_selector_view_command_identity_is_exact_not_any_observe_process(self) -> None:
+    def test_selector_view_argv_identity_is_exact_not_any_observe_process(self) -> None:
         # Codex round-6 finding 2: the stop procedure must identify the *exact*
         # selector-view process. Both the narrow paper-feeding run and the
-        # selector-view run are launched as `python3 .../autopilot_observe.py`,
-        # so matching on the script name alone matches BOTH — and would stop the
-        # narrow run if the selector-view PID file were stale and its PID reused.
-        # Only the explicit flag in argv distinguishes them.
-        narrow_run = "python3 tools/scripts/autopilot_observe.py"
-        for command, expected, why in (
-            (narrow_run, False, "narrow paper-feeding run: same script, no flag"),
-            ("python3 tools/scripts/autopilot_observe.py --capture-selector-view",
+        # selector-view run are launched as `python3 .../autopilot_observe.py`
+        # with everything else supplied by the environment, so matching on the
+        # script name alone matches BOTH — and would stop the narrow run if the
+        # selector-view PID file were stale and its PID reused. Only the
+        # explicit flag in argv distinguishes them.
+        for argv, expected, why in (
+            (["python3", "tools/scripts/autopilot_observe.py"], False,
+             "narrow paper-feeding run: same script, no flag"),
+            (["python3", "tools/scripts/autopilot_observe.py", "--capture-selector-view"],
              True, "the selector-view run"),
-            ("python3 /opt/cryptopairs/tools/scripts/autopilot_observe.py "
-             "--capture-selector-view --once", True, "absolute path, extra flags"),
-            ("python3 autopilot_observe.py --capture-selector-view", True, "bare script name"),
-            ("", False, "empty ps output"),
-            ("python3 some_other_tool.py --capture-selector-view", False,
+            (["python3", "/opt/cryptopairs/tools/scripts/autopilot_observe.py",
+              "--capture-selector-view", "--once"], True, "absolute path, extra flags"),
+            (["python3", "autopilot_observe.py", "--capture-selector-view"], True,
+             "bare script name"),
+            (["python3", "-u", "tools/scripts/autopilot_observe.py",
+              "--capture-selector-view"], True, "interpreter flags before the script"),
+            (["/usr/bin/python3.11", "tools/scripts/autopilot_observe.py",
+              "--capture-selector-view"], True, "versioned absolute interpreter"),
+            (["./tools/scripts/autopilot_observe.py", "--capture-selector-view"], True,
+             "executed directly via its shebang"),
+            ([], False, "no argv at all"),
+            (["python3", "some_other_tool.py", "--capture-selector-view"], False,
              "the flag alone is not enough: must be this script"),
-            ("python3 tools/scripts/autopilot_observe.py --capture-selector-view-typo",
-             False, "token-exact: a lookalike flag is not the flag"),
-            ("grep --capture-selector-view autopilot_observe.py", False,
+            (["python3", "tools/scripts/autopilot_observe.py",
+              "--capture-selector-view-typo"], False,
+             "token-exact: a lookalike flag is not the flag"),
+            (["grep", "--capture-selector-view", "autopilot_observe.py"], False,
              "a process merely mentioning both tokens is not the capture"),
-            ("python3 'unterminated autopilot_observe.py --capture-selector-view",
-             False, "unparseable command line fails closed"),
+            (["python3", "other.py", "autopilot_observe.py", "--capture-selector-view"],
+             False, "script name as a later argument is not the program being run"),
+            # The false positive that matters most: a narrow run whose ARGUMENT
+            # VALUE contains the flag text. With exact argv the value stays one
+            # token and cannot masquerade as the flag.
+            (["python3", "tools/scripts/autopilot_observe.py", "--output-dir",
+              "/tmp/out --capture-selector-view"], False,
+             "flag text inside an argument value is not the flag"),
         ):
             with self.subTest(command=why):
-                self.assertIs(
-                    observe.selector_view_command_matches(command), expected, why
-                )
+                self.assertIs(observe.selector_view_argv_matches(argv), expected, why)
+
+    def test_verify_refuses_when_argv_cannot_be_read_exactly(self) -> None:
+        # `ps` renders argv space-joined and unquoted, so it cannot be split
+        # back into argv: an argument value containing the flag text would
+        # re-split into a token that looks like the flag, and the probe would
+        # green-light killing the narrow run. When argv is not exact the probe
+        # refuses rather than trusting it.
+        from unittest import mock
+
+        looks_like_capture = [
+            "python3", "tools/scripts/autopilot_observe.py", "--capture-selector-view",
+        ]
+        with mock.patch.object(observe, "process_argv", return_value=(looks_like_capture, False)):
+            safe, verdict = observe.verify_selector_view_pid(4242)
+        self.assertFalse(safe)
+        self.assertEqual(verdict["verdict"], "IDENTITY_NOT_VERIFIABLE")
+
+        with mock.patch.object(observe, "process_argv", return_value=(looks_like_capture, True)):
+            safe, verdict = observe.verify_selector_view_pid(4242)
+        self.assertTrue(safe)
+        self.assertEqual(verdict["verdict"], "SELECTOR_VIEW_CAPTURE")
 
     def test_verify_selector_view_pid_refuses_wrong_or_stale_pid(self) -> None:
         # The verdict gates a signal, so every non-confirming case must be
@@ -357,17 +391,17 @@ class AutopilotObserveTests(unittest.TestCase):
         from unittest import mock
 
         cases = (
-            ("narrow run", "python3 tools/scripts/autopilot_observe.py",
+            ("narrow run", (["python3", "tools/scripts/autopilot_observe.py"], True),
              2, "NOT_SELECTOR_VIEW_CAPTURE"),
-            ("stale pid", None, 2, "NO_SUCH_PROCESS"),
+            ("stale pid", (None, False), 2, "NO_SUCH_PROCESS"),
             ("selector-view run",
-             "python3 tools/scripts/autopilot_observe.py --capture-selector-view",
+             (["python3", "tools/scripts/autopilot_observe.py", "--capture-selector-view"], True),
              0, "SELECTOR_VIEW_CAPTURE"),
         )
-        for label, command, expected_rc, verdict in cases:
+        for label, argv_result, expected_rc, verdict in cases:
             with self.subTest(case=label):
                 out, err = io.StringIO(), io.StringIO()
-                with mock.patch.object(observe, "process_command_line", return_value=command):
+                with mock.patch.object(observe, "process_argv", return_value=argv_result):
                     with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
                         rc = observe.main(["--verify-selector-view-pid", "4242"])
                 self.assertEqual(rc, expected_rc, label)
@@ -381,7 +415,7 @@ class AutopilotObserveTests(unittest.TestCase):
         from unittest import mock
 
         with mock.patch.dict(os.environ, {}, clear=True):
-            with mock.patch.object(observe, "process_command_line", return_value=None):
+            with mock.patch.object(observe, "process_argv", return_value=(None, False)):
                 with mock.patch.object(observe, "os") as fake_os:
                     with mock.patch("sys.stderr"):
                         rc = observe.main(["--verify-selector-view-pid", "4242"])
@@ -452,6 +486,48 @@ class AutopilotObserveTests(unittest.TestCase):
         self.assertEqual(len(manifests), 1)
         self.assertEqual(manifests[0]["recorded_rows"], len(rows))
 
+    def test_stop_while_polling_abandons_the_tick_instead_of_waiting_out_every_fetch(
+        self,
+    ) -> None:
+        # A tick makes 7 sequential fetches, each able to burn the full timeout
+        # against an unresponsive endpoint. If a stop only took effect after the
+        # whole tick, exit could take ~7x the timeout — past the runbook's ~30s
+        # escalation gate, and precisely in the degraded case where an operator
+        # most wants to stop. Worse, it would steer them to the `kill -9` this
+        # handling exists to avoid. A stop while polling must abandon the tick.
+        stop = observe.StopSignal()
+        fetched: list[str] = []
+
+        def fetch_then_stop(_client, url, _timeout):
+            fetched.append(url)
+            stop.request(15)  # a stop lands during the very first fetch
+            return {"status": "ok"}, "OK", None
+
+        with unittest.mock.patch.object(observe, "fetch_source", fetch_then_stop):
+            records = observe.run_once(
+                config(capture_selector_view=True),
+                client=object(),
+                observed_at=OBSERVED_AT,
+                stop=stop,
+            )
+
+        # Abandoned: nothing is recorded, so nothing partial reaches the
+        # artifact and the tick reads downstream as missing — which it is.
+        self.assertIsNone(records)
+        # It stopped at the next fetch boundary rather than completing all 7.
+        self.assertEqual(len(fetched), 1)
+
+    def test_run_once_without_stop_is_unchanged(self) -> None:
+        # The stop parameter is opt-in: every existing caller (and --once) must
+        # keep getting a list, never None.
+        records = observe.run_once(
+            config(capture_selector_view=True),
+            client=RecordingGetClient(base_routes()),
+            observed_at=OBSERVED_AT,
+        )
+        self.assertIsInstance(records, list)
+        self.assertTrue(records)
+
     def test_sigterm_during_sleep_stops_without_waiting_out_the_interval(self) -> None:
         # PEP 475 resumes an interrupted time.sleep for its full remaining
         # duration, so a flag alone would leave a stop unnoticed for up to a
@@ -468,6 +544,30 @@ class AutopilotObserveTests(unittest.TestCase):
 
         self.assertTrue(stop.requested)
         self.assertLess(elapsed, 5)  # returned promptly, not after 300s
+
+    def test_install_does_not_re_arm_a_signal_the_launcher_ignored(self) -> None:
+        # `nohup ... &` hands a background run an ignored SIGINT on purpose.
+        # Re-arming it here would make the run newly killable by a signal its
+        # launcher meant it to survive, so an existing SIG_IGN is left alone.
+        import signal as signal_mod
+
+        previous = signal_mod.getsignal(signal_mod.SIGINT)
+        try:
+            signal_mod.signal(signal_mod.SIGINT, signal_mod.SIG_IGN)
+            observe.StopSignal().install()
+            self.assertIs(signal_mod.getsignal(signal_mod.SIGINT), signal_mod.SIG_IGN)
+        finally:
+            signal_mod.signal(signal_mod.SIGINT, previous)
+
+        # SIGTERM, which is not ignored, is still armed.
+        previous_term = signal_mod.getsignal(signal_mod.SIGTERM)
+        try:
+            stop = observe.StopSignal()
+            stop.install()
+            # Bound methods are equal, not identical, across attribute lookups.
+            self.assertEqual(signal_mod.getsignal(signal_mod.SIGTERM), stop.request)
+        finally:
+            signal_mod.signal(signal_mod.SIGTERM, previous_term)
 
     def test_stop_signal_records_only_the_first_request(self) -> None:
         stop = observe.StopSignal()

@@ -133,6 +133,11 @@ sleep 2
 tail -n 100 "$RUN_ROOT/autopilot_observe.log"
 ```
 
+SIGTERM lets the in-flight tick finish its append before the loop exits, logging
+`"status": "stopped_by_signal"` (see "Stop the selector-view run" below for the
+timing detail — it applies to this loop too). Reach for `kill -9` only after
+escalating: SIGKILL cannot be handled and can truncate the final record.
+
 ## Selector-View Capture (AUTO-2B.2, wide universe)
 
 Selector-view capture records the cue endpoint's full view across all three
@@ -191,7 +196,11 @@ distinguishing token in this process's own visible command line, so the stop
 procedure below can tell the two runs apart. Start it any other way and that
 procedure will — by design — refuse to confirm the PID.
 
-The loop exits itself at `MAX_RUNTIME_SECONDS` (bounded, 72h cap). Each tick
+The loop exits itself at `MAX_RUNTIME_SECONDS` — whatever value the command
+above sets, here 259200s (72h). The tool enforces only that the bound is a
+positive integer, not any particular ceiling: it will not clamp a larger value
+for you, so the 72h window is this command's choice and re-scoping it is an
+Operator decision. Each tick
 logs a `selector_view_records` count so growth is visible. No allowlist and
 no quality windows are needed — selector-view capture bypasses the
 entry-candidate gates entirely and drives no eligibility or execution path.
@@ -241,10 +250,15 @@ Because the manifest is written first, it also makes truncation visible: if the
 rows that follow are fewer than `recorded_rows`, the tail was cut (e.g. a
 `kill -9` mid-append) rather than the universe being smaller.
 
+The records are sharded one file per calendar day, so a multi-day run always
+spans several files. `-h` suppresses the per-file name prefix, which is what
+makes these a single total rather than a count per file:
+
 ```bash
 # Ticks captured, and how many of them saw an empty universe:
-grep -c '"SELECTOR_VIEW_TICK_CAPTURED"' "$SV_ROOT"/records/*/autopilot_observe_*.jsonl
-grep '"SELECTOR_VIEW_TICK_CAPTURED"' "$SV_ROOT"/records/*/autopilot_observe_*.jsonl \
+grep -hc '"SELECTOR_VIEW_TICK_CAPTURED"' "$SV_ROOT"/records/*/autopilot_observe_*.jsonl \
+  | paste -sd+ - | bc
+grep -h '"SELECTOR_VIEW_TICK_CAPTURED"' "$SV_ROOT"/records/*/autopilot_observe_*.jsonl \
   | grep -c '"recorded_rows":0'
 ```
 
@@ -268,10 +282,19 @@ python3 tools/scripts/autopilot_observe.py --verify-selector-view-pid "$SV_PID"
 
 This check exists because a PID file can go stale and PIDs get reused: matching
 on `autopilot_observe.py` alone would match the **narrow paper-feeding run too**,
-and stop the wrong capture. The check reads the PID's actual command line and
-confirms the `--capture-selector-view` flag; it signals nothing itself. It fails
-closed — `NO_SUCH_PROCESS` (stale PID file) and `NOT_SELECTOR_VIEW_CAPTURE`
-(some other process now holds this PID) both exit 2 and mean **do not signal**.
+and stop the wrong capture. The check reads the PID's exact argv from
+`/proc/<pid>/cmdline` and confirms the `--capture-selector-view` flag; it
+signals nothing itself.
+
+Run it **on the capture host**, where the run actually is. It fails closed —
+each verdict below exits 2 and means **do not signal**:
+
+| Verdict | Meaning |
+|---|---|
+| `NO_SUCH_PROCESS` | Stale PID file; nothing is running under this PID. |
+| `NOT_SELECTOR_VIEW_CAPTURE` | Some other process holds this PID — possibly the narrow run. |
+| `IDENTITY_NOT_VERIFIABLE` | No `/proc` (e.g. run from a Mac). `ps` renders argv space-joined and unquoted, so an argument *value* could masquerade as the flag; the check will not guess. Re-run it on the host. |
+
 If it does not exit 0, stop and escalate to the Operator; do not kill the PID.
 
 If, and only if, the check exits 0:
@@ -286,16 +309,28 @@ tail -n 20 "$SV_ROOT/autopilot_observe_selector_view.log"
 The tool handles SIGTERM (and SIGINT) by finishing the tick it is in — the
 append completes and the file is closed — and then exiting at its next
 checkpoint, logging `"status": "stopped_by_signal"`. It does not wait out the
-remaining sleep interval, so expect it to exit within a few seconds rather than
-up to `INTERVAL_SECONDS`. A run stopped this way ends with a whole final record,
+remaining sleep interval. A run stopped this way ends with a whole final record,
 and the log line is the confirmation.
+
+Expected time to exit:
+
+- Idle between ticks (the common case): well under a second.
+- Mid-tick: up to one HTTP timeout (`AUTOPILOT_OBSERVE_TIMEOUT_SECONDS`,
+  default 10s). A tick makes seven sequential fetches, but a stop is honoured at
+  the next fetch boundary — it does not wait out all seven. If the stop lands
+  while polling, the tick is abandoned rather than half-recorded and the log
+  says `"status": "tick_abandoned_on_stop"`; nothing is written, so that
+  timestamp is simply a missing tick, which is what it is.
+- If an endpoint is not merely slow but dribbles bytes indefinitely, the socket
+  timeout never fires and the fetch can outlast the estimate above. That is the
+  case for the `kill -9` escalation below.
 
 If it is still running after ~30s, escalate to the Operator before using
 `kill -9`: SIGKILL cannot be handled, so a hard kill during a JSONL append can
 still truncate the final record. The capture is append-only and
 observation-only, so a stopped run loses no committed evidence: every completed
 tick is already durable on disk. A truncated tail is detectable rather than
-silent — see the tick manifest below.
+silent — see "Tick manifests" above.
 
 ## Capture Attribution Inputs
 

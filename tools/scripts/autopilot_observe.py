@@ -1099,6 +1099,12 @@ def selector_view_records(
         if not isinstance(bucket, list):
             return refuse("BLOCKED_MALFORMED_RESPONSE", [f"CUE_BUCKET_NOT_LIST:{endpoint_key}"])
 
+    # Non-null past this point only because the freshness gate above already
+    # rejected every value source_generated_at() would reject: the two apply the
+    # same str / "T" / parse_iso test. Both the selector rows and the tick
+    # manifest declare source_generated_at as a required non-nullable string, so
+    # loosening either predicate without the other would emit records that
+    # violate their own schema branch. Keep the two in step.
     source_generated = source_generated_at(trade_now)
     records: list[dict[str, Any]] = []
     # Whole-tick completeness accounting. A candidate the endpoint returned but
@@ -1175,7 +1181,15 @@ def run_once(
     client: Any | None = None,
     observed_at: dt.datetime | None = None,
     seen_keys: set[str] | None = None,
-) -> list[dict[str, Any]]:
+    stop: StopSignal | None = None,
+) -> list[dict[str, Any]] | None:
+    """Run one observation tick and return its records.
+
+    Returns None only when ``stop`` is supplied and a stop was requested while
+    polling, meaning the tick was abandoned before anything was recorded. With
+    no ``stop`` (the default, and every non-loop caller) this always returns a
+    list.
+    """
     if not config.enabled:
         return []
 
@@ -1220,6 +1234,17 @@ def run_once(
     payloads: dict[str, dict[str, Any] | None] = {}
     statuses: dict[str, str] = {}
     for key, url in urls.items():
+        # A tick makes seven sequential fetches, each able to burn the full
+        # timeout against an unresponsive endpoint. Waiting out all of them
+        # before honouring a stop would take far longer than the runbook's
+        # escalation gate and push the operator toward the `kill -9` this
+        # handling exists to avoid — and the degraded case that makes the tick
+        # slow is exactly when a stop is most likely. Nothing is written until
+        # the tick completes, so a stop here abandons the tick outright: no
+        # partial view is recorded, and the tick reads downstream as missing,
+        # which it is. Only a stop during the append needs the tick to finish.
+        if stop is not None and stop.requested:
+            return None
         payload, status, _error = fetch_source(active_client, url, config.timeout_seconds)
         payloads[key] = payload
         statuses[key] = status
@@ -1441,8 +1466,13 @@ class StopSignal:
     def install(self) -> None:
         # SIGINT is handled the same way: the default KeyboardInterrupt is
         # raised at an arbitrary bytecode and can abort an in-flight append
-        # just as SIGTERM can.
+        # just as SIGTERM can. A disposition already set to SIG_IGN is left
+        # alone — a shell backgrounding this run (`nohup ... &`) hands it an
+        # ignored SIGINT deliberately, and re-arming it here would make the run
+        # newly killable by a signal its launcher meant it to survive.
         for signum in (signal.SIGTERM, signal.SIGINT):
+            if signal.getsignal(signum) is signal.SIG_IGN:
+                continue
             signal.signal(signum, self.request)
 
 
@@ -1472,38 +1502,54 @@ SELECTOR_VIEW_FLAG = "--capture-selector-view"
 OBSERVE_SCRIPT_NAME = "autopilot_observe.py"
 
 
-def selector_view_command_matches(command: str) -> bool:
-    """True only for a command line that is *this* script run in selector-view.
+def selector_view_argv_matches(argv: list[str]) -> bool:
+    """True only for an argv that is *this* script run in selector-view.
 
-    Deliberately strict and token-exact (never a substring test): it gates a
-    signal, so a false positive stops the wrong process. The script must be the
-    program actually being run — either executed directly or as the argument to
-    a python interpreter — so an unrelated process that merely *mentions* both
-    tokens (an editor, a `grep autopilot_observe.py`) is not mistaken for the
-    capture. An unparseable command line, or one that only reaches selector-view
-    capture via the environment, returns False: the caller then refuses to
-    signal rather than guessing.
+    Token-exact, never a substring test: it gates a signal, so a false positive
+    stops the wrong process. The script must be the program actually being run —
+    executed directly, or as the argument to a python interpreter (any
+    interpreter flags in between are fine) — so an unrelated process that merely
+    *mentions* both tokens is not mistaken for the capture. A command that
+    reaches selector-view capture only via the environment returns False: the
+    caller then refuses to signal rather than guessing.
     """
-    try:
-        tokens = shlex.split(command)
-    except ValueError:
-        return False
-    if not tokens or SELECTOR_VIEW_FLAG not in tokens:
+    if not argv or SELECTOR_VIEW_FLAG not in argv:
         return False
 
     def is_this_script(token: str) -> bool:
         return token == OBSERVE_SCRIPT_NAME or token.endswith("/" + OBSERVE_SCRIPT_NAME)
 
-    def is_python(token: str) -> bool:
-        return os.path.basename(token).startswith("python")
-
-    if is_this_script(tokens[0]):
+    if is_this_script(argv[0]):
         return True  # executed directly via its shebang
-    return len(tokens) > 1 and is_python(tokens[0]) and is_this_script(tokens[1])
+    if os.path.basename(argv[0]).startswith("python"):
+        for token in argv[1:]:
+            if is_this_script(token):
+                return True
+            if not token.startswith("-"):
+                return False  # first non-flag argument is something else
+    return False
 
 
-def process_command_line(pid: int) -> str | None:
-    """The full command of ``pid``, or None if it cannot be read."""
+def process_argv(pid: int) -> tuple[list[str] | None, bool]:
+    """Exact argv of ``pid`` plus whether it is trustworthy for identity.
+
+    ``/proc/<pid>/cmdline`` is NUL-separated, so on the Linux deployment host
+    this recovers argv exactly. Elsewhere the only portable source is ``ps``,
+    which renders argv space-joined and unquoted — the original token
+    boundaries are unrecoverable, so an argument *value* containing the
+    selector-view flag would be re-split into a token that looks like the flag
+    itself. That is a false positive on a check that gates a kill, so the ps
+    path is reported as inexact and refused rather than trusted.
+    """
+    cmdline = Path("/proc") / str(pid) / "cmdline"
+    try:
+        raw = cmdline.read_bytes()
+    except OSError:
+        pass  # not Linux, or no such process — fall through to ps
+    else:
+        argv = [part.decode("utf-8", "replace") for part in raw.split(b"\0") if part]
+        return (argv or None), True
+
     try:
         completed = subprocess.run(
             ["ps", "-o", "command=", "-p", str(pid)],
@@ -1512,24 +1558,30 @@ def process_command_line(pid: int) -> str | None:
             timeout=10,
         )
     except (OSError, subprocess.SubprocessError):
-        return None
+        return None, False
     if completed.returncode != 0:
-        return None
+        return None, False
     command = completed.stdout.strip()
-    return command or None
+    if not command:
+        return None, False
+    try:
+        return shlex.split(command), False
+    except ValueError:
+        return None, False
 
 
 def verify_selector_view_pid(pid: int) -> tuple[bool, dict[str, Any]]:
     """Confirm ``pid`` is a selector-view capture before anyone signals it."""
-    command = process_command_line(pid)
-    if command is None:
+    argv, exact = process_argv(pid)
+    if argv is None:
         return False, {
             "pid": pid,
             "verdict": "NO_SUCH_PROCESS",
             "safe_to_signal": False,
             "detail": "No process with this PID; the PID file is stale. Do not signal it.",
         }
-    if not selector_view_command_matches(command):
+    command = " ".join(argv)
+    if not selector_view_argv_matches(argv):
         return False, {
             "pid": pid,
             "verdict": "NOT_SELECTOR_VIEW_CAPTURE",
@@ -1539,6 +1591,20 @@ def verify_selector_view_pid(pid: int) -> tuple[bool, dict[str, Any]]:
                 "This PID is not a selector-view capture (no "
                 f"{SELECTOR_VIEW_FLAG} in its argv). It may be the narrow "
                 "paper-feeding run or an unrelated process. Do not signal it."
+            ),
+        }
+    if not exact:
+        return False, {
+            "pid": pid,
+            "verdict": "IDENTITY_NOT_VERIFIABLE",
+            "safe_to_signal": False,
+            "command": command,
+            "detail": (
+                "This PID looks like a selector-view capture, but argv could "
+                "not be read exactly (no /proc on this platform), and `ps` "
+                "output cannot be split back into argv reliably — an argument "
+                "value could masquerade as the flag. Refusing to confirm. Run "
+                "this check on the capture host."
             ),
         }
     return True, {
@@ -1647,16 +1713,48 @@ def main(argv: list[str] | None = None) -> int:
     seen_keys: set[str] = set()
     client = JsonGetClient()
     started_at = utc_now()
-    # Installed only for a loop: a --once run has no checkpoint to stop at, and
-    # leaving the default disposition in place keeps one-shot behaviour exactly
-    # as it was.
+    # Installed for any loop, narrow or selector-view: both append to JSONL and
+    # both are stopped by signal, so both want the in-flight tick to finish. A
+    # --once run has no checkpoint to stop at, so its default disposition is
+    # left untouched.
     stop = StopSignal()
     if config.loop:
         stop.install()
+
+    def stopped_exit() -> int:
+        print(
+            json.dumps(
+                {
+                    "generated_at": iso(utc_now()),
+                    "status": "stopped_by_signal",
+                    "signal": stop.signum,
+                    "detail": "stop signal received; finished the in-flight tick and exited",
+                },
+                sort_keys=True,
+            )
+        )
+        return 0
+
     while True:
         observed_at = utc_now()
-        records = run_once(config, client=client, observed_at=observed_at, seen_keys=seen_keys)
-        # A stop arriving anywhere above (including mid-append inside
+        records = run_once(
+            config, client=client, observed_at=observed_at, seen_keys=seen_keys, stop=stop
+        )
+        if records is None:
+            # Stopped while polling, before any record existed. Nothing to
+            # write; drop straight to the exit checkpoint.
+            print(
+                json.dumps(
+                    {
+                        "generated_at": iso(observed_at),
+                        "status": "tick_abandoned_on_stop",
+                        "detail": "stop signal received while polling; nothing was recorded",
+                    },
+                    sort_keys=True,
+                )
+            )
+            return stopped_exit()
+        # A stop arriving after polling (including mid-append inside
         # write_records) only sets the flag; this tick is written in full and
         # the exit checkpoint below is the first place it takes effect.
         output_path = write_records(records, config.output_dir, observed_at)
@@ -1691,18 +1789,7 @@ def main(argv: list[str] | None = None) -> int:
         # Single exit point for a stop requested at any time during the tick
         # above or the sleep, so a stop never starts one more tick.
         if stop.requested:
-            print(
-                json.dumps(
-                    {
-                        "generated_at": iso(utc_now()),
-                        "status": "stopped_by_signal",
-                        "signal": stop.signum,
-                        "detail": "stop signal received; finished the in-flight tick and exited",
-                    },
-                    sort_keys=True,
-                )
-            )
-            return 0
+            return stopped_exit()
 
 
 if __name__ == "__main__":
