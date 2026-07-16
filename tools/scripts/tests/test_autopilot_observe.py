@@ -152,6 +152,10 @@ class AutopilotObserveTests(unittest.TestCase):
             (repo_root / "specs/examples/autopilot_observe_record.selector_view.example.json")
             .read_text(encoding="utf-8")
         )
+        tick_example = json.loads(
+            (repo_root / "specs/examples/autopilot_observe_record.selector_view_tick.example.json")
+            .read_text(encoding="utf-8")
+        )
 
         self.assertEqual(sorted(validator.iter_errors(entry_example), key=str), [])
         self.assertEqual(
@@ -159,6 +163,27 @@ class AutopilotObserveTests(unittest.TestCase):
         )
         self.assertEqual(selector_view_example["capture_profile"], "selector_view")
         self.assertEqual(selector_view_example["decision"], "SELECTOR_VIEW_OBSERVED")
+
+        # The tick manifest is its own record type. Validating it against the
+        # whole schema (a oneOf) also proves the branches stay mutually
+        # exclusive: a manifest must match the manifest branch and no other.
+        self.assertEqual(sorted(validator.iter_errors(tick_example), key=str), [])
+        self.assertEqual(tick_example["capture_profile"], "selector_view_tick")
+        self.assertEqual(tick_example["decision"], "SELECTOR_VIEW_TICK_CAPTURED")
+        self.assertEqual(
+            tick_example["recorded_rows"], sum(tick_example["rows_per_bucket"].values())
+        )
+        # A live manifest built by the tool validates too, empty universe included.
+        for rows_per_bucket in (
+            {"TRADE_NOW": 0, "WATCHLIST": 0, "EXCLUDED": 0},
+            {"TRADE_NOW": 2, "WATCHLIST": 1, "EXCLUDED": 7},
+        ):
+            built = observe.selector_view_tick_record(
+                observed_at=OBSERVED_AT,
+                source_generated="2026-06-13T05:29:57Z",
+                rows_per_bucket=rows_per_bucket,
+            )
+            self.assertEqual(sorted(validator.iter_errors(built), key=str), [])
         # Selector-view surfaces are observations, never outcomes: no property
         # name anywhere in the selector-view branch of the observe schema, nor
         # in the snapshot's selector_view/universe/churn.selector_view blocks,
@@ -182,6 +207,7 @@ class AutopilotObserveTests(unittest.TestCase):
         )
         guarded_nodes = [
             schema["oneOf"][1],
+            schema["oneOf"][2],  # the tick manifest is a selector-view surface too
             snapshot_schema["properties"]["selector_view"],
             snapshot_schema["properties"]["universe"],
             snapshot_schema["properties"]["churn"]["oneOf"][1]["properties"]["selector_view"],
@@ -220,15 +246,24 @@ class AutopilotObserveTests(unittest.TestCase):
             config(capture_selector_view=True), client=client, observed_at=OBSERVED_AT
         )
 
-        # Every candidate across all three buckets is captured. (A malformed row
-        # would refuse the whole tick instead — see the refusal tests below;
-        # this response is deliberately all-valid.)
-        self.assertEqual(len(records), 3)
+        # A captured tick is one manifest followed by every candidate across all
+        # three buckets. (A malformed row would refuse the whole tick instead —
+        # see the refusal tests below; this response is deliberately all-valid.)
+        manifest, rows = records[0], records[1:]
+        self.assertEqual(manifest["capture_profile"], "selector_view_tick")
+        self.assertEqual(manifest["decision"], "SELECTOR_VIEW_TICK_CAPTURED")
+        self.assertEqual(manifest["recorded_rows"], 3)
         self.assertEqual(
-            sorted(r["cue_bucket"] for r in records),
+            manifest["rows_per_bucket"], {"TRADE_NOW": 1, "WATCHLIST": 1, "EXCLUDED": 1}
+        )
+        self.assertEqual(sorted(validator.iter_errors(manifest), key=str), [])
+
+        self.assertEqual(len(rows), 3)
+        self.assertEqual(
+            sorted(r["cue_bucket"] for r in rows),
             ["EXCLUDED", "TRADE_NOW", "WATCHLIST"],
         )
-        for record in records:
+        for record in rows:
             self.assertEqual(record["decision"], "SELECTOR_VIEW_OBSERVED")
             self.assertEqual(record["capture_profile"], "selector_view")
             self.assertEqual(sorted(validator.iter_errors(record), key=str), [])
@@ -284,6 +319,163 @@ class AutopilotObserveTests(unittest.TestCase):
                         rc = observe.main([])
         self.assertEqual(rc, 0)
         self.assertEqual(ran.call_count, 1)  # started, ticked once, exited on bound
+
+    def test_selector_view_command_identity_is_exact_not_any_observe_process(self) -> None:
+        # Codex round-6 finding 2: the stop procedure must identify the *exact*
+        # selector-view process. Both the narrow paper-feeding run and the
+        # selector-view run are launched as `python3 .../autopilot_observe.py`,
+        # so matching on the script name alone matches BOTH — and would stop the
+        # narrow run if the selector-view PID file were stale and its PID reused.
+        # Only the explicit flag in argv distinguishes them.
+        narrow_run = "python3 tools/scripts/autopilot_observe.py"
+        for command, expected, why in (
+            (narrow_run, False, "narrow paper-feeding run: same script, no flag"),
+            ("python3 tools/scripts/autopilot_observe.py --capture-selector-view",
+             True, "the selector-view run"),
+            ("python3 /opt/cryptopairs/tools/scripts/autopilot_observe.py "
+             "--capture-selector-view --once", True, "absolute path, extra flags"),
+            ("python3 autopilot_observe.py --capture-selector-view", True, "bare script name"),
+            ("", False, "empty ps output"),
+            ("python3 some_other_tool.py --capture-selector-view", False,
+             "the flag alone is not enough: must be this script"),
+            ("python3 tools/scripts/autopilot_observe.py --capture-selector-view-typo",
+             False, "token-exact: a lookalike flag is not the flag"),
+            ("grep --capture-selector-view autopilot_observe.py", False,
+             "a process merely mentioning both tokens is not the capture"),
+            ("python3 'unterminated autopilot_observe.py --capture-selector-view",
+             False, "unparseable command line fails closed"),
+        ):
+            with self.subTest(command=why):
+                self.assertIs(
+                    observe.selector_view_command_matches(command), expected, why
+                )
+
+    def test_verify_selector_view_pid_refuses_wrong_or_stale_pid(self) -> None:
+        # The verdict gates a signal, so every non-confirming case must be
+        # unsafe-to-signal (exit 2) rather than a guess.
+        import contextlib, io
+        from unittest import mock
+
+        cases = (
+            ("narrow run", "python3 tools/scripts/autopilot_observe.py",
+             2, "NOT_SELECTOR_VIEW_CAPTURE"),
+            ("stale pid", None, 2, "NO_SUCH_PROCESS"),
+            ("selector-view run",
+             "python3 tools/scripts/autopilot_observe.py --capture-selector-view",
+             0, "SELECTOR_VIEW_CAPTURE"),
+        )
+        for label, command, expected_rc, verdict in cases:
+            with self.subTest(case=label):
+                out, err = io.StringIO(), io.StringIO()
+                with mock.patch.object(observe, "process_command_line", return_value=command):
+                    with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+                        rc = observe.main(["--verify-selector-view-pid", "4242"])
+                self.assertEqual(rc, expected_rc, label)
+                payload = json.loads((out.getvalue() or err.getvalue()).strip())
+                self.assertEqual(payload["verdict"], verdict)
+                self.assertIs(payload["safe_to_signal"], expected_rc == 0)
+
+    def test_verify_selector_view_pid_signals_nothing_and_ignores_env(self) -> None:
+        # The probe is a pure question: it must not kill anything, and must
+        # answer even when the observer is disabled by default in the env.
+        from unittest import mock
+
+        with mock.patch.dict(os.environ, {}, clear=True):
+            with mock.patch.object(observe, "process_command_line", return_value=None):
+                with mock.patch.object(observe, "os") as fake_os:
+                    with mock.patch("sys.stderr"):
+                        rc = observe.main(["--verify-selector-view-pid", "4242"])
+        self.assertEqual(rc, 2)
+        fake_os.kill.assert_not_called()
+
+    def test_sigterm_lets_the_in_flight_tick_finish_its_append(self) -> None:
+        # Codex round-6 finding 2: the runbook says SIGTERM "lets the current
+        # tick finish its write", but with no handler the default disposition
+        # terminates the process immediately and can cut a JSONL append in half.
+        # Deliver a real SIGTERM to this process from inside write_records —
+        # i.e. mid-append — and assert the tick still lands complete and the
+        # loop then exits on its own.
+        import signal as signal_mod
+        from unittest import mock
+
+        real_write = observe.write_records
+        state = {"ticks": 0}
+
+        def write_and_get_signalled(records, output_dir, observed_at):
+            state["ticks"] += 1
+            os.kill(os.getpid(), signal_mod.SIGTERM)  # arrives mid-tick
+            return real_write(records, output_dir, observed_at)
+
+        env = {
+            "AUTOPILOT_OBSERVE_ENABLED": "true",
+            "AUTOPILOT_OBSERVE_CAPTURE_SELECTOR_VIEW": "true",
+            "AUTOPILOT_OBSERVE_LOOP": "true",
+            "AUTOPILOT_OBSERVE_MAX_RUNTIME_SECONDS": "86400",  # would run all day
+            "AUTOPILOT_OBSERVE_INTERVAL_SECONDS": "300",       # would sleep 5 min
+            # Point at the in-test fake services so the tick is a real capture
+            # with rows to append, not a source-unavailable system record.
+            "DATA_SERVICE_URL": "http://data",
+            "STRATEGY_SERVICE_URL": "http://strategy",
+            "EXECUTION_SERVICE_URL": "http://execution",
+        }
+        routes = base_routes()
+        previous = signal_mod.getsignal(signal_mod.SIGTERM)
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                env["AUTOPILOT_OBSERVE_OUTPUT_DIR"] = tmp
+                with mock.patch.dict(os.environ, env, clear=True):
+                    with mock.patch.object(
+                        observe, "JsonGetClient", lambda: RecordingGetClient(routes)
+                    ):
+                        with mock.patch.object(observe, "utc_now", return_value=OBSERVED_AT):
+                            with mock.patch.object(
+                                observe, "write_records", write_and_get_signalled
+                            ):
+                                rc = observe.main([])
+
+                written = sorted(pathlib.Path(tmp).rglob("autopilot_observe_*.jsonl"))
+                self.assertEqual(len(written), 1)
+                lines = [
+                    line for line in
+                    written[0].read_text(encoding="utf-8").splitlines() if line.strip()
+                ]
+        finally:
+            signal_mod.signal(signal_mod.SIGTERM, previous)
+
+        self.assertEqual(rc, 0)                 # clean exit, not a kill
+        self.assertEqual(state["ticks"], 1)     # stopped; did not start another tick
+        # The in-flight append completed: every line is whole, parseable JSON,
+        # and the tick's manifest and rows are all present.
+        records = [json.loads(line) for line in lines]
+        manifests = [r for r in records if r.get("capture_profile") == "selector_view_tick"]
+        rows = [r for r in records if r.get("capture_profile") == "selector_view"]
+        self.assertEqual(len(manifests), 1)
+        self.assertEqual(manifests[0]["recorded_rows"], len(rows))
+
+    def test_sigterm_during_sleep_stops_without_waiting_out_the_interval(self) -> None:
+        # PEP 475 resumes an interrupted time.sleep for its full remaining
+        # duration, so a flag alone would leave a stop unnoticed for up to a
+        # whole interval (300s in the runbook). The sleep must poll the flag.
+        stop = observe.StopSignal()
+
+        def request_stop_partway(_seconds):
+            stop.request(15)  # as the handler would, from another context
+
+        with unittest.mock.patch.object(observe.time, "sleep", request_stop_partway):
+            started = observe.time.monotonic()
+            observe.sleep_until_interval_or_stop(300, stop)
+            elapsed = observe.time.monotonic() - started
+
+        self.assertTrue(stop.requested)
+        self.assertLess(elapsed, 5)  # returned promptly, not after 300s
+
+    def test_stop_signal_records_only_the_first_request(self) -> None:
+        stop = observe.StopSignal()
+        self.assertFalse(stop.requested)
+        stop.request(15)
+        stop.request(2)  # a later signal must not overwrite the original cause
+        self.assertTrue(stop.requested)
+        self.assertEqual(stop.signum, 15)
 
     def test_max_runtime_guard_does_not_affect_narrow_loop_or_once(self) -> None:
         # Scoped strictly to selector-view loops: the narrow paper-feeding loop
@@ -529,7 +721,110 @@ class AutopilotObserveTests(unittest.TestCase):
             observed_at=OBSERVED_AT, dispatch_mode=None, kill_switch=None,
             evidence=observe.blocked_before_poll_evidence(), source_reasons=[],
         )
-        self.assertEqual(records, [])  # no rows, and crucially no refusal record
+        # No candidate rows, and crucially no refusal record: the tick is
+        # complete. It is represented by the manifest alone.
+        self.assertEqual([r["capture_profile"] for r in records], ["selector_view_tick"])
+        self.assertEqual(records[0]["recorded_rows"], 0)
+        self.assertEqual(
+            records[0]["rows_per_bucket"], {"TRADE_NOW": 0, "WATCHLIST": 0, "EXCLUDED": 0}
+        )
+
+    def test_artifact_distinguishes_empty_captured_tick_from_missing_tick(self) -> None:
+        # Codex round-6 finding 1: an all-empty selector universe is a valid,
+        # successfully captured observation, but it writes no candidate rows —
+        # so without a positive per-tick marker it is byte-for-byte
+        # indistinguishable on disk from a tick that never ran (host down, loop
+        # stopped). B2-c must be able to tell "the selector saw nothing" from
+        # "we did not look". This asserts that at the artifact level, through
+        # the real writer, because that file is B2-c's only input.
+        def read_ticks(path: pathlib.Path) -> dict[str, dict[str, Any]]:
+            """A B2-c-style reader: a tick counts as captured only on a manifest."""
+            ticks: dict[str, dict[str, Any]] = {}
+            for line in path.read_text(encoding="utf-8").splitlines():
+                if not line.strip():
+                    continue
+                record = json.loads(line)  # every line must be complete JSON
+                run = record["run_id"]
+                tick = ticks.setdefault(run, {"captured": False, "stated": 0, "rows": 0})
+                if record.get("capture_profile") == "selector_view_tick":
+                    tick["captured"] = True
+                    tick["stated"] = record["recorded_rows"]
+                elif record.get("capture_profile") == "selector_view":
+                    tick["rows"] += 1
+            return ticks
+
+        routes = base_routes()
+        payload = routes["http://strategy/v1/strategy/pairs/trade-now?timeframe=1m"]
+        empty_at = dt.datetime(2026, 6, 13, 5, 30, tzinfo=dt.timezone.utc)
+        populated_at = dt.datetime(2026, 6, 13, 5, 35, tzinfo=dt.timezone.utc)
+        missing_at = dt.datetime(2026, 6, 13, 5, 40, tzinfo=dt.timezone.utc)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            out = pathlib.Path(tmp)
+            # Each tick's cue response must be fresh for its own observed_at, or
+            # the staleness gate would refuse it and this would not be testing
+            # capture at all.
+            payload["generated_at"] = "2026-06-13T05:29:57Z"
+            payload["tradable_now"] = []  # the selector legitimately returns nothing
+            empty_records = observe.run_once(
+                config(capture_selector_view=True),
+                client=RecordingGetClient(routes),
+                observed_at=empty_at,
+            )
+            path = observe.write_records(empty_records, out, empty_at)
+
+            payload["generated_at"] = "2026-06-13T05:34:57Z"
+            payload["tradable_now"] = [candidate()]  # a later tick sees one pair
+            populated_records = observe.run_once(
+                config(capture_selector_view=True),
+                client=RecordingGetClient(routes),
+                observed_at=populated_at,
+            )
+            observe.write_records(populated_records, out, populated_at)
+            # The 05:40 tick never ran: nothing is written for it at all.
+
+            ticks = read_ticks(path)
+
+        empty_key = observe.iso(empty_at)
+        populated_key = observe.iso(populated_at)
+        missing_key = observe.iso(missing_at)
+
+        # The empty tick is present and positively marked as captured, with a
+        # stated row count of zero that its zero rows satisfy.
+        self.assertIn(empty_key, ticks)
+        self.assertTrue(ticks[empty_key]["captured"])
+        self.assertEqual(ticks[empty_key]["stated"], 0)
+        self.assertEqual(ticks[empty_key]["rows"], 0)
+
+        # The missing tick is absent entirely — the distinction the finding is
+        # about, and the assertion that fails on the pre-fix behaviour where an
+        # empty tick also wrote nothing.
+        self.assertNotIn(missing_key, ticks)
+        self.assertNotEqual(ticks.get(empty_key), ticks.get(missing_key))
+
+        # A populated tick still reconciles: stated count == rows that follow.
+        self.assertTrue(ticks[populated_key]["captured"])
+        self.assertEqual(ticks[populated_key]["stated"], 1)
+        self.assertEqual(ticks[populated_key]["rows"], 1)
+
+    def test_refused_tick_emits_no_manifest_so_it_never_reads_as_captured(self) -> None:
+        # "Captured" and "refused" must stay mutually exclusive: a refused tick
+        # must not carry a manifest, or B2-c would read an untrustworthy view as
+        # a good one.
+        records = observe.selector_view_records(
+            config=config(),
+            trade_now={
+                "generated_at": "2026-06-13T05:29:57Z",
+                "tradable_now": [candidate()], "watchlist": "not-a-list", "excluded": [],
+            },
+            observed_at=OBSERVED_AT, dispatch_mode=None, kill_switch=None,
+            evidence=observe.blocked_before_poll_evidence(), source_reasons=[],
+        )
+        self.assertEqual(len(records), 1)
+        self.assertEqual(records[0]["decision"], "BLOCKED_MALFORMED_RESPONSE")
+        self.assertNotIn(
+            "selector_view_tick", [r.get("capture_profile") for r in records]
+        )
 
     def test_selector_view_refuses_whole_tick_on_bad_or_missing_bucket(self) -> None:
         # A non-list bucket refuses the whole tick (no partial universe).

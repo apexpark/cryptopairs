@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://cryptopairs/specs/contracts/autopilot_observe_record.schema.json",
   "title": "AutopilotObserveRecord",
-  "description": "Append-only observe-only autopilot decision record. This artifact records what the observer would have considered; it is not an execution intent and must not be submitted to execution-service. Version 2 splits records into two row types: entry rows (the version-1 shape, unchanged) and selector-view rows (capture_profile=selector_view) recording the cue endpoint's stated view per bucket with no outcome claims (AUTO-2B.2 \u00a74.1).",
+  "description": "Append-only observe-only autopilot decision record. This artifact records what the observer would have considered; it is not an execution intent and must not be submitted to execution-service. Version 2 splits records into two row types: entry rows (the version-1 shape, unchanged) and selector-view rows (capture_profile=selector_view) recording the cue endpoint's stated view per bucket with no outcome claims (AUTO-2B.2 §4.1). Version 2 additionally emits one selector-view tick manifest (capture_profile=selector_view_tick) per captured tick, which distinguishes an empty-but-captured selector universe from a missing tick.",
   "oneOf": [
     {
       "type": "object",
@@ -394,7 +394,7 @@
             "WATCHLIST",
             "EXCLUDED"
           ],
-          "description": "Normalized label for the cue endpoint's response buckets: tradable_now \u2192 TRADE_NOW, watchlist \u2192 WATCHLIST, excluded \u2192 EXCLUDED (mapping implemented in B2-b)."
+          "description": "Normalized label for the cue endpoint's response buckets: tradable_now → TRADE_NOW, watchlist → WATCHLIST, excluded → EXCLUDED (mapping implemented in B2-b)."
         },
         "direction_hint": {
           "type": [
@@ -575,8 +575,84 @@
           ]
         }
       },
-      "description": "Selector-view row: an observation of the champion/challenger selector's stated view for one candidate in one cue bucket. Every numeric field records the selector's own stated figures \u2014 never a realized or tool-estimated outcome. This row is advisory evidence and is not permission for any eligibility change (AUTO-2B.2 \u00a74.2). Optional fields mirror the cue endpoint's decisionRowBase verbatim as further stated-view observations; all remain optional so B2-b may pass endpoint fields through unchanged."
+      "description": "Selector-view row: an observation of the champion/challenger selector's stated view for one candidate in one cue bucket. Every numeric field records the selector's own stated figures — never a realized or tool-estimated outcome. This row is advisory evidence and is not permission for any eligibility change (AUTO-2B.2 §4.2). Optional fields mirror the cue endpoint's decisionRowBase verbatim as further stated-view observations; all remain optional so B2-b may pass endpoint fields through unchanged."
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Selector-view tick manifest: the positive marker that one selector-view tick was captured completely, written immediately before that tick's rows. Absence of rows is otherwise ambiguous - a legitimately empty selector universe writes no rows and would be indistinguishable from a tick that never ran - so a consumer treats a tick as captured only when this record is present, and reads recorded_rows/rows_per_bucket as the authoritative count of the rows that follow (a shortfall means a truncated tail, not a smaller universe). A refused tick emits no manifest (AUTO-2B.2 B2-b).",
+      "required": [
+        "schema_version",
+        "mode",
+        "capture_profile",
+        "run_id",
+        "observed_at",
+        "source_generated_at",
+        "timeframe",
+        "decision",
+        "recorded_rows",
+        "rows_per_bucket"
+      ],
+      "properties": {
+        "schema_version": {
+          "type": "integer",
+          "const": 2
+        },
+        "mode": {
+          "type": "string",
+          "const": "observe_only"
+        },
+        "capture_profile": {
+          "type": "string",
+          "const": "selector_view_tick"
+        },
+        "run_id": {
+          "type": "string"
+        },
+        "observed_at": {
+          "type": "string"
+        },
+        "source_generated_at": {
+          "type": "string"
+        },
+        "timeframe": {
+          "type": "string"
+        },
+        "decision": {
+          "type": "string",
+          "const": "SELECTOR_VIEW_TICK_CAPTURED"
+        },
+        "recorded_rows": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Total selector_view rows that follow for this tick; equals the sum of rows_per_bucket. Zero is valid and means the selector returned an empty universe."
+        },
+        "rows_per_bucket": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "TRADE_NOW",
+            "WATCHLIST",
+            "EXCLUDED"
+          ],
+          "properties": {
+            "TRADE_NOW": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "WATCHLIST": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "EXCLUDED": {
+              "type": "integer",
+              "minimum": 0
+            }
+          },
+          "description": "Per-bucket count of the selector_view rows that follow for this tick."
+        }
+      }
     }
   ],
-  "version": "0.2.0"
+  "version": "0.3.0"
 }

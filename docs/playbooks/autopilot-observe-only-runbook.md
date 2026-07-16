@@ -171,16 +171,25 @@ git rev-parse HEAD | tee "$SV_ROOT/git_head.txt"
 
 nohup env \
   AUTOPILOT_OBSERVE_ENABLED=true \
-  AUTOPILOT_OBSERVE_CAPTURE_SELECTOR_VIEW=true \
   AUTOPILOT_OBSERVE_OUTPUT_DIR="$SV_ROOT/records" \
   AUTOPILOT_OBSERVE_LOOP=true \
   AUTOPILOT_OBSERVE_INTERVAL_SECONDS=300 \
   AUTOPILOT_OBSERVE_MAX_RUNTIME_SECONDS=259200 \
-  python3 tools/scripts/autopilot_observe.py \
+  python3 tools/scripts/autopilot_observe.py --capture-selector-view \
   > "$SV_ROOT/autopilot_observe_selector_view.log" 2>&1 &
 echo "$!" | tee "$SV_ROOT/autopilot_observe_selector_view.pid"
 echo "SV_ROOT=$SV_ROOT"
 ```
+
+Selector-view capture is switched on by the explicit `--capture-selector-view`
+**flag**, not by the equivalent `AUTOPILOT_OBSERVE_CAPTURE_SELECTOR_VIEW`
+environment variable, and this matters for stopping the run safely. Both this
+run and the narrow paper-feeding run above execute the same
+`python3 tools/scripts/autopilot_observe.py`; everything else about them comes
+from the environment, which `ps` does not show. The flag is what puts a
+distinguishing token in this process's own visible command line, so the stop
+procedure below can tell the two runs apart. Start it any other way and that
+procedure will — by design — refuse to confirm the PID.
 
 The loop exits itself at `MAX_RUNTIME_SECONDS` (bounded, 72h cap). Each tick
 logs a `selector_view_records` count so growth is visible. No allowlist and
@@ -211,6 +220,34 @@ grep -c 'INCOMPLETE_UNIVERSE' "$SV_ROOT/autopilot_observe_selector_view.log" || 
 grep 'INCOMPLETE_UNIVERSE' "$SV_ROOT/autopilot_observe_selector_view.log" | tail -n 5
 ```
 
+### Tick manifests: what "no rows" means
+
+Every captured tick writes one manifest record
+(`"capture_profile": "selector_view_tick"`, `"decision":
+"SELECTOR_VIEW_TICK_CAPTURED"`) immediately before that tick's rows, stating
+`recorded_rows` and the per-bucket counts that follow.
+
+It is there because "no rows" is otherwise ambiguous. If the selector
+legitimately returns an empty universe, the tick writes no candidate rows — and
+without the manifest that is indistinguishable on disk from a tick that never
+ran at all (host down, loop stopped, run never started). The manifest is the
+positive marker: **manifest present = the tick was captured**, and a manifest
+with `recorded_rows: 0` is a real observation that the selector saw nothing. No
+manifest and no refusal record for a timestamp means that tick is missing, not
+empty. A refused tick emits its `BLOCKED_*` record and **no** manifest, so
+captured and refused never overlap.
+
+Because the manifest is written first, it also makes truncation visible: if the
+rows that follow are fewer than `recorded_rows`, the tail was cut (e.g. a
+`kill -9` mid-append) rather than the universe being smaller.
+
+```bash
+# Ticks captured, and how many of them saw an empty universe:
+grep -c '"SELECTOR_VIEW_TICK_CAPTURED"' "$SV_ROOT"/records/*/autopilot_observe_*.jsonl
+grep '"SELECTOR_VIEW_TICK_CAPTURED"' "$SV_ROOT"/records/*/autopilot_observe_*.jsonl \
+  | grep -c '"recorded_rows":0'
+```
+
 ### Stop the selector-view run
 
 The selector-view run has its **own** PID file
@@ -224,24 +261,41 @@ or to confirm it has ended:
 ```bash
 SV_PID="$(cat "$SV_ROOT/autopilot_observe_selector_view.pid")"
 
-# Confirm the PID is this selector-view capture before signalling anything.
-ps -o pid=,command= -p "$SV_PID" | grep 'autopilot_observe.py' || \
-  echo "PID $SV_PID is not the selector-view capture — STOP, do not kill it."
+# Confirm the PID really is this selector-view capture before signalling it.
+# Exits 0 only when it is safe to signal; prints the verdict either way.
+python3 tools/scripts/autopilot_observe.py --verify-selector-view-pid "$SV_PID"
 ```
 
-If, and only if, the `ps` line above shows `autopilot_observe.py`:
+This check exists because a PID file can go stale and PIDs get reused: matching
+on `autopilot_observe.py` alone would match the **narrow paper-feeding run too**,
+and stop the wrong capture. The check reads the PID's actual command line and
+confirms the `--capture-selector-view` flag; it signals nothing itself. It fails
+closed — `NO_SUCH_PROCESS` (stale PID file) and `NOT_SELECTOR_VIEW_CAPTURE`
+(some other process now holds this PID) both exit 2 and mean **do not signal**.
+If it does not exit 0, stop and escalate to the Operator; do not kill the PID.
+
+If, and only if, the check exits 0:
 
 ```bash
-kill "$SV_PID"          # SIGTERM; lets the current tick finish its write
+kill "$SV_PID"          # SIGTERM; the in-flight tick finishes its write first
 sleep 5
 ps -p "$SV_PID" > /dev/null && echo "still running" || echo "stopped"
 tail -n 20 "$SV_ROOT/autopilot_observe_selector_view.log"
 ```
 
+The tool handles SIGTERM (and SIGINT) by finishing the tick it is in — the
+append completes and the file is closed — and then exiting at its next
+checkpoint, logging `"status": "stopped_by_signal"`. It does not wait out the
+remaining sleep interval, so expect it to exit within a few seconds rather than
+up to `INTERVAL_SECONDS`. A run stopped this way ends with a whole final record,
+and the log line is the confirmation.
+
 If it is still running after ~30s, escalate to the Operator before using
-`kill -9` — a hard kill during a JSONL append can truncate the final record.
-The capture is append-only and observation-only, so a stopped run loses no
-committed evidence: every completed tick is already durable on disk.
+`kill -9`: SIGKILL cannot be handled, so a hard kill during a JSONL append can
+still truncate the final record. The capture is append-only and
+observation-only, so a stopped run loses no committed evidence: every completed
+tick is already durable on disk. A truncated tail is detectable rather than
+silent — see the tick manifest below.
 
 ## Capture Attribution Inputs
 

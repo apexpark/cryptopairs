@@ -13,6 +13,9 @@ import datetime as dt
 import json
 import math
 import os
+import shlex
+import signal
+import subprocess
 import sys
 import time
 import urllib.parse
@@ -736,6 +739,10 @@ def evaluate_candidate(
 
 
 SELECTOR_VIEW_SCHEMA_VERSION = 2
+# Capture profile of the per-tick completeness record (the "tick manifest").
+# Distinct from the per-candidate "selector_view" profile so a manifest is never
+# miscounted as an observed candidate.
+SELECTOR_VIEW_TICK_PROFILE = "selector_view_tick"
 
 
 class _SelectorViewRowMalformed(Exception):
@@ -974,6 +981,46 @@ def selector_view_record(
     return record
 
 
+def selector_view_tick_record(
+    *,
+    observed_at: dt.datetime,
+    source_generated: str,
+    rows_per_bucket: dict[str, int],
+) -> dict[str, Any]:
+    """Record that one selector-view tick was captured completely.
+
+    Emitted once per successfully captured tick, immediately *before* that
+    tick's rows. It is the positive marker of a completed capture, and it
+    exists because absence of rows is otherwise ambiguous: a tick where the
+    selector legitimately returned an empty universe writes no rows at all,
+    which on disk is indistinguishable from a tick that never ran (host down,
+    process stopped, loop not started). A consumer (B2-c) reads a tick as
+    captured only if this record is present, and reads an empty universe as a
+    real observation — not as missing data — only on the strength of it.
+
+    ``rows_per_bucket`` states how many rows follow for each cue bucket, so a
+    truncated tail (e.g. a hard kill mid-append) is detectable as a shortfall
+    against the stated counts rather than read as a smaller universe. Because
+    the manifest is written first, truncation can only ever remove rows the
+    manifest already accounted for.
+
+    A refused tick emits no manifest — only the ``BLOCKED_*`` system record —
+    so "captured" and "refused" stay mutually exclusive.
+    """
+    return {
+        "schema_version": SELECTOR_VIEW_SCHEMA_VERSION,
+        "mode": MODE,
+        "capture_profile": SELECTOR_VIEW_TICK_PROFILE,
+        "run_id": iso(observed_at),
+        "observed_at": iso(observed_at),
+        "source_generated_at": source_generated,
+        "timeframe": SUPPORTED_TIMEFRAME,
+        "decision": "SELECTOR_VIEW_TICK_CAPTURED",
+        "recorded_rows": sum(rows_per_bucket.values()),
+        "rows_per_bucket": rows_per_bucket,
+    }
+
+
 def selector_view_records(
     *,
     config: Config,
@@ -990,13 +1037,17 @@ def selector_view_records(
     never entry candidates and never outcomes. Nothing is coerced or fabricated.
 
     Completeness is all-or-nothing: a tick either records every candidate the
-    endpoint returned, or records no selector rows at all. A whole tick is
-    refused (a single system record, no selector rows) whenever the view cannot
-    be trusted as current *or complete* — mirroring the entry path's fail-closed
-    posture so a stale, degraded, or partial cue response is never recorded as a
-    fresh, trustworthy observation (a silently shrunken universe reads
-    downstream as false churn, and a silently under-recorded bucket reads as
-    false stability):
+    endpoint returned, or records no selector rows at all. A captured tick is
+    led by a ``selector_view_tick`` manifest stating the per-bucket row counts
+    that follow (see ``selector_view_tick_record``), so a consumer can tell a
+    captured tick from a tick that never ran — including the all-empty universe,
+    which is a valid observation that emits a manifest and zero rows. A whole
+    tick is refused (a single system record, no manifest and no selector rows)
+    whenever the view cannot be trusted as current *or complete* — mirroring the
+    entry path's fail-closed posture so a stale, degraded, or partial cue
+    response is never recorded as a fresh, trustworthy observation (a silently
+    shrunken universe reads downstream as false churn, and a silently
+    under-recorded bucket reads as false stability):
       - degraded source health / another read-only fetch failed → the same
         ``source_reasons`` the entry path computes → ``BLOCKED_SOURCE_UNAVAILABLE``;
       - invalid/stale/future ``generated_at`` (outside ±``max_signal_age_seconds``)
@@ -1058,6 +1109,7 @@ def selector_view_records(
     # pair_id, which would be unbounded and attacker-influenced.
     incomplete_reasons: set[str] = set()
     omitted_per_bucket: dict[str, int] = {}
+    rows_per_bucket: dict[str, int] = {cue_bucket: 0 for _key, cue_bucket in CUE_BUCKETS}
 
     def omit(endpoint_key: str, cause: str) -> None:
         incomplete_reasons.add(f"SELECTOR_VIEW_ROW_{cause}:{endpoint_key}")
@@ -1083,6 +1135,7 @@ def selector_view_records(
             except _SelectorViewRowMalformed:
                 omit(endpoint_key, "MALFORMED")
                 continue
+            rows_per_bucket[cue_bucket] += 1
 
     if incomplete_reasons:
         # Diagnostic first (per-bucket counts are useful for locating the bad
@@ -1103,7 +1156,17 @@ def selector_view_records(
             file=sys.stderr,
         )
         return refuse("BLOCKED_MALFORMED_RESPONSE", sorted(incomplete_reasons))
-    return records
+    # Complete tick. The manifest leads so that it accounts for every row that
+    # follows; an all-empty universe yields a manifest and no rows, which is a
+    # positively recorded observation rather than the silence of a missed tick.
+    return [
+        selector_view_tick_record(
+            observed_at=observed_at,
+            source_generated=source_generated,
+            rows_per_bucket=rows_per_bucket,
+        ),
+        *records,
+    ]
 
 
 def run_once(
@@ -1355,6 +1418,137 @@ def write_records(records: list[dict[str, Any]], output_dir: Path, observed_at: 
     return path
 
 
+class StopSignal:
+    """Records a stop request so the current tick can finish before exiting.
+
+    Without a handler, the default SIGTERM disposition terminates the process
+    immediately — which can land in the middle of ``write_records``' append and
+    leave a half-written final line, or drop a buffered tick entirely. Setting a
+    flag instead lets the interpreter deliver the signal between bytecodes, run
+    this handler, and resume the append; the loop then exits at its own
+    checkpoint, with the file closed and every recorded tick durable.
+    """
+
+    def __init__(self) -> None:
+        self.requested = False
+        self.signum: int | None = None
+
+    def request(self, signum: int, _frame: Any = None) -> None:
+        if not self.requested:
+            self.requested = True
+            self.signum = signum
+
+    def install(self) -> None:
+        # SIGINT is handled the same way: the default KeyboardInterrupt is
+        # raised at an arbitrary bytecode and can abort an in-flight append
+        # just as SIGTERM can.
+        for signum in (signal.SIGTERM, signal.SIGINT):
+            signal.signal(signum, self.request)
+
+
+def sleep_until_interval_or_stop(seconds: float, stop: StopSignal) -> None:
+    """Sleep, but notice a stop request promptly.
+
+    PEP 475 resumes an interrupted ``time.sleep`` for the remaining duration
+    once the handler returns, so a single long sleep would swallow a stop for
+    up to a full interval (300s in the selector-view runbook). Sleeping in short
+    slices keeps the stop responsive without busy-waiting.
+    """
+    deadline = time.monotonic() + seconds
+    while not stop.requested:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            return
+        time.sleep(min(0.5, remaining))
+
+
+# A selector-view run and the narrow paper-feeding run are both launched as
+# `python3 tools/scripts/autopilot_observe.py` with their configuration supplied
+# by the environment, so a bare `autopilot_observe.py` match in `ps` output
+# cannot tell the two apart and can send a stop signal to the wrong run. The
+# selector-view runbook therefore passes the explicit --capture-selector-view
+# flag, which puts the distinguishing token in the process's own argv.
+SELECTOR_VIEW_FLAG = "--capture-selector-view"
+OBSERVE_SCRIPT_NAME = "autopilot_observe.py"
+
+
+def selector_view_command_matches(command: str) -> bool:
+    """True only for a command line that is *this* script run in selector-view.
+
+    Deliberately strict and token-exact (never a substring test): it gates a
+    signal, so a false positive stops the wrong process. The script must be the
+    program actually being run — either executed directly or as the argument to
+    a python interpreter — so an unrelated process that merely *mentions* both
+    tokens (an editor, a `grep autopilot_observe.py`) is not mistaken for the
+    capture. An unparseable command line, or one that only reaches selector-view
+    capture via the environment, returns False: the caller then refuses to
+    signal rather than guessing.
+    """
+    try:
+        tokens = shlex.split(command)
+    except ValueError:
+        return False
+    if not tokens or SELECTOR_VIEW_FLAG not in tokens:
+        return False
+
+    def is_this_script(token: str) -> bool:
+        return token == OBSERVE_SCRIPT_NAME or token.endswith("/" + OBSERVE_SCRIPT_NAME)
+
+    def is_python(token: str) -> bool:
+        return os.path.basename(token).startswith("python")
+
+    if is_this_script(tokens[0]):
+        return True  # executed directly via its shebang
+    return len(tokens) > 1 and is_python(tokens[0]) and is_this_script(tokens[1])
+
+
+def process_command_line(pid: int) -> str | None:
+    """The full command of ``pid``, or None if it cannot be read."""
+    try:
+        completed = subprocess.run(
+            ["ps", "-o", "command=", "-p", str(pid)],
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if completed.returncode != 0:
+        return None
+    command = completed.stdout.strip()
+    return command or None
+
+
+def verify_selector_view_pid(pid: int) -> tuple[bool, dict[str, Any]]:
+    """Confirm ``pid`` is a selector-view capture before anyone signals it."""
+    command = process_command_line(pid)
+    if command is None:
+        return False, {
+            "pid": pid,
+            "verdict": "NO_SUCH_PROCESS",
+            "safe_to_signal": False,
+            "detail": "No process with this PID; the PID file is stale. Do not signal it.",
+        }
+    if not selector_view_command_matches(command):
+        return False, {
+            "pid": pid,
+            "verdict": "NOT_SELECTOR_VIEW_CAPTURE",
+            "safe_to_signal": False,
+            "command": command,
+            "detail": (
+                "This PID is not a selector-view capture (no "
+                f"{SELECTOR_VIEW_FLAG} in its argv). It may be the narrow "
+                "paper-feeding run or an unrelated process. Do not signal it."
+            ),
+        }
+    return True, {
+        "pid": pid,
+        "verdict": "SELECTOR_VIEW_CAPTURE",
+        "safe_to_signal": True,
+        "command": command,
+    }
+
+
 def parse_args(argv: list[str]) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--once", action="store_true", help="run one observation tick")
@@ -1368,6 +1562,16 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         help="record the cue endpoint's full selector view across all buckets (observation only)",
     )
     parser.add_argument(
+        "--verify-selector-view-pid",
+        type=int,
+        default=None,
+        metavar="PID",
+        help=(
+            "check whether PID is a selector-view capture and exit; "
+            "exit 0 only if it is safe to signal (observation only, signals nothing)"
+        ),
+    )
+    parser.add_argument(
         "--max-runtime-seconds",
         type=int,
         default=None,
@@ -1378,6 +1582,14 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
 
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(sys.argv[1:] if argv is None else argv)
+    # Read-only identity probe. Answered before any config/enablement handling
+    # so the stop procedure can use it regardless of how the environment is set,
+    # and so it stays a pure question: it inspects a PID and signals nothing.
+    if args.verify_selector_view_pid is not None:
+        safe, verdict = verify_selector_view_pid(args.verify_selector_view_pid)
+        print(json.dumps(verdict, sort_keys=True), file=sys.stdout if safe else sys.stderr)
+        return 0 if safe else 2
+
     config = load_config()
     if args.enabled:
         config = config.replace(enabled=True)
@@ -1435,9 +1647,18 @@ def main(argv: list[str] | None = None) -> int:
     seen_keys: set[str] = set()
     client = JsonGetClient()
     started_at = utc_now()
+    # Installed only for a loop: a --once run has no checkpoint to stop at, and
+    # leaving the default disposition in place keeps one-shot behaviour exactly
+    # as it was.
+    stop = StopSignal()
+    if config.loop:
+        stop.install()
     while True:
         observed_at = utc_now()
         records = run_once(config, client=client, observed_at=observed_at, seen_keys=seen_keys)
+        # A stop arriving anywhere above (including mid-append inside
+        # write_records) only sets the flag; this tick is written in full and
+        # the exit checkpoint below is the first place it takes effect.
         output_path = write_records(records, config.output_dir, observed_at)
         summary: dict[str, Any] = {
             "generated_at": iso(observed_at),
@@ -1455,17 +1676,33 @@ def main(argv: list[str] | None = None) -> int:
         print(json.dumps(summary, sort_keys=True))
         if not config.loop:
             return 0
-        if config.max_runtime_seconds is not None:
-            elapsed = (utc_now() - started_at).total_seconds()
-            if elapsed + config.interval_seconds >= config.max_runtime_seconds:
-                print(
-                    json.dumps(
-                        {"generated_at": iso(utc_now()), "status": "max_runtime_reached"},
-                        sort_keys=True,
+        if not stop.requested:
+            if config.max_runtime_seconds is not None:
+                elapsed = (utc_now() - started_at).total_seconds()
+                if elapsed + config.interval_seconds >= config.max_runtime_seconds:
+                    print(
+                        json.dumps(
+                            {"generated_at": iso(utc_now()), "status": "max_runtime_reached"},
+                            sort_keys=True,
+                        )
                     )
+                    return 0
+            sleep_until_interval_or_stop(config.interval_seconds, stop)
+        # Single exit point for a stop requested at any time during the tick
+        # above or the sleep, so a stop never starts one more tick.
+        if stop.requested:
+            print(
+                json.dumps(
+                    {
+                        "generated_at": iso(utc_now()),
+                        "status": "stopped_by_signal",
+                        "signal": stop.signum,
+                        "detail": "stop signal received; finished the in-flight tick and exited",
+                    },
+                    sort_keys=True,
                 )
-                return 0
-        time.sleep(config.interval_seconds)
+            )
+            return 0
 
 
 if __name__ == "__main__":
