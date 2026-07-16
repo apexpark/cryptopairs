@@ -224,10 +224,23 @@ Refreshed to the exact repaired head with the actual verification counts below.
 
 ### Verification (actual counts at this head)
 
-- `tests.test_autopilot_observe` + `tests.test_autopilot_observe_contract` +
-  `tests.test_autopilot_observe_report`: **Ran 54 tests — OK** (was 46 before
-  this round; 8 net new). Includes jsonschema validation of both selector-view
-  rows and the refusal records.
+Canonical command (from `tools/scripts/`):
+`PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 python3 -m pytest tests/ -q --import-mode=importlib`
+
+- Full `tools/scripts` suite: **180 passed, 6 subtests passed** (0 failures).
+- Focused observe suites (`test_autopilot_observe.py`, `..._contract.py`,
+  `..._report.py`): **54 passed, 6 subtests** — was 46 before this round
+  (+8 net). Includes jsonschema validation of both selector-view rows and the
+  refusal records.
+- Runner caveat (reconciled, worth recording): a plain `python3 -m unittest`
+  run reports only **136** — its loader collects the 136 `TestCase` methods but
+  not the 44 module-level `def test_*` functions (136 + 44 = 180). pytest's 180
+  is the complete count. Separately, plain `unittest`/`pytest` invocations from
+  this Mac fail or mis-resolve `from tests.test_autopilot_observe import ...`
+  because Anaconda ships a real `tests` package in site-packages that shadows
+  the local namespace dir; `--import-mode=importlib` (as in the canonical
+  command above) resolves it. The stale "143" in the PR description dated from
+  head `b517510`, before rounds 2-5 added tests.
 - Regression tests added this round: whole-tick refusal on malformed rows;
   refusal on non-object and identity-invalid rows (6 sub-cases); bounded/deduped
   reason codes with no `pair_id` leakage; empty buckets are complete (no false
@@ -235,6 +248,10 @@ Refreshed to the exact repaired head with the actual verification counts below.
   stderr refusal diagnostic with per-bucket counts; max-runtime guard rejects
   absent/empty/zero/negative (4 sub-cases); bounded loop still starts; guard does
   not affect narrow loop or `--once`; disabled probe unaffected by the guard.
-- No Rust surface touched; GitHub Actions `ci.yml` on `claude/**` is the
-  canonical Rust gate.
+- All `specs/contracts/*.json` + `specs/examples/*.json` valid (`python -m
+  json.tool`, the `contracts` CI job's check).
+- No Rust surface touched (no `.rs` / `Cargo*` / `rust-toolchain`); the local
+  pre-push Rust preflight was skipped with a reason via
+  `RUST_PREFLIGHT_OVERRIDE`, and GitHub Actions `ci.yml` on `claude/**` — the
+  canonical Rust gate — ran and passed `rust` on the pushed head.
 - No host action, deploy, capture, or merge performed by this session.
