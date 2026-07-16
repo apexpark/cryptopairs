@@ -218,6 +218,150 @@ class AutopilotObserveTests(unittest.TestCase):
                 for forbidden in forbidden_tokens:
                     self.assertNotIn(forbidden, field_name.lower())
 
+    def test_tick_manifest_contract_rejects_out_of_contract_identity(self) -> None:
+        """The manifest branch must reject a tick that misstates its own identity.
+
+        The manifest is the sole positive marker that a tick was captured, so a
+        consumer keys off its run_id/observed_at/timeframe. Left loose, the
+        branch would accept an empty run_id, a timestamp that is not a
+        timestamp, or a non-1m tick — each of which reads as a valid capture
+        downstream. These are the adversarial cases the tightened contract must
+        refuse.
+        """
+        from jsonschema import Draft202012Validator
+
+        repo_root = pathlib.Path(__file__).resolve().parents[3]
+        schema = json.loads(
+            (repo_root / "specs/contracts/autopilot_observe_record.schema.json")
+            .read_text(encoding="utf-8")
+        )
+        format_checker = Draft202012Validator.FORMAT_CHECKER
+        # `format` is annotation-only unless a checker is passed, and the
+        # date-time checker itself no-ops unless its backing dependency is
+        # installed. Without this guard every assertion below would pass
+        # vacuously in an environment that cannot check date-time at all, and
+        # the contract would look enforced while enforcing nothing.
+        self.assertFalse(
+            format_checker.conforms("not-a-timestamp", "date-time"),
+            "date-time format checking is inactive (rfc3339-validator missing); "
+            "these assertions would pass vacuously",
+        )
+        validator = Draft202012Validator(schema, format_checker=format_checker)
+
+        valid = json.loads(
+            (repo_root / "specs/examples/autopilot_observe_record.selector_view_tick.example.json")
+            .read_text(encoding="utf-8")
+        )
+        self.assertEqual(sorted(validator.iter_errors(valid), key=str), [])
+
+        # Each case mutates exactly one field of an otherwise-valid manifest, so
+        # a rejection can only be attributed to that field.
+        for field, bad_value, case in (
+            ("run_id", "", "empty run_id"),
+            ("run_id", "   ", "blank run_id"),
+            ("run_id", "not-a-timestamp", "run_id that is not a date-time"),
+            ("observed_at", "", "empty observed_at"),
+            ("observed_at", "2026-07-16", "date-only observed_at"),
+            ("observed_at", "16/07/2026 00:05", "non-ISO observed_at"),
+            ("source_generated_at", "", "empty source_generated_at"),
+            ("source_generated_at", "not-a-timestamp", "invalid source_generated_at"),
+            ("timeframe", "5m", "non-1m timeframe"),
+            ("timeframe", "1h", "non-1m timeframe"),
+            ("timeframe", "", "empty timeframe"),
+        ):
+            with self.subTest(case=case, field=field):
+                record = deepcopy(valid)
+                record[field] = bad_value
+                self.assertNotEqual(
+                    sorted(validator.iter_errors(record), key=str),
+                    [],
+                    f"schema accepted {case}",
+                )
+
+        # A null in either required timestamp is rejected too: the manifest
+        # declares both non-nullable, unlike the entry row's nullable
+        # source_generated_at.
+        for field in ("observed_at", "source_generated_at", "run_id"):
+            with self.subTest(case="null", field=field):
+                record = deepcopy(valid)
+                record[field] = None
+                self.assertNotEqual(
+                    sorted(validator.iter_errors(record), key=str), [], f"schema accepted null {field}"
+                )
+
+        # The tool's own manifests satisfy the tightened contract under the same
+        # format checker — the constraints describe what it actually emits.
+        built = observe.selector_view_tick_record(
+            observed_at=OBSERVED_AT,
+            source_generated="2026-06-13T05:29:57Z",
+            rows_per_bucket={"TRADE_NOW": 0, "WATCHLIST": 0, "EXCLUDED": 0},
+        )
+        self.assertEqual(sorted(validator.iter_errors(built), key=str), [])
+        self.assertEqual(built["run_id"], built["observed_at"])
+        self.assertEqual(built["timeframe"], "1m")
+
+    def test_emitted_records_are_rfc3339_even_when_the_cue_timestamp_is_not(self) -> None:
+        """A tightened contract is only real if the tool cannot violate it.
+
+        The freshness gate's predicate is `datetime.fromisoformat`, which is
+        strictly wider than the RFC 3339 `format: date-time` the manifest branch
+        declares: a naive timestamp with no offset, ISO basic form, or a
+        one-digit fraction all parse fine and would previously be recorded raw —
+        emitting a manifest that fails its own schema branch while the tick
+        looked captured. Drives the real capture path, not a hand-built record.
+        """
+        from jsonschema import Draft202012Validator
+
+        repo_root = pathlib.Path(__file__).resolve().parents[3]
+        schema = json.loads(
+            (repo_root / "specs/contracts/autopilot_observe_record.schema.json")
+            .read_text(encoding="utf-8")
+        )
+        format_checker = Draft202012Validator.FORMAT_CHECKER
+        self.assertFalse(
+            format_checker.conforms("not-a-timestamp", "date-time"),
+            "date-time format checking is inactive; this test would pass vacuously",
+        )
+        validator = Draft202012Validator(schema, format_checker=format_checker)
+
+        for raw, case in (
+            ("2026-06-13T05:29:57Z", "already RFC 3339"),
+            ("2026-06-13T05:29:57", "naive, no offset"),
+            ("2026-06-13T05:29:57.5", "one-digit fraction"),
+            ("2026-06-13T07:29:57+02:00", "non-UTC offset"),
+        ):
+            with self.subTest(case=case):
+                cue_url = "http://strategy/v1/strategy/pairs/trade-now?timeframe=1m"
+                routes = base_routes()
+                routes[cue_url] = {**routes[cue_url], "generated_at": raw}
+                records = observe.run_once(
+                    config(capture_selector_view=True),
+                    client=RecordingGetClient(routes),
+                    observed_at=OBSERVED_AT,
+                )
+
+                self.assertTrue(records, f"{case}: tick produced no records")
+                # The whole tick must be in contract, manifest and rows alike.
+                for record in records:
+                    self.assertEqual(
+                        sorted(validator.iter_errors(record), key=str),
+                        [],
+                        f"{case}: emitted record violates its own schema branch",
+                    )
+                manifest = records[0]
+                self.assertEqual(manifest["capture_profile"], "selector_view_tick")
+                # Same instant as the source, restated in the declared form.
+                # Compared at whole-second resolution because iso() truncates
+                # sub-second precision — the same canonical form every other
+                # timestamp the tool records already uses, and immaterial at the
+                # 1m timeframe this capture is scoped to.
+                self.assertEqual(
+                    observe.parse_iso(manifest["source_generated_at"]),
+                    observe.parse_iso(raw).replace(microsecond=0),
+                    f"{case}: normalization moved the instant by more than the "
+                    f"sub-second truncation iso() is defined to apply",
+                )
+
     def test_selector_view_mode_captures_all_buckets_and_is_schema_valid(self) -> None:
         from jsonschema import Draft202012Validator
 
@@ -423,9 +567,13 @@ class AutopilotObserveTests(unittest.TestCase):
         fake_os.kill.assert_not_called()
 
     def test_sigterm_lets_the_in_flight_tick_finish_its_append(self) -> None:
-        # Codex round-6 finding 2: the runbook says SIGTERM "lets the current
-        # tick finish its write", but with no handler the default disposition
-        # terminates the process immediately and can cut a JSONL append in half.
+        # Codex round-6 finding 2: the runbook then claimed SIGTERM "lets the
+        # current tick finish its write", but with no handler the default
+        # disposition terminates the process immediately and can cut a JSONL
+        # append in half. (Round 7 narrowed that claim — a stop only finishes the
+        # tick once it is past abandoning, which is exactly the mid-append case
+        # pinned here — and scoped the handler to selector-view loops, which is
+        # why this test sets the capture flag.)
         # Deliver a real SIGTERM to this process from inside write_records —
         # i.e. mid-append — and assert the tick still lands complete and the
         # loop then exits on its own.
@@ -605,6 +753,98 @@ class AutopilotObserveTests(unittest.TestCase):
                                         rc = 0  # narrow loop ran past the guard
                 self.assertEqual(rc, 0, label)
                 self.assertGreaterEqual(ran.call_count, 1, label)
+
+    def test_stop_handling_is_scoped_to_selector_view_loops_only(self) -> None:
+        """The narrow paper-feeding loop must keep its pre-slice stop behaviour.
+
+        This slice's work order (AG-20260713-009) requires the narrow run to be
+        byte-identical when the selector-view flag is false, and installing a
+        SIGTERM handler changes how that run dies — an operator-visible change to
+        a loop this slice was never authorized to touch. Pinned here because
+        nothing else fails if the install is quietly re-broadened to every loop.
+        """
+        import signal as signal_mod
+        from unittest import mock
+
+        cases = (
+            ("narrow loop installs no handler", {}, False),
+            (
+                "selector-view loop installs a handler",
+                {
+                    "AUTOPILOT_OBSERVE_CAPTURE_SELECTOR_VIEW": "true",
+                    "AUTOPILOT_OBSERVE_MAX_RUNTIME_SECONDS": "600",
+                },
+                True,
+            ),
+        )
+        for label, extra_env, expect_install in cases:
+            with self.subTest(case=label):
+                installed: list[int] = []
+
+                # Record what the loop arms without actually arming it, so the
+                # test process keeps its own dispositions.
+                def record_install(signum, handler, _installed=installed):
+                    _installed.append(signum)
+                    return signal_mod.SIG_DFL
+
+                with tempfile.TemporaryDirectory() as tmp:
+                    env = {
+                        "AUTOPILOT_OBSERVE_ENABLED": "true",
+                        "AUTOPILOT_OBSERVE_LOOP": "true",
+                        "AUTOPILOT_OBSERVE_OUTPUT_DIR": tmp,
+                        **extra_env,
+                    }
+                    with mock.patch.dict(os.environ, env, clear=True):
+                        with mock.patch.object(observe.signal, "signal", record_install):
+                            with mock.patch.object(
+                                observe.signal, "getsignal", return_value=signal_mod.SIG_DFL
+                            ):
+                                with mock.patch.object(observe, "run_once", return_value=[]):
+                                    with mock.patch.object(observe, "JsonGetClient"):
+                                        # Both sleep paths raise, so the loop
+                                        # exits after exactly one tick either way.
+                                        with mock.patch.object(
+                                            observe.time, "sleep", side_effect=_StopLoop
+                                        ):
+                                            with self.assertRaises(_StopLoop):
+                                                observe.main([])
+
+                if expect_install:
+                    self.assertEqual(
+                        sorted(installed),
+                        sorted([signal_mod.SIGTERM, signal_mod.SIGINT]),
+                        label,
+                    )
+                else:
+                    self.assertEqual(installed, [], label)
+
+    def test_narrow_loop_sleeps_with_plain_sleep_not_the_stop_aware_sleep(self) -> None:
+        # The stop-aware sleep wakes every 0.5s to poll the flag. The narrow loop
+        # has no flag to poll, so it keeps the single plain sleep it has always
+        # made — same one call, same full interval.
+        from unittest import mock
+
+        slept: list[float] = []
+
+        def record_sleep(seconds):
+            slept.append(seconds)
+            raise _StopLoop
+
+        with tempfile.TemporaryDirectory() as tmp:
+            env = {
+                "AUTOPILOT_OBSERVE_ENABLED": "true",
+                "AUTOPILOT_OBSERVE_LOOP": "true",
+                "AUTOPILOT_OBSERVE_INTERVAL_SECONDS": "300",
+                "AUTOPILOT_OBSERVE_OUTPUT_DIR": tmp,
+            }
+            with mock.patch.dict(os.environ, env, clear=True):
+                with mock.patch.object(observe, "run_once", return_value=[]):
+                    with mock.patch.object(observe, "JsonGetClient"):
+                        with mock.patch.object(observe.time, "sleep", record_sleep):
+                            with self.assertRaises(_StopLoop):
+                                observe.main([])
+
+        self.assertEqual(slept, [300.0])
 
     def test_disabled_selector_view_loop_probe_is_unaffected_by_max_runtime_guard(self) -> None:
         # The guard sits AFTER the disabled-default early return, so a disabled

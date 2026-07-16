@@ -1105,7 +1105,24 @@ def selector_view_records(
     # manifest declare source_generated_at as a required non-nullable string, so
     # loosening either predicate without the other would emit records that
     # violate their own schema branch. Keep the two in step.
-    source_generated = source_generated_at(trade_now)
+    #
+    # Normalized, not passed through raw: the manifest branch declares
+    # format:"date-time" (RFC 3339), but the gate's predicate is
+    # datetime.fromisoformat, which is strictly *wider* — it accepts values RFC
+    # 3339 rejects, e.g. a naive "2026-06-13T05:29:57" with no offset, ISO basic
+    # "20260613T052957", or a one-digit fraction. Recording those raw emits a
+    # manifest that fails its own branch. parse_iso has already resolved the
+    # instant (reading naive as UTC), so iso() restates that exact instant in the
+    # form the contract declares. Scoped to the selector-view path deliberately:
+    # the shared source_generated_at() also feeds entry rows on the narrow
+    # paper-feeding path, which this slice must leave byte-identical.
+    parsed_source = parse_iso(source_generated_at(trade_now))
+    if parsed_source is None:
+        # Unreachable: the freshness gate above rejects every value that would
+        # land here. Fail closed rather than emit an out-of-contract manifest if
+        # that ever stops being true.
+        return refuse("BLOCKED_STALE_INPUT", ["CUE_GENERATED_AT_UNPARSEABLE"])
+    source_generated = iso(parsed_source)
     records: list[dict[str, Any]] = []
     # Whole-tick completeness accounting. A candidate the endpoint returned but
     # that cannot be faithfully transcribed makes the universe partial, exactly
@@ -1444,14 +1461,33 @@ def write_records(records: list[dict[str, Any]], output_dir: Path, observed_at: 
 
 
 class StopSignal:
-    """Records a stop request so the current tick can finish before exiting.
+    """Records a stop request so the loop exits at a checkpoint, never mid-append.
 
-    Without a handler, the default SIGTERM disposition terminates the process
-    immediately — which can land in the middle of ``write_records``' append and
-    leave a half-written final line, or drop a buffered tick entirely. Setting a
-    flag instead lets the interpreter deliver the signal between bytecodes, run
-    this handler, and resume the append; the loop then exits at its own
-    checkpoint, with the file closed and every recorded tick durable.
+    Installed only by a selector-view loop (the narrow paper-feeding loop is
+    required to keep its pre-slice signal behaviour).
+
+    What this does and does not promise depends on when the signal lands:
+
+    - **During polling, with a fetch boundary still ahead**: the tick is
+      abandoned at that boundary and nothing is written. No manifest, no rows —
+      on disk that tick simply never happened, which is the same thing a
+      consumer reads for a tick that never ran.
+    - **During the final fetch**: the flag is only tested at the *top* of each of
+      the seven fetches, so a signal arriving during the last one has no boundary
+      left to be honoured at. That tick completes and is appended like any other
+      — the right outcome, since its data is whole by then.
+    - **During or after record construction**, including mid-append inside
+      ``write_records``: the append completes and the tick is durable.
+
+    So it is not the case that every in-flight tick finishes, nor that every
+    signal during polling abandons one. The guarantee is narrower and more
+    useful: no tick is ever left half-written — each is either fully appended or
+    never written at all. Without a handler, the default SIGTERM disposition
+    terminates the process immediately, which can land in the middle of the
+    append and leave a truncated final line. Setting a flag instead lets the
+    interpreter deliver the signal between bytecodes, run this handler, and
+    resume the append; the loop then exits at its own checkpoint with the file
+    closed.
     """
 
     def __init__(self) -> None:
@@ -1713,22 +1749,27 @@ def main(argv: list[str] | None = None) -> int:
     seen_keys: set[str] = set()
     client = JsonGetClient()
     started_at = utc_now()
-    # Installed for any loop, narrow or selector-view: both append to JSONL and
-    # both are stopped by signal, so both want the in-flight tick to finish. A
-    # --once run has no checkpoint to stop at, so its default disposition is
-    # left untouched.
-    stop = StopSignal()
-    if config.loop:
+    # Scoped to selector-view loops only. This slice (work order AG-20260713-009)
+    # requires the narrow paper-feeding run to stay byte-identical to pre-slice
+    # behaviour, and installing a handler would change how it dies on SIGTERM —
+    # so the narrow loop keeps its default signal disposition and its plain
+    # sleep. `stop` stays None there, which also leaves run_once on its
+    # always-returns-a-list path. Giving the narrow loop the same graceful stop
+    # is a recorded follow-up, not this slice's call to make.
+    stop: StopSignal | None = None
+    if config.loop and config.capture_selector_view:
+        stop = StopSignal()
         stop.install()
 
-    def stopped_exit() -> int:
+    def stopped_exit(detail: str) -> int:
+        assert stop is not None  # only reachable on the selector-view path
         print(
             json.dumps(
                 {
                     "generated_at": iso(utc_now()),
                     "status": "stopped_by_signal",
                     "signal": stop.signum,
-                    "detail": "stop signal received; finished the in-flight tick and exited",
+                    "detail": detail,
                 },
                 sort_keys=True,
             )
@@ -1741,8 +1782,11 @@ def main(argv: list[str] | None = None) -> int:
             config, client=client, observed_at=observed_at, seen_keys=seen_keys, stop=stop
         )
         if records is None:
-            # Stopped while polling, before any record existed. Nothing to
-            # write; drop straight to the exit checkpoint.
+            # Selector-view only (the narrow loop passes stop=None and never
+            # gets here). A stop arrived while polling, before any record
+            # existed, so this tick is abandoned unwritten — the tick simply
+            # never happened on disk, which is precisely what a missing manifest
+            # already means to a consumer.
             print(
                 json.dumps(
                     {
@@ -1753,10 +1797,14 @@ def main(argv: list[str] | None = None) -> int:
                     sort_keys=True,
                 )
             )
-            return stopped_exit()
-        # A stop arriving after polling (including mid-append inside
-        # write_records) only sets the flag; this tick is written in full and
-        # the exit checkpoint below is the first place it takes effect.
+            return stopped_exit(
+                "stop signal received while polling; the unwritten tick was abandoned"
+            )
+        # Past polling the tick is committed: a stop arriving now (including
+        # mid-append inside write_records) only sets the flag, so this tick's
+        # append completes and the exit checkpoint below is the first place the
+        # stop takes effect. This is the only window in which a tick is finished
+        # rather than abandoned.
         output_path = write_records(records, config.output_dir, observed_at)
         summary: dict[str, Any] = {
             "generated_at": iso(observed_at),
@@ -1774,22 +1822,38 @@ def main(argv: list[str] | None = None) -> int:
         print(json.dumps(summary, sort_keys=True))
         if not config.loop:
             return 0
-        if not stop.requested:
-            if config.max_runtime_seconds is not None:
-                elapsed = (utc_now() - started_at).total_seconds()
-                if elapsed + config.interval_seconds >= config.max_runtime_seconds:
-                    print(
-                        json.dumps(
-                            {"generated_at": iso(utc_now()), "status": "max_runtime_reached"},
-                            sort_keys=True,
-                        )
+        # A stop requested during the tick just written: exit before sleeping, so
+        # a stop never starts one more tick. No-op for the narrow loop.
+        if stop is not None and stop.requested:
+            # Reached when the stop landed too late to abandon the tick — during
+            # record construction, during the append, or during the final fetch
+            # (which has no boundary left to honour it at). In every case the
+            # tick above is already written in full.
+            return stopped_exit(
+                "stop signal received once the tick was past abandoning; its append completed"
+            )
+        if config.max_runtime_seconds is not None:
+            elapsed = (utc_now() - started_at).total_seconds()
+            if elapsed + config.interval_seconds >= config.max_runtime_seconds:
+                print(
+                    json.dumps(
+                        {"generated_at": iso(utc_now()), "status": "max_runtime_reached"},
+                        sort_keys=True,
                     )
-                    return 0
-            sleep_until_interval_or_stop(config.interval_seconds, stop)
-        # Single exit point for a stop requested at any time during the tick
-        # above or the sleep, so a stop never starts one more tick.
+                )
+                return 0
+        if stop is None:
+            # Narrow paper-feeding loop: the pre-slice sleep, unchanged.
+            time.sleep(config.interval_seconds)
+            continue
+        sleep_until_interval_or_stop(config.interval_seconds, stop)
+        # Covers a stop landing anywhere between the tick's append and the end of
+        # the sleep, including the gap before the sleep starts — in every case
+        # the previous tick is already durable and no tick is in flight.
         if stop.requested:
-            return stopped_exit()
+            return stopped_exit(
+                "stop signal received between ticks; no tick was in flight"
+            )
 
 
 if __name__ == "__main__":

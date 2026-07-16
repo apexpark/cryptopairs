@@ -1,7 +1,14 @@
 # Inner Review Summary — AG-20260713-009
 
 Two independent read-only reviewers on commit f4573ec; repairs in the
-follow-up commit. 143 tools/scripts tests green.
+follow-up commit. 143 tools/scripts tests green at that commit.
+
+> **Round 7 (current head) supersedes the totals in this header and in
+> "Reviewer B" below.** The authoritative counts are in "Round 7 — repairs after
+> the fresh Codex exact-SHA review at `177cd0e`" at the end of this file. The
+> round-6 claim that the narrow paper-feeding loop "does now finish its tick on
+> SIGTERM — an improvement" is **withdrawn**: it was an unauthorized scope
+> expansion, and round 7 reverts it.
 
 ## Reviewer A — tool correctness / fail-closed / contract conformance
 
@@ -186,8 +193,10 @@ the runbook's only stop procedure used the narrow run's `autopilot_observe.pid`
 — an operator stopping early had no exact procedure and could signal the wrong
 process. **Repair:** a dedicated "Stop the selector-view run" section that
 identifies the correct PID file, verifies the PID really is the selector-view
-capture via `ps` before signalling, uses SIGTERM (letting the in-flight tick
-finish its write), verifies the stop, and escalates before any `kill -9`
+capture via `ps` before signalling, uses SIGTERM (~~letting the in-flight tick
+finish its write~~ — **corrected in round 7:** never leaving a half-written
+record; whether the in-flight tick finishes or is abandoned depends on when the
+signal lands), verifies the stop, and escalates before any `kill -9`
 (a hard kill mid-append can truncate the final JSONL record).
 
 ### F4 — PR description and evidence refreshed
@@ -307,12 +316,18 @@ capture.
   `StopSignal` now handles SIGTERM/SIGINT by setting a flag, so the signal is
   delivered between bytecodes, the append completes, the file closes, and the
   loop exits at its next checkpoint logging `"status": "stopped_by_signal"`.
+  (**Round-7 caveat:** true for a signal arriving at or after record
+  construction, which is the case measured here. A signal during polling with a
+  fetch boundary still ahead abandons the tick instead — nothing is appended.)
 - **Sleep responsiveness:** PEP 475 resumes an interrupted `time.sleep` for its
   full remaining duration, so a flag alone would have left a stop unnoticed for
   up to a whole interval (300s in the runbook). `sleep_until_interval_or_stop`
-  polls the flag in short slices. The loop tail was restructured to a single
+  polls the flag in short slices. ~~The loop tail was restructured to a single
   stop-exit point so a stop arriving during either the tick or the sleep never
-  starts one more tick.
+  starts one more tick.~~ (**Superseded in round 7:** scoping the stop to
+  selector-view loops split the tail into three `stopped_exit` call sites, each
+  naming its own case. The invariant that a stop never starts one more tick is
+  unchanged.)
 
 Tests: `..._command_identity_is_exact_not_any_observe_process` (9 sub-cases,
 including the narrow run, lookalike flags, and an unparseable command line),
@@ -402,11 +417,19 @@ claim the code didn't do.
 - **Also corrected:** `StopSignal.install` no longer re-arms a disposition
   already `SIG_IGN` (a shell backgrounding the run ignores SIGINT deliberately;
   re-arming would make it newly killable by a signal its launcher meant it to
-  survive). And the narrow loop *does* now finish its tick on SIGTERM — an
+  survive). ~~And the narrow loop *does* now finish its tick on SIGTERM — an
   improvement, but one an earlier comment glossed as "unchanged"; the comment
-  and the runbook now say so.
+  and the runbook now say so.~~ **Withdrawn in round 7** — see below. Correctly
+  spotting that the narrow loop's behaviour had changed, this round drew the
+  wrong conclusion: it documented the change instead of questioning whether the
+  slice was allowed to make it. It was not. An "improvement" outside the work
+  order is still a scope expansion, and the reasoning that an unauthorized
+  change is fine because it is an improvement is the failure mode to watch for.
 
-### Verification (clean detached checkout of the pushed commit)
+### Verification — superseded, see "Round 7" below
+
+(Accurate for round 6's head `177cd0e`; round 7 adds tests, so the totals here
+are no longer the current ones.)
 
 Canonical command (from `tools/scripts/`):
 `PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 python3 -m pytest tests/ -q --import-mode=importlib`

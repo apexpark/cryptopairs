@@ -133,10 +133,11 @@ sleep 2
 tail -n 100 "$RUN_ROOT/autopilot_observe.log"
 ```
 
-SIGTERM lets the in-flight tick finish its append before the loop exits, logging
-`"status": "stopped_by_signal"` (see "Stop the selector-view run" below for the
-timing detail — it applies to this loop too). Reach for `kill -9` only after
-escalating: SIGKILL cannot be handled and can truncate the final record.
+This loop stops on SIGTERM's default disposition — it is not signal-handled, so
+a stop can land mid-append and truncate the final record. Stop it between ticks
+where you can, and treat a truncated last line as expected rather than as data
+loss. (The graceful stop described under "Stop the selector-view run" belongs to
+the selector-view loop only; extending it to this loop is a tracked follow-up.)
 
 ## Selector-View Capture (AUTO-2B.2, wide universe)
 
@@ -300,27 +301,46 @@ If it does not exit 0, stop and escalate to the Operator; do not kill the PID.
 If, and only if, the check exits 0:
 
 ```bash
-kill "$SV_PID"          # SIGTERM; the in-flight tick finishes its write first
+kill "$SV_PID"          # SIGTERM; never leaves a half-written record
 sleep 5
 ps -p "$SV_PID" > /dev/null && echo "still running" || echo "stopped"
 tail -n 20 "$SV_ROOT/autopilot_observe_selector_view.log"
 ```
 
-The tool handles SIGTERM (and SIGINT) by finishing the tick it is in — the
-append completes and the file is closed — and then exiting at its next
-checkpoint, logging `"status": "stopped_by_signal"`. It does not wait out the
-remaining sleep interval. A run stopped this way ends with a whole final record,
-and the log line is the confirmation.
+The tool handles SIGTERM (and SIGINT) and exits at its next checkpoint, always
+logging `"status": "stopped_by_signal"` last. It does not wait out the remaining
+sleep interval. What happens to the tick in progress depends on where the signal
+lands, and the `detail` in that final log line tells you which case you got:
+
+- **Idle between ticks** (the common case) — nothing is in flight. Detail:
+  `stop signal received between ticks; no tick was in flight`.
+- **While polling, with a fetch still ahead** — the tick is abandoned and
+  nothing is written. An extra line logs `"status": "tick_abandoned_on_stop"`
+  first, then the detail `stop signal received while polling; the unwritten tick
+  was abandoned`. That timestamp has no manifest and no rows, so it reads
+  downstream as a tick that never ran, which is what it is.
+- **Too late to abandon** — during record construction, during the append, or
+  during the tick's *final* fetch (the stop is only tested at each fetch
+  boundary, and the last fetch has none after it). The append completes and the
+  file is closed. Detail: `stop signal received once the tick was past
+  abandoning; its append completed`.
+
+So a stop guarantees neither that the in-flight tick finishes nor that it is
+abandoned — which you get depends on timing. What it does guarantee is that no
+tick is ever left half-written: every record on disk is whole, and a stopped run
+ends either with a complete final record or with no record for that tick.
 
 Expected time to exit:
 
 - Idle between ticks (the common case): well under a second.
 - Mid-tick: up to one HTTP timeout (`AUTOPILOT_OBSERVE_TIMEOUT_SECONDS`,
   default 10s). A tick makes seven sequential fetches, but a stop is honoured at
-  the next fetch boundary — it does not wait out all seven. If the stop lands
-  while polling, the tick is abandoned rather than half-recorded and the log
-  says `"status": "tick_abandoned_on_stop"`; nothing is written, so that
-  timestamp is simply a missing tick, which is what it is.
+  the next fetch boundary — it does not wait out all seven. If a boundary
+  remains, the tick is abandoned rather than half-recorded and the log says
+  `"status": "tick_abandoned_on_stop"`; nothing is written, so that timestamp is
+  simply a missing tick, which is what it is. If the stop lands during the
+  seventh fetch there is no boundary left, so that tick completes and is
+  appended — see the case list above.
 - If an endpoint is not merely slow but dribbles bytes indefinitely, the socket
   timeout never fires and the fetch can outlast the estimate above. That is the
   case for the `kill -9` escalation below.

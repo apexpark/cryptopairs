@@ -607,16 +607,24 @@
           "const": "selector_view_tick"
         },
         "run_id": {
-          "type": "string"
+          "type": "string",
+          "minLength": 1,
+          "format": "date-time",
+          "description": "Identifies the tick this manifest heads. The tool sets it to the tick's observed_at instant, so it carries the same date-time identity as observed_at and is never empty."
         },
         "observed_at": {
-          "type": "string"
+          "type": "string",
+          "format": "date-time"
         },
         "source_generated_at": {
-          "type": "string"
+          "type": "string",
+          "format": "date-time",
+          "description": "Required and non-nullable: the tool only reaches a manifest after the freshness gate has rejected every value that is not a parseable timestamp."
         },
         "timeframe": {
-          "type": "string"
+          "type": "string",
+          "const": "1m",
+          "description": "AUTO-2B is 1m-only; a manifest claiming any other timeframe is out of contract."
         },
         "decision": {
           "type": "string",

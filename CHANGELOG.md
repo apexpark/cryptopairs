@@ -37,12 +37,37 @@ This project follows SemVer as defined in `docs/02-versioning-and-releases.md`.
   `selector_view_tick` manifest record stating `recorded_rows` and the
   per-bucket counts that follow, so an empty-but-captured selector universe is
   distinguishable from a tick that never ran (and a truncated tail from a
-  smaller universe); a refused tick emits no manifest. The tool handles
-  SIGTERM/SIGINT by finishing the in-flight tick before exiting rather than
-  risking a half-written append, and a new read-only
-  `--verify-selector-view-pid` probe confirms a PID really is the selector-view
-  capture — not the identically-invoked narrow paper-feeding run — before the
-  operator signals it, failing closed on a stale or non-matching PID.
+  smaller universe); a refused tick emits no manifest. A **selector-view loop
+  only** handles SIGTERM/SIGINT and exits at a checkpoint: a signal during
+  polling abandons the unwritten tick at the next fetch boundary (nothing is
+  recorded, so it reads as a tick that never ran), while a signal that arrives
+  once the tick is past abandoning — during or after record construction, or
+  during the final fetch, which has no boundary after it — lets the append
+  complete. The guarantee is that no tick is left half-written, not that every
+  in-flight tick finishes nor that every stop while polling abandons one. Cue
+  timestamps are normalized to RFC 3339 on the selector-view path, so a
+  parseable-but-not-RFC-3339 `generated_at` (naive, ISO basic, one-digit
+  fraction) can no longer produce a manifest that violates its own contract. The
+  narrow paper-feeding loop is untouched
+  and keeps its default signal disposition (extending the graceful stop to it is
+  a tracked follow-up). A new read-only `--verify-selector-view-pid` probe
+  confirms a PID really is the selector-view capture — not the
+  identically-invoked narrow paper-feeding run — before the operator signals it,
+  failing closed on a stale or non-matching PID.
+- Contract: `autopilot_observe_record` schema `version` 0.2.0 → 0.3.0. Additive
+  — a third `oneOf` branch for the `selector_view_tick` manifest, with a new
+  `specs/examples/autopilot_observe_record.selector_view_tick.example.json`. The
+  two existing branches (entry rows, selector-view rows) are unchanged, so every
+  record valid under 0.2.0 stays valid under 0.3.0. The manifest branch pins its
+  own identity: `run_id` non-empty and `date-time`-formatted,
+  `observed_at`/`source_generated_at` `date-time`-formatted and both required
+  non-nullable, and `timeframe` fixed to `1m`. (That `run_id` carries the tick's
+  own `observed_at` value is a property of the tool, asserted in its tests — the
+  schema constrains `run_id`'s shape, not its equality to another field.)
+  Enforcement note: `format` is inert unless a validator is given a
+  `FormatChecker`, so the date-time constraints bind only for consumers that
+  pass one — the new adversarial tests do, and assert the checker is live rather
+  than passing vacuously.
 - AUTO-2B.2 B2-a contracts: `autopilot_observe_record` version 2 splits
   into entry rows (version-1 shape unchanged) and selector-view rows
   (`SELECTOR_VIEW_OBSERVED`, cue bucket + selector-stated fields, no
