@@ -3,12 +3,12 @@
 Two independent read-only reviewers on commit f4573ec; repairs in the
 follow-up commit. 143 tools/scripts tests green at that commit.
 
-> **Round 7 (current head) supersedes the totals in this header and in
-> "Reviewer B" below.** The authoritative counts are in "Round 7 — repairs after
-> the fresh Codex exact-SHA review at `177cd0e`" at the end of this file. The
-> round-6 claim that the narrow paper-feeding loop "does now finish its tick on
-> SIGTERM — an improvement" is **withdrawn**: it was an unauthorized scope
-> expansion, and round 7 reverts it.
+> **Round 7 (current head) supersedes every earlier total in this file**,
+> including the 143 above and the round-6 totals. The authoritative counts are
+> under "Round 7 — Codex exact-SHA review of `177cd0e`" → "Verification", at the
+> end of this file. The round-6 claim that the narrow paper-feeding loop "does
+> now finish its tick on SIGTERM — an improvement" is **withdrawn**: it was an
+> unauthorized scope expansion, and round 7 reverts it.
 
 ## Reviewer A — tool correctness / fail-closed / contract conformance
 
@@ -464,4 +464,161 @@ Canonical command (from `tools/scripts/`):
   pre-push Rust preflight was skipped with a reason via
   `RUST_PREFLIGHT_OVERRIDE`, and GitHub Actions `ci.yml` on `claude/**` — the
   canonical Rust gate — ran and passed `rust` on the pushed head.
+- No host action, deploy, capture, or merge performed by this session.
+
+---
+
+## Round 7 — Codex exact-SHA review of `177cd0e` (4 findings, all repaired)
+
+### F1 — the tick manifest declared no identity
+
+The manifest is the sole positive marker that a tick was captured, so a consumer
+keys off its `run_id` / `observed_at` / `timeframe`. The branch constrained none
+of them: `run_id` had no `minLength`, both timestamps no `format`, `timeframe` no
+`const`. An empty `run_id`, an `observed_at` of `"not-a-timestamp"`, or a `5m`
+tick all validated as a captured 1m tick. **Fix:** `run_id` non-empty +
+`date-time`; `observed_at` / `source_generated_at` `date-time` (both already
+required and non-nullable); `timeframe` `const: "1m"`. Scoped to the *new* branch
+only — the entry and selector-view branches are merged contracts from B2-a and
+are out of this slice's scope.
+
+**Tests:** `test_tick_manifest_contract_rejects_out_of_contract_identity` — 14
+sub-cases, each mutating exactly one field of an otherwise-valid manifest so a
+rejection can only be attributed to that field. `format` is annotation-only
+unless a validator is handed a `FormatChecker`, and the `date-time` checker
+itself silently no-ops without `rfc3339-validator`, so the test asserts the
+checker is live before asserting anything else — otherwise every case would pass
+vacuously while enforcing nothing. Verified adversarially: against the pre-repair
+schema the test fails with exactly the reviewer's cases (`schema accepted empty
+run_id`, `schema accepted non-ISO observed_at`, …).
+
+### F2 — the narrow paper-feeding loop had been changed, out of scope
+
+`StopSignal` was installed for `if config.loop:` — every loop. The work order
+(AG-20260713-009) requires the narrow run to be byte-identical with the capture
+flag false, and names "any change to the entry-candidate emission when the flag
+is false" a stop condition. **Fix:** the install, the polling stop (`run_once`'s
+`stop=` argument), and the stop-aware sleep are scoped to
+`config.loop and config.capture_selector_view`. The narrow loop keeps `stop =
+None`, its default signal disposition, and its plain
+`time.sleep(config.interval_seconds)` — which also leaves `run_once` on its
+always-returns-a-list path, making the abandoned-tick branch dead there.
+
+Round 6 *noticed* this divergence and documented it as "an improvement". That
+was the wrong call and is withdrawn: an improvement outside the work order is
+still a scope expansion. Shared graceful stopping for the narrow loop is recorded
+as **OBS-1** for an Operator scope decision rather than taken here.
+
+**Tests:** `test_stop_handling_is_scoped_to_selector_view_loops_only` and
+`test_narrow_loop_sleeps_with_plain_sleep_not_the_stop_aware_sleep` pin the
+boundary — nothing else failed when the scoping changed, which is exactly why it
+could regress unnoticed. Verified adversarially: re-broadening the install to
+`if config.loop:` fails both, reporting the handler armed on the narrow path and
+the sleep shortened to `[0.5]` from `[300.0]` — concrete proof the pre-repair
+code really did change narrow-loop behaviour.
+
+### F3 — the wording claimed every in-flight tick finishes
+
+Worst instance: the abandoned path printed `"status": "tick_abandoned_on_stop"`
+and then, from a shared `stopped_exit()`, `"detail": "…finished the in-flight
+tick and exited"` — the log contradicted itself in adjacent lines. **Fix:**
+`stopped_exit(detail)` takes the case, and each of the three exits names its own:
+abandoned while polling / past abandoning (append completed) / stopped between
+ticks. The guarantee is now stated as what it actually is — *no tick is ever left
+half-written* — rather than as every tick finishing. Corrected in the docstring,
+the loop comments, the runbook (both loops' sections), `CHANGELOG.md`, and
+`docs/AGENT_STATE.md`; a repo-wide grep for the stale phrasings returns nothing.
+
+### F4 — audit surfaces refreshed
+
+The 0.2.0 → 0.3.0 contract change and the new manifest example are now declared
+in `CHANGELOG.md` (the PR body had said "Schema/examples updated (n/a)", which
+was false). Round-6 totals are marked superseded, `docs/AGENT_STATE.md`'s B2-b
+row carries the round-7 behaviour and counts, and the PR body's Head SHA and
+fresh-review line are refreshed to the pushed head.
+
+### Multi-angle inner review of the round-7 repairs
+
+Three independent read-only reviewers (work-order scope boundary; JSON Schema
+contract + test rigour; documentation accuracy). **Both of the following are
+defects the repairs themselves introduced or missed, found by that review and
+fixed before pushing.**
+
+- **The tightening was unenforceable as written.** The manifest branch declared
+  `format: date-time` (RFC 3339), but the freshness gate's predicate is
+  `datetime.fromisoformat`, which is strictly *wider*, and `source_generated_at()`
+  returns the **raw** string. So a cue response with a naive
+  `"2026-06-13T05:29:57"` (no offset), ISO basic `"20260613T052957"`, or a
+  one-digit fraction passed the gate and produced a manifest that **failed the
+  branch it had just been given** — the tick looked captured while its record
+  violated its own contract. Reproduced end-to-end before fixing. **Fix:**
+  normalize via `iso(parse_iso(...))` at the selector-view call site, restating
+  the instant `parse_iso` already resolved in the form the contract declares.
+  Deliberately *not* fixed inside the shared `source_generated_at()`, which also
+  feeds entry rows on the narrow path this slice must not touch. Note `iso()`
+  truncates to whole seconds — immaterial at 1m, and the canonical form every
+  other timestamp here already uses. **Test:**
+  `test_emitted_records_are_rfc3339_even_when_the_cue_timestamp_is_not` drives
+  the real capture path (not a hand-built record) across four timestamp forms and
+  validates every emitted record, manifest and rows alike, under the format
+  checker. Verified adversarially: reverting to raw passthrough fails exactly the
+  two non-RFC-3339 cases.
+- **The F3 fix itself over-claimed, in the same class F3 asked to remove.** "A
+  signal during polling abandons the unwritten tick" is not unconditional: the
+  flag is tested only at the *top* of each of the seven fetches, so a signal
+  during the last one has no boundary left to be honoured at and the tick
+  completes and is appended. Verified by experiment — stop during fetch #1 →
+  `records=None` (abandoned); stop during fetch #7 → 2 records written. That is
+  the *right* behaviour (the tick's data is whole by then), so the code stands
+  and the wording was corrected everywhere instead.
+
+Also fixed from the review: the `CHANGELOG` implied the schema constrains
+`run_id == observed_at` (it constrains `run_id`'s shape; the equality is a tool
+property asserted in tests); the runbook's stop taxonomy omitted the
+idle-between-ticks case, which is the common one; and stale "lets the in-flight
+tick finish its write" phrasings survived inside this file's own round-6 sections.
+
+Recorded, not fixed:
+
+- **OBS-2 (new, medium)** — the scope reviewer found that B2-b's fail-closed
+  hardening *also* changed the narrow run's entry emission, which the work order
+  excluded. Independently reproduced by executing `origin/main`'s module against
+  the branch's with the flag false: a non-ISO `generated_at`, a NaN `spread_z`, a
+  negative `learning_overlay_age_seconds`, and an out-of-enum `dispatch_mode` now
+  record `null` instead of passing through; `_optional_int(5.0)` now raises where
+  it returned `5`, which is reachable at startup because the narrow run is
+  launched with `AUTOPILOT_OBSERVE_QUALITY_WINDOWS_JSON`. Every one is a
+  *hardening*, so "restoring byte-identical" would mean weakening a safety
+  property — an Operator call, not this session's. Full options in the follow-up
+  row.
+- **CI-1** — unchanged and still open: CI never runs `tools/scripts/tests`, so
+  this contract and its examples are enforced only when run locally. The round-7
+  tests are the repo's only `FormatChecker` users, and `rfc3339-validator` is an
+  undeclared dependency — on a plain-`jsonschema` environment the new guard fails
+  the suite loudly rather than passing silently, which is the intended direction,
+  but it underlines CI-1.
+
+### Verification (clean detached checkout of the pushed commit)
+
+Measured in a clean detached worktree (`git worktree add --detach <sha>`;
+`git status --porcelain` empty) — **not** the working tree, which still carries
+the untracked macOS " 2.py" duplicates that caused the round-6 F3 miscount.
+
+Canonical command (from `tools/scripts/`):
+`PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 python3 -m pytest tests/ -q --import-mode=importlib`
+
+- Full `tools/scripts` suite: **185 passed, 42 subtests passed** (0 failures).
+- Focused observe suites (`test_autopilot_observe.py`, `..._contract.py`,
+  `..._report.py`): **70 passed, 42 subtests**; `test_autopilot_observe.py` alone
+  is **59**.
+- Reconciliation: round-6 clean-tree total **181** + **4** new tests → **185**;
+  subtests 22 → 42 (+20, from the new sub-case tests). The same command in the
+  dirty working tree still reports **196** = 185 + the 11 untracked duplicates,
+  reproducing the F3 arithmetic exactly.
+- All `specs/contracts/*.json` + `specs/examples/*.json` valid (**111** files,
+  `python -m json.tool` — the `contracts` CI job's check), in the clean tree.
+  The observe schema is also `check_schema`-valid draft 2020-12, `version` 0.3.0,
+  3 `oneOf` branches.
+- No Rust surface touched (no `.rs` / `Cargo*` / `rust-toolchain` in the branch
+  diff), so the Rust preflight is not implicated this round.
 - No host action, deploy, capture, or merge performed by this session.
