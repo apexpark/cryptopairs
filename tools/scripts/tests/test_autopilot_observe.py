@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import datetime as dt
 import json
+import os
 import pathlib
 import sys
 import tempfile
@@ -18,6 +19,10 @@ import autopilot_observe as observe  # noqa: E402
 
 
 OBSERVED_AT = dt.datetime(2026, 6, 13, 5, 30, tzinfo=dt.timezone.utc)
+
+
+class _StopLoop(Exception):
+    """Sentinel to break out of an otherwise-unbounded loop under test."""
 
 
 def candidate() -> dict[str, Any]:
@@ -208,14 +213,17 @@ class AutopilotObserveTests(unittest.TestCase):
         excluded["decision_bucket"] = "EXCLUDED"
         excluded["blocked_reason_code"] = "COST_GATE_FAIL"
         payload["watchlist"] = [watch]
-        payload["excluded"] = [excluded, "not-an-object"]
+        payload["excluded"] = [excluded]
         client = RecordingGetClient(routes)
 
         records = observe.run_once(
             config(capture_selector_view=True), client=client, observed_at=OBSERVED_AT
         )
 
-        self.assertEqual(len(records), 3)  # malformed excluded row skipped
+        # Every candidate across all three buckets is captured. (A malformed row
+        # would refuse the whole tick instead — see the refusal tests below;
+        # this response is deliberately all-valid.)
+        self.assertEqual(len(records), 3)
         self.assertEqual(
             sorted(r["cue_bucket"] for r in records),
             ["EXCLUDED", "TRADE_NOW", "WATCHLIST"],
@@ -226,6 +234,110 @@ class AutopilotObserveTests(unittest.TestCase):
             self.assertEqual(sorted(validator.iter_errors(record), key=str), [])
             self.assertNotIn("realized_net_bps", record)
             self.assertTrue(record["observe_key"].startswith("selector-view:v2:"))
+
+    def test_selector_view_loop_requires_positive_max_runtime(self) -> None:
+        # Codex finding 2: an unbounded selector-view loop is both an unattended
+        # loop and unbounded disk growth. Startup must be refused unless a
+        # positive runtime bound is configured. Each case returns before any
+        # network client is constructed.
+        import contextlib, io
+        from unittest import mock
+
+        base = {
+            "AUTOPILOT_OBSERVE_ENABLED": "true",
+            "AUTOPILOT_OBSERVE_CAPTURE_SELECTOR_VIEW": "true",
+            "AUTOPILOT_OBSERVE_LOOP": "true",
+        }
+        for label, extra in (
+            ("absent", {}),
+            ("empty", {"AUTOPILOT_OBSERVE_MAX_RUNTIME_SECONDS": ""}),
+            ("zero", {"AUTOPILOT_OBSERVE_MAX_RUNTIME_SECONDS": "0"}),
+            ("negative", {"AUTOPILOT_OBSERVE_MAX_RUNTIME_SECONDS": "-300"}),
+        ):
+            with self.subTest(max_runtime=label):
+                buf = io.StringIO()
+                with mock.patch.dict(os.environ, {**base, **extra}, clear=True):
+                    with contextlib.redirect_stderr(buf):
+                        rc = observe.main([])
+                self.assertEqual(rc, 2, label)
+                payload = json.loads(buf.getvalue().strip().splitlines()[-1])
+                self.assertEqual(payload["error"], "SELECTOR_VIEW_LOOP_REQUIRES_MAX_RUNTIME")
+
+    def test_selector_view_loop_with_positive_max_runtime_starts(self) -> None:
+        # The guard must not block a properly bounded selector-view loop.
+        # run_once is stubbed so no network is touched; a single tick then exits
+        # because elapsed + interval >= max_runtime.
+        from unittest import mock
+
+        env = {
+            "AUTOPILOT_OBSERVE_ENABLED": "true",
+            "AUTOPILOT_OBSERVE_CAPTURE_SELECTOR_VIEW": "true",
+            "AUTOPILOT_OBSERVE_LOOP": "true",
+            "AUTOPILOT_OBSERVE_MAX_RUNTIME_SECONDS": "1",
+            "AUTOPILOT_OBSERVE_INTERVAL_SECONDS": "300",
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            env["AUTOPILOT_OBSERVE_OUTPUT_DIR"] = tmp
+            with mock.patch.dict(os.environ, env, clear=True):
+                with mock.patch.object(observe, "run_once", return_value=[]) as ran:
+                    with mock.patch.object(observe, "JsonGetClient"):
+                        rc = observe.main([])
+        self.assertEqual(rc, 0)
+        self.assertEqual(ran.call_count, 1)  # started, ticked once, exited on bound
+
+    def test_max_runtime_guard_does_not_affect_narrow_loop_or_once(self) -> None:
+        # Scoped strictly to selector-view loops: the narrow paper-feeding loop
+        # keeps its existing operator-authorized behaviour, and a bounded-by-
+        # construction --once selector-view run is exempt.
+        from unittest import mock
+
+        cases = (
+            ("narrow loop, no max runtime",
+             {"AUTOPILOT_OBSERVE_ENABLED": "true", "AUTOPILOT_OBSERVE_LOOP": "true"}, []),
+            ("selector-view --once, no max runtime",
+             {"AUTOPILOT_OBSERVE_ENABLED": "true",
+              "AUTOPILOT_OBSERVE_CAPTURE_SELECTOR_VIEW": "true"}, ["--once"]),
+        )
+        for label, env, argv in cases:
+            with self.subTest(case=label):
+                with tempfile.TemporaryDirectory() as tmp:
+                    env = {**env, "AUTOPILOT_OBSERVE_OUTPUT_DIR": tmp}
+                    with mock.patch.dict(os.environ, env, clear=True):
+                        with mock.patch.object(observe, "run_once", return_value=[]) as ran:
+                            with mock.patch.object(observe, "JsonGetClient"):
+                                with mock.patch.object(observe.time, "sleep",
+                                                       side_effect=_StopLoop):
+                                    try:
+                                        rc = observe.main(argv)
+                                    except _StopLoop:
+                                        rc = 0  # narrow loop ran past the guard
+                self.assertEqual(rc, 0, label)
+                self.assertGreaterEqual(ran.call_count, 1, label)
+
+    def test_disabled_selector_view_loop_probe_is_unaffected_by_max_runtime_guard(self) -> None:
+        # The guard sits AFTER the disabled-default early return, so a disabled
+        # probe still prints the disabled payload and exits 0 even with a loop +
+        # selector-view + no max runtime configured. Disabled-default behaviour
+        # stays byte-identical.
+        import contextlib, io
+        from unittest import mock
+
+        env = {
+            "AUTOPILOT_OBSERVE_ENABLED": "false",
+            "AUTOPILOT_OBSERVE_CAPTURE_SELECTOR_VIEW": "true",
+            "AUTOPILOT_OBSERVE_LOOP": "true",
+        }
+        out, err = io.StringIO(), io.StringIO()
+        with mock.patch.dict(os.environ, env, clear=True):
+            with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+                rc = observe.main([])
+        self.assertEqual(rc, 0)
+        self.assertEqual(err.getvalue(), "")  # guard did not fire
+        self.assertEqual(
+            json.loads(out.getvalue()),
+            {"enabled": False,
+             "recommended_action": "SET_AUTOPILOT_OBSERVE_ENABLED_TRUE_TO_RUN"},
+        )
 
     def test_selector_view_disabled_by_default_leaves_behavior_unchanged(self) -> None:
         routes = base_routes()
@@ -243,7 +355,7 @@ class AutopilotObserveTests(unittest.TestCase):
         self.assertEqual(default_records[0]["decision"], "OBSERVED_ENTRY_CANDIDATE")
         self.assertNotIn("capture_profile", default_records[0])
 
-    def test_selector_view_malformed_inputs_fail_closed_to_omission(self) -> None:
+    def test_selector_view_malformed_inputs_refuse_whole_tick(self) -> None:
         from jsonschema import Draft202012Validator
 
         repo_root = pathlib.Path(__file__).resolve().parents[3]
@@ -296,19 +408,128 @@ class AutopilotObserveTests(unittest.TestCase):
             source_reasons=[],
         )
 
-        selector_rows = [r for r in records if r.get("capture_profile") == "selector_view"]
-        # The good row and the big-int row survive (big int preserved exactly,
-        # not rounded); every genuinely malformed row is omitted, not coerced.
-        self.assertEqual({r["pair_id"] for r in selector_rows},
-                         {"PF_DOGEUSD__PF_PEPEUSD", "PF_HUGE__PF_NUM"})
-        huge_row = next(r for r in selector_rows if r["pair_id"] == "PF_HUGE__PF_NUM")
-        self.assertEqual(huge_row["spread_z"], huge)  # exact, no float rounding
+        # Codex finding 1: a malformed candidate must NOT be silently dropped
+        # while its neighbours are emitted. Because this response contains rows
+        # that cannot be faithfully transcribed, the whole tick is refused: no
+        # selector rows at all, just one machine-readable refusal record.
+        self.assertEqual([r.get("capture_profile") for r in records], [None])
+        self.assertEqual(len(records), 1)
+        self.assertEqual(records[0]["decision"], "BLOCKED_MALFORMED_RESPONSE")
+        self.assertIn("SELECTOR_VIEW_ROW_MALFORMED:tradable_now", records[0]["reason_codes"])
+        # The good row and the big-int row are NOT emitted — a partial universe
+        # can never reach B2-c as though it were complete.
+        self.assertNotIn("PF_DOGEUSD__PF_PEPEUSD", json.dumps(records))
+        self.assertNotIn("PF_HUGE__PF_NUM", json.dumps(records))
+        # Reason codes stay bounded and never leak row-supplied pair_ids.
+        for code in records[0]["reason_codes"]:
+            self.assertRegex(
+                code,
+                r"^SELECTOR_VIEW_ROW_(NOT_OBJECT|IDENTITY_INVALID|MALFORMED):"
+                r"(tradable_now|watchlist|excluded)$",
+            )
         # Everything written is schema-valid (no NaN/inf, no fabricated fields).
         serialized = json.dumps(records, allow_nan=False)  # raises if any NaN/inf slipped through
         self.assertNotIn("NaN", serialized)
         self.assertNotIn("Infinity", serialized)
         for record in records:
             self.assertEqual(sorted(validator.iter_errors(record), key=str), [])
+
+    def test_selector_view_strict_transcription_preserves_valid_rows(self) -> None:
+        # Complement to the refusal test: on a fully-valid tick every candidate
+        # is emitted, and a huge int is preserved exactly rather than rounded.
+        # This keeps the strict-transcription coverage the refusal path removed.
+        huge = int("9" * 400)
+        good = deepcopy(candidate())
+        big = deepcopy(candidate())
+        big["pair_id"] = "PF_HUGE__PF_NUM"
+        big["spread_z"] = huge
+        records = observe.selector_view_records(
+            config=config(),
+            trade_now={
+                "generated_at": "2026-06-13T05:29:57Z",
+                "tradable_now": [good, big], "watchlist": [], "excluded": [],
+            },
+            observed_at=OBSERVED_AT, dispatch_mode=None, kill_switch=None,
+            evidence=observe.blocked_before_poll_evidence(), source_reasons=[],
+        )
+        selector_rows = [r for r in records if r.get("capture_profile") == "selector_view"]
+        self.assertEqual({r["pair_id"] for r in selector_rows},
+                         {"PF_DOGEUSD__PF_PEPEUSD", "PF_HUGE__PF_NUM"})
+        huge_row = next(r for r in selector_rows if r["pair_id"] == "PF_HUGE__PF_NUM")
+        self.assertEqual(huge_row["spread_z"], huge)  # exact, no float rounding
+
+    def test_selector_view_refuses_tick_on_non_object_or_identity_invalid_row(self) -> None:
+        # Codex finding 1: non-object and identity-invalid rows previously
+        # vanished without even incrementing the omission counter. Each must now
+        # refuse the whole tick with its own bounded reason code.
+        for bad_row, expected in (
+            ("not-an-object", "SELECTOR_VIEW_ROW_NOT_OBJECT:watchlist"),
+            (None, "SELECTOR_VIEW_ROW_NOT_OBJECT:watchlist"),
+            ([1, 2], "SELECTOR_VIEW_ROW_NOT_OBJECT:watchlist"),
+            ({"selected_variant": "ROBUST_Z", "timeframe": "1m"},
+             "SELECTOR_VIEW_ROW_IDENTITY_INVALID:watchlist"),   # pair_id absent
+            ({"pair_id": "   ", "selected_variant": "ROBUST_Z", "timeframe": "1m"},
+             "SELECTOR_VIEW_ROW_IDENTITY_INVALID:watchlist"),   # blank pair_id
+            ({"pair_id": "PF_A__PF_B", "timeframe": "1m"},
+             "SELECTOR_VIEW_ROW_IDENTITY_INVALID:watchlist"),   # variant absent
+        ):
+            records = observe.selector_view_records(
+                config=config(),
+                trade_now={
+                    "generated_at": "2026-06-13T05:29:57Z",
+                    "tradable_now": [candidate()],   # a perfectly good row
+                    "watchlist": [bad_row],
+                    "excluded": [],
+                },
+                observed_at=OBSERVED_AT, dispatch_mode=None, kill_switch=None,
+                evidence=observe.blocked_before_poll_evidence(), source_reasons=[],
+            )
+            self.assertEqual(len(records), 1, f"{bad_row!r} should refuse the tick")
+            self.assertEqual(records[0]["decision"], "BLOCKED_MALFORMED_RESPONSE")
+            self.assertIn(expected, records[0]["reason_codes"])
+            # the good tradable_now row must NOT be emitted alongside the refusal
+            self.assertNotIn("selector_view", [r.get("capture_profile") for r in records])
+            self.assertNotIn("PF_DOGEUSD__PF_PEPEUSD", json.dumps(records))
+
+    def test_selector_view_refusal_reason_codes_are_bounded_and_deduped(self) -> None:
+        # Many bad rows in one bucket collapse to a single code; codes never
+        # interpolate pair_id (which would be unbounded and attacker-supplied).
+        bad = deepcopy(candidate())
+        bad["pair_id"] = "PF_EVIL__PF_INJECT"
+        bad["setup_gate_pass"] = "false"          # bool-as-string -> malformed
+        other = deepcopy(bad)
+        other["pair_id"] = "PF_OTHER__PF_BAD"
+        records = observe.selector_view_records(
+            config=config(),
+            trade_now={
+                "generated_at": "2026-06-13T05:29:57Z",
+                "tradable_now": [bad, other, "not-an-object"],
+                "watchlist": [], "excluded": [],
+            },
+            observed_at=OBSERVED_AT, dispatch_mode=None, kill_switch=None,
+            evidence=observe.blocked_before_poll_evidence(), source_reasons=[],
+        )
+        codes = records[0]["reason_codes"]
+        self.assertEqual(sorted(codes), [
+            "SELECTOR_VIEW_ROW_MALFORMED:tradable_now",
+            "SELECTOR_VIEW_ROW_NOT_OBJECT:tradable_now",
+        ])
+        self.assertNotIn("PF_EVIL__PF_INJECT", json.dumps(records))
+        self.assertNotIn("PF_OTHER__PF_BAD", json.dumps(records))
+
+    def test_selector_view_empty_buckets_are_complete_not_incomplete(self) -> None:
+        # An empty bucket is a complete view of an empty bucket; only candidates
+        # the endpoint actually returned can make a tick incomplete.
+        records = observe.selector_view_records(
+            config=config(),
+            trade_now={
+                "generated_at": "2026-06-13T05:29:57Z",
+                "tradable_now": [], "watchlist": [], "excluded": [],
+            },
+            observed_at=OBSERVED_AT, dispatch_mode=None, kill_switch=None,
+            evidence=observe.blocked_before_poll_evidence(), source_reasons=[],
+        )
+        self.assertEqual(records, [])  # no rows, and crucially no refusal record
 
     def test_selector_view_refuses_whole_tick_on_bad_or_missing_bucket(self) -> None:
         # A non-list bucket refuses the whole tick (no partial universe).
@@ -428,19 +649,30 @@ class AutopilotObserveTests(unittest.TestCase):
         )
         self.assertEqual([r for r in r2 if r.get("capture_profile") == "selector_view"], [])
 
-    def test_round4_omitted_rows_are_surfaced_on_stderr(self) -> None:
+    def test_refused_tick_is_surfaced_on_stderr_with_per_bucket_counts(self) -> None:
         import contextlib, io
-        bad = deepcopy(candidate()); bad["net_edge_bps"] = float("nan")  # omitted
+        bad = deepcopy(candidate()); bad["net_edge_bps"] = float("nan")  # malformed
         trade_now = {"generated_at": "2026-06-13T05:29:57Z",
-                     "tradable_now": [bad], "watchlist": [], "excluded": []}
+                     "tradable_now": [bad], "watchlist": ["not-an-object"],
+                     "excluded": []}
         buf = io.StringIO()
         with contextlib.redirect_stderr(buf):
-            observe.selector_view_records(
+            records = observe.selector_view_records(
                 config=config(), trade_now=trade_now, observed_at=OBSERVED_AT,
                 dispatch_mode=None, kill_switch=None,
                 evidence=observe.blocked_before_poll_evidence(), source_reasons=[],
             )
-        self.assertIn("selector_view_omitted_malformed", buf.getvalue())
+        diag = json.loads(buf.getvalue().strip().splitlines()[-1])
+        self.assertEqual(diag["selector_view_tick_refused"], "INCOMPLETE_UNIVERSE")
+        self.assertEqual(diag["omitted_per_bucket"], {"tradable_now": 1, "watchlist": 1})
+        self.assertEqual(diag["would_have_recorded"], 0)
+        self.assertEqual(sorted(diag["reason_codes"]), [
+            "SELECTOR_VIEW_ROW_MALFORMED:tradable_now",
+            "SELECTOR_VIEW_ROW_NOT_OBJECT:watchlist",
+        ])
+        # and the artifact itself carries the refusal, not a partial universe
+        self.assertEqual(len(records), 1)
+        self.assertEqual(records[0]["decision"], "BLOCKED_MALFORMED_RESPONSE")
 
     def test_round4_timeless_timestamps_are_invalid(self) -> None:
         for bad in ("2026-06-13", "2026-06-13+00:00", "2026-06-13:05:29:57"):

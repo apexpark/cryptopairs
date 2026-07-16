@@ -127,3 +127,114 @@ paths. It confirmed no remaining crash or invalid-JSON path, and surfaced:
 Every finding has a regression test. The fail-closed review checklist for
 capture tools now mandates an exhaustive per-schema-field trace across all
 record-building paths before first external review.
+
+## Codex Tier 3 review round at `93efb4d` (post-merge-repair) — FINDINGS
+
+Codex reviewed the conflict-repaired head `93efb4d1bdc87c88467182a03fcaad29d681b06a`
+and returned FINDINGS. All four are repaired below; the prior verdict is void.
+
+### F1 — incomplete ticks were silently under-recorded (fail-closed gap)
+
+`selector_view_records` dropped a non-object row, an identity-invalid row, or
+an unfaithfully-transcribable row and **emitted the remaining rows anyway**. Two
+of those three paths did not even increment the omission counter, so they left
+no trace at all; the third produced only a stderr line. The JSONL artifact —
+the sole B2-c input — carried no signal, so B2-c could not distinguish a
+complete universe from a silently shrunken one. A shrunken universe reads
+downstream as false churn, and an under-recorded bucket as false stability:
+exactly the measurement B2-b exists to make trustworthy.
+
+**Repair — refuse the whole tick** (the finding's first branch), chosen over a
+completeness marker because:
+- it matches the fail-closed posture already in this function (a missing or
+  non-list bucket already refuses the whole tick);
+- it needs no contract change — B2-a's v2 contracts are merged and binding, and
+  a marker "B2-c is explicitly required to reject" would need both a schema
+  change and a downstream obligation that does not yet exist;
+- it makes the guarantee unconditional and self-enforcing: any selector row
+  present in the artifact belongs to a complete, faithfully-transcribed tick.
+
+Any returned candidate that is not an object, fails identity, or raises
+`_SelectorViewRowMalformed` now refuses the tick with a single
+`BLOCKED_MALFORMED_RESPONSE` record and **no** selector rows. Reason codes are
+bounded (3 causes x 3 buckets = 9 max) and never interpolate row-supplied
+values such as `pair_id`. An empty bucket remains complete and valid — only
+candidates the endpoint actually returned can make a tick incomplete.
+
+Accepted trade-off: a persistently malformed upstream row refuses every tick.
+That is the correct fail-closed direction and is loudly visible (per-tick
+`INCOMPLETE_UNIVERSE` stderr diagnostic with per-bucket counts, plus a refusal
+record per tick), rather than silently banking a corrupt churn baseline for 72h.
+The runbook now tells the Operator to grep for it and escalate.
+
+### F2 — unbounded selector-view loop could be started
+
+`AUTOPILOT_OBSERVE_MAX_RUNTIME_SECONDS` was optional, so `--loop` +
+`--capture-selector-view` with no bound ran forever: an unattended loop
+(Autonomy Doctrine) capturing the whole universe every tick (unbounded disk).
+**Repair:** selector-view loop startup is refused unless a positive bound is
+configured — `SELECTOR_VIEW_LOOP_REQUIRES_MAX_RUNTIME`, exit 2, before any
+network client is constructed. Placed after the disabled-default early return
+so the disabled probe stays byte-identical, and scoped to selector-view loops
+so the narrow paper-feeding loop's operator-authorized behaviour is unchanged.
+A `--once` selector-view run is bounded by construction and exempt.
+
+### F3 — no selector-view stop procedure
+
+The selector-view run writes its own `autopilot_observe_selector_view.pid`, but
+the runbook's only stop procedure used the narrow run's `autopilot_observe.pid`
+— an operator stopping early had no exact procedure and could signal the wrong
+process. **Repair:** a dedicated "Stop the selector-view run" section that
+identifies the correct PID file, verifies the PID really is the selector-view
+capture via `ps` before signalling, uses SIGTERM (letting the in-flight tick
+finish its write), verifies the stop, and escalates before any `kill -9`
+(a hard kill mid-append can truncate the final JSONL record).
+
+### F4 — PR description and evidence refreshed
+
+Refreshed to the exact repaired head with the actual verification counts below.
+
+### Multi-angle inner review of these repairs
+
+- **Completeness (adversarial):** traced every path by which a selector row can
+  fail to reach the artifact. Three row-level causes → all now refuse. Verified
+  no *other* silent-drop path survives: `apply_persisted_duplicate_blocks` only
+  relabels `OBSERVED_ENTRY_CANDIDATE` records (never drops, never matches
+  `SELECTOR_VIEW_OBSERVED`), and `existing_observed_candidate_keys` only
+  collects entry keys — so selector rows never dedupe away.
+- **Exception surface:** confirmed every strict helper raises only
+  `_SelectorViewRowMalformed` (`_finite_number` preserves ints so no
+  `OverflowError`; `selector_view_observe_key` is total), so no exception
+  escapes to crash a tick instead of refusing it. `row["pair_id"]` /
+  `row["selected_variant"]` direct access stays safe because
+  `candidate_identity_reason` gates it — and now refuses rather than skips.
+- **Blast radius:** guard is scoped to `loop and capture_selector_view`;
+  disabled-probe byte-identity and the narrow entry path are regression-tested.
+- **Cardinality / injection:** refusal reason codes and the stderr diagnostic
+  are built only from the `CUE_BUCKETS` constant and fixed cause strings; a
+  regression test asserts no row-supplied `pair_id` reaches either.
+- **Contract:** the refusal reuses the existing `BLOCKED_MALFORMED_RESPONSE`
+  system record; no schema change. Refusal records are schema-validated in test.
+- **Test-honesty finding (self-caught):** the pre-existing happy-path test
+  `test_selector_view_mode_captures_all_buckets_and_is_schema_valid` had a
+  `"not-an-object"` row baked into its `excluded` bucket and asserted the other
+  three rows were still emitted — i.e. the test *enshrined* the F1 bug as
+  intended behaviour. It now uses an all-valid response; the non-object case is
+  covered by a dedicated refusal test.
+
+### Verification (actual counts at this head)
+
+- `tests.test_autopilot_observe` + `tests.test_autopilot_observe_contract` +
+  `tests.test_autopilot_observe_report`: **Ran 54 tests — OK** (was 46 before
+  this round; 8 net new). Includes jsonschema validation of both selector-view
+  rows and the refusal records.
+- Regression tests added this round: whole-tick refusal on malformed rows;
+  refusal on non-object and identity-invalid rows (6 sub-cases); bounded/deduped
+  reason codes with no `pair_id` leakage; empty buckets are complete (no false
+  refusal); strict transcription preserves valid rows incl. exact 400-digit int;
+  stderr refusal diagnostic with per-bucket counts; max-runtime guard rejects
+  absent/empty/zero/negative (4 sub-cases); bounded loop still starts; guard does
+  not affect narrow loop or `--once`; disabled probe unaffected by the guard.
+- No Rust surface touched; GitHub Actions `ci.yml` on `claude/**` is the
+  canonical Rust gate.
+- No host action, deploy, capture, or merge performed by this session.

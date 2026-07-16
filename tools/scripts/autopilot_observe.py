@@ -987,23 +987,31 @@ def selector_view_records(
     """Emit one selector-view row per candidate across all cue buckets.
 
     These are observations of the champion/challenger selector's stated view,
-    never entry candidates and never outcomes. Fail-closed to omission: a row
-    that is not an object, fails identity, or cannot be faithfully recorded
-    (any wrong-typed, non-finite, or overflowing field) is omitted — no
-    partial, coerced, or fabricated record is written.
+    never entry candidates and never outcomes. Nothing is coerced or fabricated.
 
-    A whole tick is refused (a single system record, no selector rows) when
-    the source is degraded or the view cannot be trusted as current — mirroring
-    the entry path's fail-closed posture so a stale or degraded cue response is
-    never recorded as a fresh, trustworthy observation (which would pollute
-    churn/stability as false stability):
+    Completeness is all-or-nothing: a tick either records every candidate the
+    endpoint returned, or records no selector rows at all. A whole tick is
+    refused (a single system record, no selector rows) whenever the view cannot
+    be trusted as current *or complete* — mirroring the entry path's fail-closed
+    posture so a stale, degraded, or partial cue response is never recorded as a
+    fresh, trustworthy observation (a silently shrunken universe reads
+    downstream as false churn, and a silently under-recorded bucket reads as
+    false stability):
       - degraded source health / another read-only fetch failed → the same
         ``source_reasons`` the entry path computes → ``BLOCKED_SOURCE_UNAVAILABLE``;
       - invalid/stale/future ``generated_at`` (outside ±``max_signal_age_seconds``)
         → ``BLOCKED_STALE_INPUT`` / ``BLOCKED_MALFORMED_RESPONSE``;
       - ANY of the three cue buckets absent or not-a-list → the whole tick is
         refused with a single ``BLOCKED_MALFORMED_RESPONSE`` and NO selector
-        rows, so a partial universe can never be mistaken for real churn.
+        rows, so a partial universe can never be mistaken for real churn;
+      - ANY returned candidate that is not an object, fails identity, or cannot
+        be faithfully transcribed (wrong-typed, non-finite, or overflowing
+        field) → the whole tick is refused with ``BLOCKED_MALFORMED_RESPONSE``
+        and bounded ``SELECTOR_VIEW_ROW_{NOT_OBJECT,IDENTITY_INVALID,MALFORMED}
+        :<bucket>`` reason codes. Such a row is never dropped while its
+        neighbours are emitted, so B2-c cannot mistake an incomplete tick for a
+        complete one. An empty bucket is complete and valid; only candidates the
+        endpoint actually returned can make a tick incomplete.
     """
 
     def refuse(decision: str, reasons: list[str]) -> list[dict[str, Any]]:
@@ -1042,15 +1050,27 @@ def selector_view_records(
 
     source_generated = source_generated_at(trade_now)
     records: list[dict[str, Any]] = []
+    # Whole-tick completeness accounting. A candidate the endpoint returned but
+    # that cannot be faithfully transcribed makes the universe partial, exactly
+    # like a missing bucket above, so it refuses the tick rather than silently
+    # shrinking the recorded universe. Reason codes stay bounded (3 causes x 3
+    # buckets = 9 max) and never interpolate row-supplied values such as
+    # pair_id, which would be unbounded and attacker-influenced.
+    incomplete_reasons: set[str] = set()
+    omitted_per_bucket: dict[str, int] = {}
+
+    def omit(endpoint_key: str, cause: str) -> None:
+        incomplete_reasons.add(f"SELECTOR_VIEW_ROW_{cause}:{endpoint_key}")
+        omitted_per_bucket[endpoint_key] = omitted_per_bucket.get(endpoint_key, 0) + 1
+
     for endpoint_key, cue_bucket in CUE_BUCKETS:
-        seen = 0
-        recorded = 0
         for row in trade_now[endpoint_key]:  # each bucket validated as a list above
             if not isinstance(row, dict):
+                omit(endpoint_key, "NOT_OBJECT")
                 continue
             if candidate_identity_reason(row) is not None:
+                omit(endpoint_key, "IDENTITY_INVALID")
                 continue
-            seen += 1
             try:
                 records.append(
                     selector_view_record(
@@ -1060,27 +1080,29 @@ def selector_view_records(
                         source_generated=source_generated,
                     )
                 )
-                recorded += 1
             except _SelectorViewRowMalformed:
+                omit(endpoint_key, "MALFORMED")
                 continue
-        # Observability: if any identity-valid row was omitted as malformed,
-        # surface it so a silently under-recorded bucket (e.g. all EXCLUDED
-        # rows dropped) is visible in the capture log rather than looking like
-        # a genuinely empty bucket. Never touches the JSONL artifact.
-        if seen > recorded:
-            print(
-                json.dumps(
-                    {
-                        "observed_at": iso(observed_at),
-                        "selector_view_omitted_malformed": seen - recorded,
-                        "cue_bucket": cue_bucket,
-                        "seen": seen,
-                        "recorded": recorded,
-                    },
-                    sort_keys=True,
-                ),
-                file=sys.stderr,
-            )
+
+    if incomplete_reasons:
+        # Diagnostic first (per-bucket counts are useful for locating the bad
+        # rows), then refuse the whole tick. The JSONL artifact carries the
+        # refusal, so an incomplete universe can never reach B2-c as if it were
+        # a complete one — no partial tick is ever emitted alongside good rows.
+        print(
+            json.dumps(
+                {
+                    "observed_at": iso(observed_at),
+                    "selector_view_tick_refused": "INCOMPLETE_UNIVERSE",
+                    "omitted_per_bucket": omitted_per_bucket,
+                    "would_have_recorded": len(records),
+                    "reason_codes": sorted(incomplete_reasons),
+                },
+                sort_keys=True,
+            ),
+            file=sys.stderr,
+        )
+        return refuse("BLOCKED_MALFORMED_RESPONSE", sorted(incomplete_reasons))
     return records
 
 
@@ -1172,10 +1194,10 @@ def run_once(
         # single-purpose artifact and does not double the record volume with
         # uniformly-blocked entry rows. Fail-closed: the source-unavailable
         # system record above already fired if trade_now was absent; here
-        # trade_now is a dict here; selector_view_records applies the same
-        # source-health and staleness gates the entry path uses (refusing the
-        # tick when degraded/stale so nothing is recorded as a fresh view),
-        # then fails closed to omission per malformed row.
+        # trade_now is a dict, and selector_view_records applies the same
+        # source-health and staleness gates the entry path uses, then refuses
+        # the whole tick — recording no selector rows at all — if the view is
+        # degraded, stale, or incomplete in any way.
         return selector_view_records(
             config=config,
             trade_now=trade_now,
@@ -1383,6 +1405,32 @@ def main(argv: list[str] | None = None) -> int:
             )
         )
         return 0
+
+    # A selector-view loop captures the whole universe every tick, so an
+    # unbounded one is both an unattended loop and unbounded disk growth.
+    # Refuse startup unless a positive runtime bound is configured. Placed
+    # after the disabled-default early return above so the disabled probe stays
+    # byte-identical, and scoped to selector-view loops so the narrow
+    # paper-feeding loop's existing operator-authorized behaviour is unchanged.
+    # A one-shot (--once) selector-view run is inherently bounded and exempt.
+    if config.loop and config.capture_selector_view:
+        if config.max_runtime_seconds is None or config.max_runtime_seconds <= 0:
+            print(
+                json.dumps(
+                    {
+                        "error": "SELECTOR_VIEW_LOOP_REQUIRES_MAX_RUNTIME",
+                        "detail": (
+                            "AUTOPILOT_OBSERVE_MAX_RUNTIME_SECONDS (or "
+                            "--max-runtime-seconds) must be a positive integer "
+                            "to start a selector-view loop."
+                        ),
+                        "max_runtime_seconds": config.max_runtime_seconds,
+                    },
+                    sort_keys=True,
+                ),
+                file=sys.stderr,
+            )
+            return 2
 
     seen_keys: set[str] = set()
     client = JsonGetClient()

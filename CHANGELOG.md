@@ -23,11 +23,17 @@ This project follows SemVer as defined in `docs/02-versioning-and-releases.md`.
   path, entry-candidate behaviour byte-identical when disabled. Adds a
   `MAX_RUNTIME_SECONDS` loop bound, a per-tick selector-view row count,
   and a runbook section with a required read-only disk estimate before any
-  capture starts. Capture is strictly fail-closed: it refuses a whole tick
-  on a degraded source, a stale/future/invalid cue timestamp, or any
-  missing/non-list bucket (no partial universe), omits any malformed row
-  without fabricating values, and rejects non-finite numbers at the source
-  so no record can serialize invalid JSON.
+  capture starts. Capture is strictly fail-closed and all-or-nothing: it
+  refuses a whole tick on a degraded source, a stale/future/invalid cue
+  timestamp, any missing/non-list bucket, or any returned candidate that is
+  not an object, fails identity, or cannot be faithfully transcribed — so a
+  partial universe is never recorded alongside good rows (it would read
+  downstream as false churn). Refusals carry bounded
+  `SELECTOR_VIEW_ROW_*:<bucket>` reason codes. Non-finite numbers are
+  rejected at the source so no record can serialize invalid JSON. A
+  selector-view loop refuses to start without a positive
+  `MAX_RUNTIME_SECONDS`, and the runbook carries an exact selector-view stop
+  procedure keyed to its own PID file.
 - AUTO-2B.2 B2-a contracts: `autopilot_observe_record` version 2 splits
   into entry rows (version-1 shape unchanged) and selector-view rows
   (`SELECTOR_VIEW_OBSERVED`, cue bucket + selector-stated fields, no

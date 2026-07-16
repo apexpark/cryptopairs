@@ -187,6 +187,11 @@ logs a `selector_view_records` count so growth is visible. No allowlist and
 no quality windows are needed — selector-view capture bypasses the
 entry-candidate gates entirely and drives no eligibility or execution path.
 
+`AUTOPILOT_OBSERVE_MAX_RUNTIME_SECONDS` is **mandatory and must be a positive
+integer** for a selector-view loop: the tool refuses to start
+(`SELECTOR_VIEW_LOOP_REQUIRES_MAX_RUNTIME`, exit 2) if it is missing, zero, or
+negative, so an unbounded wide capture cannot be started by accident.
+
 ### Monitor
 
 ```bash
@@ -194,6 +199,49 @@ tail -n 20 "$SV_ROOT/autopilot_observe_selector_view.log"
 find "$SV_ROOT/records" -name 'autopilot_observe_*.jsonl' -exec wc -l {} \;
 du -sh "$SV_ROOT"
 ```
+
+If a tick logs `"selector_view_tick_refused": "INCOMPLETE_UNIVERSE"`, the cue
+endpoint returned a candidate that could not be faithfully transcribed. That
+tick is recorded as a single `BLOCKED_MALFORMED_RESPONSE` record and emits **no**
+selector rows — by design, so a partial universe never reaches B2-c. Repeated
+refusals mean the source needs fixing; capture, do not ignore them:
+
+```bash
+grep -c 'INCOMPLETE_UNIVERSE' "$SV_ROOT/autopilot_observe_selector_view.log" || true
+grep 'INCOMPLETE_UNIVERSE' "$SV_ROOT/autopilot_observe_selector_view.log" | tail -n 5
+```
+
+### Stop the selector-view run
+
+The selector-view run has its **own** PID file
+(`autopilot_observe_selector_view.pid`), separate from the narrow
+paper-feeding run's `$RUN_ROOT/autopilot_observe.pid`. Stop only the
+selector-view loop; do not touch the narrow run.
+
+The loop normally exits on its own at `MAX_RUNTIME_SECONDS`. To stop it early,
+or to confirm it has ended:
+
+```bash
+SV_PID="$(cat "$SV_ROOT/autopilot_observe_selector_view.pid")"
+
+# Confirm the PID is this selector-view capture before signalling anything.
+ps -o pid=,command= -p "$SV_PID" | grep 'autopilot_observe.py' || \
+  echo "PID $SV_PID is not the selector-view capture — STOP, do not kill it."
+```
+
+If, and only if, the `ps` line above shows `autopilot_observe.py`:
+
+```bash
+kill "$SV_PID"          # SIGTERM; lets the current tick finish its write
+sleep 5
+ps -p "$SV_PID" > /dev/null && echo "still running" || echo "stopped"
+tail -n 20 "$SV_ROOT/autopilot_observe_selector_view.log"
+```
+
+If it is still running after ~30s, escalate to the Operator before using
+`kill -9` — a hard kill during a JSONL append can truncate the final record.
+The capture is append-only and observation-only, so a stopped run loses no
+committed evidence: every completed tick is already durable on disk.
 
 ## Capture Attribution Inputs
 
