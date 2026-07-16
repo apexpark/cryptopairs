@@ -20,7 +20,8 @@ This project follows SemVer as defined in `docs/02-versioning-and-releases.md`.
   that records the cue endpoint's full view across all three buckets
   (`tradable_now`/`watchlist`/`excluded`) as observation-only v2
   selector-view rows — no outcome fields, no eligibility or execution
-  path, entry-candidate behaviour byte-identical when disabled. Adds a
+  path, entry-candidate behaviour unchanged when disabled **on well-formed
+  input** (see the byte-identical scope note below). Adds a
   `MAX_RUNTIME_SECONDS` loop bound, a per-tick selector-view row count,
   and a runbook section with a required read-only disk estimate before any
   capture starts. Capture is strictly fail-closed and all-or-nothing: it
@@ -47,10 +48,21 @@ This project follows SemVer as defined in `docs/02-versioning-and-releases.md`.
   in-flight tick finishes nor that every stop while polling abandons one. Cue
   timestamps are normalized to RFC 3339 on the selector-view path, so a
   parseable-but-not-RFC-3339 `generated_at` (naive, ISO basic, one-digit
-  fraction) can no longer produce a manifest that violates its own contract. The
-  narrow paper-feeding loop is untouched
-  and keeps its default signal disposition (extending the graceful stop to it is
-  a tracked follow-up). A new read-only `--verify-selector-view-pid` probe
+  fraction) can no longer produce a manifest that violates its own contract.
+  **Byte-identical scope (narrow paper-feeding run, capture flag false).** Round
+  7 restored this run's *stop* behaviour to pre-slice: it installs no signal
+  handler, keeps SIGTERM's default disposition, and sleeps once per interval
+  rather than in polling slices. Its emission is unchanged on well-formed input.
+  It is **not** byte-identical on malformed input: the slice's fail-closed
+  hardening also lands on this path, so a non-ISO `generated_at`, a NaN
+  `spread_z`, a negative `learning_overlay_age_seconds`, or an out-of-enum
+  `dispatch_mode` now record `null` instead of passing through, and a float such
+  as `"rows": 5.0` in `AUTOPILOT_OBSERVE_QUALITY_WINDOWS_JSON` now fails at
+  startup instead of loading. Those changes are **open under follow-up OBS-2**
+  pending an Operator scope decision and are deliberately neither ratified nor
+  reverted here — reverting them would weaken a fail-closed property. Extending
+  the graceful stop to this loop is tracked separately as OBS-1. A new read-only
+  `--verify-selector-view-pid` probe
   confirms a PID really is the selector-view capture — not the
   identically-invoked narrow paper-feeding run — before the operator signals it,
   failing closed on a stale or non-matching PID.
