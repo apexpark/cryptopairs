@@ -222,25 +222,212 @@ Refreshed to the exact repaired head with the actual verification counts below.
   intended behaviour. It now uses an all-valid response; the non-object case is
   covered by a dedicated refusal test.
 
-### Verification (actual counts at this head)
+### Verification — superseded, see "Round 6" below
+
+The counts previously recorded in this section (**180**) were measured in a
+dirty working tree and are wrong for the pushed commit. Corrected in the round-6
+section below; retained here only so the error is legible rather than silently
+rewritten.
+
+- Runner caveat (still accurate, worth keeping): a plain `python3 -m unittest`
+  run under-reports, because its loader collects `TestCase` methods but not
+  module-level `def test_*` functions. Separately, plain `unittest`/`pytest`
+  invocations from this Mac fail or mis-resolve
+  `from tests.test_autopilot_observe import ...` because Anaconda ships a real
+  `tests` package in site-packages that shadows the local namespace dir;
+  `--import-mode=importlib` (as in the canonical command) resolves it. The stale
+  "143" in the PR description dated from head `b517510`, before rounds 2-5 added
+  tests.
+
+## Round 6 — Codex exact-SHA review of `4d14612` (3 findings, all repaired)
+
+### F1 — an empty-but-captured tick was indistinguishable from a missed tick
+
+Confirmed by reading and by test: with all three buckets present but empty,
+every guard in `selector_view_records` passes, the row loop never executes, and
+the function returns `[]` — zero records written. On disk that is identical to a
+tick that never ran. The pre-existing test
+`test_selector_view_empty_buckets_are_complete_not_incomplete` asserted exactly
+this (`assertEqual(records, [])`), so it had **enshrined the defect** — the
+second time this slice a test encoded the bug as intended behaviour.
+
+**Decision — represent, do not fail closed.** An empty universe is a legitimate
+selector state (every pair filtered out), and "the selector saw nothing" is real
+information for B2-c's churn measurement. Failing closed would discard a valid
+observation *and* would still not distinguish it from a malformed response.
+So: a versioned per-tick completeness record. Each captured tick now leads with a
+`selector_view_tick` manifest (`decision: SELECTOR_VIEW_TICK_CAPTURED`) stating
+`recorded_rows` and `rows_per_bucket`. Manifest present = captured; absent =
+missing. A refused tick emits only its `BLOCKED_*` record and no manifest, so
+captured and refused stay mutually exclusive.
+
+Manifest-first ordering is deliberate: it accounts for every row that follows, so
+a truncated tail (a `kill -9` mid-append) is detectable as a shortfall against
+the stated counts rather than reading as a genuinely smaller universe — which
+also closes the artifact-integrity half of F2.
+
+**Regression test, proven to fail pre-fix:**
+`test_artifact_distinguishes_empty_captured_tick_from_missing_tick` drives the
+real writer and reads the JSONL back through a B2-c-style reader over three
+ticks — empty-captured, populated, and never-run. Against the pre-fix code it
+fails with `AssertionError: '2026-06-13T05:30:00Z' not found in {...}` — the
+empty tick is simply absent, which is the finding. It passes after.
+`test_refused_tick_emits_no_manifest_so_it_never_reads_as_captured` pins the
+mutual exclusion.
+
+### F2 — the stop procedure could identify neither the run nor stop it gracefully
+
+Both parts confirmed, and the identity half is worse than the finding states.
+Both the narrow paper-feeding run and the selector-view run were launched as
+`python3 tools/scripts/autopilot_observe.py` with *all* differing configuration
+supplied by the environment (`AUTOPILOT_OBSERVE_CAPTURE_SELECTOR_VIEW=true`).
+`ps` shows argv, not the environment — so the two runs' command lines were
+**byte-identical** and the runbook's `grep 'autopilot_observe.py'` guard could
+not distinguish them *even in principle*. A stale selector-view PID file whose
+PID had been reused by the narrow run would pass the guard and stop the wrong
+capture.
+
+- **Identity:** the runbook now starts the selector run with the explicit
+  `--capture-selector-view` flag, putting a distinguishing token in the
+  process's own argv, and gates the kill on a new read-only
+  `--verify-selector-view-pid PID` probe. The probe reads the PID's command line
+  and confirms the flag; it signals nothing. It fails closed: `NO_SUCH_PROCESS`
+  (stale PID file) and `NOT_SELECTOR_VIEW_CAPTURE` both exit 2 = do not signal.
+  `selector_view_command_matches` is token-exact via `shlex` and requires the
+  script to be the program actually run (directly, or as a python interpreter's
+  argument) — an inner-review case caught that an earlier draft matched
+  `grep --capture-selector-view autopilot_observe.py`, a false positive that
+  would have gated a kill on an unrelated process.
+- **Graceful stop:** the runbook's claim that SIGTERM "lets the current tick
+  finish its write" was false — the tool had no handler, so the default
+  disposition terminated it outright. Demonstrated in an isolated subprocess:
+  with the handler suppressed, a SIGTERM delivered mid-`write_records` kills the
+  process (**exit 143**) and the tick is lost entirely — no file, no output.
+  With the handler, **exit 0** and the complete tick (manifest + row) on disk.
+  `StopSignal` now handles SIGTERM/SIGINT by setting a flag, so the signal is
+  delivered between bytecodes, the append completes, the file closes, and the
+  loop exits at its next checkpoint logging `"status": "stopped_by_signal"`.
+- **Sleep responsiveness:** PEP 475 resumes an interrupted `time.sleep` for its
+  full remaining duration, so a flag alone would have left a stop unnoticed for
+  up to a whole interval (300s in the runbook). `sleep_until_interval_or_stop`
+  polls the flag in short slices. The loop tail was restructured to a single
+  stop-exit point so a stop arriving during either the tick or the sleep never
+  starts one more tick.
+
+Tests: `..._command_identity_is_exact_not_any_observe_process` (9 sub-cases,
+including the narrow run, lookalike flags, and an unparseable command line),
+`..._verify_selector_view_pid_refuses_wrong_or_stale_pid` (3 sub-cases),
+`..._verify_selector_view_pid_signals_nothing_and_ignores_env`,
+`test_sigterm_lets_the_in_flight_tick_finish_its_append` (delivers a real
+SIGTERM from inside `write_records`), `..._sigterm_during_sleep_stops_without_
+waiting_out_the_interval`, `test_stop_signal_records_only_the_first_request`.
+
+### F3 — verification totals were measured in a dirty tree
+
+Confirmed and root-caused. The recorded **180** was measured in a working tree
+carrying macOS duplicate files; `tools/scripts/tests/test_strategy_tuning_scripts 2.py`
+is untracked and contributes exactly **11** tests. `180 − 11 = 169`, matching the
+finding precisely. All counts below are now measured in a **clean detached
+worktree of the pushed commit** (`git worktree add --detach`, `git status
+--porcelain` empty), not the working tree.
+
+### Multi-angle inner review of the round-6 repairs
+
+Four independent read-only angles over the staged diff; everything they raised is
+fixed in the pushed commit.
+
+- **Fail-closed correctness (adversarial, fuzzed):** traced every return path of
+  `selector_view_records` and fuzzed it with 5,000 randomized cue payloads
+  (missing/non-list buckets, non-object rows, bad identity, NaN, string-as-bool,
+  null `rationale_codes`, invalid/stale/future timestamps, with and without
+  `source_reasons`) asserting that a refused tick never carries a manifest, a
+  captured tick always does, and `sum(rows_per_bucket) == len(rows)` with the
+  per-bucket counts matching a `Counter` over emitted rows. Zero violations. The
+  `rows_per_bucket` increment sits *after* the successful `append`, so a row that
+  raises is neither appended nor counted.
+- **Contract:** all three `oneOf` branches carry disjoint `required` sets with
+  `additionalProperties: false`, so every record the tool emits matches exactly
+  one branch — verified by validating tool-generated entry rows, selector rows,
+  refusal records, and manifests (empty and populated) against the schema.
+- **Doc accuracy (the class of defect that caused F2):** the runbook's start →
+  verify → stop procedure was executed verbatim against the real script, and the
+  greps were run against real serialized output. Three defects found and fixed:
+  (1) a "72h cap" claim the tool does not enforce — it requires only a *positive*
+  bound and clamps nothing, so the sentence now says the window is this command's
+  choice, not a tool-enforced ceiling; (2) `grep -c` over the day-sharded glob
+  printed a count *per file* rather than the stated total (records shard one file
+  per calendar day, so any multi-day run always trips this) — now `grep -hc … |
+  paste -sd+ - | bc`, verified to report 3 across two day-files where the old
+  form printed `2` and `1`; (3) a cross-reference pointing "below" at a section
+  that is above it. Fixing (1) mattered on principle: this slice exists precisely
+  because a runbook asserted a safety property the code did not implement.
+- **Self-caught during implementation:** an earlier draft of the identity
+  predicate matched any command *containing* both tokens, so
+  `grep --capture-selector-view autopilot_observe.py` returned True — a false
+  positive on a predicate that gates a kill. It now requires the script to be the
+  program actually run (directly, or as a python interpreter's argument).
+
+#### Two defects the inner review found in the round-6 repair itself
+
+Both were in the F2 fix, and both are recorded because the first draft of a fix
+for "the runbook claims something the code doesn't do" itself shipped a runbook
+claim the code didn't do.
+
+- **Stop latency was bounded by network I/O, not by the append it protects.**
+  A tick makes seven sequential fetches, each able to burn the full timeout
+  against an unresponsive endpoint, and the flag was only read after the whole
+  tick. Measured against blackholed endpoints: **68.1s** from SIGTERM to exit at
+  the default 10s timeout (35s at 5s) — past the runbook's own ~30s escalation
+  gate, in exactly the degraded case where an operator most wants to stop, so
+  the documented procedure walked them toward the `kill -9` the handler exists
+  to avoid. The truncation window actually being closed is the append itself
+  (sub-millisecond), so waiting out fetches bought nothing. Fixed by checking
+  the flag at each fetch boundary and **abandoning** the tick: nothing is
+  written until a tick completes, so an abandoned tick records no partial view
+  and reads downstream as the missing tick it is (`"status":
+  "tick_abandoned_on_stop"`). Re-measured: **3.0s**, i.e. the in-flight fetch's
+  remainder. The runbook's "a few seconds" claim is replaced by the real bounds,
+  including the slow-drip socket case that genuinely warrants `kill -9`.
+- **Process identity trusted `ps`, which cannot be split back into argv.**
+  `ps -o command=` renders argv space-joined and unquoted, so `shlex.split`
+  cannot recover token boundaries. Demonstrated live: a **narrow** run with no
+  selector-view flag anywhere in its argv, but with the flag text inside an
+  `--output-dir` value, re-split into `[..., '--output-dir', '/tmp/out',
+  '--capture-selector-view']` and was confirmed `SELECTOR_VIEW_CAPTURE`, exit 0
+  — green-lighting the kill of the narrow run, the precise outcome the check
+  exists to prevent. Fixed by reading `/proc/<pid>/cmdline` (NUL-separated →
+  exact argv) on the Linux capture host; where `/proc` is absent the check
+  returns `IDENTITY_NOT_VERIFIABLE` and refuses rather than guessing. Verified:
+  the same exploit now returns `IDENTITY_NOT_VERIFIABLE`, safe_to_signal false.
+- **Also corrected:** `StopSignal.install` no longer re-arms a disposition
+  already `SIG_IGN` (a shell backgrounding the run ignores SIGINT deliberately;
+  re-arming would make it newly killable by a signal its launcher meant it to
+  survive). And the narrow loop *does* now finish its tick on SIGTERM — an
+  improvement, but one an earlier comment glossed as "unchanged"; the comment
+  and the runbook now say so.
+
+### Verification (clean detached checkout of the pushed commit)
 
 Canonical command (from `tools/scripts/`):
 `PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 python3 -m pytest tests/ -q --import-mode=importlib`
 
-- Full `tools/scripts` suite: **180 passed, 6 subtests passed** (0 failures).
+- Full `tools/scripts` suite: **181 passed, 22 subtests passed** (0 failures).
 - Focused observe suites (`test_autopilot_observe.py`, `..._contract.py`,
-  `..._report.py`): **54 passed, 6 subtests** — was 46 before this round
-  (+8 net). Includes jsonschema validation of both selector-view rows and the
-  refusal records.
-- Runner caveat (reconciled, worth recording): a plain `python3 -m unittest`
-  run reports only **136** — its loader collects the 136 `TestCase` methods but
-  not the 44 module-level `def test_*` functions (136 + 44 = 180). pytest's 180
-  is the complete count. Separately, plain `unittest`/`pytest` invocations from
-  this Mac fail or mis-resolve `from tests.test_autopilot_observe import ...`
-  because Anaconda ships a real `tests` package in site-packages that shadows
-  the local namespace dir; `--import-mode=importlib` (as in the canonical
-  command above) resolves it. The stale "143" in the PR description dated from
-  head `b517510`, before rounds 2-5 added tests.
+  `..._report.py`): **66 passed, 22 subtests** — was 54 in the dirty-tree
+  measurement; `test_autopilot_observe.py` alone is **55**.
+- Reconciliation: the pre-repair clean-tree total is **169** (not 180); this
+  round adds **12** tests → **181**, and subtests go 6 → 22 (+16, from the two
+  new sub-case tests). Re-running the same command in the dirty working tree
+  still reports **192** = 181 + the 11 untracked duplicates, which reproduces
+  the F3 error exactly and confirms the diagnosis.
+- All `specs/contracts/*.json` + `specs/examples/*.json` valid (111 files,
+  `python -m json.tool` — the `contracts` CI job's check), in the clean tree.
+- Schema `version` 0.2.0 → 0.3.0 for the added `oneOf` branch; the manifest
+  example and tool-built manifests (empty and populated) are jsonschema-validated
+  in test, which also proves the three `oneOf` branches stay mutually exclusive.
+- No Rust surface touched (no `.rs` / `Cargo*` / `rust-toolchain` in the
+  branch diff).
+- No host action, deploy, capture, or merge performed by this session.
 - Regression tests added this round: whole-tick refusal on malformed rows;
   refusal on non-object and identity-invalid rows (6 sub-cases); bounded/deduped
   reason codes with no `pair_id` leakage; empty buckets are complete (no false

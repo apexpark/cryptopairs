@@ -33,7 +33,16 @@ This project follows SemVer as defined in `docs/02-versioning-and-releases.md`.
   rejected at the source so no record can serialize invalid JSON. A
   selector-view loop refuses to start without a positive
   `MAX_RUNTIME_SECONDS`, and the runbook carries an exact selector-view stop
-  procedure keyed to its own PID file.
+  procedure keyed to its own PID file. Each captured tick is led by a
+  `selector_view_tick` manifest record stating `recorded_rows` and the
+  per-bucket counts that follow, so an empty-but-captured selector universe is
+  distinguishable from a tick that never ran (and a truncated tail from a
+  smaller universe); a refused tick emits no manifest. The tool handles
+  SIGTERM/SIGINT by finishing the in-flight tick before exiting rather than
+  risking a half-written append, and a new read-only
+  `--verify-selector-view-pid` probe confirms a PID really is the selector-view
+  capture — not the identically-invoked narrow paper-feeding run — before the
+  operator signals it, failing closed on a stale or non-matching PID.
 - AUTO-2B.2 B2-a contracts: `autopilot_observe_record` version 2 splits
   into entry rows (version-1 shape unchanged) and selector-view rows
   (`SELECTOR_VIEW_OBSERVED`, cue bucket + selector-stated fields, no
