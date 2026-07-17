@@ -6,7 +6,7 @@ base_branch: main
 working_branch: codex/b2c-selector-view-input
 worker_tier: T1
 required_evidence_level: E3
-status: dispatched
+status: done
 ---
 
 # Work Order
@@ -80,10 +80,10 @@ Out:
 
 1. Complete manifests, including an empty-universe tick, produce schema-valid
    v2 snapshots with deterministic selector-view metrics and universe counts.
-2. Truncated ticks, count mismatches, unmanifested rows, duplicate ticks or
-   duplicate candidates within a tick, invalid identities, non-finite values,
-   and selector rows carrying outcome/PnL/fill fields fail closed without an
-   output artifact.
+2. Truncated or unterminated ticks, count mismatches, unmanifested rows,
+   duplicate ticks or duplicate candidates within a tick, out-of-contract
+   fields, invalid identities, non-finite values, and selector rows carrying
+   outcome/PnL/fill fields fail closed without an output artifact.
 3. `churn.selector_view` compares prominent sets only when both snapshots
    contain selector-view evidence; realized churn remains unchanged.
 4. A targeted E4 regression test proves selector-view aggregates cannot
@@ -105,4 +105,3 @@ Out:
 - Correctness would require capture, host access, a scheduler, deployment,
   secrets, or an unattended loop.
 - Work would enter OBS-1, OBS-3, AUTO-2C, or any file outside the scope above.
-
