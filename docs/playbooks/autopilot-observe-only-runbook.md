@@ -372,16 +372,29 @@ Once the screening checks pass **and the Operator has authorized this specific
 early stop** knowing identity is unverified:
 
 ```bash
-kill "$SV_PID"          # SIGTERM; never leaves a half-written record
+kill "$SV_PID"          # SIGTERM. See below: what this guarantees depends
+                        # entirely on what $SV_PID refers to *now*.
 sleep 5
 ps -p "$SV_PID" > /dev/null && echo "still running" || echo "stopped"
 tail -n 20 "$SV_ROOT/autopilot_observe_selector_view.log"
 ```
 
-The tool handles SIGTERM (and SIGINT) and exits at its next checkpoint, always
-logging `"status": "stopped_by_signal"` last. It does not wait out the remaining
-sleep interval. What happens to the tick in progress depends on where the signal
-lands, and the `detail` in that final log line tells you which case you got:
+**Everything in this section holds only if `$SV_PID` still refers to a
+selector-view capture.** Authorization does not restore identity — it records
+that you accepted an unverified one. If the PID was recycled between the probe
+and the `kill`, the signal landed on whatever holds it now and none of the
+guarantees below apply: the **narrow paper-feeding run** has no signal handler
+(see its own stop section, and OBS-1), so SIGTERM there can truncate its final
+record; any other process does whatever SIGTERM does to it. Your first move after
+signalling is therefore to confirm you hit what you meant to — the log tail in
+the command above is that check, and if it shows no `stopped_by_signal` line from
+*this* run, stop and escalate rather than signalling again.
+
+Assuming the target is this capture: the tool handles SIGTERM (and SIGINT) and
+exits at its next checkpoint, always logging `"status": "stopped_by_signal"`
+last. It does not wait out the remaining sleep interval. What happens to the tick
+in progress depends on where the signal lands, and the `detail` in that final log
+line tells you which case you got:
 
 - **Idle between ticks** (the common case) — nothing is in flight. Detail:
   `stop signal received between ticks; no tick was in flight`.
@@ -397,9 +410,12 @@ lands, and the `detail` in that final log line tells you which case you got:
   abandoning; its append completed`.
 
 So a stop guarantees neither that the in-flight tick finishes nor that it is
-abandoned — which you get depends on timing. What it does guarantee is that no
-tick is ever left half-written: every record on disk is whole, and a stopped run
-ends either with a complete final record or with no record for that tick.
+abandoned — which you get depends on timing. What it does guarantee, **for a
+capture that actually received the signal**, is that no tick is ever left
+half-written: every record on disk is whole, and a stopped run ends either with a
+complete final record or with no record for that tick. That guarantee is a
+property of the capture's signal handler, so it travels with the process, not
+with the PID — it says nothing about a process the signal reached by recycle.
 
 Expected time to exit:
 

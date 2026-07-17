@@ -3,15 +3,17 @@
 Two independent read-only reviewers on commit f4573ec; repairs in the
 follow-up commit. 143 tools/scripts tests green at that commit.
 
-> **Round 11 (current head) is the latest round; totals are unchanged from round
+> **Round 12 (current head) is the latest round; totals are unchanged from round
 > 9**, which supersedes the 143 above and the round-6/7 totals. The authoritative
 > counts are under "Round 9 — Codex exact-SHA review of `f9b3e63`" →
-> "Verification" (rounds 10 and 11 are documentation-only and change no count).
-> Four earlier claims are **withdrawn**: that the probe establishes process
-> *identity* — it establishes *kind* only, per OBS-3 (round 10); that any
+> "Verification" (rounds 10, 11 and 12 are documentation-only and change no
+> count). Five earlier claims are **withdrawn**: that the probe establishes
+> process *identity* — it establishes *kind* only, per OBS-3 (round 10); that any
 > procedural rule in the runbook closes the resulting gap — a sequential PID
 > recycle defeats them all, so an early stop needs Operator authorization
-> (round 11); the round-6 claim that
+> (round 11); that verify-then-signal in one process would close it either — that
+> is still TOCTOU on a raw PID, and OBS-3 now requires a pidfd (round 12); the
+> round-6 claim that
 > the narrow paper-feeding loop "does now finish its tick on SIGTERM — an
 > improvement" (an unauthorized scope expansion, reverted in round 7), and every
 > unqualified "byte-identical" statement about the narrow run or the disabled
@@ -929,8 +931,16 @@ pattern repeating anyway, in the surfaces the repair did not audit:
   and `readlink /proc/<pid>/fd/1` are both sound in principle (independently
   confirmed), but performed as an Operator eyeball *between* probe and kill they
   are still TOCTOU-exposed — i.e. not fixes at all. The row now states the binding
-  constraint: whichever candidate wins must run **inside the signalling tool,
-  atomically with the signal**. Two further holes recorded against candidate (b):
+  constraint: whichever candidate wins must run **inside the signalling tool**.
+  (**Corrected in round 12:** that constraint was first written as "atomically
+  with the signal — verify-then-signal in one process", which is itself not
+  atomic. Reading `/proc` and calling `kill(pid)` are separate syscalls and the
+  PID can be recycled between them, so a single process racing on a raw PID
+  reproduces the TOCTOU it was meant to close — the same error one layer deeper,
+  in the very constraint written to prevent it. The requirement is a stable
+  kernel handle: acquire a pidfd, verify, then signal through the pidfd, so a
+  recycle fails `ESRCH` instead of hitting a stranger. Recorded on the OBS-3
+  row.) Two further holes recorded against candidate (b):
   a capture restarted into an existing `$SV_ROOT` resolves to the same log and
   passes for the wrong run, and a rotated/removed log yields a `(deleted)` path
   that must fail closed.
@@ -952,7 +962,91 @@ was caught only because someone swept for the *claim*, not the *citation*.
 
 - Full `tools/scripts` suite: **187 passed, 49 subtests** — unchanged, as a
   documentation round should be.
-- Diff vs `94dec9f` touches no Python, no contract, no test: the runbook, the
-  state file, and this record.
+- Diff vs `94dec9f` changes **five** files: `docs/playbooks/autopilot-observe-only-runbook.md`,
+  `docs/AGENT_STATE.md`, `CHANGELOG.md`, `tools/scripts/autopilot_observe.py`
+  (docstring only) and this record. It touches **no executable Python logic** —
+  the normalized AST is unchanged — and no contract or test file.
+  (**Round-12 correction:** this line originally read "touches no Python … the
+  runbook, the state file, and this record". That was true when written and went
+  stale the moment the round-11 inner review added the docstring and CHANGELOG
+  repairs; it was never re-checked. A verification record that is not re-derived
+  after the last edit is not a verification record.)
+- OBS-2, OBS-3 and CI-1 remain open and unreverted; none is claimed repaired.
+- No host action, deploy, capture, or merge performed.
+
+---
+
+## Round 12 — Codex exact-SHA review of `713536f` (3 P2s, all repaired)
+
+Documentation only. All three findings were correct; the first is the sharpest
+result of this whole sequence.
+
+### P2-1 — "verify-then-signal in one process" is not atomic
+
+Round 11's own OBS-3 constraint — written specifically to stop a racy
+identity check — was itself racy. Reading `/proc` and calling `kill(pid)` are
+separate syscalls; the target can exit and its PID be recycled between them. A
+single process racing on a raw PID reproduces exactly the TOCTOU it was written
+to close. Round 11 rejected the Operator-eyeball check for being TOCTOU-exposed
+and then prescribed a tool-side check with the same defect, one layer down.
+
+**Repair:** the requirement is now a **stable kernel handle, not a PID**. Acquire
+a pidfd (`os.pidfd_open`, Linux 5.3+/Python 3.9+) and signal through it
+(`signal.pidfd_send_signal`, Linux 5.1+/Python 3.9+) — a pidfd refers to one
+specific process and is never recycled, which is the property
+`pidfd_send_signal(2)` exists to provide. **Order is load-bearing and is recorded
+as such:** open the pidfd *first*, then verify, then signal through it, so a
+recycle in any window leaves the pidfd on the original (dead) process and the
+signal fails `ESRCH` — fail closed. Verify-then-open is wrong and must not be
+built: a recycle in *that* window is precisely what gets signalled. Fail closed
+where the APIs are unavailable, matching the existing `IDENTITY_NOT_VERIFIABLE`
+posture. Both APIs confirmed **absent on this macOS host**, so recorded untested,
+like OBS-3's other candidates.
+
+### P2-2 — the kill block's guarantees were unconditional
+
+The runbook admitted the PID may change between probe and signal, then told the
+Operator SIGTERM "never leaves a half-written record" and described the graceful
+stop unconditionally. Authorization does not restore identity — it records that
+the Operator accepted an unverified one. If the PID now belongs to the narrow
+paper-feeding run (no handler, OBS-1) or anything else, none of those guarantees
+hold. **Repair:** the whole section is now explicitly conditional on `$SV_PID`
+still referring to a capture, with the narrow-run consequence named; the guarantee
+is stated as a property of the capture's *handler* — travelling with the process,
+not the PID — and the log tail is framed as the post-signal check that you hit
+what you meant to.
+
+### P2-3 — the verification record was false
+
+It claimed the round-11 delta touched "no Python" and listed three files; the
+delta is five, including `tools/scripts/autopilot_observe.py` and `CHANGELOG.md`.
+The line was true when written and went stale the moment round 11's *own inner
+review* added the docstring and CHANGELOG repairs — and was never re-derived.
+**Repair:** it now says "no executable Python logic" (AST unchanged), lists all
+five files, and carries the correction. The lesson is narrow and worth stating: a
+verification record written before the last edit is not a verification record.
+
+### Pattern note
+
+Five consecutive rounds of the same failure, and round 12 sharpens the diagnosis
+past round 11's. It is not only "fix the class, not the citation" — P2-1 shows the
+fix itself can carry the defect it names, and P2-3 shows the *evidence* can go
+stale under the repair that produced it. Both are the same root: a claim asserted
+at one moment and never re-checked against the artifact as it finally stands. The
+three habits that actually caught things this round were mechanical, not clever:
+re-derive every count and file list *after* the last edit; test the primitive
+before prescribing it (pidfd's absence here is why it is marked untested); and
+grep for the claim across every surface, not the one cited.
+
+### Verification
+
+- Full `tools/scripts` suite: **187 passed, 49 subtests** — unchanged.
+- Diff vs `713536f` changes **three** files, re-derived from `git status` after
+  the last edit rather than asserted from memory:
+  `docs/playbooks/autopilot-observe-only-runbook.md`, `docs/AGENT_STATE.md`, and
+  this record. **No `.py` file is in the delta at all** this round, so the
+  executable-logic question does not arise. (The first draft of this very line
+  said "four files" and then listed three — caught by re-deriving it, which is
+  the whole point of P2-3 above.)
 - OBS-2, OBS-3 and CI-1 remain open and unreverted; none is claimed repaired.
 - No host action, deploy, capture, or merge performed.
