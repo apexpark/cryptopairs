@@ -11,13 +11,12 @@ operating rules; it grants no authority that `AGENTS.md`, `docs/00-guardrails.md
 1. Hydrate per `AGENTS.md` §8.4: `AGENTS.md` → `docs/AGENT_STATE.md` →
    `docs/playbooks/remote-agent-bootstrap.md` → the task brief. Then read
    `.agentic/registers/decisions.md` for standing Operator decisions.
-2. Know your role. Per Operator decision 2026-07-13 (OP-44, effective for
-   slices after AUTO-2B.2 B2-b / PR #252) the Claude session holds the
-   **Independent Reviewer** role: read-only exact-SHA review of protected-path
-   PRs authored by Codex (the Lead Coder + Operator Interface). Never edit,
-   commit, merge, or approve your own work; the reviewing model must differ
-   from the authoring model. (Before OP-44 is operative — including for the
-   in-flight B2-b PR #252 — Claude remains Lead Coder + Operator Interface.)
+2. Know your role. AUTO-2B.2 B2-b / PR #252 completed under the prior roles
+   and merged as `04826d1`, making Operator decision 2026-07-13 (OP-44)
+   operative. The Claude session holds the **Independent Reviewer** role:
+   read-only exact-SHA review of protected-path PRs authored by Codex (the Lead
+   Coder + Operator Interface). Never edit, commit, merge, or approve your own
+   work; the reviewing model must differ from the authoring model.
    See `docs/ops/ai_workflow.md` §Roles and `.agentic/policies/git-github.md`
    §Roles.
 3. Merge authority is tiered — `docs/ops/ai_workflow.md` §Merge Authority
