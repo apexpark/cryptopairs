@@ -6,10 +6,20 @@ base_branch: main
 working_branch: claude/b2b-selector-view-capture
 worker_tier: T1
 required_evidence_level: E3
-status: dispatched
+status: done
 ---
 
 # Work Order
+
+> **Operator amendment — 2026-07-17 (OBS-2, Option 1):** the already-merged
+> fail-closed hardening on the narrow paper-feeding path is ratified. The
+> original byte-identical design decision, acceptance criterion 2, and related
+> stop condition below are superseded only for fail-closed validation of
+> malformed inputs and configuration. They continue to describe the historical
+> scope at dispatch time. Normal-operation behaviour remains unchanged; do not
+> revert the hardening. This amendment grants no authority for OBS-1, OBS-3,
+> B2-c scope expansion, capture, host action, deploy, secret access, live
+> trading, or an unattended loop.
 
 ## Objective
 

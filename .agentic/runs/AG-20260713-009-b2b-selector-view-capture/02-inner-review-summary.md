@@ -1,5 +1,12 @@
 # Inner Review Summary — AG-20260713-009
 
+> **Post-merge Operator ruling — 2026-07-17 (OBS-2, Option 1):** the
+> malformed-input/config divergence described below is ratified as fail-closed
+> hardening. Historical statements that OBS-2 was open remain as the record of
+> each review round and are superseded for current status by this ruling and the
+> append-only decisions register. OBS-1, OBS-3, B2-c scope, capture, host,
+> deploy, secrets, live trading, and unattended loops remain unauthorized.
+
 Two independent read-only reviewers on commit f4573ec; repairs in the
 follow-up commit. 143 tools/scripts tests green at that commit.
 
