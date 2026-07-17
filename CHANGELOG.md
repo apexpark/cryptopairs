@@ -48,7 +48,14 @@ This project follows SemVer as defined in `docs/02-versioning-and-releases.md`.
   in-flight tick finishes nor that every stop while polling abandons one. Cue
   timestamps are normalized to RFC 3339 on the selector-view path, so a
   parseable-but-not-RFC-3339 `generated_at` (naive, ISO basic, one-digit
-  fraction) can no longer produce a manifest that violates its own contract.
+  fraction) can no longer produce a manifest that violates its own contract. The
+  selector-view loop's runtime bound is measured on the **monotonic** clock, not
+  the wall clock: it is the control that keeps a capture from running unattended,
+  so an NTP correction must not be able to stretch it past the authorized window
+  or end it early. `recorded_rows` is documented as a **producer invariant, not
+  schema-enforced** — JSON Schema cannot express a cross-field sum, so a
+  consumer relying on `recorded_rows == sum(rows_per_bucket)` must re-check it;
+  the writer's invariant is pinned by test instead.
   **Byte-identical scope (narrow paper-feeding run, capture flag false).** Round
   7 restored this run's *stop* behaviour to pre-slice: it installs no signal
   handler, keeps SIGTERM's default disposition, and sleeps once per interval
@@ -63,9 +70,11 @@ This project follows SemVer as defined in `docs/02-versioning-and-releases.md`.
   reverted here — reverting them would weaken a fail-closed property. Extending
   the graceful stop to this loop is tracked separately as OBS-1. A new read-only
   `--verify-selector-view-pid` probe
-  confirms a PID really is the selector-view capture — not the
+  confirms a PID really is a selector-view capture — not the
   identically-invoked narrow paper-feeding run — before the operator signals it,
-  failing closed on a stale or non-matching PID.
+  failing closed on a stale or non-matching PID. It establishes the process's
+  *kind*, not its *identity*: the PID file supplies identity, and binding the
+  probe to one specific run is tracked as follow-up OBS-3.
 - Contract: `autopilot_observe_record` schema `version` 0.2.0 → 0.3.0. Additive
   — a third `oneOf` branch for the `selector_view_tick` manifest, with a new
   `specs/examples/autopilot_observe_record.selector_view_tick.example.json`. The

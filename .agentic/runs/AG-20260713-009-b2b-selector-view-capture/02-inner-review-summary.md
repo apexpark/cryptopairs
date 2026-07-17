@@ -3,12 +3,16 @@
 Two independent read-only reviewers on commit f4573ec; repairs in the
 follow-up commit. 143 tools/scripts tests green at that commit.
 
-> **Round 7 (current head) supersedes every earlier total in this file**,
-> including the 143 above and the round-6 totals. The authoritative counts are
-> under "Round 7 — Codex exact-SHA review of `177cd0e`" → "Verification", at the
-> end of this file. The round-6 claim that the narrow paper-feeding loop "does
-> now finish its tick on SIGTERM — an improvement" is **withdrawn**: it was an
-> unauthorized scope expansion, and round 7 reverts it.
+> **Round 9 (current head) supersedes every earlier total in this file**,
+> including the 143 above and the round-6/7 totals. The authoritative counts are
+> under "Round 9 — Codex exact-SHA review of `f9b3e63`" → "Verification", at the
+> end of this file. Two earlier claims are **withdrawn**: the round-6 claim that
+> the narrow paper-feeding loop "does now finish its tick on SIGTERM — an
+> improvement" (an unauthorized scope expansion, reverted in round 7), and every
+> unqualified "byte-identical" statement about the narrow run or the disabled
+> probe (true only on well-formed input; malformed input diverges — open under
+> OBS-2). Individual sections below carry dated round-7/round-9 corrections
+> inline rather than being rewritten.
 
 ## Reviewer A — tool correctness / fail-closed / contract conformance
 
@@ -27,7 +31,9 @@ follow-up commit. 143 tools/scripts tests green at that commit.
   is unchanged.
 - P3: source_generated_at fallback / disabled-default test proxy — noted;
   the disabled-default path is byte-identical (records) and now also
-  summary-identical.
+  summary-identical. (**Round-9 correction:** "byte-identical" is true only on
+  well-formed input. The slice's fail-closed hardening also lands on the narrow
+  path, so malformed input diverges — open under OBS-2.)
 - Verified: max_runtime bound math correct; `--once` unaffected; boundary
   observation-only; scope confined.
 
@@ -181,9 +187,15 @@ The runbook now tells the Operator to grep for it and escalate.
 (Autonomy Doctrine) capturing the whole universe every tick (unbounded disk).
 **Repair:** selector-view loop startup is refused unless a positive bound is
 configured — `SELECTOR_VIEW_LOOP_REQUIRES_MAX_RUNTIME`, exit 2, before any
-network client is constructed. Placed after the disabled-default early return
-so the disabled probe stays byte-identical, and scoped to selector-view loops
-so the narrow paper-feeding loop's operator-authorized behaviour is unchanged.
+network client is constructed. Placed after the disabled-default early return,
+so the guard itself never fires on a disabled probe, and scoped to selector-view
+loops so the narrow paper-feeding loop's operator-authorized behaviour is
+unchanged. (**Round-9 correction:** this originally read "so the disabled probe
+stays byte-identical". That is false and was verified so — `load_config` runs
+*before* the disabled-default early return, so a malformed quality-windows file
+makes even a disabled probe raise where `origin/main` exits 0. The guard's own
+placement is still correct; only the byte-identity claim was wrong. Open under
+OBS-2.)
 A `--once` selector-view run is bounded by construction and exempt.
 
 ### F3 — no selector-view stop procedure
@@ -622,3 +634,123 @@ Canonical command (from `tools/scripts/`):
 - No Rust surface touched (no `.rs` / `Cargo*` / `rust-toolchain` in the branch
   diff), so the Rust preflight is not implicated this round.
 - No host action, deploy, capture, or merge performed by this session.
+
+---
+
+## Round 9 — Codex exact-SHA review of `f9b3e63` (4 P2 findings; 3 repaired, 1 Operator-deferred)
+
+All four reproduced. The Operator scoped the round (2026-07-17): repair 1, 3 and
+4; defer 2 to its own work order.
+
+### P2-1 — the runtime bound was measured on a steerable clock
+
+`main()` computed `elapsed` from `utc_now()` (i.e. `datetime.now()`) while
+`sleep_until_interval_or_stop` already used `time.monotonic()` — two clocks in
+one loop. This bound is the control that keeps a selector-view capture from
+running unattended (Autonomy Doctrine; a selector-view loop refuses to start
+without a positive `MAX_RUNTIME_SECONDS`), so an NTP correction could steer the
+authorized window: a backward step subtracts itself from every later `elapsed`
+and the run keeps capturing far past its window; a forward step ends it early.
+**Fix:** both ends now read `time.monotonic()`, which cannot be stepped.
+
+**Test:** `test_max_runtime_bound_is_immune_to_wall_clock_steps` advances both
+clocks together at 400s/tick and steps only the wall clock. Verified
+adversarially by reverting to wall-clock: the control case still passes while
+both step cases fail (`10 != 1` — a 6.7x overrun of the authorized window — and
+`1 != 5` — an early exit), so the test isolates the clock choice rather than the
+harness, and it is the only test in the suite that does.
+
+### P2-3 — the manifest's count consistency was claimed but unenforced
+
+`recorded_rows`' description asserted it "equals the sum of rows_per_bucket",
+which the schema does not enforce — the same "text claims more than it enforces"
+class as round 7's `run_id` description. The inner review confirmed the gap is
+**unclosable in principle here**: draft 2020-12 has no keyword relating two
+instance locations arithmetically (`multipleOf` compares to a literal; `$data` is
+a non-standard Ajv extension and does substitution, not arithmetic), and the one
+real loophole — enumerating the domain via `anyOf`/`const` — needs a finite
+domain, while `recorded_rows` and each bucket are unbounded (`minimum: 0`, no
+`maximum`). **Fix:** the description now states it as a producer invariant that
+is explicitly NOT schema-enforced and that a consumer must re-check, and the
+enforcement the schema cannot carry moved into a test.
+
+**Test:** `test_manifest_row_count_invariant_holds_and_is_not_schema_enforced`
+first asserts a lying manifest (`recorded_rows: 99` over buckets summing to 3) is
+schema-*valid* — pinning the gap so nobody reverts the description to the false
+claim — then proves the writer upholds the invariant across empty, lopsided and
+populated universes, and end-to-end that the manifest's counts match the rows
+actually emitted after it.
+
+### P2-4 — the byte-identity audit was incomplete
+
+Round 8 was scoped to three surfaces; `.agentic/registers/decisions.md:32` still
+carried "the narrow paper-feeding run (flag default false) is byte-identical".
+**Fix, per the Operator's ruling:** row 32 is left byte-for-byte intact — its
+*decision* (pure observational mode) is still valid and only a factual claim in
+its rationale is wrong — and a dated correction row is **appended**, per the
+register's own "append-only" rule. The diff on that file is one insertion, zero
+deletions. A full sweep also corrected `.agentic/registers/agent-runs.md` and two
+claims in this file.
+
+### P2-2 — deferred by the Operator
+
+The stop probe proves a process's *kind* (it is *a* selector-view capture), not
+its *identity* (it is *the* run you meant to stop). Recorded as **OBS-3** with
+the two candidate designs; the Operator deferred it so the redesign gets its own
+work order rather than being improvised at the end of this PR. Definite-article
+over-claims ("confirms a PID really is **the** selector-view capture") were
+corrected in `CHANGELOG.md` and `docs/AGENT_STATE.md` to match what the probe
+actually establishes.
+
+### Multi-angle inner review of the round-9 repairs
+
+Three independent read-only reviewers (clock correctness; schema contract + test
+rigour; audit completeness + register governance). The schema reviewer found no
+defects and independently confirmed the unenforceability premise. The other two
+found four defects **in the round-9 repairs themselves**, all fixed before push:
+
+- **The sweep that fixed the incompleteness finding was itself incomplete.** It
+  excluded `tools/scripts/tests/` and missed a code comment, leaving the exact
+  claim round 9 declares false alive in `autopilot_observe.py` ("so the disabled
+  probe stays byte-identical") and in its own test. Both corrected; the
+  AGENT_STATE line claiming the audit was "completed" was itself an over-claim
+  and now says what was actually swept.
+- **The recorded counts were wrong** — 186/45 written before the last test was
+  added; the measured clean-tree total is **187/49**. This is the round-6 F3
+  error class exactly, caught pre-push this time.
+- **Two comment-accuracy defects in the new clock test**, and they are the F3
+  sin repeated in the repair for P2-1: the comments said a wall-clock bound
+  "never fires" and "would run forever". False — a one-time step still leaves
+  `elapsed` growing, so the bound fires late (tick 10), and the real defect is a
+  6.7x overrun, not a hang. Reworded to the measured behaviour; the runaway cap
+  is now honestly described as a harness guard, not a modelled scenario.
+- **A non-conforming register status** (`active — superseded by the eventual
+  OBS-2 ruling`) invented a value outside the register's vocabulary and
+  pre-announced a supersession that has not happened. Now plain `active`.
+
+Raised and not actioned: the decisions register has no correction mechanism, so a
+reader of row 32 alone still sees the false claim with status `active` and no
+forward pointer — a register-design gap for the Operator, not a defect in this
+repair. `docs/AGENT_STATE.md:48` has a pre-existing unescaped `|` rendering that
+row as 5 columns (not introduced here, left alone).
+
+### Verification (clean detached checkout of the pushed commit)
+
+Canonical command (from `tools/scripts/`):
+`PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 python3 -m pytest tests/ -q --import-mode=importlib`
+
+- Full `tools/scripts` suite: **187 passed, 49 subtests passed** (0 failures) —
+  185 at round 7 plus round 9's 2 tests.
+- Focused observe suites: **72 passed, 49 subtests**.
+- All `specs/contracts/*.json` + `specs/examples/*.json` valid (**111** files);
+  the observe schema is `check_schema`-valid draft 2020-12, `version` 0.3.0, 3
+  `oneOf` branches, each example matching exactly one.
+- Schema `version` stays **0.3.0**: the only schema edit is a description, so the
+  set of records the contract accepts is unchanged — no wire-visible change to
+  bump for.
+- Narrow paper-feeding run unaffected **by this round's clock change**:
+  `max_runtime_seconds` defaults to `None`, the whole `elapsed` block is skipped
+  there, and the only narrow-path change is a never-read local, so round 9 alters
+  none of its stdout. (This says nothing about the slice's overall byte-identity
+  on that path — that remains open under OBS-2.)
+- No Rust surface touched; no host action, deploy, capture, or merge performed.

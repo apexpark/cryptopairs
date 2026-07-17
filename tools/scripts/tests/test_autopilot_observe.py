@@ -300,6 +300,79 @@ class AutopilotObserveTests(unittest.TestCase):
         self.assertEqual(built["run_id"], built["observed_at"])
         self.assertEqual(built["timeframe"], "1m")
 
+    def test_manifest_row_count_invariant_holds_and_is_not_schema_enforced(self) -> None:
+        """`recorded_rows == sum(rows_per_bucket)` is a producer invariant.
+
+        JSON Schema 2020-12 has no cross-field arithmetic, so the manifest branch
+        cannot express this equality — validation alone will happily accept a
+        manifest claiming 99 rows over buckets summing to 3. The schema
+        description therefore states it as a producer invariant a consumer must
+        re-check, and this test carries the enforcement the schema cannot:
+        first proving the gap is real (so nobody "fixes" the description back),
+        then proving the writer never produces a manifest inside it.
+        """
+        from jsonschema import Draft202012Validator
+
+        repo_root = pathlib.Path(__file__).resolve().parents[3]
+        schema = json.loads(
+            (repo_root / "specs/contracts/autopilot_observe_record.schema.json")
+            .read_text(encoding="utf-8")
+        )
+        validator = Draft202012Validator(
+            schema, format_checker=Draft202012Validator.FORMAT_CHECKER
+        )
+
+        # 1. The gap is real: a lying manifest is schema-valid. This is exactly
+        #    why the description must not claim the schema enforces the sum.
+        liar = json.loads(
+            (repo_root / "specs/examples/autopilot_observe_record.selector_view_tick.example.json")
+            .read_text(encoding="utf-8")
+        )
+        liar["recorded_rows"] = 99  # buckets still sum to 3
+        self.assertEqual(
+            sorted(validator.iter_errors(liar), key=str),
+            [],
+            "schema unexpectedly enforces the sum — update the description, which "
+            "documents it as unenforceable",
+        )
+        self.assertNotEqual(liar["recorded_rows"], sum(liar["rows_per_bucket"].values()))
+
+        # 2. The writer upholds it anyway, across shapes including empty and
+        #    lopsided universes.
+        for rows_per_bucket in (
+            {"TRADE_NOW": 0, "WATCHLIST": 0, "EXCLUDED": 0},
+            {"TRADE_NOW": 1, "WATCHLIST": 0, "EXCLUDED": 0},
+            {"TRADE_NOW": 0, "WATCHLIST": 0, "EXCLUDED": 12},
+            {"TRADE_NOW": 3, "WATCHLIST": 5, "EXCLUDED": 7},
+        ):
+            with self.subTest(rows_per_bucket=rows_per_bucket):
+                built = observe.selector_view_tick_record(
+                    observed_at=OBSERVED_AT,
+                    source_generated="2026-06-13T05:29:57Z",
+                    rows_per_bucket=rows_per_bucket,
+                )
+                self.assertEqual(sorted(validator.iter_errors(built), key=str), [])
+                self.assertEqual(built["recorded_rows"], sum(rows_per_bucket.values()))
+
+        # 3. End-to-end over the real capture path: the manifest's stated counts
+        #    must match the rows actually emitted after it, per bucket and total.
+        records = observe.run_once(
+            config(capture_selector_view=True),
+            client=RecordingGetClient(base_routes()),
+            observed_at=OBSERVED_AT,
+        )
+        manifest = records[0]
+        rows = [r for r in records if r.get("capture_profile") == "selector_view"]
+        self.assertEqual(manifest["capture_profile"], "selector_view_tick")
+        self.assertEqual(manifest["recorded_rows"], len(rows))
+        self.assertEqual(
+            manifest["recorded_rows"], sum(manifest["rows_per_bucket"].values())
+        )
+        actual_per_bucket: dict[str, int] = {"TRADE_NOW": 0, "WATCHLIST": 0, "EXCLUDED": 0}
+        for row in rows:
+            actual_per_bucket[row["cue_bucket"]] += 1
+        self.assertEqual(manifest["rows_per_bucket"], actual_per_bucket)
+
     def test_emitted_records_are_rfc3339_even_when_the_cue_timestamp_is_not(self) -> None:
         """A tightened contract is only real if the tool cannot violate it.
 
@@ -463,6 +536,97 @@ class AutopilotObserveTests(unittest.TestCase):
                         rc = observe.main([])
         self.assertEqual(rc, 0)
         self.assertEqual(ran.call_count, 1)  # started, ticked once, exited on bound
+
+    def test_max_runtime_bound_is_immune_to_wall_clock_steps(self) -> None:
+        """The runtime bound must measure a clock nobody can step.
+
+        This bound is what keeps a selector-view capture from running
+        unattended, so the Operator authorizes a window on the strength of it.
+        Measured against `utc_now()` (i.e. `datetime.now()`), an NTP correction
+        steers it: a backward step subtracts itself from every later `elapsed`,
+        so the run keeps capturing long past the window the Operator approved (a
+        ~6.7x overrun in the case below); a forward step inflates `elapsed` and
+        ends the window early. Only `time.monotonic()` is unsteppable.
+
+        Both clocks advance together at 400s per tick; only the *step* cases move
+        the wall clock out from under the run, so a bound reading the monotonic
+        clock is unaffected by every case here. The undisturbed case is the
+        control: it must pass under either implementation, which is what proves
+        the two step cases isolate the clock choice rather than the harness.
+        """
+        from unittest import mock
+
+        tick_seconds = 400.0
+        cases = (
+            # (label, wall-clock step, max_runtime, expected ticks before exit)
+            #
+            # Undisturbed control: bound fires when elapsed + 300 >= 600, i.e.
+            # after the first tick's 400s. True on either clock.
+            ("wall clock undisturbed (control)", 0, 600, 1),
+            # A backward step subtracts an hour from wall-clock `elapsed`, so on
+            # the wall clock the bound fires ~9 ticks late: the run keeps
+            # capturing until monotonic elapsed is ~4000s against a 600s
+            # authorized window — a ~6.7x overrun of what the Operator approved.
+            ("wall clock steps 1h BACKWARD mid-run", -3600, 600, 1),
+            # A forward step inflates wall-clock `elapsed` past a window that
+            # should still have ticks left: correct is 5 ticks (400n + 300 >=
+            # 2000 → n >= 4.25), but the wall clock would quit after 1.
+            ("wall clock steps 1h FORWARD mid-run", 3600, 2000, 5),
+        )
+        for label, step, max_runtime, expected_ticks in cases:
+            with self.subTest(case=label):
+                ticks = {"n": 0}
+                wall_base = dt.datetime(2026, 6, 13, 5, 30, tzinfo=dt.timezone.utc)
+
+                def fake_monotonic(_t=ticks, _s=tick_seconds):
+                    return _t["n"] * _s
+
+                def fake_utc_now(_t=ticks, _s=tick_seconds, _step=step, _base=wall_base):
+                    # Wall clock tracks monotonic exactly, except that from the
+                    # first tick onward it also carries the step — which is what
+                    # an NTP correction landing mid-run looks like.
+                    offset = _t["n"] * _s + (_step if _t["n"] > 0 else 0)
+                    return _base + dt.timedelta(seconds=offset)
+
+                def advance(*_a, _t=ticks, **_k):
+                    _t["n"] += 1  # one completed tick
+                    if _t["n"] > 20:
+                        # Belt and braces against a harness bug, not a modelled
+                        # scenario: every case here terminates (the worst, the
+                        # backward step on a wall-clock bound, exits at tick 10).
+                        # A cap only matters if a future edit stops the bound
+                        # firing at all — then this errors instead of hanging.
+                        raise _StopLoop("runtime bound never fired")
+                    return []
+
+                env = {
+                    "AUTOPILOT_OBSERVE_ENABLED": "true",
+                    "AUTOPILOT_OBSERVE_CAPTURE_SELECTOR_VIEW": "true",
+                    "AUTOPILOT_OBSERVE_LOOP": "true",
+                    "AUTOPILOT_OBSERVE_MAX_RUNTIME_SECONDS": str(max_runtime),
+                    "AUTOPILOT_OBSERVE_INTERVAL_SECONDS": "300",
+                }
+                with tempfile.TemporaryDirectory() as tmp:
+                    env["AUTOPILOT_OBSERVE_OUTPUT_DIR"] = tmp
+                    with mock.patch.dict(os.environ, env, clear=True):
+                        with mock.patch.object(observe.time, "monotonic", fake_monotonic):
+                            with mock.patch.object(observe, "utc_now", fake_utc_now):
+                                with mock.patch.object(
+                                    observe, "run_once", side_effect=advance
+                                ) as ran:
+                                    with mock.patch.object(observe, "JsonGetClient"):
+                                        # The stop-aware sleep is a no-op here, so
+                                        # the loop is driven purely by the bound;
+                                        # if the bound never fires the iteration
+                                        # cap below trips instead of hanging.
+                                        with mock.patch.object(
+                                            observe, "sleep_until_interval_or_stop", lambda *a: None
+                                        ):
+                                            with mock.patch.object(observe.time, "sleep", lambda *a: None):
+                                                rc = observe.main([])
+
+                self.assertEqual(rc, 0, label)
+                self.assertEqual(ran.call_count, expected_ticks, label)
 
     def test_selector_view_argv_identity_is_exact_not_any_observe_process(self) -> None:
         # Codex round-6 finding 2: the stop procedure must identify the *exact*
@@ -849,8 +1013,11 @@ class AutopilotObserveTests(unittest.TestCase):
     def test_disabled_selector_view_loop_probe_is_unaffected_by_max_runtime_guard(self) -> None:
         # The guard sits AFTER the disabled-default early return, so a disabled
         # probe still prints the disabled payload and exits 0 even with a loop +
-        # selector-view + no max runtime configured. Disabled-default behaviour
-        # stays byte-identical.
+        # selector-view + no max runtime configured — which is all this test
+        # pins. It does NOT show the disabled probe is byte-identical to
+        # pre-slice: load_config runs before that early return, so a malformed
+        # quality-windows file fails a disabled probe that used to exit 0 (open
+        # under OBS-2). This comment previously over-claimed exactly that.
         import contextlib, io
         from unittest import mock
 

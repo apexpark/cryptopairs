@@ -1723,9 +1723,13 @@ def main(argv: list[str] | None = None) -> int:
     # A selector-view loop captures the whole universe every tick, so an
     # unbounded one is both an unattended loop and unbounded disk growth.
     # Refuse startup unless a positive runtime bound is configured. Placed
-    # after the disabled-default early return above so the disabled probe stays
-    # byte-identical, and scoped to selector-view loops so the narrow
+    # after the disabled-default early return above, so this guard never fires
+    # on a disabled probe, and scoped to selector-view loops so the narrow
     # paper-feeding loop's existing operator-authorized behaviour is unchanged.
+    # (This comment used to say the placement kept the disabled probe
+    # "byte-identical". It does not: load_config runs before that early return,
+    # so a malformed quality-windows file fails a disabled probe too — see
+    # OBS-2. The guard's placement is still right; the claim was not.)
     # A one-shot (--once) selector-view run is inherently bounded and exempt.
     if config.loop and config.capture_selector_view:
         if config.max_runtime_seconds is None or config.max_runtime_seconds <= 0:
@@ -1748,7 +1752,14 @@ def main(argv: list[str] | None = None) -> int:
 
     seen_keys: set[str] = set()
     client = JsonGetClient()
-    started_at = utc_now()
+    # Monotonic, not wall-clock: this is the bound that keeps a selector-view
+    # capture from running unattended, so it must not be steerable by the
+    # system clock. `utc_now()` is `datetime.now()`, which an NTP correction can
+    # step in either direction — backwards, and the loop runs past the runtime
+    # the Operator authorized; forwards, and it exits early mid-window.
+    # `time.monotonic()` cannot be stepped, and it is already what
+    # `sleep_until_interval_or_stop` uses, so the two now measure the same clock.
+    started_at = time.monotonic()
     # Scoped to selector-view loops only. This slice (work order AG-20260713-009)
     # requires the narrow paper-feeding run to stay byte-identical to pre-slice
     # behaviour, and installing a handler would change how it dies on SIGTERM —
@@ -1833,7 +1844,7 @@ def main(argv: list[str] | None = None) -> int:
                 "stop signal received once the tick was past abandoning; its append completed"
             )
         if config.max_runtime_seconds is not None:
-            elapsed = (utc_now() - started_at).total_seconds()
+            elapsed = time.monotonic() - started_at
             if elapsed + config.interval_seconds >= config.max_runtime_seconds:
                 print(
                     json.dumps(

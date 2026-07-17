@@ -633,7 +633,7 @@
         "recorded_rows": {
           "type": "integer",
           "minimum": 0,
-          "description": "Total selector_view rows that follow for this tick; equals the sum of rows_per_bucket. Zero is valid and means the selector returned an empty universe."
+          "description": "Total selector_view rows that follow for this tick. Zero is valid and means the selector returned an empty universe. PRODUCER INVARIANT, NOT SCHEMA-ENFORCED: the writer derives this as the sum of rows_per_bucket, but JSON Schema cannot express a cross-field sum, so validation alone does not prove recorded_rows == sum(rows_per_bucket). A consumer that relies on the equality must check it itself and treat a mismatch as a corrupt manifest — the same posture it already takes for a row count that falls short of the manifest (a truncated tail)."
         },
         "rows_per_bucket": {
           "type": "object",
