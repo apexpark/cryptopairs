@@ -5,10 +5,12 @@ This project follows SemVer as defined in `docs/02-versioning-and-releases.md`.
 
 ## Unreleased
 ### Governance
-- Swapped the Claude/Codex role assignments (Operator decision OP-44,
-  effective for the first slice after it merges; AUTO-2B.2 B2-b / PR #252
-  completes under the prior roles): Codex becomes Lead Coder + Operator
-  Interface, Claude becomes Independent Reviewer. Added `CODEX.md` (Codex
+- Swapped the Claude/Codex role assignments (Operator decision OP-44). The
+  transition became operative when AUTO-2B.2 B2-b / PR #252 completed under
+  the prior roles, was Codex-reviewed CLEAN at
+  `256e80031216773102dcddcccf88f76a8975d75b`, and the Operator squash-merged it
+  as `04826d1d708fa3e40812301d368ec43cf388c300`: Codex is Lead Coder + Operator
+  Interface, and Claude is Independent Reviewer. Added `CODEX.md` (Codex
   session entry point) alongside `CLAUDE.md`; the Autonomy Doctrine is
   model-agnostic and binds whoever holds the Coder role. Updated
   ai_workflow.md / git-github.md / CLAUDE.md role sections, the Codex
@@ -65,10 +67,14 @@ This project follows SemVer as defined in `docs/02-versioning-and-releases.md`.
   `spread_z`, a negative `learning_overlay_age_seconds`, or an out-of-enum
   `dispatch_mode` now record `null` instead of passing through, and a float such
   as `"rows": 5.0` in `AUTOPILOT_OBSERVE_QUALITY_WINDOWS_JSON` now fails at
-  startup instead of loading. Those changes are **open under follow-up OBS-2**
-  pending an Operator scope decision and are deliberately neither ratified nor
-  reverted here — reverting them would weaken a fail-closed property. Extending
-  the graceful stop to this loop is tracked separately as OBS-1. A new read-only
+  startup instead of loading. Under the 2026-07-17 OBS-2 Option 1 ruling, the
+  Operator ratified those already-merged changes as fail-closed hardening and
+  superseded AG-20260713-009's byte-identical requirement only for validation
+  of malformed inputs and configuration. Normal-operation behaviour remains
+  unchanged, and the hardening must not be reverted. The ruling does not
+  authorize OBS-1, OBS-3, B2-c scope expansion, any capture, host action,
+  deploy, secret access, live trading, or unattended loop. Extending the
+  graceful stop to this loop is tracked separately as OBS-1. A new read-only
   `--verify-selector-view-pid` probe
   confirms a PID really is a selector-view capture — not the
   identically-invoked narrow paper-feeding run — before the operator signals it,
