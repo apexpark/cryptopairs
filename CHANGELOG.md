@@ -73,8 +73,13 @@ This project follows SemVer as defined in `docs/02-versioning-and-releases.md`.
   confirms a PID really is a selector-view capture — not the
   identically-invoked narrow paper-feeding run — before the operator signals it,
   failing closed on a stale or non-matching PID. It establishes the process's
-  *kind*, not its *identity*: the PID file supplies identity, and binding the
-  probe to one specific run is tracked as follow-up OBS-3.
+  *kind*, not its *identity*: nothing establishes identity today — not the PID
+  file either, since a PID file records a PID and that is the recyclable thing —
+  and no procedural rule substitutes, because a sequential recycle (one capture
+  exits, a later one is handed its PID) defeats every "one capture at a time"
+  rule. The runbook therefore treats the probe as screening only, and an early
+  stop requires explicit Operator authorization with identity declared
+  unverified. Establishing it is tracked as follow-up OBS-3.
 - Contract: `autopilot_observe_record` schema `version` 0.2.0 → 0.3.0. Additive
   — a third `oneOf` branch for the `selector_view_tick` manifest, with a new
   `specs/examples/autopilot_observe_record.selector_view_tick.example.json`. The

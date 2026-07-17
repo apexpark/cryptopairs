@@ -1545,9 +1545,15 @@ def selector_view_argv_matches(argv: list[str]) -> bool:
     selector-view capture — decisively not the narrow paper-feeding run, which is
     what this check exists to separate. It does **not** mean the process is *the*
     run a caller intended to stop: a second concurrent capture, or a recycled PID
-    now held by a different capture, matches just as well. Identity comes from
-    the caller's PID file; binding the two together is follow-up OBS-3, and the
-    runbook carries the procedural rules that stand in until then.
+    now held by a different capture, matches just as well. **Nothing establishes
+    identity today, including the caller's PID file** — a PID file records a PID,
+    which is the very thing that gets recycled, so it identifies a run only while
+    that process is known to have been alive continuously. There is no procedural
+    substitute either: a sequential recycle (the first capture exits, a later one
+    is handed its PID) defeats every "one at a time" rule, because the two never
+    coexist. Establishing identity is follow-up OBS-3; until it lands, the runbook
+    treats this check as screening only and an early stop needs explicit Operator
+    authorization.
 
     Token-exact, never a substring test: it gates a signal, so a false positive
     stops the wrong process. The script must be the program actually being run —

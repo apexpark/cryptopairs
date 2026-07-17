@@ -3,12 +3,15 @@
 Two independent read-only reviewers on commit f4573ec; repairs in the
 follow-up commit. 143 tools/scripts tests green at that commit.
 
-> **Round 10 (current head) is the latest round; totals are unchanged from round
+> **Round 11 (current head) is the latest round; totals are unchanged from round
 > 9**, which supersedes the 143 above and the round-6/7 totals. The authoritative
 > counts are under "Round 9 — Codex exact-SHA review of `f9b3e63`" →
-> "Verification" (round 10 is wording-only and changes no count). Three earlier
-> claims are **withdrawn**: that the probe establishes process *identity* — it
-> establishes *kind* only, per OBS-3 (round 10); the round-6 claim that
+> "Verification" (rounds 10 and 11 are documentation-only and change no count).
+> Four earlier claims are **withdrawn**: that the probe establishes process
+> *identity* — it establishes *kind* only, per OBS-3 (round 10); that any
+> procedural rule in the runbook closes the resulting gap — a sequential PID
+> recycle defeats them all, so an early stop needs Operator authorization
+> (round 11); the round-6 claim that
 > the narrow paper-feeding loop "does now finish its tick on SIGTERM — an
 > improvement" (an unauthorized scope expansion, reverted in round 7), and every
 > unqualified "byte-identical" statement about the narrow run or the disabled
@@ -825,4 +828,131 @@ Stated as such in the row rather than presented as closure.
 - `git diff` vs `8cbd563` touches no executable logic: one docstring, one state
   row, one register row, the runbook, and this file.
 - OBS-2, OBS-3 and CI-1 all remain open and unreverted; none is claimed repaired.
+- No host action, deploy, capture, or merge performed.
+
+---
+
+## Round 11 — Codex exact-SHA review of `94dec9f` (1 P2, repaired)
+
+Documentation only — no behaviour, contract or test change; suite unchanged at
+187/49.
+
+### P2 — the round-10 repair admitted the gap and then closed it with rules that don't
+
+Round 10 correctly stopped the runbook claiming the probe proves identity. Then,
+in the next paragraph, it claimed two procedural rules "close the gap": run one
+capture at a time, and use the PID file from the run root you started. **They do
+not**, and the review's counterexample is exact:
+
+> Capture A writes PID 1234 into A's run root and exits at `MAX_RUNTIME_SECONDS`.
+> Capture B later starts and the kernel recycles PID 1234. At kill time only B is
+> running — so "one capture at a time" holds. The PID file is the one the
+> Operator created, from their own run root — so rule 2 holds. The probe exits 0,
+> because B genuinely *is* a selector-view capture. Every condition passes and
+> the kill lands on B.
+
+The two captures never coexist, so no "one at a time" rule can exclude the case.
+Round 10's rule 1 rested on "the two cases above only arise when a second capture
+exists", which is false for a *sequential* recycle. Round 10 had literally named
+the recycled-PID case two paragraphs earlier and then asserted rules that don't
+cover it — the same self-contradiction class this PR keeps producing, one layer
+deeper each time: round 8 fixed the claim in three surfaces and missed a fourth;
+round 9 fixed the wording and missed the runbook; round 10 fixed the runbook's
+claim and then re-introduced sufficiency underneath it.
+
+Also false and now removed: "**Identity comes from the PID file**, not from this
+check." A PID file records a *PID* — precisely the thing that gets recycled. It
+identifies a run only while that process is known to have been alive
+continuously, which is exactly what is unknown at the moment you ask whether to
+signal it.
+
+**Repair.** The runbook no longer presents any set of conditions as sufficient:
+
+- The two habits are kept but demoted to **screening** — they can prove you must
+  *not* signal, never that you may — with the sequential-recycle sequence written
+  out so the limit is concrete rather than asserted.
+- An early stop is **not self-authorizing**: it now requires explicit Operator
+  authorization, stating that identity is unverified. There is no procedural
+  substitute until OBS-3 lands, and the runbook says so.
+- Two pieces of context so escalation is a real decision rather than a shrug:
+  the loop **exits by itself** at `MAX_RUNTIME_SECONDS`, so early stops should be
+  rare; and the blast radius is *likely* small — at probe time the check does
+  reliably exclude the narrow paper-feeding run, so if that still holds at signal
+  time the worst case is a graceful SIGTERM to a different selector-view capture
+  (observation-only, no trading or eligibility path, no half-written record, at
+  most one in-flight tick lost). It is deliberately **not** stated as a bound:
+  the probe and the `kill` are separate commands, so a recycle in that window can
+  land the signal on a process the probe never saw — including the narrow run,
+  which has no handler (OBS-1). Unlikely, not excluded. The inner review of this
+  round flagged the first draft of this very sentence for asserting a bound.
+
+**No new mitigation was invented.** Round 10's lesson was that an untested
+command in a step card is not a mitigation; round 11's is that an untested
+*argument* is not one either. The two mechanisms that would genuinely establish
+identity — comparing process start time against the PID file's mtime, and
+`readlink /proc/<pid>/fd/1` resolving to this run root's log — are `/proc`-based
+and **cannot be tested from this session's macOS host** (a third candidate,
+carrying the run id in argv, is recorded alongside them). They are
+recorded as OBS-3 candidates, explicitly marked untested, to be validated on the
+capture host inside that slice. Prescribing either here would repeat the exact
+error being repaired.
+
+OBS-3's row records the withdrawal of the round-10 stopgap and notes the raised
+practical priority: until it lands, every early stop costs an Operator decision.
+
+### Inner review of the round-11 repair
+
+One adversarial reviewer, briefed on this PR's documented pattern (each round
+fixes an over-claim and reintroduces a subtler one underneath) and told to hunt
+for exactly that. It confirmed the runbook repair itself is sound — no residual
+sufficiency claim, the sequential-recycle example traced and correct against the
+Step 2 launch and the tool's self-exit, and the "no half-written record" clause
+CONFIRMED for a wrongly-signalled capture B (B matches argv only because it *is*
+a capture, so it installs `StopSignal` before its first tick). It then found the
+pattern repeating anyway, in the surfaces the repair did not audit:
+
+- **The withdrawn claims were left standing in the records** — "the PID file
+  supplies identity" survived in the OBS-3 row's own opening (the same table cell
+  whose round-11 addition says it "is gone"), in the B2-b row, in `CHANGELOG.md`,
+  and in `selector_view_argv_matches`' docstring, which still told the reader the
+  runbook "carries the procedural rules that stand in until then" while the
+  runbook now says there is no procedural substitute. This is round 8's miss
+  reproduced exactly: qualified in one surface, unqualified in the records that
+  outlive the PR. All corrected.
+- **The blast-radius claim was re-asserted as a bound** in both the OBS-3 row and
+  this file, unqualified by the TOCTOU window the runbook states two files away.
+  The concrete cost: an OBS-3 designer reads the row, budgets against a bounded
+  observation-only radius, and never designs for the recycle-between-probe-and-
+  kill window — which can land SIGTERM on the narrow paper-feeding run, which has
+  no handler (OBS-1). Both now say likelihood, not bound.
+- **The OBS-3 candidates carried the round-10 error latently.** Start-time-vs-mtime
+  and `readlink /proc/<pid>/fd/1` are both sound in principle (independently
+  confirmed), but performed as an Operator eyeball *between* probe and kill they
+  are still TOCTOU-exposed — i.e. not fixes at all. The row now states the binding
+  constraint: whichever candidate wins must run **inside the signalling tool,
+  atomically with the signal**. Two further holes recorded against candidate (b):
+  a capture restarted into an existing `$SV_ROOT` resolves to the same log and
+  passes for the wrong run, and a rotated/removed log yields a `(deleted)` path
+  that must fail closed.
+
+Found independently and fixed before that review reported: the blast-radius
+sentence in the runbook had the same defect, asserting the narrow run was excluded
+when the probe only excludes it *at probe time*. The probe and the `kill` are
+separate commands with nothing holding the PID between them, so the guarantee does
+not survive to the signal. Now stated as a likelihood with the window named.
+
+The meta-lesson, recorded because it is now four rounds old: the failure is not
+carelessness in any one sentence, it is **fixing the surface that was cited and
+not the class**. Round 8 fixed three surfaces of four; round 9 fixed wording but
+not the runbook; round 10 fixed the runbook's claim and re-introduced sufficiency
+beneath it; round 11 fixed the runbook and left the records. Every one of these
+was caught only because someone swept for the *claim*, not the *citation*.
+
+### Verification
+
+- Full `tools/scripts` suite: **187 passed, 49 subtests** — unchanged, as a
+  documentation round should be.
+- Diff vs `94dec9f` touches no Python, no contract, no test: the runbook, the
+  state file, and this record.
+- OBS-2, OBS-3 and CI-1 remain open and unreverted; none is claimed repaired.
 - No host action, deploy, capture, or merge performed.

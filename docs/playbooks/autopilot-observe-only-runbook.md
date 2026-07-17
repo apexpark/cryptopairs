@@ -308,19 +308,59 @@ Two cases still pass:
 - **A stale PID file whose PID has been recycled by a different selector-view
   capture** — the check passes and you would stop the wrong one.
 
-Identity comes from the PID file, not from this check — so keep the PID file
-trustworthy. Two rules close the gap, and they are procedural, not automated:
+**Nothing in this runbook establishes identity, and the PID file does not
+either.** A PID file records a *PID*, and a PID is exactly the thing that gets
+recycled. It identifies the run only for as long as that process is known to have
+been alive continuously — which, once you are asking whether it is still running,
+is the very thing you do not know.
 
-1. **Run one selector-view capture at a time.** The two cases above only arise
-   when a second capture exists. If you cannot account for every capture running
-   on the host, do not signal — escalate to the Operator.
-2. **Use the PID file from the run root you started** (`$SV_ROOT`, the timestamped
-   directory from Step 2 of this session). Each run writes its PID into its own
-   run root, so a PID file you did not just create is the stale case — do not
-   signal from it.
+Two habits genuinely narrow the risk, and you should keep both — but read the
+next paragraph before treating them as a green light:
 
-Binding the check to one specific run, so neither rule has to be remembered, is
-tracked as follow-up **OBS-3**.
+1. **Run one selector-view capture at a time.** If you cannot account for every
+   capture on the host, do not signal.
+2. **Use the PID file from the run root you started** (`$SV_ROOT`, the
+   timestamped directory from Step 2 of this session).
+
+**They are necessary, not sufficient — they do not cover PID reuse.** Work the
+sequence through:
+
+> Capture A starts and writes PID 1234 into A's run root. A exits on its own at
+> `MAX_RUNTIME_SECONDS`. Later, capture B starts and the kernel hands it PID
+> 1234. You now read A's PID file — the one *you* created, from *your* run root —
+> and only one capture is running, so both habits above are satisfied. The probe
+> exits 0, because B really is a selector-view capture. Every condition passes
+> and the kill lands on **B**.
+
+That is the recycled-PID case named above, and no rule here excludes it: the two
+captures never coexist, so "one at a time" holds throughout.
+
+**Therefore an early stop is not self-authorizing.** Treat the checks as
+screening — they can prove you *should not* signal, never that you may. If they
+all pass and you still intend to stop the run early, escalate to the Operator for
+an explicit decision, stating that identity is unverified. Establishing it
+externally (binding the probe to a specific run) is follow-up **OBS-3**; until
+that lands there is no procedural substitute.
+
+Two things that make this decision easier rather than harder:
+
+- **You usually do not need to signal at all.** The loop exits by itself at
+  `MAX_RUNTIME_SECONDS` (72h in the Step 2 command). Letting it finish carries
+  none of this risk. Stopping early should be the exception, not the routine.
+- **Know the blast radius before you weigh it — including its own limit.** At
+  the moment it ran, the probe did establish that this PID was a selector-view
+  capture and not the narrow paper-feeding run. If that is still true when you
+  press `kill`, the worst case is a graceful SIGTERM to a *different* capture:
+  observation-only, no trading, no eligibility, no execution path, no
+  half-written record, losing at most that run's in-flight tick.
+  **But the probe and the `kill` are two separate commands, and nothing holds the
+  PID between them.** If the capture exits in that window and the kernel recycles
+  its PID, the signal lands on whatever now holds it — which the probe never
+  saw, and which is not necessarily a capture at all. Wrapping the PID space in
+  those few seconds is unlikely, and it is not excluded; treat "worst case: some
+  other capture" as the *likely* case, not a guaranteed bound. Run the probe
+  immediately before the kill to keep the window short, and read this as one more
+  reason the decision is the Operator's.
 
 > Do not substitute a `pgrep -f --capture-selector-view` style count for rule 1.
 > That pattern is matched against whole command lines as text, so it also matches
@@ -328,9 +368,8 @@ tracked as follow-up **OBS-3**.
 > verified to return spurious extra PIDs. A check that cries wolf is worse than
 > no check, because it teaches you to ignore it.
 
-If, and only if, **all** hold — the check exited 0, `$SV_PID` came from the run
-root you started, and you can account for every selector-view capture on the
-host:
+Once the screening checks pass **and the Operator has authorized this specific
+early stop** knowing identity is unverified:
 
 ```bash
 kill "$SV_PID"          # SIGTERM; never leaves a half-written record
