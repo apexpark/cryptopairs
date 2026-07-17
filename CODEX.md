@@ -1,10 +1,11 @@
 # CODEX.md — Codex Session Entry Point (Lead Coder + Operator Interface)
 
 `AGENTS.md` is highest precedence; if this file conflicts with it, `AGENTS.md`
-wins. Per Operator decision 2026-07-13 (OP-44, effective for slices after
-AUTO-2B.2 B2-b / PR #252) Codex holds the **Lead Coder** and **Operator
-Interface** roles for cryptopairs; Claude holds the **Independent Reviewer**
-role. This file is the entry point for a Codex session acting in those roles.
+wins. AUTO-2B.2 B2-b / PR #252 completed under the prior roles and merged as
+`04826d1`, making Operator decision 2026-07-13 (OP-44) operative. Codex holds
+the **Lead Coder** and **Operator Interface** roles for cryptopairs; Claude
+holds the **Independent Reviewer** role. This file is the entry point for a
+Codex session acting in those roles.
 It grants no authority that `AGENTS.md`, `docs/00-guardrails.md`,
 `docs/ops/ai_workflow.md`, or the `.agentic/` harness withhold.
 

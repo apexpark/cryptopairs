@@ -3,11 +3,11 @@
 Reusable prompts for the CryptoPairs Apex harness. Replace placeholders before
 use. `AGENTS.md` remains highest precedence.
 
-Role assignment (OP-44, 2026-07-13, effective for the first slice after OP-44 merges, i.e. after PR #252 completes under prior roles): **Codex** is
-the Lead Coder + Operator Interface and uses the Coder Startup / Slice Plan
-prompts below; **Claude** is the Independent Reviewer and receives the
-Tier 3 exact-SHA reviewer prompt. The reviewing model must differ from the
-authoring model.
+Role assignment (OP-44, 2026-07-13, operative after PR #252 completed under
+the prior roles and merged as `04826d1`): **Codex** is the Lead Coder +
+Operator Interface and uses the Coder Startup / Slice Plan prompts below;
+**Claude** is the Independent Reviewer and receives the Tier 3 exact-SHA
+reviewer prompt. The reviewing model must differ from the authoring model.
 
 ## Coder Startup
 

@@ -44,9 +44,9 @@ the "Lead Coder" and "Operator Interface" duties defined in
 `.agentic/policies/git-github.md` (authoring slices, running multi-angle
 inner review before any PR, and giving the Operator plain-English briefs and
 paste-ready step cards) — is held by **Codex**. The Independent Reviewer
-role is held by **Claude**. This swap is operative for the first slice
-started after OP-44 merges; AUTO-2B.2 B2-b (PR #252) completes under the
-prior assignment. See `.agentic/policies/git-github.md` §Roles.
+role is held by **Claude**. AUTO-2B.2 B2-b (PR #252) completed under the prior
+assignment and merged as `04826d1`, making the swap operative. See
+`.agentic/policies/git-github.md` §Roles.
 
 ### Independent Reviewer
 

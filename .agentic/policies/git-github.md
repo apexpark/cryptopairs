@@ -39,9 +39,9 @@ authority (roles are "by function and reassignable by Operator decision"),
 so where OP-44 and the §8 default work-allocation differ, OP-44 governs the
 assignment; no governance exception is required.
 
-Transition: this swap is operative for the first slice started after
-Operator decision OP-44 merges (which is after AUTO-2B.2 B2-b / PR #252
-completes under the prior assignment — Claude author, Codex reviewer).
+Transition complete: AUTO-2B.2 B2-b / PR #252 completed under the prior
+assignment (Claude author, Codex reviewer) and merged as `04826d1`, making
+Operator decision OP-44 operative.
 Interaction model after the swap: the Operator directs Codex to
 author/implement and receives Codex's briefs and step cards, and brings
 Codex's protected-path PRs to Claude for exact-SHA review.
