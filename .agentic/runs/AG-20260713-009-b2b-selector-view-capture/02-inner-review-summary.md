@@ -3,10 +3,12 @@
 Two independent read-only reviewers on commit f4573ec; repairs in the
 follow-up commit. 143 tools/scripts tests green at that commit.
 
-> **Round 9 (current head) supersedes every earlier total in this file**,
-> including the 143 above and the round-6/7 totals. The authoritative counts are
-> under "Round 9 — Codex exact-SHA review of `f9b3e63`" → "Verification", at the
-> end of this file. Two earlier claims are **withdrawn**: the round-6 claim that
+> **Round 10 (current head) is the latest round; totals are unchanged from round
+> 9**, which supersedes the 143 above and the round-6/7 totals. The authoritative
+> counts are under "Round 9 — Codex exact-SHA review of `f9b3e63`" →
+> "Verification" (round 10 is wording-only and changes no count). Three earlier
+> claims are **withdrawn**: that the probe establishes process *identity* — it
+> establishes *kind* only, per OBS-3 (round 10); the round-6 claim that
 > the narrow paper-feeding loop "does now finish its tick on SIGTERM — an
 > improvement" (an unauthorized scope expansion, reverted in round 7), and every
 > unqualified "byte-identical" statement about the narrow run or the disabled
@@ -204,8 +206,10 @@ The selector-view run writes its own `autopilot_observe_selector_view.pid`, but
 the runbook's only stop procedure used the narrow run's `autopilot_observe.pid`
 — an operator stopping early had no exact procedure and could signal the wrong
 process. **Repair:** a dedicated "Stop the selector-view run" section that
-identifies the correct PID file, verifies the PID really is the selector-view
-capture via `ps` before signalling, uses SIGTERM (~~letting the in-flight tick
+identifies the correct PID file, verifies the PID really is ~~the~~ **a**
+selector-view capture (**corrected in round 10:** the check establishes the
+process's *kind*, not its *identity* — a concurrent capture or a recycled PID
+passes it too; see OBS-3) via `ps` before signalling, uses SIGTERM (~~letting the in-flight tick
 finish its write~~ — **corrected in round 7:** never leaving a half-written
 record; whether the in-flight tick finishes or is abandoned depends on when the
 signal lands), verifies the stop, and escalates before any `kill -9`
@@ -754,3 +758,71 @@ Canonical command (from `tools/scripts/`):
   none of its stdout. (This says nothing about the slice's overall byte-identity
   on that path — that remains open under OBS-2.)
 - No Rust surface touched; no host action, deploy, capture, or merge performed.
+
+---
+
+## Round 10 — Codex exact-SHA review of `8cbd563` (1 P2, repaired)
+
+Documentation and wording only — **no behaviour, contract or test change** (the
+suite is unchanged at 187/49, and the diff touches no logic).
+
+### P2 — OBS-3 was disclosed in the registers but still overclaimed where it counts
+
+Round 9 recorded the kind-vs-identity gap as OBS-3 and corrected the definite
+article in `CHANGELOG.md` / `docs/AGENT_STATE.md` — but never audited the
+**runbook**, which is the surface an Operator actually acts on. It still said the
+probe confirms "**this** selector-view capture", that exit 0 means "it is **safe
+to signal**", and then gated the `kill` on that exit code alone. Worse, it framed
+the check as the answer to "a PID file can go stale and PIDs get reused" — which
+is exactly the case it does *not* cover when the recycled PID belongs to another
+capture. A disclosure in a register the Operator does not read during the
+procedure is not a disclosure. The finding is correct and was the most
+operationally serious of the wording defects: it told a human it was safe to kill
+a process on a guarantee the code does not make.
+
+**Repair.** The stop procedure now reads *what the check verifies → the verdict
+table → what it does **not** prove → the kill gate*:
+
+- Exit 0 is stated as establishing the process's **kind** (it is *a* selector-view
+  capture, decisively not the narrow run), explicitly **not** its **identity**,
+  with the two passing cases named (a concurrent capture; a recycled PID held by
+  a different capture).
+- Two procedural rules stand in until OBS-3: run one capture at a time, and use
+  the PID file from the run root you just started (each run writes its PID into
+  its own timestamped root, so a PID file you did not just create *is* the stale
+  case).
+- The kill gate now requires **all three** conditions, not just exit 0.
+- `selector_view_argv_matches`' docstring, which claimed "*this* script run in
+  selector-view", now states kind-not-identity at the top.
+
+**A mitigation was drafted and then withdrawn on test evidence.** The first draft
+told the Operator to cross-check with `pgrep -laf -- "--capture-selector-view"`
+and expect exactly one line. Executed against a fake capture it returned **two**
+PIDs — the capture and the shell wrapper whose own command line contained the
+flag — and BSD `pgrep` silently ignored `-a`, printing bare PIDs. A check that
+routinely cries wolf either causes needless escalation or trains the Operator to
+ignore it, so it was replaced with the procedural rules above and the runbook now
+explicitly warns against that pattern. Recorded because the near-miss is the
+lesson: a command in a step card is only a mitigation if it has been run.
+
+**Deliberately not changed, recorded on OBS-3 instead:** the probe emits a field
+literally named `safe_to_signal: true` and its `--help` says "exit 0 only if it
+is safe to signal". Both assert the safety the check does not establish, but
+renaming them changes the tool's output contract — a behaviour change, out of
+scope for an audit-wording repair, and any consumer of that JSON would need
+updating in step. OBS-3 now carries both, with the resolution depending on its
+own outcome: bind the probe to a run and `safe_to_signal` becomes true as named;
+leave it unbound and it should be renamed (e.g. `is_selector_view_capture`).
+
+The runbook's procedural rules are honestly a stopgap, not a fix: they rely on
+the Operator remembering them, which is precisely what OBS-3 exists to remove.
+Stated as such in the row rather than presented as closure.
+
+### Verification (clean detached checkout of the pushed commit)
+
+- Full `tools/scripts` suite: **187 passed, 49 subtests** — unchanged from round
+  9, as a wording-only round should be.
+- `git diff` vs `8cbd563` touches no executable logic: one docstring, one state
+  row, one register row, the runbook, and this file.
+- OBS-2, OBS-3 and CI-1 all remain open and unreverted; none is claimed repaired.
+- No host action, deploy, capture, or merge performed.

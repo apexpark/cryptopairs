@@ -1539,13 +1539,21 @@ OBSERVE_SCRIPT_NAME = "autopilot_observe.py"
 
 
 def selector_view_argv_matches(argv: list[str]) -> bool:
-    """True only for an argv that is *this* script run in selector-view.
+    """True for an argv that is this script run in selector-view capture.
+
+    Establishes *kind*, not *identity*. A True here means the process is **a**
+    selector-view capture — decisively not the narrow paper-feeding run, which is
+    what this check exists to separate. It does **not** mean the process is *the*
+    run a caller intended to stop: a second concurrent capture, or a recycled PID
+    now held by a different capture, matches just as well. Identity comes from
+    the caller's PID file; binding the two together is follow-up OBS-3, and the
+    runbook carries the procedural rules that stand in until then.
 
     Token-exact, never a substring test: it gates a signal, so a false positive
     stops the wrong process. The script must be the program actually being run —
     executed directly, or as the argument to a python interpreter (any
     interpreter flags in between are fine) — so an unrelated process that merely
-    *mentions* both tokens is not mistaken for the capture. A command that
+    *mentions* both tokens is not mistaken for a capture. A command that
     reaches selector-view capture only via the environment returns False: the
     caller then refuses to signal rather than guessing.
     """

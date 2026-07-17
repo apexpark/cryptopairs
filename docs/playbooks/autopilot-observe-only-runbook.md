@@ -276,16 +276,15 @@ or to confirm it has ended:
 ```bash
 SV_PID="$(cat "$SV_ROOT/autopilot_observe_selector_view.pid")"
 
-# Confirm the PID really is this selector-view capture before signalling it.
-# Exits 0 only when it is safe to signal; prints the verdict either way.
+# Confirm the PID is a selector-view capture before signalling it.
+# Prints the verdict either way; signals nothing itself.
 python3 tools/scripts/autopilot_observe.py --verify-selector-view-pid "$SV_PID"
 ```
 
-This check exists because a PID file can go stale and PIDs get reused: matching
-on `autopilot_observe.py` alone would match the **narrow paper-feeding run too**,
-and stop the wrong capture. The check reads the PID's exact argv from
-`/proc/<pid>/cmdline` and confirms the `--capture-selector-view` flag; it
-signals nothing itself.
+This check exists because matching on `autopilot_observe.py` alone would match
+the **narrow paper-feeding run too**, and stop the wrong capture. It reads the
+PID's exact argv from `/proc/<pid>/cmdline` and confirms the
+`--capture-selector-view` flag.
 
 Run it **on the capture host**, where the run actually is. It fails closed —
 each verdict below exits 2 and means **do not signal**:
@@ -298,7 +297,40 @@ each verdict below exits 2 and means **do not signal**:
 
 If it does not exit 0, stop and escalate to the Operator; do not kill the PID.
 
-If, and only if, the check exits 0:
+**Read the exit code for exactly what it means.** Exit 0 establishes the
+process's **kind** — this PID is *a* selector-view capture, so it is not the
+narrow run and not some unrelated process. It does **not** establish the
+process's **identity**: it cannot tell you this PID is *the* capture you started.
+Two cases still pass:
+
+- **Two captures running at once** — both match, and the check cannot say which
+  is yours.
+- **A stale PID file whose PID has been recycled by a different selector-view
+  capture** — the check passes and you would stop the wrong one.
+
+Identity comes from the PID file, not from this check — so keep the PID file
+trustworthy. Two rules close the gap, and they are procedural, not automated:
+
+1. **Run one selector-view capture at a time.** The two cases above only arise
+   when a second capture exists. If you cannot account for every capture running
+   on the host, do not signal — escalate to the Operator.
+2. **Use the PID file from the run root you started** (`$SV_ROOT`, the timestamped
+   directory from Step 2 of this session). Each run writes its PID into its own
+   run root, so a PID file you did not just create is the stale case — do not
+   signal from it.
+
+Binding the check to one specific run, so neither rule has to be remembered, is
+tracked as follow-up **OBS-3**.
+
+> Do not substitute a `pgrep -f --capture-selector-view` style count for rule 1.
+> That pattern is matched against whole command lines as text, so it also matches
+> any shell or wrapper whose own command line happens to contain the flag —
+> verified to return spurious extra PIDs. A check that cries wolf is worse than
+> no check, because it teaches you to ignore it.
+
+If, and only if, **all** hold — the check exited 0, `$SV_PID` came from the run
+root you started, and you can account for every selector-view capture on the
+host:
 
 ```bash
 kill "$SV_PID"          # SIGTERM; never leaves a half-written record
