@@ -13,6 +13,9 @@ import time
 from pathlib import Path
 from typing import Any
 
+DEFAULT_DEPLOY_HEALTH_RETRIES = 90
+DEFAULT_DEPLOY_HEALTH_SLEEP_SECS = 2
+
 
 def utc_now() -> str:
     return dt.datetime.now(dt.timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
@@ -44,6 +47,17 @@ def run_apply(repo_root: Path, request: dict[str, Any]) -> tuple[subprocess.Comp
     output_json = to_host_path(repo_root, request["output_json_path"])
     policy_json = to_host_path(repo_root, request["policy_json_path"])
     timeout_secs = max(int(request.get("timeout_secs", 300)), 1)
+    try:
+        deploy_health_retries = max(
+            int(request.get("deploy_health_retries", DEFAULT_DEPLOY_HEALTH_RETRIES)),
+            1,
+        )
+        deploy_health_sleep_secs = max(
+            int(request.get("deploy_health_sleep_secs", DEFAULT_DEPLOY_HEALTH_SLEEP_SECS)),
+            1,
+        )
+    except (TypeError, ValueError) as error:
+        return None, f"invalid deploy health window: {error}"
 
     command = [
         "python3",
@@ -65,6 +79,8 @@ def run_apply(repo_root: Path, request: dict[str, Any]) -> tuple[subprocess.Comp
         command.append("--skip-pull")
     else:
         command.append("--no-skip-pull")
+    command.extend(["--deploy-health-retries", str(deploy_health_retries)])
+    command.extend(["--deploy-health-sleep-secs", str(deploy_health_sleep_secs)])
 
     try:
         result = subprocess.run(

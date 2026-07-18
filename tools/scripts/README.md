@@ -272,6 +272,8 @@ Apply lookback profile updates with env backup, deploy integration, and rollback
 ```bash
 python3 tools/scripts/strategy_tuning_apply.py \
   --mode promote \
+  --deploy-health-retries 90 \
+  --deploy-health-sleep-secs 2 \
   --output-json artifacts/strategy_tuning/<apply-report>.json
 ```
 
@@ -281,6 +283,8 @@ Dry-run:
 python3 tools/scripts/strategy_tuning_apply.py \
   --mode promote \
   --dry-run \
+  --deploy-health-retries 90 \
+  --deploy-health-sleep-secs 2 \
   --output-json artifacts/strategy_tuning/<apply-dryrun-report>.json
 ```
 
@@ -292,7 +296,12 @@ Run the full daily evaluation cycle (health checks, baseline, candidate apply dr
 python3 tools/scripts/strategy_maintenance_cycle.py \
   --env-file /opt/cryptopairs/.env.hosted \
   --output-root artifacts/strategy_tuning/runs \
-  --latest-report artifacts/strategy_tuning/latest_maintenance_report.json
+  --latest-report artifacts/strategy_tuning/latest_maintenance_report.json \
+  --timeout-seconds 900 \
+  --report-timeout-seconds 300 \
+  --deploy-health-retries 90 \
+  --deploy-health-sleep-secs 2 \
+  --print-summary
 ```
 
 Install/update cron automation on hosted server:
@@ -314,6 +323,9 @@ python3 tools/scripts/strategy_maintenance_action_worker.py \
   --queue-root artifacts/strategy_tuning/manual_action_queue \
   --once
 ```
+
+The worker forwards the same deploy health window used by the maintenance cycle
+by default (`90` retries, `2` seconds between retries).
 
 Install cron worker:
 
