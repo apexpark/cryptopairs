@@ -6,7 +6,7 @@ base_branch: main
 working_branch: codex/b2c-selector-view-input
 worker_tier: T1
 required_evidence_level: E3
-status: done
+status: dispatched
 ---
 
 # Work Order

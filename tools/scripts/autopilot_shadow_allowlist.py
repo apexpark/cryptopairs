@@ -27,6 +27,10 @@ SELECTOR_VIEW_SCHEMA_VERSION = 2
 MODE = "shadow_dynamic_allowlist_snapshot"
 TIMEFRAME = "1m"
 LONG_FRACTIONAL_SECONDS_RE = re.compile(r"(\.\d{6})\d+((?:[+-]\d{2}:\d{2})?)$")
+RFC3339_TIMESTAMP_RE = re.compile(
+    r"^\d{4}-\d{2}-\d{2}[Tt]\d{2}:\d{2}:\d{2}"
+    r"(?:\.\d+)?(?:[Zz]|[+-]\d{2}:\d{2})$"
+)
 SUPPORTED_DIRECTIONS = {"LONG_SPREAD", "SHORT_SPREAD"}
 SELECTOR_VIEW_BUCKETS = ("TRADE_NOW", "WATCHLIST", "EXCLUDED")
 SELECTOR_VIEW_PROFILE = "selector_view"
@@ -147,6 +151,21 @@ def parse_timestamp(value: Any, field_name: str) -> dt.datetime:
     if parsed.tzinfo is None or parsed.utcoffset() is None:
         raise ValueError(f"{field_name} must include timezone: {value}")
     return parsed.astimezone(dt.timezone.utc)
+
+
+def parse_selector_timestamp(value: Any, field_name: str) -> dt.datetime:
+    """Parse one selector-v2 identity timestamp under its RFC 3339 contract."""
+    if not isinstance(value, str) or not RFC3339_TIMESTAMP_RE.fullmatch(value):
+        raise ValueError(f"{field_name} is not a valid RFC 3339 timestamp: {value}")
+    normalized = value.replace("t", "T", 1)
+    if normalized.endswith(("Z", "z")):
+        normalized = normalized[:-1] + "+00:00"
+    try:
+        return parse_timestamp(normalized, field_name)
+    except ValueError as exc:
+        raise ValueError(
+            f"{field_name} is not a valid RFC 3339 timestamp: {value}"
+        ) from exc
 
 
 def format_timestamp(value: dt.datetime | None) -> str | None:
@@ -320,8 +339,9 @@ def _selector_manifest(
     observed_at_raw = require_string(row, "observed_at")
     if run_id != observed_at_raw:
         raise ValueError(f"{context}: run_id must equal the manifest observed_at")
-    observed_at = parse_timestamp(observed_at_raw, "observed_at")
-    source_generated_at = parse_timestamp(
+    parse_selector_timestamp(run_id, "run_id")
+    observed_at = parse_selector_timestamp(observed_at_raw, "observed_at")
+    source_generated_at = parse_selector_timestamp(
         row.get("source_generated_at"), "source_generated_at"
     )
     recorded_rows = row.get("recorded_rows")
@@ -375,8 +395,8 @@ def _validate_selector_view_row(
         raise ValueError(
             f"{context}: selector row source_generated_at does not match its manifest"
         )
-    parse_timestamp(row.get("observed_at"), "observed_at")
-    parse_timestamp(row.get("source_generated_at"), "source_generated_at")
+    observed_at = parse_selector_timestamp(row.get("observed_at"), "observed_at")
+    parse_selector_timestamp(row.get("source_generated_at"), "source_generated_at")
     cue_bucket = row.get("cue_bucket")
     if cue_bucket not in SELECTOR_VIEW_BUCKETS:
         raise ValueError(f"{context}: cue_bucket is not a supported selector-view bucket")
@@ -452,7 +472,22 @@ def _validate_selector_view_row(
     decision_bucket = row.get("decision_bucket")
     if decision_bucket is not None and decision_bucket not in SELECTOR_VIEW_BUCKETS:
         raise ValueError(f"{context}: decision_bucket is invalid")
-    require_string(row, "observe_key")
+    direction = key[3] or "NO_DIRECTION"
+    minute_bucket = observed_at.replace(second=0, microsecond=0)
+    expected_observe_key = ":".join(
+        [
+            "selector-view",
+            "v2",
+            key[1],
+            key[0],
+            key[2],
+            direction,
+            str(cue_bucket),
+            minute_bucket.isoformat().replace("+00:00", "Z"),
+        ]
+    )
+    if require_string(row, "observe_key") != expected_observe_key:
+        raise ValueError(f"{context}: observe_key does not match selector row identity")
     return key
 
 
@@ -538,8 +573,6 @@ def read_selector_view_ticks(paths: Sequence[pathlib.Path]) -> list[SelectorView
                 if pending_manifest is None:
                     raise ValueError(f"{context}: selector row has no leading tick manifest")
                 pending_rows.append(payload)
-                if len(pending_rows) > expected_rows:
-                    raise ValueError(f"{context}: selector tick exceeds manifest row count")
                 if len(pending_rows) == expected_rows:
                     ticks.append(
                         _complete_selector_tick(
@@ -769,23 +802,25 @@ def selector_number_summary(
         with localcontext() as context:
             context.prec = required_precision
             mean = sum(decimals, Decimal(0)) / Decimal(len(decimals))
-            rounded_mean = mean.quantize(Decimal("0.000001"))
+            quantum = Decimal("0.000001")
+            rounded_min = min(decimals).quantize(quantum)
+            rounded_max = max(decimals).quantize(quantum)
+            rounded_mean = mean.quantize(quantum)
     except InvalidOperation as exc:
-        raise ValueError("selector metric mean cannot be represented safely") from exc
-    if rounded_mean == rounded_mean.to_integral_value():
-        mean_value: int | float = int(rounded_mean)
-    else:
-        mean_value = float(rounded_mean)
-        if not math.isfinite(mean_value) or Decimal(str(mean_value)) != rounded_mean:
-            raise ValueError("selector metric mean cannot be represented safely")
+        raise ValueError("selector metric summary cannot be represented safely") from exc
 
-    def rounded_endpoint(value: int | float) -> int | float:
-        return value if isinstance(value, int) else round(value, 6)
+    def json_number(value: Decimal) -> int | float:
+        if value == value.to_integral_value():
+            return int(value)
+        converted = float(value)
+        if not math.isfinite(converted) or Decimal(str(converted)) != value:
+            raise ValueError("selector metric summary cannot be represented safely")
+        return converted
 
     return {
-        "min": rounded_endpoint(min(values)),
-        "max": rounded_endpoint(max(values)),
-        "mean": mean_value,
+        "min": json_number(rounded_min),
+        "max": json_number(rounded_max),
+        "mean": json_number(rounded_mean),
     }
 
 

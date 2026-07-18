@@ -794,31 +794,39 @@ class AutopilotShadowAllowlistTests(unittest.TestCase):
     def test_selector_view_replay_is_input_order_deterministic(self) -> None:
         first_at = "2026-07-16T00:05:00Z"
         second_at = "2026-07-16T00:10:00Z"
+        first_rows = [
+            selector_row(observed_at=first_at),
+            selector_row(
+                observed_at=first_at,
+                pair_id="PF_DOGEUSD__PF_PEPEUSD",
+                selected_variant="ROBUST_Z",
+                direction_hint="SHORT_SPREAD",
+            ),
+        ]
+        second_rows = [
+            selector_row(
+                observed_at=second_at,
+                cue_bucket="TRADE_NOW",
+                selected_score_z=2.5,
+            )
+        ]
         with tempfile.TemporaryDirectory() as tmp:
             root = pathlib.Path(tmp)
-            first_path = root / "a.jsonl"
-            second_path = root / "b.jsonl"
+            forward_path = root / "forward.jsonl"
+            reverse_path = root / "reverse.jsonl"
             write_selector_capture(
-                first_path,
-                [(first_at, [selector_row(observed_at=first_at)])],
+                forward_path,
+                [(first_at, first_rows), (second_at, second_rows)],
             )
             write_selector_capture(
-                second_path,
+                reverse_path,
                 [
-                    (
-                        second_at,
-                        [
-                            selector_row(
-                                observed_at=second_at,
-                                cue_bucket="TRADE_NOW",
-                                selected_score_z=2.5,
-                            )
-                        ],
-                    )
+                    (second_at, list(reversed(second_rows))),
+                    (first_at, list(reversed(first_rows))),
                 ],
             )
-            forward_ticks = shadow.read_selector_view_ticks([first_path, second_path])
-            reverse_ticks = shadow.read_selector_view_ticks([second_path, first_path])
+            forward_ticks = shadow.read_selector_view_ticks([forward_path])
+            reverse_ticks = shadow.read_selector_view_ticks([reverse_path])
 
         kwargs = {
             "events": [],
@@ -829,7 +837,7 @@ class AutopilotShadowAllowlistTests(unittest.TestCase):
         forward = shadow.build_snapshot(selector_ticks=forward_ticks, **kwargs)
         reverse = shadow.build_snapshot(selector_ticks=reverse_ticks, **kwargs)
 
-        self.assertEqual(forward_ticks, reverse_ticks)
+        self.assertNotEqual(forward_ticks, reverse_ticks)
         self.assertEqual(forward, reverse)
         forward_bytes = (
             json.dumps(forward, indent=2, sort_keys=True, allow_nan=False) + "\n"
@@ -848,8 +856,10 @@ class AutopilotShadowAllowlistTests(unittest.TestCase):
         self.assertLessEqual(summary["mean"], summary["max"])
 
     def test_b2b_producer_records_integrate_with_b2c_consumer(self) -> None:
-        observed_at = dt.datetime(2026, 7, 16, 0, 5, tzinfo=dt.timezone.utc)
-        observed_at_text = "2026-07-16T00:05:00Z"
+        observed_at = dt.datetime(
+            2026, 7, 16, 0, 5, 47, 123456, tzinfo=dt.timezone.utc
+        )
+        observed_at_text = "2026-07-16T00:05:47Z"
         huge_spread = int("9" * 400)
         exact_large_score = 2**53 + 1
         records = observe.selector_view_records(
@@ -891,6 +901,11 @@ class AutopilotShadowAllowlistTests(unittest.TestCase):
         self.assertEqual(
             [record["capture_profile"] for record in records],
             ["selector_view_tick", "selector_view"],
+        )
+        self.assertEqual(
+            records[1]["observe_key"],
+            "selector-view:v2:1m:PF_SOLUSD__PF_AVAXUSD:COINTEGRATION_Z:"
+            "LONG_SPREAD:TRADE_NOW:2026-07-16T00:05:00Z",
         )
 
         with tempfile.TemporaryDirectory() as tmp:
