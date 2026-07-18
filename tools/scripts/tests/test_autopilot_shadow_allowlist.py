@@ -763,6 +763,14 @@ class AutopilotShadowAllowlistTests(unittest.TestCase):
             prominent[pair_b]["metrics"]["top_gate_failure_reasons"],
             ["COST_GATE_FAIL"],
         )
+        self.assertEqual(
+            prominent[pair_b]["metrics"]["score_z_summary"],
+            {"min": 2, "max": 2, "mean": 2},
+        )
+        self.assertEqual(
+            prominent[pair_b]["metrics"]["stated_net_edge_bps_summary"],
+            {"min": -1, "max": 7, "mean": 3},
+        )
 
         self.assertEqual(
             snapshot["universe"]["bucket_universe_counts"],
@@ -823,6 +831,21 @@ class AutopilotShadowAllowlistTests(unittest.TestCase):
 
         self.assertEqual(forward_ticks, reverse_ticks)
         self.assertEqual(forward, reverse)
+        forward_bytes = (
+            json.dumps(forward, indent=2, sort_keys=True, allow_nan=False) + "\n"
+        ).encode("utf-8")
+        reverse_bytes = (
+            json.dumps(reverse, indent=2, sort_keys=True, allow_nan=False) + "\n"
+        ).encode("utf-8")
+        self.assertEqual(forward_bytes, reverse_bytes)
+
+    def test_selector_number_summary_uses_one_decimal_rounding_path(self) -> None:
+        summary = shadow.selector_number_summary([1.0000005, 1.0000005, 1.0000005])
+
+        self.assertEqual(summary, {"min": 1, "max": 1, "mean": 1})
+        assert summary is not None
+        self.assertLessEqual(summary["min"], summary["mean"])
+        self.assertLessEqual(summary["mean"], summary["max"])
 
     def test_b2b_producer_records_integrate_with_b2c_consumer(self) -> None:
         observed_at = dt.datetime(2026, 7, 16, 0, 5, tzinfo=dt.timezone.utc)
@@ -1126,6 +1149,36 @@ class AutopilotShadowAllowlistTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "terminating newline"):
                 shadow.read_selector_view_ticks([unterminated_path])
 
+    def test_selector_view_ingest_rejects_non_rfc3339_identity_without_artifact(
+        self,
+    ) -> None:
+        invalid_timestamps = {
+            "space_separator": "2026-07-16 00:05:00+00:00",
+            "basic_format": "20260716T000500Z",
+        }
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = pathlib.Path(tmp)
+            for name, observed_at in invalid_timestamps.items():
+                with self.subTest(name=name):
+                    row = selector_row(observed_at=observed_at)
+                    capture_path = root / f"{name}.jsonl"
+                    output_path = root / f"{name}.json"
+                    write_selector_capture(capture_path, [(observed_at, [row])])
+
+                    with self.assertRaisesRegex(ValueError, "RFC 3339"):
+                        shadow.main(
+                            [
+                                "--selector-view-jsonl",
+                                str(capture_path),
+                                "--source-cutoff-at",
+                                "2026-07-16T01:00:00Z",
+                                "--output-json",
+                                str(output_path),
+                            ]
+                        )
+                    self.assertFalse(output_path.exists())
+
     def test_selector_view_ingest_rejects_outcomes_and_invalid_values(self) -> None:
         observed_at = "2026-07-16T00:05:00Z"
         base = selector_row(observed_at=observed_at)
@@ -1133,6 +1186,10 @@ class AutopilotShadowAllowlistTests(unittest.TestCase):
             "outcome_field": {**base, "realized_net_bps": 99.0},
             "non_finite_score": {**base, "selected_score_z": math.nan},
             "unsupported_direction": {**base, "direction_hint": "SIDEWAYS"},
+            "contradictory_observe_key": {
+                **base,
+                "observe_key": base["observe_key"].replace("WATCHLIST", "EXCLUDED"),
+            },
             "unexpected_field": {**base, "unexpected_selector_field": True},
             "missing_required_field": {
                 key: value for key, value in base.items() if key != "decision_reason_code"
