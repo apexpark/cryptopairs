@@ -17,6 +17,20 @@ This project follows SemVer as defined in `docs/02-versioning-and-releases.md`.
   prompt-pack note, CODEOWNERS, and the project.yaml protected mirror.
 
 ### Operator Tooling
+- AUTO-2B.2 B2-c: `autopilot_shadow_allowlist.py` gains optional repeatable
+  `--selector-view-jsonl` inputs for completed B2-b captures and emits the
+  already-contracted v2 `selector_view`, `universe`, and per-stream churn
+  blocks. The consumer re-checks each leading tick manifest, including its
+  RFC 3339 identity timestamps and the producer invariant
+  `recorded_rows == sum(rows_per_bucket)`, and fails closed before output on
+  truncated or unterminated, count-mismatched, unmanifested, duplicated,
+  out-of-contract, or malformed selector evidence. Selector-view
+  metrics remain segregated from realized-paper scoring: they carry no
+  outcome/PnL/fill claims and can never control paper eligibility. With no
+  selector-view input, the version-1 output and prior failure behavior remain
+  unchanged. The shadow runbook adds an Operator-only, bounded
+  artifact-consumption procedure; it does not start a capture, service,
+  deployment, or unattended loop.
 - AUTO-2B.2 B2-b: `autopilot_observe.py` gains a disabled-by-default
   selector-view capture mode (`AUTOPILOT_OBSERVE_CAPTURE_SELECTOR_VIEW`)
   that records the cue endpoint's full view across all three buckets
