@@ -32,6 +32,7 @@ RFC3339_TIMESTAMP_RE = re.compile(
     r"(?:\.\d+)?(?:[Zz]|[+-]\d{2}:\d{2})$"
 )
 SUPPORTED_DIRECTIONS = {"LONG_SPREAD", "SHORT_SPREAD"}
+SUPPORTED_SELECTOR_DIRECTIONS = {"LONG_SPREAD", "NONE", "SHORT_SPREAD"}
 SELECTOR_VIEW_BUCKETS = ("TRADE_NOW", "WATCHLIST", "EXCLUDED")
 SELECTOR_VIEW_PROFILE = "selector_view"
 SELECTOR_VIEW_TICK_PROFILE = "selector_view_tick"
@@ -266,10 +267,13 @@ def selector_view_key(row: dict[str, Any]) -> SelectorKey:
     selected_variant = require_string(row, "selected_variant")
     direction = row.get("direction_hint")
     if direction is not None:
-        if not isinstance(direction, str) or direction not in SUPPORTED_DIRECTIONS:
+        if (
+            not isinstance(direction, str)
+            or direction not in SUPPORTED_SELECTOR_DIRECTIONS
+        ):
             raise ValueError(
                 "selector-view direction_hint must be null or one of "
-                f"{sorted(SUPPORTED_DIRECTIONS)}"
+                f"{sorted(SUPPORTED_SELECTOR_DIRECTIONS)}"
             )
     return (pair_id, timeframe, selected_variant, direction)
 
@@ -1099,7 +1103,10 @@ def snapshot_selector_prominent_keys(snapshot: dict[str, Any]) -> set[SelectorKe
         if not isinstance(row, dict):
             raise ValueError("previous snapshot selector_view_prominent rows must be objects")
         direction = row.get("direction")
-        if direction is not None and direction not in SUPPORTED_DIRECTIONS:
+        if (
+            direction is not None
+            and direction not in SUPPORTED_SELECTOR_DIRECTIONS
+        ):
             raise ValueError("previous snapshot selector direction is invalid")
         key: SelectorKey = (
             require_string(row, "pair_id"),

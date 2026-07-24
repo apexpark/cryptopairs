@@ -1056,7 +1056,12 @@ class AutopilotShadowAllowlistTests(unittest.TestCase):
             [shadow.selector_view_key(row)[3] for row in ticks[0].rows],
             ["NONE", "NONE"],
         )
-        self.assertNotIn(None, [shadow.selector_view_key(row)[3] for row in ticks[0].rows])
+        self.assertNotIn(
+            None,
+            [shadow.selector_view_key(row)[3] for row in ticks[0].rows],
+        )
+        with self.assertRaisesRegex(ValueError, "direction must be one of"):
+            shadow.direction_value("NONE")
 
         snapshot = shadow.build_snapshot(
             events=[
@@ -1387,28 +1392,30 @@ class AutopilotShadowAllowlistTests(unittest.TestCase):
                     with self.assertRaises(ValueError):
                         shadow.read_selector_view_ticks([path])
 
-            outcome_path = root / "outcome_for_cli.jsonl"
-            output_path = root / "must_not_exist.json"
-            outcome_row = cases["outcome_field"]
-            write_jsonl(
-                outcome_path,
-                [
-                    selector_manifest(observed_at=observed_at, rows=[outcome_row]),
-                    outcome_row,
-                ],
-            )
-            with self.assertRaises(ValueError):
-                shadow.main(
+            for name in ("outcome_field", "unsupported_direction"):
+                invalid_row = cases[name]
+                path = root / f"{name}_for_cli.jsonl"
+                output_path = root / f"{name}_must_not_exist.json"
+                write_jsonl(
+                    path,
                     [
-                        "--selector-view-jsonl",
-                        str(outcome_path),
-                        "--source-cutoff-at",
-                        "2026-07-16T01:00:00Z",
-                        "--output-json",
-                        str(output_path),
-                    ]
+                        selector_manifest(observed_at=observed_at, rows=[invalid_row]),
+                        invalid_row,
+                    ],
                 )
-            self.assertFalse(output_path.exists())
+                with self.subTest(cli_rejection=name):
+                    with self.assertRaises(ValueError):
+                        shadow.main(
+                            [
+                                "--selector-view-jsonl",
+                                str(path),
+                                "--source-cutoff-at",
+                                "2026-07-16T01:00:00Z",
+                                "--output-json",
+                                str(output_path),
+                            ]
+                        )
+                    self.assertFalse(output_path.exists())
 
     def test_explicit_no_selector_input_preserves_legacy_v1_output(self) -> None:
         kwargs = {
