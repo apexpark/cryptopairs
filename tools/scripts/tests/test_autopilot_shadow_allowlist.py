@@ -11,7 +11,7 @@ import sys
 import tempfile
 import unittest
 
-from jsonschema import Draft202012Validator
+from jsonschema import Draft202012Validator, FormatChecker
 
 
 REPO_ROOT = pathlib.Path(__file__).resolve().parents[3]
@@ -802,6 +802,13 @@ class AutopilotShadowAllowlistTests(unittest.TestCase):
                 selected_variant="ROBUST_Z",
                 direction_hint="SHORT_SPREAD",
             ),
+            selector_row(
+                observed_at=first_at,
+                pair_id="PF_ETHUSD__PF_ADAUSD",
+                selected_variant="VOL_NORMALIZED",
+                direction_hint="NONE",
+                cue_bucket="EXCLUDED",
+            ),
         ]
         second_rows = [
             selector_row(
@@ -948,6 +955,164 @@ class AutopilotShadowAllowlistTests(unittest.TestCase):
         )
         self.assertEqual(snapshot["universe"]["paper_evidenced_count"], 0)
         self.assertEqual(forbidden_outcome_keys(snapshot["selector_view"]), set())
+
+    def test_b2b_none_direction_stays_distinct_and_marginal_in_b2c(self) -> None:
+        observed_at = dt.datetime(
+            2026, 7, 20, 0, 5, 58, tzinfo=dt.timezone.utc
+        )
+        observed_at_text = "2026-07-20T00:05:58Z"
+        watch_pair = "PF_XBTUSD__PF_ETHUSD"
+        excluded_pair = "PF_ETHUSD__PF_ADAUSD"
+
+        def source_row(
+            *,
+            pair_id: str,
+            selected_variant: str,
+            watch_reason_code: str | None,
+            blocked_reason_code: str | None,
+        ) -> dict[str, object]:
+            return {
+                "pair_id": pair_id,
+                "timeframe": "1m",
+                "selected_variant": selected_variant,
+                "direction_hint": "NONE",
+                "decision_reason_code": "NO_ACTIONABLE_DIRECTION",
+                "blocked_reason_code": blocked_reason_code,
+                "watch_reason_code": watch_reason_code,
+                "rationale_codes": ["ENTRY_DISTANCE_NOT_MET"],
+                "setup_gate_pass": False,
+                "cost_gate_pass": True,
+                "trade_gate_pass": False,
+                "spread_z": 0.4,
+                "selected_score_z": 0.4,
+                "net_edge_bps": 2.5,
+                "opportunity_score": 0.2,
+            }
+
+        records = observe.selector_view_records(
+            config=observe.Config(
+                enabled=True,
+                capture_selector_view=True,
+                max_signal_age_seconds=120,
+            ),
+            trade_now={
+                "generated_at": observed_at_text,
+                "tradable_now": [],
+                "watchlist": [
+                    source_row(
+                        pair_id=watch_pair,
+                        selected_variant="COINTEGRATION_Z",
+                        watch_reason_code="ENTRY_DISTANCE_NOT_MET",
+                        blocked_reason_code=None,
+                    )
+                ],
+                "excluded": [
+                    source_row(
+                        pair_id=excluded_pair,
+                        selected_variant="VOL_NORMALIZED",
+                        watch_reason_code=None,
+                        blocked_reason_code="SETUP_GATE_FAIL",
+                    )
+                ],
+            },
+            observed_at=observed_at,
+            dispatch_mode=None,
+            kill_switch=None,
+            evidence={},
+            source_reasons=[],
+        )
+
+        self.assertEqual(
+            [record["capture_profile"] for record in records],
+            ["selector_view_tick", "selector_view", "selector_view"],
+        )
+        self.assertEqual(
+            [record.get("direction_hint") for record in records[1:]],
+            ["NONE", "NONE"],
+        )
+        self.assertTrue(
+            all(":NONE:" in str(record["observe_key"]) for record in records[1:])
+        )
+
+        observe_schema = json.loads(
+            (REPO_ROOT / "specs/contracts/autopilot_observe_record.schema.json")
+            .read_text(encoding="utf-8")
+        )
+        observe_validator = Draft202012Validator(
+            observe_schema,
+            format_checker=FormatChecker(),
+        )
+        for record in records:
+            self.assertEqual(list(observe_validator.iter_errors(record)), [])
+
+        with tempfile.TemporaryDirectory() as tmp:
+            capture_path = pathlib.Path(tmp) / "production_none_capture.jsonl"
+            write_jsonl(capture_path, records)
+            ticks = shadow.read_selector_view_ticks([capture_path])
+
+        self.assertEqual(len(ticks), 1)
+        self.assertEqual(ticks[0].run_id, observed_at_text)
+        self.assertEqual(
+            [shadow.selector_view_key(row)[3] for row in ticks[0].rows],
+            ["NONE", "NONE"],
+        )
+        self.assertNotIn(
+            None,
+            [shadow.selector_view_key(row)[3] for row in ticks[0].rows],
+        )
+        with self.assertRaisesRegex(ValueError, "direction must be one of"):
+            shadow.direction_value("NONE")
+
+        snapshot = shadow.build_snapshot(
+            events=[
+                event(
+                    pair_id=watch_pair,
+                    selected_variant="COINTEGRATION_Z",
+                    direction="LONG_SPREAD",
+                )
+            ],
+            source_cutoff_at="2026-07-20T00:10:00Z",
+            selector_config=shadow.SelectorConfig(),
+            static_allowlist={
+                (watch_pair, "1m", "COINTEGRATION_Z", "LONG_SPREAD"),
+                (excluded_pair, "1m", "VOL_NORMALIZED", None),
+            },
+            generated_at="2026-07-20T00:11:00Z",
+            selector_ticks=ticks,
+        )
+
+        self.assertEqual(snapshot["selector_view"]["selector_view_prominent"], [])
+        marginal = {
+            row["pair_id"]: row
+            for row in snapshot["selector_view"]["selector_view_marginal"]
+        }
+        self.assertEqual(set(marginal), {watch_pair, excluded_pair})
+        self.assertEqual(
+            {row["direction"] for row in marginal.values()},
+            {"NONE"},
+        )
+        self.assertEqual(
+            marginal[watch_pair]["metrics"]["bucket_counts"],
+            {"TRADE_NOW": 0, "WATCHLIST": 1, "EXCLUDED": 0},
+        )
+        self.assertEqual(
+            marginal[excluded_pair]["metrics"]["bucket_counts"],
+            {"TRADE_NOW": 0, "WATCHLIST": 0, "EXCLUDED": 1},
+        )
+        self.assertEqual(snapshot["universe"]["paper_evidenced_count"], 0)
+        self.assertEqual(snapshot["universe"]["static_allowlist_overlap_count"], 1)
+        self.assertEqual(forbidden_outcome_keys(snapshot["selector_view"]), set())
+
+        snapshot_schema = json.loads(
+            (
+                REPO_ROOT
+                / "specs/contracts/autopilot_shadow_allowlist_snapshot.schema.json"
+            ).read_text(encoding="utf-8")
+        )
+        self.assertEqual(
+            list(Draft202012Validator(snapshot_schema).iter_errors(snapshot)),
+            [],
+        )
 
     def test_selector_view_churn_is_separate_from_realized_churn(self) -> None:
         pair_a = "PF_SOLUSD__PF_AVAXUSD"
@@ -1227,28 +1392,30 @@ class AutopilotShadowAllowlistTests(unittest.TestCase):
                     with self.assertRaises(ValueError):
                         shadow.read_selector_view_ticks([path])
 
-            outcome_path = root / "outcome_for_cli.jsonl"
-            output_path = root / "must_not_exist.json"
-            outcome_row = cases["outcome_field"]
-            write_jsonl(
-                outcome_path,
-                [
-                    selector_manifest(observed_at=observed_at, rows=[outcome_row]),
-                    outcome_row,
-                ],
-            )
-            with self.assertRaises(ValueError):
-                shadow.main(
+            for name in ("outcome_field", "unsupported_direction"):
+                invalid_row = cases[name]
+                path = root / f"{name}_for_cli.jsonl"
+                output_path = root / f"{name}_must_not_exist.json"
+                write_jsonl(
+                    path,
                     [
-                        "--selector-view-jsonl",
-                        str(outcome_path),
-                        "--source-cutoff-at",
-                        "2026-07-16T01:00:00Z",
-                        "--output-json",
-                        str(output_path),
-                    ]
+                        selector_manifest(observed_at=observed_at, rows=[invalid_row]),
+                        invalid_row,
+                    ],
                 )
-            self.assertFalse(output_path.exists())
+                with self.subTest(cli_rejection=name):
+                    with self.assertRaises(ValueError):
+                        shadow.main(
+                            [
+                                "--selector-view-jsonl",
+                                str(path),
+                                "--source-cutoff-at",
+                                "2026-07-16T01:00:00Z",
+                                "--output-json",
+                                str(output_path),
+                            ]
+                        )
+                    self.assertFalse(output_path.exists())
 
     def test_explicit_no_selector_input_preserves_legacy_v1_output(self) -> None:
         kwargs = {
