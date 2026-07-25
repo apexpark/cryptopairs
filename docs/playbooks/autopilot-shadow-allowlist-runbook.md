@@ -167,6 +167,13 @@ Interpretation is deliberately narrow:
 - `bucket_universe_counts` counts distinct pair/variant/direction keys observed
   in each bucket. A key may count in more than one bucket when it moves during
   the window.
+- `direction: "NONE"` is the strategy service's explicit non-actionable
+  direction sentinel. It remains distinct from a missing/null direction, does
+  not match `LONG_SPREAD` or `SHORT_SPREAD` paper evidence or
+  direction-specific static entries, and does not itself grant eligibility.
+  It is accepted only as a selector-view direction; the realized paper-event
+  direction set remains `LONG_SPREAD` / `SHORT_SPREAD`. Any other unknown
+  selector direction string still fails closed.
 - `selector_view_only` is the advisory discovery list: prominent in the
   selector view and absent from the static paper allowlist. It is not
   permission to alter eligibility.

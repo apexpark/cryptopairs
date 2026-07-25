@@ -17,6 +17,17 @@ This project follows SemVer as defined in `docs/02-versioning-and-releases.md`.
   prompt-pack note, CODEOWNERS, and the project.yaml protected mirror.
 
 ### Operator Tooling
+- AUTO-2B.2 B2-cR: the selector-view consumer now recognizes the strategy
+  service's explicit non-actionable `direction_hint="NONE"` sentinel while
+  preserving it as a distinct key from JSON `null`. This repairs the
+  production-evidence incompatibility surfaced by the completed B2-d run:
+  its schema-valid `NONE` rows can remain advisory marginal observations and
+  do not match directional paper evidence or direction-specific static
+  entries.
+  The realized paper-event direction set is unchanged, and unknown selector
+  direction strings continue to fail closed. No producer, contract shape,
+  eligibility, scoring-policy, service, capture, or hosted-runtime behavior
+  changes.
 - AUTO-2B.2 B2-c: `autopilot_shadow_allowlist.py` gains optional repeatable
   `--selector-view-jsonl` inputs for completed B2-b captures and emits the
   already-contracted v2 `selector_view`, `universe`, and per-stream churn
