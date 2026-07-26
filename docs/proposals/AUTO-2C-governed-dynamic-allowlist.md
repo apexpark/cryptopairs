@@ -8,6 +8,16 @@
 >
 > **Item addressed**: Operator decision OP-45(d/e), using the accepted
 > AUTO-2B.2 B2-d capture and corrected B2-cR preserved-evidence replay.
+>
+> **Operator ratification notice (2026-07-26)**: after PR #257 merged this
+> proposal as `f1da80f11e5a8d2244ebc9715d026f30068c0fb3`, the Operator adopted the
+> exact first-policy values in §6.3, the demotion-only qualification boundary,
+> Operator-supplied read-only E3 copies, and separately scoped CI-1. The
+> historical **PROPOSAL** labels below are preserved as authored; the
+> superseding decision is recorded append-only in
+> `.agentic/registers/decisions.md`. Only C-a contract/example work was
+> authorized. C-b, C-c, C-d, a second evidence window, AUTO-2D, and every
+> runtime or eligibility action remain separately gated.
 
 ## 1. Context & Sources Consulted
 
