@@ -5,6 +5,16 @@ This project follows SemVer as defined in `docs/02-versioning-and-releases.md`.
 
 ## Unreleased
 ### Governance
+- Recorded completion of AUTO-2B.2 B2-cR / PR #256 at
+  `29de6028b564869298bc0be7e581ed28df78bbf2`, acceptance of the corrected
+  preserved-evidence replay, completion of B2-d end-to-end validation, and the
+  proposal-only AUTO-2C governor phase.
+  The accepted replay remains advisory: `churn.selector_view=null` because no
+  comparable prior v2 selector-view snapshot exists, so it cannot produce
+  actionable paper eligibility. The AUTO-2C proposal labels every unratified
+  policy value as **PROPOSAL**, requires exact-hash Operator approval before
+  any later AUTO-2D consumption, and stops the OP-45 queue for Operator-led
+  rebuilding; governor implementation remains unauthorized.
 - Swapped the Claude/Codex role assignments (Operator decision OP-44). The
   transition became operative when AUTO-2B.2 B2-b / PR #252 completed under
   the prior roles, was Codex-reviewed CLEAN at
