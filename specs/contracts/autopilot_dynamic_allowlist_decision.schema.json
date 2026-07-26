@@ -1,0 +1,1214 @@
+{
+  "$id": "https://cryptopairs/specs/contracts/autopilot_dynamic_allowlist_decision.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "AutopilotDynamicAllowlistDecision",
+  "description": "AUTO-2C offline governed dynamic-allowlist decision. This artifact is advisory pending exact-hash Operator approval and has no paper, live, execution, deployment, service, or runtime-configuration authority.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "mode",
+    "decision_id",
+    "status",
+    "evaluated_at",
+    "valid_until",
+    "current_snapshot",
+    "previous_snapshot",
+    "paper_run_config",
+    "selector_config",
+    "governor_config",
+    "governor_config_source",
+    "baseline_entries",
+    "proposed_entries",
+    "additions",
+    "removals",
+    "retained_entries",
+    "direction_counts",
+    "gate_results",
+    "gate_summary",
+    "calculations",
+    "reason_codes",
+    "methodology",
+    "authority",
+    "operator_approval_required",
+    "operator_approval_binding",
+    "authority_boundaries"
+  ],
+  "properties": {
+    "schema_version": {
+      "type": "integer",
+      "const": 1
+    },
+    "mode": {
+      "type": "string",
+      "const": "governed_dynamic_allowlist_decision"
+    },
+    "decision_id": {
+      "description": "Lowercase SHA-256 of the canonical current/previous snapshot hashes, paper configuration hash, governor configuration, and explicit evaluation time.",
+      "$ref": "#/$defs/sha256"
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "ELIGIBLE_FOR_OPERATOR_REVIEW",
+        "GOVERNOR_BLOCKED"
+      ]
+    },
+    "evaluated_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "valid_until": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "current_snapshot": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/snapshot_reference"
+        },
+        {
+          "properties": {
+            "schema_version": {
+              "const": 2
+            },
+            "selector_view_present": {
+              "const": true
+            }
+          }
+        }
+      ]
+    },
+    "previous_snapshot": {
+      "$ref": "#/$defs/snapshot_reference"
+    },
+    "paper_run_config": {
+      "$ref": "#/$defs/paper_run_config_reference"
+    },
+    "selector_config": {
+      "$ref": "#/$defs/selector_config"
+    },
+    "governor_config": {
+      "$ref": "#/$defs/governor_config"
+    },
+    "governor_config_source": {
+      "$ref": "#/$defs/governor_config_reference"
+    },
+    "baseline_entries": {
+      "$ref": "#/$defs/exact_key_array"
+    },
+    "proposed_entries": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/exact_key_array"
+        },
+        {
+          "maxItems": 4
+        }
+      ]
+    },
+    "additions": {
+      "description": "The first AUTO-2C policy is demotion-only, so additions are forbidden.",
+      "allOf": [
+        {
+          "$ref": "#/$defs/exact_key_array"
+        },
+        {
+          "maxItems": 0
+        }
+      ]
+    },
+    "removals": {
+      "$ref": "#/$defs/exact_key_array"
+    },
+    "retained_entries": {
+      "$ref": "#/$defs/exact_key_array"
+    },
+    "direction_counts": {
+      "$ref": "#/$defs/direction_counts"
+    },
+    "gate_results": {
+      "$ref": "#/$defs/gate_results"
+    },
+    "gate_summary": {
+      "$ref": "#/$defs/gate_summary"
+    },
+    "calculations": {
+      "$ref": "#/$defs/calculations"
+    },
+    "reason_codes": {
+      "$ref": "#/$defs/reason_code_array"
+    },
+    "methodology": {
+      "$ref": "#/$defs/methodology"
+    },
+    "authority": {
+      "type": "string",
+      "const": "advisory_pending_operator_approval"
+    },
+    "operator_approval_required": {
+      "type": "boolean",
+      "const": true
+    },
+    "operator_approval_binding": {
+      "$ref": "#/$defs/operator_approval_binding"
+    },
+    "authority_boundaries": {
+      "$ref": "#/$defs/authority_boundaries"
+    }
+  },
+  "$defs": {
+    "sha256": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "git_sha": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{40}$"
+    },
+    "exact_key": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "pair_id",
+        "timeframe",
+        "selected_variant",
+        "direction"
+      ],
+      "properties": {
+        "pair_id": {
+          "description": "Exactly two non-empty full instrument identifiers separated by one double underscore. The implementation must additionally reject more than one double-underscore delimiter.",
+          "type": "string",
+          "pattern": "^(?!.*__.*__)\\S+__\\S+$"
+        },
+        "timeframe": {
+          "type": "string",
+          "const": "1m"
+        },
+        "selected_variant": {
+          "type": "string",
+          "minLength": 1
+        },
+        "direction": {
+          "type": "string",
+          "enum": [
+            "LONG_SPREAD",
+            "SHORT_SPREAD"
+          ]
+        }
+      }
+    },
+    "exact_key_array": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {
+        "$ref": "#/$defs/exact_key"
+      }
+    },
+    "snapshot_reference": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "path",
+        "sha256",
+        "schema_version",
+        "generated_at",
+        "source_cutoff_at",
+        "producer_git_sha",
+        "selector_config_sha256",
+        "selector_view_present",
+        "selector_view_churn_available"
+      ],
+      "properties": {
+        "path": {
+          "type": "string",
+          "minLength": 1
+        },
+        "sha256": {
+          "$ref": "#/$defs/sha256"
+        },
+        "schema_version": {
+          "type": "integer",
+          "enum": [
+            1,
+            2
+          ]
+        },
+        "generated_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "source_cutoff_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "producer_git_sha": {
+          "$ref": "#/$defs/git_sha"
+        },
+        "selector_config_sha256": {
+          "$ref": "#/$defs/sha256"
+        },
+        "selector_view_present": {
+          "type": "boolean"
+        },
+        "selector_view_churn_available": {
+          "type": "boolean"
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "schema_version": {
+                "const": 1
+              }
+            },
+            "required": [
+              "schema_version"
+            ]
+          },
+          "then": {
+            "properties": {
+              "selector_view_present": {
+                "const": false
+              },
+              "selector_view_churn_available": {
+                "const": false
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "selector_view_churn_available": {
+                "const": true
+              }
+            },
+            "required": [
+              "selector_view_churn_available"
+            ]
+          },
+          "then": {
+            "properties": {
+              "schema_version": {
+                "const": 2
+              },
+              "selector_view_present": {
+                "const": true
+              }
+            }
+          }
+        }
+      ]
+    },
+    "paper_run_config_reference": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "path",
+        "sha256",
+        "producer_git_sha",
+        "static_allowlist_mode",
+        "static_allowlist_entry_count"
+      ],
+      "properties": {
+        "path": {
+          "type": "string",
+          "minLength": 1
+        },
+        "sha256": {
+          "$ref": "#/$defs/sha256"
+        },
+        "producer_git_sha": {
+          "$ref": "#/$defs/git_sha"
+        },
+        "static_allowlist_mode": {
+          "type": "string",
+          "enum": [
+            "pair_variant",
+            "pair_variant_direction",
+            "mixed"
+          ]
+        },
+        "static_allowlist_entry_count": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "selector_config": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "min_closed_positions",
+        "min_avg_net_bps",
+        "max_tail_loss_bps",
+        "max_avg_exit_lag_seconds",
+        "max_selected",
+        "min_score"
+      ],
+      "properties": {
+        "min_closed_positions": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "min_avg_net_bps": {
+          "type": "number"
+        },
+        "max_tail_loss_bps": {
+          "type": "number"
+        },
+        "max_avg_exit_lag_seconds": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "max_selected": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "min_score": {
+          "type": "number"
+        }
+      }
+    },
+    "governor_config": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "transition_posture",
+        "required_comparable_v2_snapshots",
+        "min_source_cutoff_separation_seconds",
+        "max_current_source_age_seconds",
+        "max_governed_entries",
+        "max_directions_per_pair_variant",
+        "max_entries_per_full_instrument",
+        "max_changed_entries",
+        "change_measure",
+        "max_churn_ratio",
+        "churn_denominator",
+        "freshness_reference",
+        "validity_seconds",
+        "validity_reference",
+        "candidate_overflow_behavior",
+        "fallback_behavior"
+      ],
+      "properties": {
+        "transition_posture": {
+          "type": "string",
+          "const": "DEMOTION_ONLY"
+        },
+        "required_comparable_v2_snapshots": {
+          "type": "integer",
+          "const": 2
+        },
+        "min_source_cutoff_separation_seconds": {
+          "type": "integer",
+          "const": 86400
+        },
+        "max_current_source_age_seconds": {
+          "type": "integer",
+          "const": 1800
+        },
+        "max_governed_entries": {
+          "type": "integer",
+          "const": 4
+        },
+        "max_directions_per_pair_variant": {
+          "type": "integer",
+          "const": 2
+        },
+        "max_entries_per_full_instrument": {
+          "type": "integer",
+          "const": 2
+        },
+        "max_changed_entries": {
+          "type": "integer",
+          "const": 1
+        },
+        "change_measure": {
+          "type": "string",
+          "const": "BASELINE_PROPOSED_SYMMETRIC_DIFFERENCE"
+        },
+        "max_churn_ratio": {
+          "type": "number",
+          "const": 0.25
+        },
+        "churn_denominator": {
+          "type": "string",
+          "const": "NON_EMPTY_BASELINE_ENTRY_COUNT"
+        },
+        "freshness_reference": {
+          "type": "string",
+          "const": "CURRENT_SNAPSHOT_SOURCE_CUTOFF_AT"
+        },
+        "validity_seconds": {
+          "type": "integer",
+          "const": 86400
+        },
+        "validity_reference": {
+          "type": "string",
+          "const": "EXPLICIT_EVALUATED_AT"
+        },
+        "candidate_overflow_behavior": {
+          "type": "string",
+          "const": "BLOCK_EMPTY_NO_TRUNCATION"
+        },
+        "fallback_behavior": {
+          "type": "string",
+          "const": "NO_FALLBACK"
+        }
+      }
+    },
+    "governor_config_reference": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "path",
+        "sha256"
+      ],
+      "properties": {
+        "path": {
+          "type": "string",
+          "minLength": 1
+        },
+        "sha256": {
+          "$ref": "#/$defs/sha256"
+        }
+      }
+    },
+    "direction_counts": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "selector_long_spread_count",
+        "selector_short_spread_count",
+        "selector_none_count",
+        "selector_null_count",
+        "selector_unknown_count",
+        "realized_long_spread_count",
+        "realized_short_spread_count",
+        "realized_none_count",
+        "realized_null_count",
+        "realized_unknown_count"
+      ],
+      "properties": {
+        "selector_long_spread_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "selector_short_spread_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "selector_none_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "selector_null_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "selector_unknown_count": {
+          "type": "integer",
+          "const": 0
+        },
+        "realized_long_spread_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "realized_short_spread_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "realized_none_count": {
+          "type": "integer",
+          "const": 0
+        },
+        "realized_null_count": {
+          "type": "integer",
+          "const": 0
+        },
+        "realized_unknown_count": {
+          "type": "integer",
+          "const": 0
+        }
+      }
+    },
+    "reason_code": {
+      "type": "string",
+      "enum": [
+        "PREVIOUS_SNAPSHOT_NOT_SCHEMA_V2",
+        "SELECTOR_CHURN_UNAVAILABLE",
+        "SOURCE_CUTOFF_SEPARATION_TOO_SHORT",
+        "CURRENT_SOURCE_STALE",
+        "STATIC_BASELINE_EMPTY",
+        "NO_QUALIFYING_ENTRIES",
+        "MAX_GOVERNED_ENTRIES_EXCEEDED",
+        "PAIR_VARIANT_DIRECTION_LIMIT_EXCEEDED",
+        "INSTRUMENT_CONCENTRATION_LIMIT_EXCEEDED",
+        "MAX_CHANGED_ENTRIES_EXCEEDED",
+        "MAX_CHURN_RATIO_EXCEEDED"
+      ]
+    },
+    "reason_code_array": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {
+        "$ref": "#/$defs/reason_code"
+      }
+    },
+    "gate_result": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "verdict",
+        "reason_codes"
+      ],
+      "properties": {
+        "verdict": {
+          "type": "string",
+          "enum": [
+            "PASS",
+            "BLOCK"
+          ]
+        },
+        "reason_codes": {
+          "$ref": "#/$defs/reason_code_array"
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "verdict": {
+                "const": "PASS"
+              }
+            },
+            "required": [
+              "verdict"
+            ]
+          },
+          "then": {
+            "properties": {
+              "reason_codes": {
+                "maxItems": 0
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "verdict": {
+                "const": "BLOCK"
+              }
+            },
+            "required": [
+              "verdict"
+            ]
+          },
+          "then": {
+            "properties": {
+              "reason_codes": {
+                "minItems": 1
+              }
+            }
+          }
+        }
+      ]
+    },
+    "gate_pass": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "verdict",
+        "reason_codes"
+      ],
+      "properties": {
+        "verdict": {
+          "type": "string",
+          "const": "PASS"
+        },
+        "reason_codes": {
+          "type": "array",
+          "maxItems": 0
+        }
+      }
+    },
+    "gate_results": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "provenance",
+        "current_snapshot_schema",
+        "previous_snapshot_schema",
+        "snapshot_hash_distinct",
+        "selector_config_match",
+        "source_cutoff_order",
+        "source_cutoff_separation",
+        "current_source_freshness",
+        "comparable_selector_history",
+        "direction_domain",
+        "evidence_segregation",
+        "static_baseline",
+        "candidate_qualification",
+        "maximum_selection",
+        "pair_variant_concentration",
+        "instrument_concentration",
+        "transition_change",
+        "transition_churn",
+        "expiry"
+      ],
+      "properties": {
+        "provenance": {
+          "$ref": "#/$defs/gate_result"
+        },
+        "current_snapshot_schema": {
+          "$ref": "#/$defs/gate_result"
+        },
+        "previous_snapshot_schema": {
+          "$ref": "#/$defs/gate_result"
+        },
+        "snapshot_hash_distinct": {
+          "$ref": "#/$defs/gate_result"
+        },
+        "selector_config_match": {
+          "$ref": "#/$defs/gate_result"
+        },
+        "source_cutoff_order": {
+          "$ref": "#/$defs/gate_result"
+        },
+        "source_cutoff_separation": {
+          "$ref": "#/$defs/gate_result"
+        },
+        "current_source_freshness": {
+          "$ref": "#/$defs/gate_result"
+        },
+        "comparable_selector_history": {
+          "$ref": "#/$defs/gate_result"
+        },
+        "direction_domain": {
+          "$ref": "#/$defs/gate_result"
+        },
+        "evidence_segregation": {
+          "$ref": "#/$defs/gate_result"
+        },
+        "static_baseline": {
+          "$ref": "#/$defs/gate_result"
+        },
+        "candidate_qualification": {
+          "$ref": "#/$defs/gate_result"
+        },
+        "maximum_selection": {
+          "$ref": "#/$defs/gate_result"
+        },
+        "pair_variant_concentration": {
+          "$ref": "#/$defs/gate_result"
+        },
+        "instrument_concentration": {
+          "$ref": "#/$defs/gate_result"
+        },
+        "transition_change": {
+          "$ref": "#/$defs/gate_result"
+        },
+        "transition_churn": {
+          "$ref": "#/$defs/gate_result"
+        },
+        "expiry": {
+          "$ref": "#/$defs/gate_result"
+        }
+      }
+    },
+    "gate_results_all_pass": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "provenance",
+        "current_snapshot_schema",
+        "previous_snapshot_schema",
+        "snapshot_hash_distinct",
+        "selector_config_match",
+        "source_cutoff_order",
+        "source_cutoff_separation",
+        "current_source_freshness",
+        "comparable_selector_history",
+        "direction_domain",
+        "evidence_segregation",
+        "static_baseline",
+        "candidate_qualification",
+        "maximum_selection",
+        "pair_variant_concentration",
+        "instrument_concentration",
+        "transition_change",
+        "transition_churn",
+        "expiry"
+      ],
+      "properties": {
+        "provenance": {
+          "$ref": "#/$defs/gate_pass"
+        },
+        "current_snapshot_schema": {
+          "$ref": "#/$defs/gate_pass"
+        },
+        "previous_snapshot_schema": {
+          "$ref": "#/$defs/gate_pass"
+        },
+        "snapshot_hash_distinct": {
+          "$ref": "#/$defs/gate_pass"
+        },
+        "selector_config_match": {
+          "$ref": "#/$defs/gate_pass"
+        },
+        "source_cutoff_order": {
+          "$ref": "#/$defs/gate_pass"
+        },
+        "source_cutoff_separation": {
+          "$ref": "#/$defs/gate_pass"
+        },
+        "current_source_freshness": {
+          "$ref": "#/$defs/gate_pass"
+        },
+        "comparable_selector_history": {
+          "$ref": "#/$defs/gate_pass"
+        },
+        "direction_domain": {
+          "$ref": "#/$defs/gate_pass"
+        },
+        "evidence_segregation": {
+          "$ref": "#/$defs/gate_pass"
+        },
+        "static_baseline": {
+          "$ref": "#/$defs/gate_pass"
+        },
+        "candidate_qualification": {
+          "$ref": "#/$defs/gate_pass"
+        },
+        "maximum_selection": {
+          "$ref": "#/$defs/gate_pass"
+        },
+        "pair_variant_concentration": {
+          "$ref": "#/$defs/gate_pass"
+        },
+        "instrument_concentration": {
+          "$ref": "#/$defs/gate_pass"
+        },
+        "transition_change": {
+          "$ref": "#/$defs/gate_pass"
+        },
+        "transition_churn": {
+          "$ref": "#/$defs/gate_pass"
+        },
+        "expiry": {
+          "$ref": "#/$defs/gate_pass"
+        }
+      }
+    },
+    "gate_summary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "pass_count",
+        "block_count",
+        "total_count"
+      ],
+      "properties": {
+        "pass_count": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 19
+        },
+        "block_count": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 19
+        },
+        "total_count": {
+          "type": "integer",
+          "const": 19
+        }
+      }
+    },
+    "pair_variant_concentration": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "pair_id",
+        "timeframe",
+        "selected_variant",
+        "direction_count"
+      ],
+      "properties": {
+        "pair_id": {
+          "type": "string",
+          "pattern": "^(?!.*__.*__)\\S+__\\S+$"
+        },
+        "timeframe": {
+          "type": "string",
+          "const": "1m"
+        },
+        "selected_variant": {
+          "type": "string",
+          "minLength": 1
+        },
+        "direction_count": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "instrument_concentration": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "instrument_id",
+        "entry_count"
+      ],
+      "properties": {
+        "instrument_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "entry_count": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "calculations": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "source_cutoff_separation_seconds",
+        "current_source_age_seconds",
+        "baseline_entry_count",
+        "qualifying_entry_count",
+        "proposed_entry_count",
+        "change_count",
+        "churn_ratio",
+        "pair_variant_concentrations",
+        "instrument_concentrations"
+      ],
+      "properties": {
+        "source_cutoff_separation_seconds": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "current_source_age_seconds": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "baseline_entry_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "qualifying_entry_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "proposed_entry_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "change_count": {
+          "description": "Number of exact keys in the symmetric difference of baseline_entries and proposed_entries.",
+          "type": "integer",
+          "minimum": 0
+        },
+        "churn_ratio": {
+          "description": "Baseline/proposed symmetric-difference count divided by the non-empty baseline entry count; null only when the baseline is empty and the decision is blocked.",
+          "oneOf": [
+            {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "pair_variant_concentrations": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/pair_variant_concentration"
+          }
+        },
+        "instrument_concentrations": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/instrument_concentration"
+          }
+        }
+      }
+    },
+    "methodology": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "transition_posture",
+        "candidate_overflow_behavior",
+        "selector_realized_evidence_relation",
+        "none_direction_behavior",
+        "null_direction_behavior",
+        "unknown_direction_behavior",
+        "serialization_behavior",
+        "output_path_behavior",
+        "input_behavior",
+        "fallback_behavior"
+      ],
+      "properties": {
+        "transition_posture": {
+          "type": "string",
+          "const": "DEMOTION_ONLY_STATIC_BASELINE_SUBSET"
+        },
+        "candidate_overflow_behavior": {
+          "type": "string",
+          "const": "BLOCK_EMPTY_NO_RANK_OR_TRUNCATE"
+        },
+        "selector_realized_evidence_relation": {
+          "type": "string",
+          "const": "SET_MEMBERSHIP_ONLY_NO_NUMERIC_MERGE"
+        },
+        "none_direction_behavior": {
+          "type": "string",
+          "const": "NON_ACTIONABLE_DISTINCT_FROM_NULL"
+        },
+        "null_direction_behavior": {
+          "type": "string",
+          "const": "NON_ACTIONABLE_MISSING_DIRECTION"
+        },
+        "unknown_direction_behavior": {
+          "type": "string",
+          "const": "REJECT_INPUT_NO_ARTIFACT"
+        },
+        "serialization_behavior": {
+          "type": "string",
+          "const": "CANONICAL_SORTED_BYTE_IDENTICAL_FOR_IDENTICAL_INPUTS"
+        },
+        "output_path_behavior": {
+          "type": "string",
+          "const": "EXCLUSIVE_CREATE_NO_OVERWRITE_OR_REPAIR"
+        },
+        "input_behavior": {
+          "type": "string",
+          "const": "READ_ONLY_HASH_PRESERVING"
+        },
+        "fallback_behavior": {
+          "type": "string",
+          "const": "NO_FALLBACK_OR_AUTOMATIC_ROLLBACK"
+        }
+      }
+    },
+    "authority_boundaries": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "paper_eligibility_authority",
+        "live_eligibility_authority",
+        "execution_authority",
+        "runtime_configuration_write_authority",
+        "deployment_authority"
+      ],
+      "properties": {
+        "paper_eligibility_authority": {
+          "type": "boolean",
+          "const": false
+        },
+        "live_eligibility_authority": {
+          "type": "boolean",
+          "const": false
+        },
+        "execution_authority": {
+          "type": "boolean",
+          "const": false
+        },
+        "runtime_configuration_write_authority": {
+          "type": "boolean",
+          "const": false
+        },
+        "deployment_authority": {
+          "type": "boolean",
+          "const": false
+        }
+      }
+    },
+    "operator_approval_binding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "append_only_operator_decision_required",
+        "decision_id_required",
+        "decision_json_sha256_required",
+        "governor_config_sha256_required",
+        "valid_until_required",
+        "bounded_paper_run_id_required"
+      ],
+      "properties": {
+        "append_only_operator_decision_required": {
+          "type": "boolean",
+          "const": true
+        },
+        "decision_id_required": {
+          "type": "boolean",
+          "const": true
+        },
+        "decision_json_sha256_required": {
+          "type": "boolean",
+          "const": true
+        },
+        "governor_config_sha256_required": {
+          "type": "boolean",
+          "const": true
+        },
+        "valid_until_required": {
+          "type": "boolean",
+          "const": true
+        },
+        "bounded_paper_run_id_required": {
+          "type": "boolean",
+          "const": true
+        }
+      }
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "status": {
+            "const": "ELIGIBLE_FOR_OPERATOR_REVIEW"
+          }
+        },
+        "required": [
+          "status"
+        ]
+      },
+      "then": {
+        "properties": {
+          "previous_snapshot": {
+            "properties": {
+              "schema_version": {
+                "const": 2
+              },
+              "selector_view_present": {
+                "const": true
+              },
+              "selector_view_churn_available": {
+                "const": true
+              }
+            }
+          },
+          "current_snapshot": {
+            "properties": {
+              "selector_view_churn_available": {
+                "const": true
+              }
+            }
+          },
+          "proposed_entries": {
+            "minItems": 1,
+            "maxItems": 4
+          },
+          "removals": {
+            "maxItems": 1
+          },
+          "reason_codes": {
+            "maxItems": 0
+          },
+          "gate_results": {
+            "$ref": "#/$defs/gate_results_all_pass"
+          },
+          "gate_summary": {
+            "properties": {
+              "pass_count": {
+                "const": 19
+              },
+              "block_count": {
+                "const": 0
+              }
+            }
+          },
+          "calculations": {
+            "properties": {
+              "source_cutoff_separation_seconds": {
+                "minimum": 86400
+              },
+              "current_source_age_seconds": {
+                "maximum": 1800
+              },
+              "baseline_entry_count": {
+                "minimum": 1
+              },
+              "qualifying_entry_count": {
+                "minimum": 1,
+                "maximum": 4
+              },
+              "proposed_entry_count": {
+                "minimum": 1,
+                "maximum": 4
+              },
+              "change_count": {
+                "maximum": 1
+              },
+              "churn_ratio": {
+                "type": "number",
+                "maximum": 0.25
+              },
+              "pair_variant_concentrations": {
+                "items": {
+                  "properties": {
+                    "direction_count": {
+                      "maximum": 2
+                    }
+                  }
+                }
+              },
+              "instrument_concentrations": {
+                "items": {
+                  "properties": {
+                    "entry_count": {
+                      "maximum": 2
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "status": {
+            "const": "GOVERNOR_BLOCKED"
+          }
+        },
+        "required": [
+          "status"
+        ]
+      },
+      "then": {
+        "properties": {
+          "proposed_entries": {
+            "maxItems": 0
+          },
+          "additions": {
+            "maxItems": 0
+          },
+          "reason_codes": {
+            "minItems": 1
+          },
+          "gate_summary": {
+            "properties": {
+              "block_count": {
+                "minimum": 1
+              }
+            }
+          }
+        }
+      }
+    }
+  ]
+}

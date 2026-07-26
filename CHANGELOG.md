@@ -4,7 +4,27 @@ All notable changes to this project will be documented in this file.
 This project follows SemVer as defined in `docs/02-versioning-and-releases.md`.
 
 ## Unreleased
+### Contracts
+- AUTO-2C C-a adds the schema-version-1
+  `autopilot_dynamic_allowlist_decision` contract, a canonical blocked example,
+  and focused E2 validation. The contract records exact snapshot and paper
+  configuration provenance, the ratified demotion-only policy, separate
+  selector `NONE` and null evidence counts, deterministic gate/transition
+  calculations, expiry, and explicit advisory/no-authority boundaries.
+  `GOVERNOR_BLOCKED` requires an empty proposed set; unknown directions cannot
+  form a valid artifact. Existing AUTO-2B/B2-c snapshot and AUTO-2A paper
+  contracts and behavior are unchanged. No governor implementation, paper
+  consumer, eligibility change, service, deployment, or runtime action is
+  included.
+
 ### Governance
+- Recorded PR #257's merge as
+  `f1da80f11e5a8d2244ebc9715d026f30068c0fb3`, the Operator's OP-45(e)
+  ratification of the first AUTO-2C policy, and authorization of C-a contract
+  work only. The rebuilt queue remains dependency-gated: C-b tests/scaffolding,
+  C-c offline governor, C-d runbook/hardening, a second comparable v2 evidence
+  window, AUTO-2D, AUTO-3, CI-1, OBS-1, and OBS-3 all require later explicit
+  decisions.
 - Recorded completion of AUTO-2B.2 B2-cR / PR #256 at
   `29de6028b564869298bc0be7e581ed28df78bbf2`, acceptance of the corrected
   preserved-evidence replay, completion of B2-d end-to-end validation, and the
