@@ -85,3 +85,38 @@ Compatibility rules:
 The initial policy values are encoded as constants because changing them
 changes the governed decision meaning. A future relaxation or addition-capable
 posture requires a separately reviewed contract/versioning decision.
+
+### AUTO-2C C-b inert scaffold compatibility
+
+`tools/scripts/autopilot_dynamic_allowlist.py` is an additive command scaffold,
+not a governed-decision producer. Its default invocation emits only:
+
+```json
+{"artifact_created":false,"mode":"auto2c_governor_scaffold","status":"DISABLED"}
+```
+
+The reserved `--enabled` gate exits nonzero with
+`GOVERNOR_NOT_IMPLEMENTED` before any input or output path access. The
+scaffold does not read evidence, evaluate or rank candidates, construct the
+schema-version-1 decision, create artifacts, import the test-only auditor, or
+expose paper/live eligibility authority. Later C-c implementation must be a
+separately authorized compatibility change.
+
+C-b's synthetic specification fixes these later implementation identities:
+
+- exact keys sort lexicographically by
+  `(pair_id, timeframe, selected_variant, direction)`;
+- each supplied input hash is SHA-256 over its exact raw file bytes, without
+  parse/reserialize normalization; and
+- `decision_id` is lowercase SHA-256 over minified, key-sorted UTF-8 JSON
+  containing exactly `current_snapshot_sha256`,
+  `previous_snapshot_sha256`, `paper_run_config_sha256`,
+  `governor_config_sha256`, and canonical UTC `evaluated_at`, with no trailing
+  newline.
+
+These vectors and the independent test-only auditor are a C-c conformance
+target, not production governor behavior or an eligibility decision. `NONE`
+and null remain separately counted but non-actionable, unknown directions fail
+closed, realized-paper and selector-view evidence remain segregated, and every
+materialized synthetic decision remains advisory pending exact-hash Operator
+approval.

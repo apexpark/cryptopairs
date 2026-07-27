@@ -18,6 +18,13 @@ This project follows SemVer as defined in `docs/02-versioning-and-releases.md`.
   included.
 
 ### Governance
+- Recorded PR #258's C-a merge as
+  `b29118e0373c7f8149051f687c91eef9f5281119` and the Operator's authorization
+  of C-b only under `AG-20260726-014`. C-b fixes the synthetic specification's
+  exact-key ordering, exact-raw-byte input hashes, and canonical
+  `decision_id` identity for later C-c conformance. C-c/C-d, a runbook,
+  contracts, a second selector window, hosts/artifacts, eligibility, AUTO-2D,
+  AUTO-3, CI-1, OBS-1, and OBS-3 remain separately gated and unauthorized.
 - Recorded PR #257's merge as
   `f1da80f11e5a8d2244ebc9715d026f30068c0fb3`, the Operator's OP-45(e)
   ratification of the first AUTO-2C policy, and authorization of C-a contract
@@ -47,6 +54,15 @@ This project follows SemVer as defined in `docs/02-versioning-and-releases.md`.
   prompt-pack note, CODEOWNERS, and the project.yaml protected mirror.
 
 ### Operator Tooling
+- AUTO-2C C-b adds deterministic synthetic governed-allowlist specification
+  vectors, an independent test-only cross-field/mutation auditor, and an inert
+  `autopilot_dynamic_allowlist.py` CLI scaffold. The default invocation prints
+  only a bounded disabled diagnostic. The reserved `--enabled` gate always
+  exits nonzero with `GOVERNOR_NOT_IMPLEMENTED` before any input or output
+  access. The production scaffold contains no candidate evaluation, ranking,
+  governed-decision construction, hashing, artifact creation, eligibility,
+  service, paper, live, or network behavior; the existing C-a contract,
+  example, and tests are unchanged.
 - AUTO-2B.2 B2-cR: the selector-view consumer now recognizes the strategy
   service's explicit non-actionable `direction_hint="NONE"` sentinel while
   preserving it as a distinct key from JSON `null`. This repairs the

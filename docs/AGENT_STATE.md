@@ -9,14 +9,14 @@
 
 | Field | Value |
 |---|---|
-| Last updated (UTC) | 2026-07-26 |
+| Last updated (UTC) | 2026-07-27 |
 | Updated by | codex |
-| Repo HEAD pin (committed) | `f1da80f11e5a8d2244ebc9715d026f30068c0fb3` |
+| Repo HEAD pin (committed) | `b29118e0373c7f8149051f687c91eef9f5281119` |
 | Pin branch | `main` |
 | Sprint base branch | `main` |
-| Pin notes | Pin is `origin/main` after PR #257 merged the AUTO-2C design proposal. The Operator then rebuilt the queue under OP-45(e), ratified the conservative first-policy values, and authorized only C-a contract/example work under AG-20260726-013. |
+| Pin notes | Pin is `origin/main` after PR #258 merged AUTO-2C C-a. The Operator approved the C-b plan and authorized only deterministic synthetic vectors, the independent test-only auditor, the inert no-artifact CLI scaffold, focused/full verification, and governance under AG-20260726-014. |
 | Origin | `https://github.com/apexpark/cryptopairs.git` |
-| Working-tree state | **PR #257 merged the proposal as `f1da80f11e5a8d2244ebc9715d026f30068c0fb3`; the OP-45(e) queue is rebuilt and AUTO-2C C-a is Codex inner-review CLEAN on `codex/auto2c-governor-contract` under AG-20260726-013.** C-a adds only the version-1 governed-decision contract/example, focused E2 validation, compatibility/changelog, and governance reconciliation; a Tier 3 draft PR and fresh Claude exact-SHA review are the next gates. The accepted B2-cR snapshot remains advisory and cannot confer eligibility because `churn.selector_view=null` and no second comparable v2 selector window exists. C-b/C-c/C-d, governor implementation/scaffolding/runbook, host or artifact work, eligibility, AUTO-2D/AUTO-3, OBS-1, OBS-3, CI-1, services, deployment, secrets, trading, and unattended loops remain unauthorized. |
+| Working-tree state | **PR #258 merged C-a as `b29118e0373c7f8149051f687c91eef9f5281119`; AUTO-2C C-b is Codex inner-review CLEAN on `codex/auto2c-governor-scaffold` under AG-20260726-014.** C-b is limited to deterministic synthetic specification vectors, an independent test-only semantic/mutation auditor, an inert disabled-by-default no-artifact CLI scaffold, E2 plus bounded refusal proof, compatibility/changelog, and governance. Focused 28-test and full canonical 250-test/70-subtest suites pass; the next gate is a Tier 3 draft PR and fresh Claude exact-SHA review. The accepted B2-cR snapshot remains advisory and cannot confer eligibility because `churn.selector_view=null` and no second comparable v2 selector window exists. The C-a contract/example/tests remain unchanged. Governor implementation/output, C-c/C-d, a runbook, host or artifact work, a second selector window, eligibility, AUTO-2D/AUTO-3, OBS-1, OBS-3, CI-1, services, deployment, secrets, trading, merge, and unattended loops remain unauthorized. |
 
 If the pin above is not reachable from `HEAD` via fast-forward, this file is stale; if `HEAD` is ahead of the pin, see §"Pin Convention".
 
@@ -51,7 +51,8 @@ If the pin above is not reachable from `HEAD` via fast-forward, this file is sta
 | AUTO-2B.2 - B2-d Operator selector-view evidence pass | **Done — end-to-end validation complete** | operator | Run `20260720T000558Z` completed naturally at Git head `88f12eab5ec29c19b91a27497c1658c6cf109002`. Its accepted four shards contain 849 complete manifests and 13,584 selector rows with no malformed lines, duplicate ticks, incomplete manifests, or trailing partials. After B2-cR landed, the Operator accepted one corrected offline preserved-evidence replay at exact SHA `29de6028b564869298bc0be7e581ed28df78bbf2`: 46 closed positions were scored, two open positions were excluded, and 11,418 `NONE` rows remained distinct, marginal selector evidence. The advisory snapshot selected one realized-paper identity, rejected three, quarantined zero, and has `churn.selector_view=null`; it changed no eligibility or runtime state. No recapture is required or authorized. |
 | AUTO-2B.2 - B2-cR direction-sentinel consumer repair | **Done — PR #256 merged and replay accepted** | codex (author) / claude (reviewer) | Claude reviewed exact PR head `1c1de5fdfccc7a49370c94f87e1d6026734cca55` CLEAN. After the required exact-head, check, and thread gates, the Operator-authorized squash merge landed as `29de6028b564869298bc0be7e581ed28df78bbf2`. Selector-view `direction_hint="NONE"` remains a distinct non-actionable key; null retains its prior meaning; unknown selector directions fail closed; realized paper-event directions remain restricted to `LONG_SPREAD` / `SHORT_SPREAD`. The corrected preserved-evidence replay passed at the landing SHA. |
 | AUTO-2C - Governed dynamic-allowlist design proposal | **Done — PR #257 merged** | codex (author) / claude (reviewer) | Claude reviewed exact head `eeed9d4a76663b39d5d43233f8464119831a8672` CLEAN; the required gates passed and PR #257 landed as `f1da80f11e5a8d2244ebc9715d026f30068c0fb3`. The proposal remains non-actuating. OP-45(e)'s stop was honored before the Operator rebuilt the queue. |
-| AUTO-2C C-a - Governed-decision contract and example | **Codex inner-review CLEAN — Tier 3 draft PR next** | codex (author) / claude (reviewer) | AG-20260726-013 encodes only the Operator-ratified demotion-only policy, advisory decision schema/example, focused E2 contract validation, and governance reconciliation. E2: 24 focused tests and the full canonical 222-test/70-subtest tooling suite pass; Codex repaired four contract/audit findings. No governor implementation/scaffold/runbook, host/artifact work, eligibility, AUTO-2D/AUTO-3, OBS-1/OBS-3, or CI-1 scope is included. Fresh Claude exact-SHA review is required; merge is not authorized. |
+| AUTO-2C C-a - Governed-decision contract and example | **Done — PR #258 merged** | codex (author) / claude (reviewer) | Claude reviewed exact head `98f9ade8802a48a21c41f9543d2137a39226c5a7` CLEAN. The required exact-head, checks, thread, and mergeability gates passed; PR #258 landed as `b29118e0373c7f8149051f687c91eef9f5281119`. C-a remains advisory and contains no governor implementation or eligibility authority. |
+| AUTO-2C C-b - Synthetic vectors, test-only auditor, and inert CLI scaffold | **Codex inner-review CLEAN — Tier 3 draft PR next** | codex (author) / claude (reviewer) | AG-20260726-014 fixes deterministic key ordering, raw-byte hash binding, and the canonical decision-ID formula in synthetic vectors; the independent test-only auditor covers cross-field semantics and mutations. The production scaffold is disabled and cannot read/write evidence or produce a decision. E2: 28 focused tests and the full canonical 250-test/70-subtest suite pass; bounded E4 proves explicit-enable refusal before input/output access and concurrent no-artifact behavior. Claude exact-SHA review and a later Operator merge decision remain mandatory. |
 | GOV-ROLESWAP - Swap Claude/Codex roles (OP-44) | **Merged and operative** | claude | PR #253 merged at `ecc9cbd` on `main`. B2-b PR #252 completed under the prior roles and merged as `04826d1`, making the swap operative per OP-44's transition clause and OP-45(a)/(g). Codex → Lead Coder + Operator Interface; Claude → Independent Reviewer. Added `CODEX.md`; updated ai_workflow/git-github/CLAUDE role sections, codex_prompt_pack note, CODEOWNERS, project.yaml. |
 | GOV-SCAFFOLD-1 - Install dual-agent governance scaffold v0 (`.agentic/**`) | **Merged** | claude | PR #245 squash-merged at `2516fc5` (Codex CLEAN at `7c0efe2` after three exact-SHA review cycles; Operator-executed merge, recorded in `.agentic/registers/decisions.md`). Branch `claude/agentic-scaffold-v0` builds on `codex/agentic-loop-harness-adapter` (build-on, not supersede; Operator decision 2026-07-12). Adds constitution/permissions/evidence/git/context policies, seeded decisions/risks/assumptions/capabilities/agent-runs registers, nine work-order/review/handoff templates, and intake/dispatch/review/blocked playbooks. Docs-only; grants no new authority — the 2026-07-12 merge tiers are recorded as adopted but non-operative until `docs/ops/ai_workflow.md` is amended (Slice 2); protected-path list recorded in `.agentic/registers/decisions.md`. Tier 3 flow: Codex exact-SHA review + Operator authorization required. Follow-on slices: dual-agent workflow manual (Slice 2), `CLAUDE.md` Autonomy Doctrine mapped to the AUTO ladder (Slice 3), CODEOWNERS/PR-template expansion (Slice 4). |
 | GOV-SCAFFOLD-2 - Make merge-authority tiers operative | **Merged** | claude | PR #246 squash-merged at `7041b41` (Codex CLEAN at `053da11` after three exact-SHA cycles; Operator-executed merge; authorization recorded in the decisions register). Tiers 1–2 delegated merge operative from that merge under the hardened standing-delegation conditions. |
@@ -122,12 +123,14 @@ Source of truth for shipped behavior is `CHANGELOG.md` `## Unreleased` section. 
   `29de6028b564869298bc0be7e581ed28df78bbf2`). The Operator accepted the
   corrected B2-cR preserved-evidence replay; its output remains advisory and
   cannot control paper entries.
-- **Merged proposal / C-a only authorized**: PR #257 landed the AUTO-2C design
-  as `f1da80f11e5a8d2244ebc9715d026f30068c0fb3`. The Operator rebuilt the
-  queue under OP-45(e) and authorized AG-20260726-013 to add only the
-  governed-decision contract/example, focused E2 validation, and required
-  governance records. Governor code and every operational or eligibility
-  action remain unauthorized.
+- **Merged C-a / C-b only authorized**: PR #257 landed the AUTO-2C design as
+  `f1da80f11e5a8d2244ebc9715d026f30068c0fb3`; PR #258 then landed the C-a
+  governed-decision contract/example as
+  `b29118e0373c7f8149051f687c91eef9f5281119`. Under AG-20260726-014 the
+  Operator authorized only C-b synthetic vectors, the independent test-only
+  auditor, the inert no-artifact CLI scaffold, verification, and governance.
+  Governor implementation and every operational or eligibility action remain
+  unauthorized.
 
 ---
 
@@ -552,20 +555,23 @@ B2-d end-to-end validation. Its snapshot is advisory-only:
 `churn.selector_view=null`, so no second comparable v2 selector window exists
 and the replay cannot confer actionable paper eligibility.
 
-1. **Codex: complete C-a under AG-20260726-013** — contract, canonical example,
-   focused E2 validation, compatibility/changelog, and governance only. Perform
-   inner review, open a Tier 3 draft PR, and return the exact head SHA.
-2. **Claude: independently review the C-a PR at that exact SHA** — verify the
-   adopted constants, blocked-empty and direction/authority boundaries,
-   compatibility/versioning, scope, and E2 evidence. A CLEAN verdict binds only
-   that exact SHA.
-3. **Operator: decide the C-a merge only after CLEAN, green required checks,
+1. **Codex: complete C-b under AG-20260726-014** — synthetic vectors,
+   independent test-only semantic/mutation audit, inert CLI scaffold, E2 plus
+   bounded enabled-refusal/no-output proof, compatibility/changelog, and
+   governance only. Perform inner review, open a Tier 3 draft PR, and return
+   the exact head SHA.
+2. **Claude: independently review the C-b PR at that exact SHA** — verify the
+   test oracle is test-only and independent, policy/identity vectors match the
+   ratified C-a boundary, the production scaffold contains no governor or I/O
+   behavior, and the focused/full evidence is accurate. A CLEAN verdict binds
+   only that exact SHA.
+3. **Operator: decide the C-b merge only after CLEAN, green required checks,
    zero unresolved review threads, and mergeability** — no merge is
    pre-authorized.
-4. **Stop and PLAN C-b only after C-a lands** — C-b tests/scaffolding, C-c
-   governor implementation, C-d runbook/hardening, any second comparable v2
-   window, host/artifact action, eligibility change, AUTO-2D, and AUTO-3 each
-   require a new explicit Operator decision and their own complete Tier 3 gate.
+4. **Stop and PLAN C-c only after C-b lands** — governor implementation/output,
+   C-d runbook/hardening, any second comparable v2 window, host/artifact action,
+   eligibility change, AUTO-2D, and AUTO-3 each require a new explicit Operator
+   decision and their own complete Tier 3 gate.
 
 Parked / conditional (not part of the OP-45 active queue):
 
