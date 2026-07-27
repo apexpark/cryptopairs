@@ -1010,6 +1010,204 @@ def test_blocked_claim_cannot_contain_proposed_entries() -> None:
         audit_case(bundle, case)
 
 
+def write_json_input(path: Path, payload: object) -> str:
+    raw = (
+        json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
+        + b"\n"
+    )
+    path.write_bytes(raw)
+    return hashlib.sha256(raw).hexdigest()
+
+
+def exact_key_object(key: tuple[str, str, str, str]) -> dict[str, str]:
+    return {
+        "pair_id": key[0],
+        "timeframe": key[1],
+        "selected_variant": key[2],
+        "direction": key[3],
+    }
+
+
+def production_snapshot(
+    *,
+    generated_at: str,
+    source_cutoff_at: str,
+    previous_generated_at: str,
+) -> dict:
+    snapshot = json.loads(
+        (
+            REPO_ROOT
+            / "specs"
+            / "examples"
+            / "autopilot_shadow_allowlist_snapshot.example.json"
+        ).read_text(encoding="utf-8")
+    )
+    baseline = (
+        "PF_DOGEUSD__PF_PEPEUSD",
+        "1m",
+        "ROBUST_Z",
+        "SHORT_SPREAD",
+    )
+    baseline_object = exact_key_object(baseline)
+    selected = copy.deepcopy(snapshot["selected"][0])
+    selected.update(baseline_object)
+    selected["decision"] = "SHADOW_SELECTED"
+    selected["reason_codes"] = ["PASSED_SHADOW_SELECTOR_GATES"]
+    snapshot["selected"] = [selected]
+    snapshot["rejected"] = []
+    snapshot["quarantined"] = []
+    snapshot["summary"].update(
+        {
+            "eligible_universe_count": 1,
+            "selected_count": 1,
+            "rejected_count": 0,
+            "quarantined_count": 0,
+        }
+    )
+
+    prominent = copy.deepcopy(
+        snapshot["selector_view"]["selector_view_prominent"][0]
+    )
+    prominent.update(baseline_object)
+    none_row = copy.deepcopy(prominent)
+    none_row.update(
+        {
+            "pair_id": "PF_NONEAUSD__PF_NONEBUSD",
+            "selected_variant": "NONE_SENTINEL",
+            "direction": "NONE",
+        }
+    )
+    null_row = copy.deepcopy(prominent)
+    null_row.update(
+        {
+            "pair_id": "PF_NULLAUSD__PF_NULLBUSD",
+            "selected_variant": "NULL_SENTINEL",
+            "direction": None,
+        }
+    )
+    snapshot["selector_view"] = {
+        "selector_view_prominent": [prominent],
+        "selector_view_marginal": [none_row, null_row],
+    }
+    snapshot["static_allowlist_comparison"] = {
+        "static_allowlist_size": 1,
+        "shadow_selected_size": 1,
+        "overlap_count": 1,
+        "static_only_count": 0,
+        "shadow_only_count": 0,
+        "overlap": [baseline_object],
+        "static_only": [],
+        "shadow_only": [],
+    }
+    snapshot["churn"] = {
+        "previous_generated_at": previous_generated_at,
+        "previous_selected_count": 1,
+        "selected_added": [],
+        "selected_removed": [],
+        "selected_retained_count": 1,
+        "churn_count": 0,
+        "stability_ratio": 1.0,
+        "selector_view": {
+            "previous_prominent_count": 1,
+            "prominent_added": [],
+            "prominent_removed": [],
+            "prominent_retained_count": 1,
+            "churn_count": 0,
+            "stability_ratio": 1.0,
+        },
+    }
+    snapshot["generated_at"] = generated_at
+    snapshot["source_cutoff_at"] = source_cutoff_at
+    return snapshot
+
+
+def production_inputs(tmp_path: Path) -> dict[str, object]:
+    previous = production_snapshot(
+        generated_at="2026-07-26T00:01:00Z",
+        source_cutoff_at="2026-07-26T00:00:00Z",
+        previous_generated_at="2026-07-25T00:01:00Z",
+    )
+    current = production_snapshot(
+        generated_at="2026-07-27T00:01:00Z",
+        source_cutoff_at="2026-07-27T00:00:00Z",
+        previous_generated_at="2026-07-26T00:01:00Z",
+    )
+    baseline = {
+        "pair_id": "PF_DOGEUSD__PF_PEPEUSD",
+        "selected_variant": "ROBUST_Z",
+        "direction": "SHORT_SPREAD",
+    }
+    paper = {
+        "run_id": "synthetic-paper-v1",
+        "timeframe": "1m",
+        "static_allowlist_mode": "pair_variant_direction",
+        "static_allowlist": [baseline],
+        "hold_window_bars": 15,
+        "max_runtime_seconds": 259200,
+        "max_observe_candidate_age_seconds": 900,
+    }
+    paths = {
+        "current": tmp_path / "current.json",
+        "previous": tmp_path / "previous.json",
+        "paper": tmp_path / "paper.json",
+        "governor": tmp_path / "governor.json",
+    }
+    hashes = {
+        "current": write_json_input(paths["current"], current),
+        "previous": write_json_input(paths["previous"], previous),
+        "paper": write_json_input(paths["paper"], paper),
+        "governor": write_json_input(paths["governor"], ADOPTED_GOVERNOR_CONFIG),
+    }
+    return {
+        "paths": paths,
+        "hashes": hashes,
+        "current": current,
+        "previous": previous,
+        "paper": paper,
+    }
+
+
+def production_arguments(
+    inputs: dict[str, object],
+    output_root: Path,
+) -> list[str]:
+    paths = inputs["paths"]
+    hashes = inputs["hashes"]
+    assert isinstance(paths, dict)
+    assert isinstance(hashes, dict)
+    return [
+        "--enabled",
+        "--current-snapshot-json",
+        str(paths["current"]),
+        "--current-snapshot-sha256",
+        str(hashes["current"]),
+        "--current-snapshot-producer-git-sha",
+        "1" * 40,
+        "--previous-snapshot-json",
+        str(paths["previous"]),
+        "--previous-snapshot-sha256",
+        str(hashes["previous"]),
+        "--previous-snapshot-producer-git-sha",
+        "2" * 40,
+        "--paper-run-config-json",
+        str(paths["paper"]),
+        "--paper-run-config-sha256",
+        str(hashes["paper"]),
+        "--paper-run-config-producer-git-sha",
+        "3" * 40,
+        "--governor-config-json",
+        str(paths["governor"]),
+        "--governor-config-sha256",
+        str(hashes["governor"]),
+        "--evaluated-at",
+        "2026-07-27T00:30:00Z",
+        "--output-json",
+        str(output_root / scaffold.OUTPUT_JSON_NAME),
+        "--output-markdown",
+        str(output_root / scaffold.OUTPUT_MARKDOWN_NAME),
+    ]
+
+
 def test_default_scaffold_is_bounded_disabled_and_never_accesses_paths(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
@@ -1049,64 +1247,259 @@ def test_default_scaffold_is_bounded_disabled_and_never_accesses_paths(
     assert captured.err == ""
 
 
-def test_enabled_scaffold_refuses_before_input_or_output_access(
+def test_enabled_governor_creates_schema_valid_deterministic_advisory_outputs(
+    tmp_path: Path,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    arguments = [
-        "--enabled",
-        "--current-snapshot-json",
-        "/must/not/read/current.json",
-        "--previous-snapshot-json",
-        "/must/not/read/previous.json",
-        "--paper-run-config-json",
-        "/must/not/read/paper.json",
-        "--governor-config-json",
-        "/must/not/read/governor.json",
-        "--evaluated-at",
-        "2026-07-27T00:30:00Z",
-        "--output-json",
-        "/must/not/write/decision.json",
-        "--output-markdown",
-        "/must/not/write/decision.md",
-    ]
-    with (
-        mock.patch("builtins.open", side_effect=AssertionError("file access")),
-        mock.patch.object(
-            Path, "read_text", side_effect=AssertionError("path read")
-        ),
-        mock.patch.object(
-            Path, "write_text", side_effect=AssertionError("path write")
-        ),
-    ):
-        assert scaffold.main(arguments) == 2
+    inputs = production_inputs(tmp_path)
+    paths = inputs["paths"]
+    assert isinstance(paths, dict)
+    input_before = {
+        name: (path.read_bytes(), path.stat().st_mtime_ns)
+        for name, path in paths.items()
+    }
+    first_root = tmp_path / "first"
+    assert scaffold.main(production_arguments(inputs, first_root)) == 0
     captured = capsys.readouterr()
-    assert captured.out == ""
-    assert captured.err == "GOVERNOR_NOT_IMPLEMENTED\n"
+    diagnostic = json.loads(captured.out)
+    assert captured.err == ""
+    assert diagnostic["artifact_created"] is True
+    assert diagnostic["status"] == "ELIGIBLE_FOR_OPERATOR_REVIEW"
+    decision_bytes = (first_root / scaffold.OUTPUT_JSON_NAME).read_bytes()
+    markdown_bytes = (first_root / scaffold.OUTPUT_MARKDOWN_NAME).read_bytes()
+    decision = json.loads(decision_bytes)
+    validator = Draft202012Validator(
+        json.loads(DECISION_SCHEMA_PATH.read_text(encoding="utf-8"))
+    )
+    assert list(validator.iter_errors(decision)) == []
+    assert decision["proposed_entries"] == decision["baseline_entries"]
+    assert decision["additions"] == []
+    assert decision["direction_counts"]["selector_none_count"] == 1
+    assert decision["direction_counts"]["selector_null_count"] == 1
+    assert decision["authority"] == "advisory_pending_operator_approval"
+    assert not any(decision["authority_boundaries"].values())
+    expected_id = scaffold.decision_id(
+        current_snapshot_sha256=str(inputs["hashes"]["current"]),
+        previous_snapshot_sha256=str(inputs["hashes"]["previous"]),
+        paper_run_config_sha256=str(inputs["hashes"]["paper"]),
+        governor_config_sha256=str(inputs["hashes"]["governor"]),
+        evaluated_at="2026-07-27T00:30:00Z",
+    )
+    assert decision["decision_id"] == expected_id
+
+    second_root = tmp_path / "second"
+    assert scaffold.main(production_arguments(inputs, second_root)) == 0
+    capsys.readouterr()
+    assert (second_root / scaffold.OUTPUT_JSON_NAME).read_bytes() == decision_bytes
+    assert (
+        second_root / scaffold.OUTPUT_MARKDOWN_NAME
+    ).read_bytes() == markdown_bytes
+    assert {
+        name: (path.read_bytes(), path.stat().st_mtime_ns)
+        for name, path in paths.items()
+    } == input_before
 
 
-def test_concurrent_enabled_invocations_refuse_without_artifacts(
+def test_v1_previous_snapshot_produces_schema_valid_blocked_empty_decision(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    inputs = production_inputs(tmp_path)
+    previous = copy.deepcopy(inputs["previous"])
+    current = copy.deepcopy(inputs["current"])
+    assert isinstance(previous, dict)
+    assert isinstance(current, dict)
+    previous["schema_version"] = 1
+    previous.pop("selector_view")
+    previous.pop("universe")
+    previous["churn"].pop("selector_view")
+    current["churn"]["selector_view"] = None
+    paths = inputs["paths"]
+    hashes = inputs["hashes"]
+    assert isinstance(paths, dict)
+    assert isinstance(hashes, dict)
+    hashes["previous"] = write_json_input(paths["previous"], previous)
+    hashes["current"] = write_json_input(paths["current"], current)
+    output_root = tmp_path / "blocked"
+    assert scaffold.main(production_arguments(inputs, output_root)) == 0
+    captured = capsys.readouterr()
+    assert captured.err == ""
+    decision = json.loads((output_root / scaffold.OUTPUT_JSON_NAME).read_bytes())
+    assert decision["status"] == "GOVERNOR_BLOCKED"
+    assert decision["proposed_entries"] == []
+    assert "PREVIOUS_SNAPSHOT_NOT_SCHEMA_V2" in decision["reason_codes"]
+    assert "SELECTOR_CHURN_UNAVAILABLE" in decision["reason_codes"]
+    validator = Draft202012Validator(
+        json.loads(DECISION_SCHEMA_PATH.read_text(encoding="utf-8"))
+    )
+    assert list(validator.iter_errors(decision)) == []
+
+
+@pytest.mark.parametrize(
+    ("input_name", "mutator", "expected_code"),
+    [
+        (
+            "current",
+            lambda payload: payload["selector_view"][
+                "selector_view_marginal"
+            ][0].__setitem__("direction", "SIDEWAYS"),
+            "UNKNOWN_SELECTOR_DIRECTION",
+        ),
+        (
+            "paper",
+            lambda payload: payload["static_allowlist"][0].__setitem__(
+                "direction", "NONE"
+            ),
+            "PAPER_CONFIG_ALLOWLIST_0_DIRECTION_INVALID",
+        ),
+    ],
+)
+def test_unknown_selector_or_nonactionable_realized_direction_creates_no_artifact(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    input_name: str,
+    mutator,
+    expected_code: str,
+) -> None:
+    inputs = production_inputs(tmp_path)
+    paths = inputs["paths"]
+    hashes = inputs["hashes"]
+    assert isinstance(paths, dict)
+    assert isinstance(hashes, dict)
+    payload = copy.deepcopy(inputs[input_name])
+    mutator(payload)
+    hashes[input_name] = write_json_input(paths[input_name], payload)
+    output_root = tmp_path / "rejected"
+    assert scaffold.main(production_arguments(inputs, output_root)) == 2
+    captured = capsys.readouterr()
+    assert expected_code in captured.err
+    assert not output_root.exists()
+
+
+@pytest.mark.parametrize(
+    ("mutator", "expected_code"),
+    [
+        (
+            lambda payload: payload["selector_view"][
+                "selector_view_prominent"
+            ][0]["metrics"].__setitem__("time_in_tradable_now_ratio", 0.99),
+            "CURRENT_SELECTOR_VIEW_selector_view_prominent_0_METRICS_RATIO_MISMATCH",
+        ),
+        (
+            lambda payload: payload["selected"][0]["metrics"].__setitem__(
+                "avg_realized_net_bps", 99.0
+            ),
+            "CURRENT_SELECTED_0_METRICS_AVERAGE_NET_MISMATCH",
+        ),
+    ],
+)
+def test_internally_inconsistent_snapshot_creates_no_artifact(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    mutator,
+    expected_code: str,
+) -> None:
+    inputs = production_inputs(tmp_path)
+    paths = inputs["paths"]
+    hashes = inputs["hashes"]
+    assert isinstance(paths, dict)
+    assert isinstance(hashes, dict)
+    current = copy.deepcopy(inputs["current"])
+    mutator(current)
+    hashes["current"] = write_json_input(paths["current"], current)
+    output_root = tmp_path / "inconsistent"
+    assert scaffold.main(production_arguments(inputs, output_root)) == 2
+    assert expected_code in capsys.readouterr().err
+    assert not output_root.exists()
+
+
+def test_hash_mismatch_and_preoutput_mutation_create_no_artifact(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    inputs = production_inputs(tmp_path)
+    hashes = inputs["hashes"]
+    paths = inputs["paths"]
+    assert isinstance(hashes, dict)
+    assert isinstance(paths, dict)
+    hashes["current"] = "0" * 64
+    mismatch_root = tmp_path / "hash-mismatch"
+    assert scaffold.main(production_arguments(inputs, mismatch_root)) == 2
+    assert "CURRENT_SNAPSHOT_HASH_MISMATCH" in capsys.readouterr().err
+    assert not mismatch_root.exists()
+
+    hashes["current"] = hashlib.sha256(paths["current"].read_bytes()).hexdigest()
+    original_recheck = scaffold.recheck_bound_input
+    mutated = False
+
+    def mutate_before_recheck(bound, source: str) -> None:
+        nonlocal mutated
+        if source == "CURRENT_SNAPSHOT" and not mutated:
+            mutated = True
+            bound.path.write_bytes(bound.raw_bytes + b" ")
+        original_recheck(bound, source)
+
+    monkeypatch.setattr(scaffold, "recheck_bound_input", mutate_before_recheck)
+    mutation_root = tmp_path / "mutation"
+    assert scaffold.main(production_arguments(inputs, mutation_root)) == 2
+    assert "CURRENT_SNAPSHOT_HASH_MISMATCH" in capsys.readouterr().err
+    assert not mutation_root.exists()
+
+
+@pytest.mark.parametrize(
+    ("replacement_kind", "expected_code"),
+    [
+        ("symlink", "CURRENT_SNAPSHOT_SYMLINK"),
+        ("directory", "CURRENT_SNAPSHOT_NOT_REGULAR"),
+    ],
+)
+def test_nonregular_or_symlink_input_creates_no_artifact(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    replacement_kind: str,
+    expected_code: str,
+) -> None:
+    inputs = production_inputs(tmp_path)
+    paths = inputs["paths"]
+    assert isinstance(paths, dict)
+    original = paths["current"]
+    replacement = tmp_path / f"current-{replacement_kind}"
+    if replacement_kind == "symlink":
+        replacement.symlink_to(original)
+    else:
+        replacement.mkdir()
+    paths["current"] = replacement
+    output_root = tmp_path / "rejected-nonregular"
+    assert scaffold.main(production_arguments(inputs, output_root)) == 2
+    assert expected_code in capsys.readouterr().err
+    assert not output_root.exists()
+
+
+def test_exclusive_output_collision_refuses_without_modifying_existing_root(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    inputs = production_inputs(tmp_path)
+    output_root = tmp_path / "existing"
+    output_root.mkdir()
+    marker = output_root / "marker"
+    marker.write_text("preserve", encoding="utf-8")
+    assert scaffold.main(production_arguments(inputs, output_root)) == 2
+    assert "OUTPUT_ROOT_EXISTS" in capsys.readouterr().err
+    assert marker.read_text(encoding="utf-8") == "preserve"
+    assert sorted(path.name for path in output_root.iterdir()) == ["marker"]
+
+
+def test_concurrent_enabled_invocations_allow_exactly_one_exclusive_output(
     tmp_path: Path,
 ) -> None:
-    output_json = tmp_path / "decision.json"
-    output_markdown = tmp_path / "decision.md"
+    inputs = production_inputs(tmp_path)
+    output_root = tmp_path / "concurrent"
     command = [
         sys.executable,
         str(SCRIPTS_ROOT / "autopilot_dynamic_allowlist.py"),
-        "--enabled",
-        "--current-snapshot-json",
-        str(tmp_path / "missing-current.json"),
-        "--previous-snapshot-json",
-        str(tmp_path / "missing-previous.json"),
-        "--paper-run-config-json",
-        str(tmp_path / "missing-paper.json"),
-        "--governor-config-json",
-        str(tmp_path / "missing-governor.json"),
-        "--evaluated-at",
-        "2026-07-27T00:30:00Z",
-        "--output-json",
-        str(output_json),
-        "--output-markdown",
-        str(output_markdown),
+        *production_arguments(inputs, output_root),
     ]
     with ThreadPoolExecutor(max_workers=2) as executor:
         completed = list(
@@ -1120,32 +1513,78 @@ def test_concurrent_enabled_invocations_refuse_without_artifacts(
                 range(2),
             )
         )
-    assert [process.returncode for process in completed] == [2, 2]
-    assert [process.stdout for process in completed] == ["", ""]
-    assert [process.stderr for process in completed] == [
-        "GOVERNOR_NOT_IMPLEMENTED\n",
-        "GOVERNOR_NOT_IMPLEMENTED\n",
-    ]
-    assert not output_json.exists()
-    assert not output_markdown.exists()
+    assert sorted(process.returncode for process in completed) == [0, 2]
+    assert sum("OUTPUT_ROOT_EXISTS" in process.stderr for process in completed) == 1
+    assert (output_root / scaffold.OUTPUT_JSON_NAME).is_file()
+    assert (output_root / scaffold.OUTPUT_MARKDOWN_NAME).is_file()
 
 
-def test_production_scaffold_contains_no_governor_or_file_io_surface() -> None:
+def test_output_write_failure_retains_partial_root_and_never_repairs(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    inputs = production_inputs(tmp_path)
+    output_root = tmp_path / "partial"
+    original_open = Path.open
+
+    def fail_markdown_open(path: Path, *args, **kwargs):
+        if path.name == scaffold.OUTPUT_MARKDOWN_NAME:
+            raise OSError("injected write failure")
+        return original_open(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "open", fail_markdown_open)
+    assert scaffold.main(production_arguments(inputs, output_root)) == 3
+    assert "OUTPUT_WRITE_FAILED_PARTIAL_ROOT_RETAINED" in capsys.readouterr().err
+    assert output_root.is_dir()
+    assert (output_root / scaffold.OUTPUT_JSON_NAME).is_file()
+    assert not (output_root / scaffold.OUTPUT_MARKDOWN_NAME).exists()
+
+
+def test_previous_decision_is_hash_bound_markdown_comparison_only(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    inputs = production_inputs(tmp_path)
+    first_root = tmp_path / "without-comparison"
+    assert scaffold.main(production_arguments(inputs, first_root)) == 0
+    capsys.readouterr()
+    previous_decision = first_root / scaffold.OUTPUT_JSON_NAME
+    previous_hash = hashlib.sha256(previous_decision.read_bytes()).hexdigest()
+
+    second_root = tmp_path / "with-comparison"
+    arguments = production_arguments(inputs, second_root)
+    arguments.extend(
+        [
+            "--previous-decision-json",
+            str(previous_decision),
+            "--previous-decision-sha256",
+            previous_hash,
+        ]
+    )
+    assert scaffold.main(arguments) == 0
+    capsys.readouterr()
+    assert (
+        second_root / scaffold.OUTPUT_JSON_NAME
+    ).read_bytes() == previous_decision.read_bytes()
+    markdown = (
+        second_root / scaffold.OUTPUT_MARKDOWN_NAME
+    ).read_text(encoding="utf-8")
+    assert "Non-Authoritative Previous-Decision Comparison" in markdown
+    assert "does not affect status, qualification" in markdown
+
+
+def test_production_governor_has_no_test_or_runtime_actuation_dependencies() -> None:
     source = inspect.getsource(scaffold)
     assert "tools.scripts.tests" not in source
     assert "test_autopilot_dynamic_allowlist" not in source
     for forbidden in (
-        "open(",
-        ".read_text(",
-        ".write_text(",
-        "Path(",
-        "pathlib",
         "urllib",
         "requests",
         "subprocess",
-        "def evaluate_",
-        "def rank_",
-        "decision_id",
-        "sha256",
+        "docker",
+        "compose",
+        "paper_eligibility_authority\": True",
+        "live_eligibility_authority\": True",
     ):
         assert forbidden not in source

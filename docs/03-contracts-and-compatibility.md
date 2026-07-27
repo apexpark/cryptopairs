@@ -120,3 +120,42 @@ and null remain separately counted but non-actionable, unknown directions fail
 closed, realized-paper and selector-view evidence remain segregated, and every
 materialized synthetic decision remains advisory pending exact-hash Operator
 approval.
+
+### AUTO-2C C-c offline governor compatibility
+
+Explicit `--enabled` now performs one deterministic offline evaluation against
+four caller-named, exact-raw-byte SHA-256-bound files: current and previous
+B2-c snapshots, the paper-run configuration, and the ratified governor
+configuration. The three evidence producers are also bound by caller-supplied
+Git SHAs, and the caller must supply an RFC 3339 evaluation time. The default
+disabled invocation and diagnostic above remain byte-identical.
+
+The enabled path is fail-closed:
+
+- inputs must be regular, non-symlink files whose bytes, hashes, structure,
+  counts, identity sets, directions, selector configuration, chronology,
+  static comparison, and churn are internally consistent and unchanged
+  through the final pre-output recheck;
+- the paper baseline must use exact direction-level
+  `pair_variant_direction` entries;
+- selector `NONE` and null remain distinct evidence identities but cannot
+  qualify, while unknown selector directions and any realized-paper
+  non-`LONG_SPREAD`/`SHORT_SPREAD` direction create no artifact;
+- trusted but policy-insufficient inputs produce only a schema-valid
+  `GOVERNOR_BLOCKED` decision with an empty proposed set; and
+- a review-eligible proposed set is a deterministic demotion-only subset of
+  the static baseline and remains advisory pending a separate exact-hash
+  Operator approval.
+
+One invocation exclusively creates one previously absent common output
+directory containing exactly the canonical JSON decision and Markdown report.
+It never overwrites, repairs, cleans, or reuses an existing or partial output
+root. An optional previous-decision file is separately hash-bound and affects
+only a labelled, non-authoritative Markdown comparison; it cannot affect
+decision identity, status, qualification, fallback, or eligibility.
+
+This additive operator-tooling behavior does not change the schema-version-1
+contract, B2-c or paper contracts, eligibility configuration, services,
+orders, execution, deployment, or any runtime interface. C-d runbook and
+hardening work, E3 production evidence, and every AUTO-2D consumer remain
+separately gated.
