@@ -11,12 +11,12 @@
 |---|---|
 | Last updated (UTC) | 2026-07-27 |
 | Updated by | codex |
-| Repo HEAD pin (committed) | `b29118e0373c7f8149051f687c91eef9f5281119` |
+| Repo HEAD pin (committed) | `40e0513531f3b44bc2dcbd234747c9e46142360d` |
 | Pin branch | `main` |
 | Sprint base branch | `main` |
-| Pin notes | Pin is `origin/main` after PR #258 merged AUTO-2C C-a. The Operator approved the C-b plan and authorized only deterministic synthetic vectors, the independent test-only auditor, the inert no-artifact CLI scaffold, focused/full verification, and governance under AG-20260726-014. |
+| Pin notes | Pin is `origin/main` after PR #259 merged AUTO-2C C-b. The Operator authorized only the deterministic one-shot offline C-c governor, local E2/E4, and E3 from explicitly supplied read-only exact-hash copies under AG-20260727-015. |
 | Origin | `https://github.com/apexpark/cryptopairs.git` |
-| Working-tree state | **PR #258 merged C-a as `b29118e0373c7f8149051f687c91eef9f5281119`; AUTO-2C C-b is Codex inner-review CLEAN on `codex/auto2c-governor-scaffold` under AG-20260726-014.** C-b is limited to deterministic synthetic specification vectors, an independent test-only semantic/mutation auditor, an inert disabled-by-default no-artifact CLI scaffold, E2 plus bounded refusal proof, compatibility/changelog, and governance. Focused 28-test and full canonical 250-test/70-subtest suites pass; the next gate is a Tier 3 draft PR and fresh Claude exact-SHA review. The accepted B2-cR snapshot remains advisory and cannot confer eligibility because `churn.selector_view=null` and no second comparable v2 selector window exists. The C-a contract/example/tests remain unchanged. Governor implementation/output, C-c/C-d, a runbook, host or artifact work, a second selector window, eligibility, AUTO-2D/AUTO-3, OBS-1, OBS-3, CI-1, services, deployment, secrets, trading, merge, and unattended loops remain unauthorized. |
+| Working-tree state | **PR #259 merged C-b as `40e0513531f3b44bc2dcbd234747c9e46142360d`; AUTO-2C C-c is Codex inner-review CLEAN on `codex/auto2c-offline-governor` under AG-20260727-015.** Focused E2, the full canonical 261-test/70-subtest suite, and bounded E4 pass. Exactly one Operator-authorized local E3 invocation used read-only exact-hash copies: the accepted schema-v1 predecessor route produced schema-valid `GOVERNOR_BLOCKED` decision `26a9cae` with an empty proposed set, preserved inputs, and no eligibility authority. The explicit-enabled reducer validates exact-hash/provenance-bound inputs, emits deterministic advisory or blocked-empty output under one exclusive fresh root, and preserves the byte-identical disabled diagnostic. The C-a contract/example/focused tests and all B2-c/paper code/contracts remain unchanged. The next gate is a Tier 3 draft PR and fresh Claude exact-SHA review. No host was accessed by Codex. C-d, a second selector window, eligibility, AUTO-2D/AUTO-3, OBS-1, OBS-3, CI-1, services, deployment, secrets, trading, merge, and unattended loops remain unauthorized. |
 
 If the pin above is not reachable from `HEAD` via fast-forward, this file is stale; if `HEAD` is ahead of the pin, see §"Pin Convention".
 
@@ -52,7 +52,8 @@ If the pin above is not reachable from `HEAD` via fast-forward, this file is sta
 | AUTO-2B.2 - B2-cR direction-sentinel consumer repair | **Done — PR #256 merged and replay accepted** | codex (author) / claude (reviewer) | Claude reviewed exact PR head `1c1de5fdfccc7a49370c94f87e1d6026734cca55` CLEAN. After the required exact-head, check, and thread gates, the Operator-authorized squash merge landed as `29de6028b564869298bc0be7e581ed28df78bbf2`. Selector-view `direction_hint="NONE"` remains a distinct non-actionable key; null retains its prior meaning; unknown selector directions fail closed; realized paper-event directions remain restricted to `LONG_SPREAD` / `SHORT_SPREAD`. The corrected preserved-evidence replay passed at the landing SHA. |
 | AUTO-2C - Governed dynamic-allowlist design proposal | **Done — PR #257 merged** | codex (author) / claude (reviewer) | Claude reviewed exact head `eeed9d4a76663b39d5d43233f8464119831a8672` CLEAN; the required gates passed and PR #257 landed as `f1da80f11e5a8d2244ebc9715d026f30068c0fb3`. The proposal remains non-actuating. OP-45(e)'s stop was honored before the Operator rebuilt the queue. |
 | AUTO-2C C-a - Governed-decision contract and example | **Done — PR #258 merged** | codex (author) / claude (reviewer) | Claude reviewed exact head `98f9ade8802a48a21c41f9543d2137a39226c5a7` CLEAN. The required exact-head, checks, thread, and mergeability gates passed; PR #258 landed as `b29118e0373c7f8149051f687c91eef9f5281119`. C-a remains advisory and contains no governor implementation or eligibility authority. |
-| AUTO-2C C-b - Synthetic vectors, test-only auditor, and inert CLI scaffold | **Codex inner-review CLEAN — Tier 3 draft PR next** | codex (author) / claude (reviewer) | AG-20260726-014 fixes deterministic key ordering, raw-byte hash binding, and the canonical decision-ID formula in synthetic vectors; the independent test-only auditor covers cross-field semantics and mutations. The production scaffold is disabled and cannot read/write evidence or produce a decision. E2: 28 focused tests and the full canonical 250-test/70-subtest suite pass; bounded E4 proves explicit-enable refusal before input/output access and concurrent no-artifact behavior. Claude exact-SHA review and a later Operator merge decision remain mandatory. |
+| AUTO-2C C-b - Synthetic vectors, test-only auditor, and inert CLI scaffold | **Done — PR #259 merged** | codex (author) / claude (reviewer) | Claude reviewed exact head `bc10fb141e49f87b2ccd4c588b9d040fbc67f49d` CLEAN. The required exact-head, checks, thread, and mergeability gates passed; PR #259 landed as `40e0513531f3b44bc2dcbd234747c9e46142360d`. C-b remained inert and non-actuating. |
+| AUTO-2C C-c - Deterministic one-shot offline governor | **Codex inner-review CLEAN — Tier 3 draft PR next** | codex (author) / claude (future reviewer) | AG-20260727-015 has passing focused E2 (39 tests), full canonical verification (261 tests/70 subtests), and bounded E4 over strict input, mutation, direction, deterministic output, concurrency, collision, partial-root, read-only, and disabled-default boundaries. Exactly one Operator-authorized E3 invocation used read-only exact-hash copies and produced the required schema-valid blocked-empty advisory decision for the accepted schema-v1 predecessor route; all input hashes and modes remained unchanged. Claude exact-SHA review and a later Operator merge decision remain mandatory. |
 | GOV-ROLESWAP - Swap Claude/Codex roles (OP-44) | **Merged and operative** | claude | PR #253 merged at `ecc9cbd` on `main`. B2-b PR #252 completed under the prior roles and merged as `04826d1`, making the swap operative per OP-44's transition clause and OP-45(a)/(g). Codex → Lead Coder + Operator Interface; Claude → Independent Reviewer. Added `CODEX.md`; updated ai_workflow/git-github/CLAUDE role sections, codex_prompt_pack note, CODEOWNERS, project.yaml. |
 | GOV-SCAFFOLD-1 - Install dual-agent governance scaffold v0 (`.agentic/**`) | **Merged** | claude | PR #245 squash-merged at `2516fc5` (Codex CLEAN at `7c0efe2` after three exact-SHA review cycles; Operator-executed merge, recorded in `.agentic/registers/decisions.md`). Branch `claude/agentic-scaffold-v0` builds on `codex/agentic-loop-harness-adapter` (build-on, not supersede; Operator decision 2026-07-12). Adds constitution/permissions/evidence/git/context policies, seeded decisions/risks/assumptions/capabilities/agent-runs registers, nine work-order/review/handoff templates, and intake/dispatch/review/blocked playbooks. Docs-only; grants no new authority — the 2026-07-12 merge tiers are recorded as adopted but non-operative until `docs/ops/ai_workflow.md` is amended (Slice 2); protected-path list recorded in `.agentic/registers/decisions.md`. Tier 3 flow: Codex exact-SHA review + Operator authorization required. Follow-on slices: dual-agent workflow manual (Slice 2), `CLAUDE.md` Autonomy Doctrine mapped to the AUTO ladder (Slice 3), CODEOWNERS/PR-template expansion (Slice 4). |
 | GOV-SCAFFOLD-2 - Make merge-authority tiers operative | **Merged** | claude | PR #246 squash-merged at `7041b41` (Codex CLEAN at `053da11` after three exact-SHA cycles; Operator-executed merge; authorization recorded in the decisions register). Tiers 1–2 delegated merge operative from that merge under the hardened standing-delegation conditions. |
@@ -123,14 +124,18 @@ Source of truth for shipped behavior is `CHANGELOG.md` `## Unreleased` section. 
   `29de6028b564869298bc0be7e581ed28df78bbf2`). The Operator accepted the
   corrected B2-cR preserved-evidence replay; its output remains advisory and
   cannot control paper entries.
-- **Merged C-a / C-b only authorized**: PR #257 landed the AUTO-2C design as
+- **Merged C-a/C-b; C-c ready for Tier 3 review**: PR #257 landed the AUTO-2C design as
   `f1da80f11e5a8d2244ebc9715d026f30068c0fb3`; PR #258 then landed the C-a
   governed-decision contract/example as
-  `b29118e0373c7f8149051f687c91eef9f5281119`. Under AG-20260726-014 the
-  Operator authorized only C-b synthetic vectors, the independent test-only
-  auditor, the inert no-artifact CLI scaffold, verification, and governance.
-  Governor implementation and every operational or eligibility action remain
-  unauthorized.
+  `b29118e0373c7f8149051f687c91eef9f5281119`; PR #259 landed C-b as
+  `40e0513531f3b44bc2dcbd234747c9e46142360d`. Under AG-20260727-015 the
+  Operator authorized only the one-shot offline C-c governor and required
+  local E2/E4 plus E3 from Operator-supplied read-only exact-hash copies.
+  E2/E4 and exactly one separately authorized E3 pass; Codex inner review is
+  CLEAN and the next gate is a Tier 3 draft PR plus Claude exact-SHA review.
+  The E3 result is blocked-empty and advisory, not eligibility approval.
+  Every host, C-d, AUTO-2D/AUTO-3, service, deployment, secret, or trading
+  action remains unauthorized.
 
 ---
 
@@ -555,23 +560,20 @@ B2-d end-to-end validation. Its snapshot is advisory-only:
 `churn.selector_view=null`, so no second comparable v2 selector window exists
 and the replay cannot confer actionable paper eligibility.
 
-1. **Codex: complete C-b under AG-20260726-014** — synthetic vectors,
-   independent test-only semantic/mutation audit, inert CLI scaffold, E2 plus
-   bounded enabled-refusal/no-output proof, compatibility/changelog, and
-   governance only. Perform inner review, open a Tier 3 draft PR, and return
-   the exact head SHA.
-2. **Claude: independently review the C-b PR at that exact SHA** — verify the
-   test oracle is test-only and independent, policy/identity vectors match the
-   ratified C-a boundary, the production scaffold contains no governor or I/O
-   behavior, and the focused/full evidence is accurate. A CLEAN verdict binds
-   only that exact SHA.
-3. **Operator: decide the C-b merge only after CLEAN, green required checks,
+1. **Codex: open the C-c Tier 3 draft PR at one exact head SHA** — the
+   Operator-authorized one-shot E3 and Codex inner review are complete.
+2. **Claude: independently review the C-c PR at that exact SHA** — verify
+   trusted-input/no-artifact refusal, policy-blocked-empty behavior,
+   deterministic identity/output, demotion-only rules, evidence segregation,
+   advisory authority, scope, and claimed E2/E3/E4 evidence. A CLEAN verdict
+   binds only that exact SHA.
+3. **Operator: decide the C-c merge only after CLEAN, green required checks,
    zero unresolved review threads, and mergeability** — no merge is
    pre-authorized.
-4. **Stop and PLAN C-c only after C-b lands** — governor implementation/output,
-   C-d runbook/hardening, any second comparable v2 window, host/artifact action,
-   eligibility change, AUTO-2D, and AUTO-3 each require a new explicit Operator
-   decision and their own complete Tier 3 gate.
+4. **Stop and PLAN C-d only after C-c lands** — runbook/hardening, any second
+   comparable v2 window, host/artifact action, eligibility change, AUTO-2D,
+   and AUTO-3 each require a new explicit Operator decision and their own
+   complete Tier 3 gate.
 
 Parked / conditional (not part of the OP-45 active queue):
 

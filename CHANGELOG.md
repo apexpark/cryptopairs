@@ -18,6 +18,14 @@ This project follows SemVer as defined in `docs/02-versioning-and-releases.md`.
   included.
 
 ### Governance
+- Recorded PR #259's C-b merge as
+  `40e0513531f3b44bc2dcbd234747c9e46142360d` and the Operator's authorization
+  of C-c only under `AG-20260727-015`. C-c reached E2, the bounded E4 safety
+  proof, and an Operator-authorized one-shot local E3 from read-only
+  exact-hash copies. The accepted schema-v1 predecessor route produced the
+  required schema-valid blocked-empty advisory decision, and Codex inner
+  review is CLEAN. C-d, hosts, a second selector window, eligibility,
+  AUTO-2D/AUTO-3, CI-1, OBS-1, and OBS-3 remain separately gated.
 - Recorded PR #258's C-a merge as
   `b29118e0373c7f8149051f687c91eef9f5281119` and the Operator's authorization
   of C-b only under `AG-20260726-014`. C-b fixes the synthetic specification's
@@ -54,6 +62,20 @@ This project follows SemVer as defined in `docs/02-versioning-and-releases.md`.
   prompt-pack note, CODEOWNERS, and the project.yaml protected mirror.
 
 ### Operator Tooling
+- AUTO-2C C-c implements the explicit-enabled, deterministic, one-shot offline
+  governor. It binds regular non-symlink current/previous B2-c snapshots,
+  paper-run configuration, and governor configuration to exact raw-byte
+  SHA-256 values; binds evidence producers to exact Git SHAs; requires an
+  explicit RFC 3339 evaluation time; rechecks inputs before output; and
+  exclusively creates one fresh common output directory containing canonical
+  advisory JSON and Markdown. Unknown or internally inconsistent inputs create
+  no artifact. Trusted policy failures create a schema-valid blocked decision
+  with an empty proposed set. `NONE` and null remain distinct and
+  non-actionable, every realized-paper direction remains long/short only, and
+  optional previous-decision comparison cannot affect decision semantics.
+  The default disabled diagnostic is byte-identical. No eligibility, paper,
+  live, service, configuration, network, deployment, or execution integration
+  is added.
 - AUTO-2C C-b adds deterministic synthetic governed-allowlist specification
   vectors, an independent test-only cross-field/mutation auditor, and an inert
   `autopilot_dynamic_allowlist.py` CLI scaffold. The default invocation prints
