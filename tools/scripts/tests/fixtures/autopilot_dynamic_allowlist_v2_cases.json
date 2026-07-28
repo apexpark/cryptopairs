@@ -1,0 +1,65 @@
+{
+  "policy_version": "auto2c-v2-paper-automatic-acceptance-1",
+  "prior_active_set_source": "STATIC_PAPER_ALLOWLIST",
+  "unsupported_prior_active_set_source": "PREVIOUS_ACCEPTED_V2_PAPER_UNIVERSE",
+  "evaluated_at": "2026-07-28T00:30:00Z",
+  "previous_source_cutoff_at": "2026-07-27T00:00:00Z",
+  "current_source_cutoff_at": "2026-07-28T00:00:00Z",
+  "expected": {
+    "source_cutoff_separation_seconds": 86400,
+    "current_source_age_seconds": 1800,
+    "candidate_count": 7,
+    "selected_count": 4,
+    "addition_count": 1,
+    "removal_count": 1,
+    "change_count": 2,
+    "churn_denominator_count": 4,
+    "churn_ratio": 0.5,
+    "selector_exploration_selected_count": 1,
+    "status": "POLICY_ELIGIBLE_FOR_AUTO2D_VERIFICATION"
+  },
+  "keys": {
+    "baseline_long": {
+      "pair_id": "PF_DOGEUSD__PF_PEPEUSD",
+      "timeframe": "1m",
+      "selected_variant": "ROBUST_Z",
+      "direction": "LONG_SPREAD"
+    },
+    "baseline_short": {
+      "pair_id": "PF_DOGEUSD__PF_PEPEUSD",
+      "timeframe": "1m",
+      "selected_variant": "ROBUST_Z",
+      "direction": "SHORT_SPREAD"
+    },
+    "baseline_xbt": {
+      "pair_id": "PF_XBTUSD__PF_BNBUSD",
+      "timeframe": "1m",
+      "selected_variant": "COINTEGRATION_Z",
+      "direction": "LONG_SPREAD"
+    },
+    "baseline_tao": {
+      "pair_id": "PF_TAOUSD__PF_HYPEUSD",
+      "timeframe": "1m",
+      "selected_variant": "COINTEGRATION_Z",
+      "direction": "SHORT_SPREAD"
+    },
+    "exploration_eth": {
+      "pair_id": "PF_ETHUSD__PF_SOLUSD",
+      "timeframe": "1m",
+      "selected_variant": "COINTEGRATION_Z",
+      "direction": "LONG_SPREAD"
+    },
+    "exploration_sui": {
+      "pair_id": "PF_SUIUSD__PF_ARBUSD",
+      "timeframe": "1m",
+      "selected_variant": "ROBUST_Z",
+      "direction": "SHORT_SPREAD"
+    },
+    "exploration_ada": {
+      "pair_id": "PF_ADAUSD__PF_DOTUSD",
+      "timeframe": "1m",
+      "selected_variant": "ROBUST_Z",
+      "direction": "LONG_SPREAD"
+    }
+  }
+}

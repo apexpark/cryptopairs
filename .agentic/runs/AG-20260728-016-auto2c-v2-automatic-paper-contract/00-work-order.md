@@ -7,7 +7,7 @@ base_sha: c1b65389ebf0ead41146df12ca49a07f3889cfc9
 working_branch: codex/auto2c-v2-automatic-paper-contract
 worker_tier: T1
 required_evidence_level: E2
-status: in-review
+status: done
 ---
 
 # Work Order
