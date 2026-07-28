@@ -1,0 +1,112 @@
+{
+  "schema_version": 2,
+  "mode": "auto2d_dynamic_paper_provenance",
+  "record_type": "TRIAL_MANIFEST",
+  "trial_id": "auto2d-paper-20260722T003200Z-001",
+  "recorded_at": "2026-07-22T00:32:00Z",
+  "repository_git_sha": "5555555555555555555555555555555555555555",
+  "governed_decision": {
+    "path": "/synthetic/decisions/autopilot_dynamic_allowlist_decision_v2.json",
+    "sha256": "aa7e36a502738249809cd7fb799139fd72d9ab800dac2b46b3a6a2e9c4608643",
+    "decision_id": "6a5fc4fde482f63e8b0bf472b7e864831e21ca610335e18791ab518e936e4be1",
+    "policy_envelope_sha256": "cc132416d320fc8403909c7466d4b0fee669a481c349cb8998022ce94e54b2fd",
+    "schema_version": 2,
+    "status": "POLICY_ELIGIBLE_FOR_AUTO2D_VERIFICATION",
+    "independent_verification": {
+      "verdict": "PASS",
+      "recomputed_decision_id_matches": true,
+      "recomputed_policy_envelope_sha256_matches": true,
+      "raw_input_hashes_match": true,
+      "rank_and_transition_recomputed": true,
+      "decision_unexpired": true,
+      "configuration_unchanged": true
+    }
+  },
+  "trial_bounds": {
+    "decision_evaluated_at": "2026-07-22T00:30:00Z",
+    "decision_valid_until": "2026-07-23T06:30:00Z",
+    "controller_started_at": "2026-07-22T00:32:00Z",
+    "entry_deadline": "2026-07-23T00:32:00Z",
+    "exit_only_deadline": "2026-07-23T01:32:00Z",
+    "hard_deadline": "2026-07-23T01:32:00Z",
+    "max_selected_universe": 4,
+    "max_simultaneously_open_positions": 2,
+    "max_open_positions_per_pair_id": 1,
+    "max_open_positions_per_full_instrument": 1,
+    "max_open_selector_exploration_positions": 1,
+    "max_open_positions_per_exact_key": 1,
+    "hold_window_bars": 5,
+    "cooldown_seconds": 300,
+    "max_candidate_age_seconds": 120,
+    "max_automatic_start_decision_age_seconds": 300,
+    "entry_window_seconds": 86400,
+    "exit_only_grace_seconds": 3600,
+    "controller_hard_runtime_seconds": 90000
+  },
+  "append_only": true,
+  "universe_immutable": true,
+  "no_fallback": true,
+  "automatic_restart": false,
+  "selection_origin": null,
+  "subject": {
+    "dynamic_universe": [
+      {
+        "key": {
+          "pair_id": "PF_ETHUSD__PF_SOLUSD",
+          "timeframe": "1m",
+          "selected_variant": "COINTEGRATION_Z",
+          "direction": "LONG_SPREAD"
+        },
+        "evidence_class": "SELECTOR_EXPLORATION",
+        "lane_rank": 1,
+        "selection_sequence": 1
+      },
+      {
+        "key": {
+          "pair_id": "PF_DOGEUSD__PF_PEPEUSD",
+          "timeframe": "1m",
+          "selected_variant": "ROBUST_Z",
+          "direction": "LONG_SPREAD"
+        },
+        "evidence_class": "REALIZED_AND_SELECTOR",
+        "lane_rank": 1,
+        "selection_sequence": 2
+      },
+      {
+        "key": {
+          "pair_id": "PF_DOGEUSD__PF_PEPEUSD",
+          "timeframe": "1m",
+          "selected_variant": "ROBUST_Z",
+          "direction": "SHORT_SPREAD"
+        },
+        "evidence_class": "REALIZED_AND_SELECTOR",
+        "lane_rank": 2,
+        "selection_sequence": 3
+      },
+      {
+        "key": {
+          "pair_id": "PF_XBTUSD__PF_BNBUSD",
+          "timeframe": "1m",
+          "selected_variant": "COINTEGRATION_Z",
+          "direction": "LONG_SPREAD"
+        },
+        "evidence_class": "REALIZED_AND_SELECTOR",
+        "lane_rank": 3,
+        "selection_sequence": 4
+      }
+    ],
+    "lifecycle_status": "RUNNING",
+    "exclusive_trial_root": true,
+    "start_result": "STARTED",
+    "stop_reason": null,
+    "unresolved_open_position_count": 0
+  },
+  "authority_boundaries": {
+    "paper_only": true,
+    "live_order_authority": false,
+    "exchange_order_routing_authority": false,
+    "execution_service_post_authority": false,
+    "deployment_authority": false,
+    "service_configuration_authority": false
+  }
+}

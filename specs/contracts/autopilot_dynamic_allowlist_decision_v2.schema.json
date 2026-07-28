@@ -1,0 +1,1646 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://apexpark.dev/contracts/autopilot_dynamic_allowlist_decision_v2.schema.json",
+  "title": "AutopilotDynamicAllowlistDecisionV2",
+  "description": "Non-actuating AUTO-2C v2 decision for independent AUTO-2D paper-only verification. This contract permits bounded additions and deterministic truncation but grants no paper, live, execution, deployment, or self-approval authority.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "mode",
+    "policy_version",
+    "decision_id",
+    "policy_envelope_sha256",
+    "status",
+    "evaluated_at",
+    "valid_until",
+    "current_snapshot",
+    "previous_snapshot",
+    "paper_run_config",
+    "governor_config_source",
+    "selector_config",
+    "policy",
+    "prior_active_set_source",
+    "prior_active_set_sha256",
+    "prior_active_entries",
+    "candidates",
+    "selection_steps",
+    "selected_entries",
+    "truncated_candidates",
+    "skipped_candidates",
+    "additions",
+    "removals",
+    "retained_entries",
+    "direction_counts",
+    "gate_results",
+    "gate_summary",
+    "calculations",
+    "reason_codes",
+    "methodology",
+    "per_output_operator_approval_required",
+    "auto2d_verification",
+    "authority",
+    "authority_boundaries"
+  ],
+  "properties": {
+    "schema_version": {
+      "type": "integer",
+      "const": 2
+    },
+    "mode": {
+      "type": "string",
+      "const": "governed_dynamic_allowlist_decision"
+    },
+    "policy_version": {
+      "type": "string",
+      "const": "auto2c-v2-paper-automatic-acceptance-1"
+    },
+    "decision_id": {
+      "$ref": "#/$defs/sha256"
+    },
+    "policy_envelope_sha256": {
+      "$ref": "#/$defs/sha256"
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "POLICY_ELIGIBLE_FOR_AUTO2D_VERIFICATION",
+        "GOVERNOR_BLOCKED"
+      ]
+    },
+    "evaluated_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "valid_until": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "current_snapshot": {
+      "$ref": "#/$defs/snapshot_reference"
+    },
+    "previous_snapshot": {
+      "$ref": "#/$defs/snapshot_reference"
+    },
+    "paper_run_config": {
+      "$ref": "#/$defs/paper_run_config_reference"
+    },
+    "governor_config_source": {
+      "$ref": "#/$defs/file_reference"
+    },
+    "selector_config": {
+      "$ref": "#/$defs/selector_config"
+    },
+    "policy": {
+      "$ref": "#/$defs/policy"
+    },
+    "prior_active_set_source": {
+      "type": "string",
+      "enum": [
+        "STATIC_PAPER_ALLOWLIST",
+        "PREVIOUS_ACCEPTED_V2_PAPER_UNIVERSE"
+      ]
+    },
+    "prior_active_set_sha256": {
+      "$ref": "#/$defs/sha256"
+    },
+    "prior_active_entries": {
+      "$ref": "#/$defs/exact_key_array"
+    },
+    "candidates": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/candidate"
+      },
+      "uniqueItems": true
+    },
+    "selection_steps": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/selection_step"
+      },
+      "uniqueItems": true
+    },
+    "selected_entries": {
+      "type": "array",
+      "maxItems": 4,
+      "items": {
+        "$ref": "#/$defs/selected_entry"
+      },
+      "uniqueItems": true
+    },
+    "truncated_candidates": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/candidate_outcome"
+      },
+      "uniqueItems": true
+    },
+    "skipped_candidates": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/candidate_outcome"
+      },
+      "uniqueItems": true
+    },
+    "additions": {
+      "$ref": "#/$defs/exact_key_array"
+    },
+    "removals": {
+      "$ref": "#/$defs/exact_key_array"
+    },
+    "retained_entries": {
+      "$ref": "#/$defs/exact_key_array"
+    },
+    "direction_counts": {
+      "$ref": "#/$defs/direction_counts"
+    },
+    "gate_results": {
+      "$ref": "#/$defs/gate_results"
+    },
+    "gate_summary": {
+      "$ref": "#/$defs/gate_summary"
+    },
+    "calculations": {
+      "$ref": "#/$defs/calculations"
+    },
+    "reason_codes": {
+      "$ref": "#/$defs/reason_code_array"
+    },
+    "methodology": {
+      "$ref": "#/$defs/methodology"
+    },
+    "per_output_operator_approval_required": {
+      "type": "boolean",
+      "const": false
+    },
+    "auto2d_verification": {
+      "$ref": "#/$defs/auto2d_verification"
+    },
+    "authority": {
+      "type": "string",
+      "const": "non_actuating_requires_independent_auto2d_verification"
+    },
+    "authority_boundaries": {
+      "$ref": "#/$defs/authority_boundaries"
+    }
+  },
+  "$defs": {
+    "sha256": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "git_sha": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{40}$"
+    },
+    "exact_key": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "pair_id",
+        "timeframe",
+        "selected_variant",
+        "direction"
+      ],
+      "properties": {
+        "pair_id": {
+          "description": "Exactly two non-empty full instrument identifiers separated by one double underscore.",
+          "type": "string",
+          "pattern": "^(?!.*__.*__)\\S+__\\S+$"
+        },
+        "timeframe": {
+          "type": "string",
+          "const": "1m"
+        },
+        "selected_variant": {
+          "type": "string",
+          "minLength": 1
+        },
+        "direction": {
+          "type": "string",
+          "enum": [
+            "LONG_SPREAD",
+            "SHORT_SPREAD"
+          ]
+        }
+      }
+    },
+    "exact_key_array": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/exact_key"
+      },
+      "uniqueItems": true
+    },
+    "snapshot_reference": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "path",
+        "sha256",
+        "producer_git_sha",
+        "schema_version",
+        "generated_at",
+        "source_cutoff_at",
+        "selector_config_sha256",
+        "selector_view_present",
+        "selector_view_churn_available"
+      ],
+      "properties": {
+        "path": {
+          "type": "string",
+          "minLength": 1
+        },
+        "sha256": {
+          "$ref": "#/$defs/sha256"
+        },
+        "producer_git_sha": {
+          "$ref": "#/$defs/git_sha"
+        },
+        "schema_version": {
+          "type": "integer",
+          "const": 2
+        },
+        "generated_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "source_cutoff_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "selector_config_sha256": {
+          "$ref": "#/$defs/sha256"
+        },
+        "selector_view_present": {
+          "type": "boolean",
+          "const": true
+        },
+        "selector_view_churn_available": {
+          "type": "boolean",
+          "const": true
+        }
+      }
+    },
+    "paper_run_config_reference": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "path",
+        "sha256",
+        "producer_git_sha",
+        "static_allowlist_mode",
+        "static_allowlist_entry_count"
+      ],
+      "properties": {
+        "path": {
+          "type": "string",
+          "minLength": 1
+        },
+        "sha256": {
+          "$ref": "#/$defs/sha256"
+        },
+        "producer_git_sha": {
+          "$ref": "#/$defs/git_sha"
+        },
+        "static_allowlist_mode": {
+          "type": "string",
+          "const": "pair_variant_direction"
+        },
+        "static_allowlist_entry_count": {
+          "type": "integer",
+          "minimum": 1
+        }
+      }
+    },
+    "file_reference": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "path",
+        "sha256"
+      ],
+      "properties": {
+        "path": {
+          "type": "string",
+          "minLength": 1
+        },
+        "sha256": {
+          "$ref": "#/$defs/sha256"
+        }
+      }
+    },
+    "selector_config": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "min_closed_positions",
+        "min_avg_net_bps",
+        "max_tail_loss_bps",
+        "max_avg_exit_lag_seconds",
+        "max_selected",
+        "min_score"
+      ],
+      "properties": {
+        "min_closed_positions": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "min_avg_net_bps": {
+          "type": "number"
+        },
+        "max_tail_loss_bps": {
+          "type": "number"
+        },
+        "max_avg_exit_lag_seconds": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "max_selected": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "min_score": {
+          "type": "number"
+        }
+      }
+    },
+    "policy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "required_comparable_v2_snapshots",
+        "min_source_cutoff_separation_seconds",
+        "max_current_source_age_seconds",
+        "min_selector_rows_each_snapshot",
+        "min_trade_now_count_each_snapshot",
+        "min_trade_now_ratio_each_snapshot",
+        "require_positive_finite_selector_mean_net_edge",
+        "max_selected_entries",
+        "max_additions",
+        "max_selector_exploration_entries",
+        "min_selector_exploration_entries_when_qualified_and_transition_safe",
+        "max_removals",
+        "max_directions_per_pair_variant",
+        "max_entries_per_pair_id",
+        "max_entries_per_full_instrument",
+        "max_new_additions_per_full_instrument",
+        "max_churn_ratio",
+        "churn_measure",
+        "churn_denominator",
+        "churn_floor_capacity",
+        "decision_validity_seconds",
+        "candidate_overflow_behavior",
+        "concentration_overflow_behavior",
+        "selection_allocation",
+        "realized_lane_ranking",
+        "exploration_lane_ranking",
+        "fallback_behavior",
+        "max_simultaneously_open_paper_positions",
+        "max_open_paper_positions_per_pair_id",
+        "max_open_paper_positions_per_full_instrument",
+        "max_open_selector_exploration_positions",
+        "max_open_positions_per_exact_key",
+        "hold_window_bars",
+        "cooldown_seconds",
+        "max_candidate_age_seconds",
+        "max_automatic_start_decision_age_seconds",
+        "entry_window_seconds",
+        "exit_only_grace_seconds",
+        "controller_hard_runtime_seconds"
+      ],
+      "properties": {
+        "required_comparable_v2_snapshots": {
+          "type": "integer",
+          "const": 2
+        },
+        "min_source_cutoff_separation_seconds": {
+          "type": "integer",
+          "const": 86400
+        },
+        "max_current_source_age_seconds": {
+          "type": "integer",
+          "const": 1800
+        },
+        "min_selector_rows_each_snapshot": {
+          "type": "integer",
+          "const": 12
+        },
+        "min_trade_now_count_each_snapshot": {
+          "type": "integer",
+          "const": 3
+        },
+        "min_trade_now_ratio_each_snapshot": {
+          "type": "number",
+          "const": 0.01
+        },
+        "require_positive_finite_selector_mean_net_edge": {
+          "type": "boolean",
+          "const": true
+        },
+        "max_selected_entries": {
+          "type": "integer",
+          "const": 4
+        },
+        "max_additions": {
+          "type": "integer",
+          "const": 2
+        },
+        "max_selector_exploration_entries": {
+          "type": "integer",
+          "const": 2
+        },
+        "min_selector_exploration_entries_when_qualified_and_transition_safe": {
+          "type": "integer",
+          "const": 1
+        },
+        "max_removals": {
+          "type": "integer",
+          "const": 2
+        },
+        "max_directions_per_pair_variant": {
+          "type": "integer",
+          "const": 2
+        },
+        "max_entries_per_pair_id": {
+          "type": "integer",
+          "const": 2
+        },
+        "max_entries_per_full_instrument": {
+          "type": "integer",
+          "const": 2
+        },
+        "max_new_additions_per_full_instrument": {
+          "type": "integer",
+          "const": 1
+        },
+        "max_churn_ratio": {
+          "type": "number",
+          "const": 0.5
+        },
+        "churn_measure": {
+          "type": "string",
+          "const": "PRIOR_SELECTED_SYMMETRIC_DIFFERENCE"
+        },
+        "churn_denominator": {
+          "type": "string",
+          "const": "MAX_POLICY_CAPACITY_PRIOR_ACTIVE_COUNT"
+        },
+        "churn_floor_capacity": {
+          "type": "integer",
+          "const": 4
+        },
+        "decision_validity_seconds": {
+          "type": "integer",
+          "const": 108000
+        },
+        "candidate_overflow_behavior": {
+          "type": "string",
+          "const": "DETERMINISTIC_TRUNCATE_AND_RECORD"
+        },
+        "concentration_overflow_behavior": {
+          "type": "string",
+          "const": "SKIP_AND_CONTINUE"
+        },
+        "selection_allocation": {
+          "type": "string",
+          "const": "RESERVE_BEST_EXPLORATION_ADDITION_FILL_REALIZED_ALLOW_SECOND_ADDITION"
+        },
+        "realized_lane_ranking": {
+          "type": "string",
+          "const": "MIN_TOTAL_B2C_SCORE_DESC_MIN_CLOSED_COUNT_DESC_MIN_TRADE_NOW_RATIO_DESC_EXACT_KEY_ASC"
+        },
+        "exploration_lane_ranking": {
+          "type": "string",
+          "const": "MIN_TRADE_NOW_RATIO_DESC_MIN_TRADE_NOW_COUNT_DESC_MIN_SELECTOR_EDGE_DESC_EXACT_KEY_ASC"
+        },
+        "fallback_behavior": {
+          "type": "string",
+          "const": "NO_FALLBACK"
+        },
+        "max_simultaneously_open_paper_positions": {
+          "type": "integer",
+          "const": 2
+        },
+        "max_open_paper_positions_per_pair_id": {
+          "type": "integer",
+          "const": 1
+        },
+        "max_open_paper_positions_per_full_instrument": {
+          "type": "integer",
+          "const": 1
+        },
+        "max_open_selector_exploration_positions": {
+          "type": "integer",
+          "const": 1
+        },
+        "max_open_positions_per_exact_key": {
+          "type": "integer",
+          "const": 1
+        },
+        "hold_window_bars": {
+          "type": "integer",
+          "const": 5
+        },
+        "cooldown_seconds": {
+          "type": "integer",
+          "const": 300
+        },
+        "max_candidate_age_seconds": {
+          "type": "integer",
+          "const": 120
+        },
+        "max_automatic_start_decision_age_seconds": {
+          "type": "integer",
+          "const": 300
+        },
+        "entry_window_seconds": {
+          "type": "integer",
+          "const": 86400
+        },
+        "exit_only_grace_seconds": {
+          "type": "integer",
+          "const": 3600
+        },
+        "controller_hard_runtime_seconds": {
+          "type": "integer",
+          "const": 90000
+        }
+      }
+    },
+    "selector_window_metrics": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "selector_row_count",
+        "trade_now_count",
+        "time_in_trade_now_ratio",
+        "selector_stated_mean_net_edge_bps"
+      ],
+      "properties": {
+        "selector_row_count": {
+          "type": "integer",
+          "minimum": 12
+        },
+        "trade_now_count": {
+          "type": "integer",
+          "minimum": 3
+        },
+        "time_in_trade_now_ratio": {
+          "type": "number",
+          "minimum": 0.01,
+          "maximum": 1
+        },
+        "selector_stated_mean_net_edge_bps": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        }
+      }
+    },
+    "realized_window_metrics": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "total_b2c_score",
+        "closed_position_count"
+      ],
+      "properties": {
+        "total_b2c_score": {
+          "type": "number"
+        },
+        "closed_position_count": {
+          "type": "integer",
+          "minimum": 1
+        }
+      }
+    },
+    "rank_components": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "minimum_total_b2c_score",
+        "minimum_closed_position_count",
+        "minimum_trade_now_ratio",
+        "minimum_trade_now_count",
+        "minimum_selector_stated_mean_net_edge_bps",
+        "exact_key_tiebreak"
+      ],
+      "properties": {
+        "minimum_total_b2c_score": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "minimum_closed_position_count": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 1
+        },
+        "minimum_trade_now_ratio": {
+          "type": "number",
+          "minimum": 0.01,
+          "maximum": 1
+        },
+        "minimum_trade_now_count": {
+          "type": "integer",
+          "minimum": 3
+        },
+        "minimum_selector_stated_mean_net_edge_bps": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "exact_key_tiebreak": {
+          "type": "string",
+          "pattern": "^\\S+__\\S+\\|1m\\|\\S+\\|(LONG_SPREAD|SHORT_SPREAD)$"
+        }
+      }
+    },
+    "candidate": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "key",
+        "evidence_class",
+        "current_selector",
+        "previous_selector",
+        "current_realized",
+        "previous_realized",
+        "rank_components",
+        "lane_rank",
+        "absent_from_prior_active_set"
+      ],
+      "properties": {
+        "key": {
+          "$ref": "#/$defs/exact_key"
+        },
+        "evidence_class": {
+          "type": "string",
+          "enum": [
+            "REALIZED_AND_SELECTOR",
+            "SELECTOR_EXPLORATION"
+          ]
+        },
+        "current_selector": {
+          "$ref": "#/$defs/selector_window_metrics"
+        },
+        "previous_selector": {
+          "$ref": "#/$defs/selector_window_metrics"
+        },
+        "current_realized": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/realized_window_metrics"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "previous_realized": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/realized_window_metrics"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "rank_components": {
+          "$ref": "#/$defs/rank_components"
+        },
+        "lane_rank": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "absent_from_prior_active_set": {
+          "type": "boolean"
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "evidence_class": {
+                "const": "REALIZED_AND_SELECTOR"
+              }
+            },
+            "required": [
+              "evidence_class"
+            ]
+          },
+          "then": {
+            "properties": {
+              "current_realized": {
+                "$ref": "#/$defs/realized_window_metrics"
+              },
+              "previous_realized": {
+                "$ref": "#/$defs/realized_window_metrics"
+              },
+              "rank_components": {
+                "properties": {
+                  "minimum_total_b2c_score": {
+                    "type": "number"
+                  },
+                  "minimum_closed_position_count": {
+                    "type": "integer",
+                    "minimum": 1
+                  }
+                }
+              }
+            }
+          },
+          "else": {
+            "properties": {
+              "current_realized": {
+                "type": "null"
+              },
+              "previous_realized": {
+                "type": "null"
+              },
+              "rank_components": {
+                "properties": {
+                  "minimum_total_b2c_score": {
+                    "type": "null"
+                  },
+                  "minimum_closed_position_count": {
+                    "type": "null"
+                  }
+                }
+              },
+              "absent_from_prior_active_set": {
+                "const": true
+              }
+            }
+          }
+        }
+      ]
+    },
+    "selected_entry": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "key",
+        "evidence_class",
+        "lane_rank",
+        "selection_sequence",
+        "selection_rule"
+      ],
+      "properties": {
+        "key": {
+          "$ref": "#/$defs/exact_key"
+        },
+        "evidence_class": {
+          "type": "string",
+          "enum": [
+            "REALIZED_AND_SELECTOR",
+            "SELECTOR_EXPLORATION"
+          ]
+        },
+        "lane_rank": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "selection_sequence": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 4
+        },
+        "selection_rule": {
+          "type": "string",
+          "enum": [
+            "RESERVE_BEST_QUALIFYING_ADDITION",
+            "FILL_REALIZED_SUPPORTED",
+            "FILL_SECOND_QUALIFYING_ADDITION"
+          ]
+        }
+      }
+    },
+    "selection_step": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "step",
+        "rule",
+        "candidate_key",
+        "result"
+      ],
+      "properties": {
+        "step": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "rule": {
+          "type": "string",
+          "enum": [
+            "RESERVE_BEST_QUALIFYING_ADDITION",
+            "FILL_REALIZED_SUPPORTED",
+            "FILL_SECOND_QUALIFYING_ADDITION",
+            "SKIP_CONCENTRATION_AND_CONTINUE",
+            "TRUNCATE_AT_CAPACITY"
+          ]
+        },
+        "candidate_key": {
+          "$ref": "#/$defs/exact_key"
+        },
+        "result": {
+          "type": "string",
+          "enum": [
+            "SELECTED",
+            "SKIPPED",
+            "TRUNCATED"
+          ]
+        }
+      }
+    },
+    "candidate_outcome": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "key",
+        "evidence_class",
+        "lane_rank",
+        "reason_code"
+      ],
+      "properties": {
+        "key": {
+          "$ref": "#/$defs/exact_key"
+        },
+        "evidence_class": {
+          "type": "string",
+          "enum": [
+            "REALIZED_AND_SELECTOR",
+            "SELECTOR_EXPLORATION"
+          ]
+        },
+        "lane_rank": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "reason_code": {
+          "type": "string",
+          "enum": [
+            "TRUNCATED_MAX_SELECTED_ENTRIES",
+            "SKIPPED_PAIR_CONCENTRATION",
+            "SKIPPED_INSTRUMENT_CONCENTRATION",
+            "SKIPPED_ADDITION_INSTRUMENT_CONCENTRATION",
+            "SKIPPED_MAX_ADDITIONS",
+            "NOT_SELECTED_LOWER_RANK"
+          ]
+        }
+      }
+    },
+    "direction_counts": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "selector_long_spread_count",
+        "selector_short_spread_count",
+        "selector_none_count",
+        "selector_null_count",
+        "selector_unknown_count",
+        "realized_long_spread_count",
+        "realized_short_spread_count",
+        "realized_none_count",
+        "realized_null_count",
+        "realized_unknown_count"
+      ],
+      "properties": {
+        "selector_long_spread_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "selector_short_spread_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "selector_none_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "selector_null_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "selector_unknown_count": {
+          "type": "integer",
+          "const": 0
+        },
+        "realized_long_spread_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "realized_short_spread_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "realized_none_count": {
+          "type": "integer",
+          "const": 0
+        },
+        "realized_null_count": {
+          "type": "integer",
+          "const": 0
+        },
+        "realized_unknown_count": {
+          "type": "integer",
+          "const": 0
+        }
+      }
+    },
+    "gate_result": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "verdict",
+        "reason_codes"
+      ],
+      "properties": {
+        "verdict": {
+          "type": "string",
+          "enum": [
+            "PASS",
+            "BLOCK"
+          ]
+        },
+        "reason_codes": {
+          "$ref": "#/$defs/reason_code_array"
+        }
+      }
+    },
+    "gate_result_pass": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "verdict",
+        "reason_codes"
+      ],
+      "properties": {
+        "verdict": {
+          "type": "string",
+          "const": "PASS"
+        },
+        "reason_codes": {
+          "type": "array",
+          "maxItems": 0
+        }
+      }
+    },
+    "gate_results": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "provenance",
+        "current_snapshot_schema",
+        "previous_snapshot_schema",
+        "snapshot_hash_distinct",
+        "selector_config_match",
+        "source_cutoff_order",
+        "source_cutoff_separation",
+        "current_source_freshness",
+        "evidence_completeness",
+        "direction_domain",
+        "evidence_segregation",
+        "candidate_qualification",
+        "transition_limits"
+      ],
+      "properties": {
+        "provenance": {
+          "$ref": "#/$defs/gate_result"
+        },
+        "current_snapshot_schema": {
+          "$ref": "#/$defs/gate_result"
+        },
+        "previous_snapshot_schema": {
+          "$ref": "#/$defs/gate_result"
+        },
+        "snapshot_hash_distinct": {
+          "$ref": "#/$defs/gate_result"
+        },
+        "selector_config_match": {
+          "$ref": "#/$defs/gate_result"
+        },
+        "source_cutoff_order": {
+          "$ref": "#/$defs/gate_result"
+        },
+        "source_cutoff_separation": {
+          "$ref": "#/$defs/gate_result"
+        },
+        "current_source_freshness": {
+          "$ref": "#/$defs/gate_result"
+        },
+        "evidence_completeness": {
+          "$ref": "#/$defs/gate_result"
+        },
+        "direction_domain": {
+          "$ref": "#/$defs/gate_result"
+        },
+        "evidence_segregation": {
+          "$ref": "#/$defs/gate_result"
+        },
+        "candidate_qualification": {
+          "$ref": "#/$defs/gate_result"
+        },
+        "transition_limits": {
+          "$ref": "#/$defs/gate_result"
+        }
+      }
+    },
+    "gate_results_all_pass": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "provenance",
+        "current_snapshot_schema",
+        "previous_snapshot_schema",
+        "snapshot_hash_distinct",
+        "selector_config_match",
+        "source_cutoff_order",
+        "source_cutoff_separation",
+        "current_source_freshness",
+        "evidence_completeness",
+        "direction_domain",
+        "evidence_segregation",
+        "candidate_qualification",
+        "transition_limits"
+      ],
+      "properties": {
+        "provenance": {
+          "$ref": "#/$defs/gate_result_pass"
+        },
+        "current_snapshot_schema": {
+          "$ref": "#/$defs/gate_result_pass"
+        },
+        "previous_snapshot_schema": {
+          "$ref": "#/$defs/gate_result_pass"
+        },
+        "snapshot_hash_distinct": {
+          "$ref": "#/$defs/gate_result_pass"
+        },
+        "selector_config_match": {
+          "$ref": "#/$defs/gate_result_pass"
+        },
+        "source_cutoff_order": {
+          "$ref": "#/$defs/gate_result_pass"
+        },
+        "source_cutoff_separation": {
+          "$ref": "#/$defs/gate_result_pass"
+        },
+        "current_source_freshness": {
+          "$ref": "#/$defs/gate_result_pass"
+        },
+        "evidence_completeness": {
+          "$ref": "#/$defs/gate_result_pass"
+        },
+        "direction_domain": {
+          "$ref": "#/$defs/gate_result_pass"
+        },
+        "evidence_segregation": {
+          "$ref": "#/$defs/gate_result_pass"
+        },
+        "candidate_qualification": {
+          "$ref": "#/$defs/gate_result_pass"
+        },
+        "transition_limits": {
+          "$ref": "#/$defs/gate_result_pass"
+        }
+      }
+    },
+    "gate_summary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "pass_count",
+        "block_count",
+        "total_count"
+      ],
+      "properties": {
+        "pass_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "block_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "total_count": {
+          "type": "integer",
+          "const": 13
+        }
+      }
+    },
+    "pair_concentration": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "pair_id",
+        "entry_count"
+      ],
+      "properties": {
+        "pair_id": {
+          "type": "string",
+          "pattern": "^(?!.*__.*__)\\S+__\\S+$"
+        },
+        "entry_count": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 2
+        }
+      }
+    },
+    "pair_variant_concentration": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "pair_id",
+        "timeframe",
+        "selected_variant",
+        "direction_count"
+      ],
+      "properties": {
+        "pair_id": {
+          "type": "string",
+          "pattern": "^(?!.*__.*__)\\S+__\\S+$"
+        },
+        "timeframe": {
+          "type": "string",
+          "const": "1m"
+        },
+        "selected_variant": {
+          "type": "string",
+          "minLength": 1
+        },
+        "direction_count": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 2
+        }
+      }
+    },
+    "instrument_concentration": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "instrument_id",
+        "entry_count",
+        "addition_count"
+      ],
+      "properties": {
+        "instrument_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "entry_count": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 2
+        },
+        "addition_count": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 1
+        }
+      }
+    },
+    "calculations": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "source_cutoff_separation_seconds",
+        "current_source_age_seconds",
+        "prior_active_entry_count",
+        "qualifying_candidate_count",
+        "selected_entry_count",
+        "selector_exploration_selected_count",
+        "addition_count",
+        "removal_count",
+        "change_count",
+        "churn_denominator_count",
+        "churn_ratio",
+        "pair_concentrations",
+        "pair_variant_concentrations",
+        "instrument_concentrations"
+      ],
+      "properties": {
+        "source_cutoff_separation_seconds": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "current_source_age_seconds": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "prior_active_entry_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "qualifying_candidate_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "selected_entry_count": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 4
+        },
+        "selector_exploration_selected_count": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 2
+        },
+        "addition_count": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 2
+        },
+        "removal_count": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 2
+        },
+        "change_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "churn_denominator_count": {
+          "type": "integer",
+          "minimum": 4
+        },
+        "churn_ratio": {
+          "type": "number",
+          "minimum": 0
+        },
+        "pair_concentrations": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/pair_concentration"
+          },
+          "uniqueItems": true
+        },
+        "pair_variant_concentrations": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/pair_variant_concentration"
+          },
+          "uniqueItems": true
+        },
+        "instrument_concentrations": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/instrument_concentration"
+          },
+          "uniqueItems": true
+        }
+      }
+    },
+    "reason_code": {
+      "type": "string",
+      "enum": [
+        "PREVIOUS_SNAPSHOT_NOT_SCHEMA_V2",
+        "SELECTOR_CHURN_UNAVAILABLE",
+        "SOURCE_CUTOFF_SEPARATION_TOO_SHORT",
+        "CURRENT_SOURCE_STALE",
+        "EVIDENCE_INCOMPLETE",
+        "UNKNOWN_DIRECTION",
+        "EVIDENCE_STREAMS_NOT_SEGREGATED",
+        "NO_QUALIFYING_ENTRIES",
+        "TRANSITION_LIMITS_UNSATISFIABLE",
+        "POLICY_ENVELOPE_MISMATCH"
+      ]
+    },
+    "reason_code_array": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/reason_code"
+      },
+      "uniqueItems": true
+    },
+    "methodology": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "realized_selector_relation",
+        "none_direction_behavior",
+        "null_direction_behavior",
+        "unknown_direction_behavior",
+        "candidate_overflow_behavior",
+        "concentration_overflow_behavior",
+        "selection_allocation",
+        "fallback_behavior",
+        "policy_hash_formula",
+        "decision_id_formula",
+        "serialization_behavior",
+        "input_behavior",
+        "output_behavior"
+      ],
+      "properties": {
+        "realized_selector_relation": {
+          "type": "string",
+          "const": "SEPARATE_STREAMS_SET_MEMBERSHIP_NO_NUMERIC_MERGE"
+        },
+        "none_direction_behavior": {
+          "type": "string",
+          "const": "NON_ACTIONABLE_DISTINCT_FROM_NULL"
+        },
+        "null_direction_behavior": {
+          "type": "string",
+          "const": "NON_ACTIONABLE_MISSING_DIRECTION"
+        },
+        "unknown_direction_behavior": {
+          "type": "string",
+          "const": "REJECT_INPUT_NO_ARTIFACT"
+        },
+        "candidate_overflow_behavior": {
+          "type": "string",
+          "const": "DETERMINISTIC_TRUNCATE_AND_RECORD"
+        },
+        "concentration_overflow_behavior": {
+          "type": "string",
+          "const": "SKIP_AND_CONTINUE"
+        },
+        "selection_allocation": {
+          "type": "string",
+          "const": "RESERVE_BEST_EXPLORATION_ADDITION_FILL_REALIZED_ALLOW_SECOND_ADDITION"
+        },
+        "fallback_behavior": {
+          "type": "string",
+          "const": "NO_FALLBACK"
+        },
+        "policy_hash_formula": {
+          "type": "string",
+          "const": "SHA256_CANONICAL_JSON_POLICY_VERSION_AND_POLICY"
+        },
+        "decision_id_formula": {
+          "type": "string",
+          "const": "SHA256_CANONICAL_JSON_BOUND_INPUT_HASHES_POLICY_HASH_PRIOR_SET_HASH_EVALUATED_AT"
+        },
+        "serialization_behavior": {
+          "type": "string",
+          "const": "MINIFIED_KEY_SORTED_UTF8_NO_TRAILING_NEWLINE"
+        },
+        "input_behavior": {
+          "type": "string",
+          "const": "READ_ONLY_RAW_HASH_BOUND_STABLE_FILES"
+        },
+        "output_behavior": {
+          "type": "string",
+          "const": "EXCLUSIVE_CREATE_NO_OVERWRITE_REPAIR_OR_REUSE"
+        }
+      }
+    },
+    "auto2d_verification": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "independent_recomputation_required",
+        "policy_envelope_hash_match_required",
+        "decision_hash_match_required",
+        "raw_input_hash_recheck_required",
+        "immutable_universe_required",
+        "schema_v1_decision_accepted",
+        "raw_snapshot_accepted_as_decision",
+        "governor_self_approval_accepted"
+      ],
+      "properties": {
+        "independent_recomputation_required": {
+          "type": "boolean",
+          "const": true
+        },
+        "policy_envelope_hash_match_required": {
+          "type": "boolean",
+          "const": true
+        },
+        "decision_hash_match_required": {
+          "type": "boolean",
+          "const": true
+        },
+        "raw_input_hash_recheck_required": {
+          "type": "boolean",
+          "const": true
+        },
+        "immutable_universe_required": {
+          "type": "boolean",
+          "const": true
+        },
+        "schema_v1_decision_accepted": {
+          "type": "boolean",
+          "const": false
+        },
+        "raw_snapshot_accepted_as_decision": {
+          "type": "boolean",
+          "const": false
+        },
+        "governor_self_approval_accepted": {
+          "type": "boolean",
+          "const": false
+        }
+      }
+    },
+    "authority_boundaries": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "paper_eligibility_authority",
+        "paper_configuration_write_authority",
+        "paper_trial_start_authority",
+        "live_eligibility_authority",
+        "execution_authority",
+        "deployment_authority",
+        "governor_self_approval_authority"
+      ],
+      "properties": {
+        "paper_eligibility_authority": {
+          "type": "boolean",
+          "const": false
+        },
+        "paper_configuration_write_authority": {
+          "type": "boolean",
+          "const": false
+        },
+        "paper_trial_start_authority": {
+          "type": "boolean",
+          "const": false
+        },
+        "live_eligibility_authority": {
+          "type": "boolean",
+          "const": false
+        },
+        "execution_authority": {
+          "type": "boolean",
+          "const": false
+        },
+        "deployment_authority": {
+          "type": "boolean",
+          "const": false
+        },
+        "governor_self_approval_authority": {
+          "type": "boolean",
+          "const": false
+        }
+      }
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "status": {
+            "const": "POLICY_ELIGIBLE_FOR_AUTO2D_VERIFICATION"
+          }
+        },
+        "required": [
+          "status"
+        ]
+      },
+      "then": {
+        "properties": {
+          "current_snapshot": {
+            "properties": {
+              "selector_view_present": {
+                "const": true
+              },
+              "selector_view_churn_available": {
+                "const": true
+              }
+            }
+          },
+          "previous_snapshot": {
+            "properties": {
+              "selector_view_present": {
+                "const": true
+              },
+              "selector_view_churn_available": {
+                "const": true
+              }
+            }
+          },
+          "selected_entries": {
+            "minItems": 1,
+            "maxItems": 4
+          },
+          "additions": {
+            "maxItems": 2
+          },
+          "removals": {
+            "maxItems": 2
+          },
+          "reason_codes": {
+            "maxItems": 0
+          },
+          "gate_results": {
+            "$ref": "#/$defs/gate_results_all_pass"
+          },
+          "gate_summary": {
+            "properties": {
+              "pass_count": {
+                "const": 13
+              },
+              "block_count": {
+                "const": 0
+              }
+            }
+          },
+          "calculations": {
+            "properties": {
+              "source_cutoff_separation_seconds": {
+                "minimum": 86400
+              },
+              "current_source_age_seconds": {
+                "maximum": 1800
+              },
+              "selected_entry_count": {
+                "minimum": 1,
+                "maximum": 4
+              },
+              "selector_exploration_selected_count": {
+                "maximum": 2
+              },
+              "addition_count": {
+                "maximum": 2
+              },
+              "removal_count": {
+                "maximum": 2
+              },
+              "churn_ratio": {
+                "maximum": 0.5
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "status": {
+            "const": "GOVERNOR_BLOCKED"
+          }
+        },
+        "required": [
+          "status"
+        ]
+      },
+      "then": {
+        "properties": {
+          "selection_steps": {
+            "maxItems": 0
+          },
+          "selected_entries": {
+            "maxItems": 0
+          },
+          "truncated_candidates": {
+            "maxItems": 0
+          },
+          "skipped_candidates": {
+            "maxItems": 0
+          },
+          "additions": {
+            "maxItems": 0
+          },
+          "removals": {
+            "maxItems": 0
+          },
+          "retained_entries": {
+            "maxItems": 0
+          },
+          "reason_codes": {
+            "minItems": 1
+          },
+          "gate_summary": {
+            "properties": {
+              "block_count": {
+                "minimum": 1
+              }
+            }
+          },
+          "calculations": {
+            "properties": {
+              "selected_entry_count": {
+                "const": 0
+              },
+              "selector_exploration_selected_count": {
+                "const": 0
+              },
+              "addition_count": {
+                "const": 0
+              },
+              "removal_count": {
+                "const": 0
+              },
+              "change_count": {
+                "const": 0
+              },
+              "churn_ratio": {
+                "const": 0
+              }
+            }
+          }
+        }
+      }
+    }
+  ]
+}
