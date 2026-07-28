@@ -159,3 +159,53 @@ contract, B2-c or paper contracts, eligibility configuration, services,
 orders, execution, deployment, or any runtime interface. C-d runbook and
 hardening work, E3 production evidence, and every AUTO-2D consumer remain
 separately gated.
+
+### AUTO-2C v2 automatic-paper contract compatibility
+
+`specs/contracts/autopilot_dynamic_allowlist_decision_v2.schema.json` is a
+separate schema-version-2 contract. It does not relax or replace the
+schema-version-1 decision in place. Version 1 remains the historical
+demotion-only advisory interface; a future v2 AUTO-2D controller must reject
+version 1 and raw B2-c snapshots as automatic-paper decisions.
+
+The v2 decision may represent at most two evidence-qualified additions,
+deterministically rank and truncate excess candidates, and use
+`POLICY_ELIGIBLE_FOR_AUTO2D_VERIFICATION` to indicate only that a later
+controller may independently verify it. It grants no paper configuration,
+eligibility, trial-start, live, order, execution, deployment, service, or
+self-approval authority. Per-output Operator approval is not part of the
+ratified v2 envelope, but the governor implementation, controller
+implementation, production evidence, and first bounded paper trial remain
+separate protected gates.
+
+Compatibility rules:
+
+- actionable identity is exact
+  `(pair_id, timeframe=1m, selected_variant, direction)`;
+- actionable directions remain exactly `LONG_SPREAD` and `SHORT_SPREAD`;
+- selector `NONE` and JSON null remain distinct but non-actionable, and every
+  unknown selector or non-long/short realized direction remains fail-closed;
+- realized-paper and selector-view evidence remain separate streams joined
+  only by exact-key membership;
+- identity binds exact raw input hashes, producer attestations, the canonical
+  policy envelope, the prior active set, and explicit evaluation time;
+- candidate overflow is deterministically truncated and recorded;
+  concentration overflow skips the candidate and continues;
+- blocked decisions contain no selected, selection-step, truncation, skip, or
+  transition outcome state and permit no fallback; already-qualified
+  candidate evidence may remain for audit when a later global gate blocks; and
+- every existing AUTO-2B/B2-c snapshot, AUTO-2A paper, schema-version-1
+  decision, and governor surface is unchanged.
+
+`specs/contracts/autopilot_dynamic_paper_provenance_v2.schema.json` is an
+additive append-only provenance companion for a later AUTO-2D controller. It
+binds a synthetic immutable trial manifest and paper decision/position records
+to an independently verified v2 decision. It does not replace the existing
+paper contracts or implement a controller. Its authority is paper-only, with
+live-order, exchange-routing, execution-service, deployment, and
+service-configuration authority fixed false.
+
+The complete ratified policy, ranking, transition, exposure, lifecycle, and
+no-authority boundary is recorded in
+`docs/proposals/AUTO-2C-v2-automatic-paper-policy.md`. Implementing the v2
+governor or AUTO-2D remains separately gated.

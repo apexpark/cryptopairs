@@ -5,6 +5,18 @@ This project follows SemVer as defined in `docs/02-versioning-and-releases.md`.
 
 ## Unreleased
 ### Contracts
+- AUTO-2C v2 adds separate schema-version-2 decision and paper-provenance
+  contract families plus canonical eligible, blocked, trial-manifest,
+  paper-decision-binding, and paper-position-binding examples. The v2
+  decision represents bounded selector-discovered additions, deterministic
+  rank/truncate/skip outcomes, the ratified concentration/churn/expiry
+  envelope, and independent AUTO-2D verification. `NONE` and null remain
+  distinct but non-actionable, unknown directions fail closed, and
+  realized-paper/selector evidence stays segregated. The contracts grant no
+  paper configuration, eligibility, trial-start, live, order, execution,
+  deployment, service, or self-approval authority. Version 1, B2-c snapshots,
+  existing paper contracts, and runtime behavior are unchanged; no v2
+  governor or AUTO-2D controller is implemented.
 - AUTO-2C C-a adds the schema-version-1
   `autopilot_dynamic_allowlist_decision` contract, a canonical blocked example,
   and focused E2 validation. The contract records exact snapshot and paper
@@ -18,6 +30,16 @@ This project follows SemVer as defined in `docs/02-versioning-and-releases.md`.
   included.
 
 ### Governance
+- Recorded Claude's CLEAN review of exact PR #260 head
+  `b9132de68791bdba5754ba6cd8195e900053d903` and its squash-merge as
+  `c1b65389ebf0ead41146df12ca49a07f3889cfc9`. The Operator then reset the
+  OP-45(e) queue toward one later, separately authorized bounded paper-only
+  PairsTrader trial and authorized only the first accelerated v2
+  contract/example/test slice under `AG-20260728-016`. V2 governor/runbook,
+  AUTO-2D, a second comparable evidence window, host or artifact action,
+  paper configuration, eligibility, trading, CI-1, OBS-1, OBS-3, AUTO-3,
+  deployment, services, secrets, merge, and unattended loops remain separate
+  gates.
 - Recorded PR #259's C-b merge as
   `40e0513531f3b44bc2dcbd234747c9e46142360d` and the Operator's authorization
   of C-c only under `AG-20260727-015`. C-c reached E2, the bounded E4 safety

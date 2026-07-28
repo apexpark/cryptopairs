@@ -1,0 +1,710 @@
+{
+  "schema_version": 2,
+  "mode": "governed_dynamic_allowlist_decision",
+  "policy_version": "auto2c-v2-paper-automatic-acceptance-1",
+  "decision_id": "6a5fc4fde482f63e8b0bf472b7e864831e21ca610335e18791ab518e936e4be1",
+  "policy_envelope_sha256": "cc132416d320fc8403909c7466d4b0fee669a481c349cb8998022ce94e54b2fd",
+  "status": "POLICY_ELIGIBLE_FOR_AUTO2D_VERIFICATION",
+  "evaluated_at": "2026-07-22T00:30:00Z",
+  "valid_until": "2026-07-23T06:30:00Z",
+  "current_snapshot": {
+    "path": "/synthetic/evidence/current/autopilot_shadow_allowlist_snapshot.json",
+    "sha256": "1111111111111111111111111111111111111111111111111111111111111111",
+    "producer_git_sha": "1111111111111111111111111111111111111111",
+    "schema_version": 2,
+    "generated_at": "2026-07-22T00:03:00Z",
+    "source_cutoff_at": "2026-07-22T00:00:00Z",
+    "selector_config_sha256": "3333333333333333333333333333333333333333333333333333333333333333",
+    "selector_view_present": true,
+    "selector_view_churn_available": true
+  },
+  "previous_snapshot": {
+    "path": "/synthetic/evidence/previous/autopilot_shadow_allowlist_snapshot.json",
+    "sha256": "2222222222222222222222222222222222222222222222222222222222222222",
+    "producer_git_sha": "2222222222222222222222222222222222222222",
+    "schema_version": 2,
+    "generated_at": "2026-07-21T00:03:00Z",
+    "source_cutoff_at": "2026-07-21T00:00:00Z",
+    "selector_config_sha256": "3333333333333333333333333333333333333333333333333333333333333333",
+    "selector_view_present": true,
+    "selector_view_churn_available": true
+  },
+  "paper_run_config": {
+    "path": "/synthetic/evidence/paper/run_config.json",
+    "sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+    "producer_git_sha": "4444444444444444444444444444444444444444",
+    "static_allowlist_mode": "pair_variant_direction",
+    "static_allowlist_entry_count": 4
+  },
+  "governor_config_source": {
+    "path": "/synthetic/policy/auto2c_v2_governor_config.json",
+    "sha256": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+  },
+  "selector_config": {
+    "min_closed_positions": 5,
+    "min_avg_net_bps": 0,
+    "max_tail_loss_bps": -60,
+    "max_avg_exit_lag_seconds": 1800,
+    "max_selected": 8,
+    "min_score": 0
+  },
+  "policy": {
+    "required_comparable_v2_snapshots": 2,
+    "min_source_cutoff_separation_seconds": 86400,
+    "max_current_source_age_seconds": 1800,
+    "min_selector_rows_each_snapshot": 12,
+    "min_trade_now_count_each_snapshot": 3,
+    "min_trade_now_ratio_each_snapshot": 0.01,
+    "require_positive_finite_selector_mean_net_edge": true,
+    "max_selected_entries": 4,
+    "max_additions": 2,
+    "max_selector_exploration_entries": 2,
+    "min_selector_exploration_entries_when_qualified_and_transition_safe": 1,
+    "max_removals": 2,
+    "max_directions_per_pair_variant": 2,
+    "max_entries_per_pair_id": 2,
+    "max_entries_per_full_instrument": 2,
+    "max_new_additions_per_full_instrument": 1,
+    "max_churn_ratio": 0.5,
+    "churn_measure": "PRIOR_SELECTED_SYMMETRIC_DIFFERENCE",
+    "churn_denominator": "MAX_POLICY_CAPACITY_PRIOR_ACTIVE_COUNT",
+    "churn_floor_capacity": 4,
+    "decision_validity_seconds": 108000,
+    "candidate_overflow_behavior": "DETERMINISTIC_TRUNCATE_AND_RECORD",
+    "concentration_overflow_behavior": "SKIP_AND_CONTINUE",
+    "selection_allocation": "RESERVE_BEST_EXPLORATION_ADDITION_FILL_REALIZED_ALLOW_SECOND_ADDITION",
+    "realized_lane_ranking": "MIN_TOTAL_B2C_SCORE_DESC_MIN_CLOSED_COUNT_DESC_MIN_TRADE_NOW_RATIO_DESC_EXACT_KEY_ASC",
+    "exploration_lane_ranking": "MIN_TRADE_NOW_RATIO_DESC_MIN_TRADE_NOW_COUNT_DESC_MIN_SELECTOR_EDGE_DESC_EXACT_KEY_ASC",
+    "fallback_behavior": "NO_FALLBACK",
+    "max_simultaneously_open_paper_positions": 2,
+    "max_open_paper_positions_per_pair_id": 1,
+    "max_open_paper_positions_per_full_instrument": 1,
+    "max_open_selector_exploration_positions": 1,
+    "max_open_positions_per_exact_key": 1,
+    "hold_window_bars": 5,
+    "cooldown_seconds": 300,
+    "max_candidate_age_seconds": 120,
+    "max_automatic_start_decision_age_seconds": 300,
+    "entry_window_seconds": 86400,
+    "exit_only_grace_seconds": 3600,
+    "controller_hard_runtime_seconds": 90000
+  },
+  "prior_active_set_source": "STATIC_PAPER_ALLOWLIST",
+  "prior_active_set_sha256": "feb316393714c9a4330d060e72c47471cf5e95fec977c89dd2c8009ee5d0033d",
+  "prior_active_entries": [
+    {
+      "pair_id": "PF_DOGEUSD__PF_PEPEUSD",
+      "timeframe": "1m",
+      "selected_variant": "ROBUST_Z",
+      "direction": "LONG_SPREAD"
+    },
+    {
+      "pair_id": "PF_DOGEUSD__PF_PEPEUSD",
+      "timeframe": "1m",
+      "selected_variant": "ROBUST_Z",
+      "direction": "SHORT_SPREAD"
+    },
+    {
+      "pair_id": "PF_TAOUSD__PF_HYPEUSD",
+      "timeframe": "1m",
+      "selected_variant": "COINTEGRATION_Z",
+      "direction": "SHORT_SPREAD"
+    },
+    {
+      "pair_id": "PF_XBTUSD__PF_BNBUSD",
+      "timeframe": "1m",
+      "selected_variant": "COINTEGRATION_Z",
+      "direction": "LONG_SPREAD"
+    }
+  ],
+  "candidates": [
+    {
+      "key": {
+        "pair_id": "PF_DOGEUSD__PF_PEPEUSD",
+        "timeframe": "1m",
+        "selected_variant": "ROBUST_Z",
+        "direction": "LONG_SPREAD"
+      },
+      "evidence_class": "REALIZED_AND_SELECTOR",
+      "current_selector": {
+        "selector_row_count": 20,
+        "trade_now_count": 5,
+        "time_in_trade_now_ratio": 0.25,
+        "selector_stated_mean_net_edge_bps": 5.0
+      },
+      "previous_selector": {
+        "selector_row_count": 18,
+        "trade_now_count": 4,
+        "time_in_trade_now_ratio": 0.22,
+        "selector_stated_mean_net_edge_bps": 4.5
+      },
+      "current_realized": {
+        "total_b2c_score": 13.0,
+        "closed_position_count": 22
+      },
+      "previous_realized": {
+        "total_b2c_score": 12.0,
+        "closed_position_count": 20
+      },
+      "rank_components": {
+        "minimum_total_b2c_score": 12.0,
+        "minimum_closed_position_count": 20,
+        "minimum_trade_now_ratio": 0.22,
+        "minimum_trade_now_count": 4,
+        "minimum_selector_stated_mean_net_edge_bps": 4.5,
+        "exact_key_tiebreak": "PF_DOGEUSD__PF_PEPEUSD|1m|ROBUST_Z|LONG_SPREAD"
+      },
+      "lane_rank": 1,
+      "absent_from_prior_active_set": false
+    },
+    {
+      "key": {
+        "pair_id": "PF_DOGEUSD__PF_PEPEUSD",
+        "timeframe": "1m",
+        "selected_variant": "ROBUST_Z",
+        "direction": "SHORT_SPREAD"
+      },
+      "evidence_class": "REALIZED_AND_SELECTOR",
+      "current_selector": {
+        "selector_row_count": 19,
+        "trade_now_count": 4,
+        "time_in_trade_now_ratio": 0.2,
+        "selector_stated_mean_net_edge_bps": 4.2
+      },
+      "previous_selector": {
+        "selector_row_count": 18,
+        "trade_now_count": 4,
+        "time_in_trade_now_ratio": 0.18,
+        "selector_stated_mean_net_edge_bps": 4.0
+      },
+      "current_realized": {
+        "total_b2c_score": 11.0,
+        "closed_position_count": 19
+      },
+      "previous_realized": {
+        "total_b2c_score": 10.0,
+        "closed_position_count": 18
+      },
+      "rank_components": {
+        "minimum_total_b2c_score": 10.0,
+        "minimum_closed_position_count": 18,
+        "minimum_trade_now_ratio": 0.18,
+        "minimum_trade_now_count": 4,
+        "minimum_selector_stated_mean_net_edge_bps": 4.0,
+        "exact_key_tiebreak": "PF_DOGEUSD__PF_PEPEUSD|1m|ROBUST_Z|SHORT_SPREAD"
+      },
+      "lane_rank": 2,
+      "absent_from_prior_active_set": false
+    },
+    {
+      "key": {
+        "pair_id": "PF_XBTUSD__PF_BNBUSD",
+        "timeframe": "1m",
+        "selected_variant": "COINTEGRATION_Z",
+        "direction": "LONG_SPREAD"
+      },
+      "evidence_class": "REALIZED_AND_SELECTOR",
+      "current_selector": {
+        "selector_row_count": 17,
+        "trade_now_count": 4,
+        "time_in_trade_now_ratio": 0.16,
+        "selector_stated_mean_net_edge_bps": 3.5
+      },
+      "previous_selector": {
+        "selector_row_count": 16,
+        "trade_now_count": 3,
+        "time_in_trade_now_ratio": 0.15,
+        "selector_stated_mean_net_edge_bps": 3.2
+      },
+      "current_realized": {
+        "total_b2c_score": 9.0,
+        "closed_position_count": 16
+      },
+      "previous_realized": {
+        "total_b2c_score": 8.0,
+        "closed_position_count": 15
+      },
+      "rank_components": {
+        "minimum_total_b2c_score": 8.0,
+        "minimum_closed_position_count": 15,
+        "minimum_trade_now_ratio": 0.15,
+        "minimum_trade_now_count": 3,
+        "minimum_selector_stated_mean_net_edge_bps": 3.2,
+        "exact_key_tiebreak": "PF_XBTUSD__PF_BNBUSD|1m|COINTEGRATION_Z|LONG_SPREAD"
+      },
+      "lane_rank": 3,
+      "absent_from_prior_active_set": false
+    },
+    {
+      "key": {
+        "pair_id": "PF_TAOUSD__PF_HYPEUSD",
+        "timeframe": "1m",
+        "selected_variant": "COINTEGRATION_Z",
+        "direction": "SHORT_SPREAD"
+      },
+      "evidence_class": "REALIZED_AND_SELECTOR",
+      "current_selector": {
+        "selector_row_count": 15,
+        "trade_now_count": 3,
+        "time_in_trade_now_ratio": 0.13,
+        "selector_stated_mean_net_edge_bps": 2.8
+      },
+      "previous_selector": {
+        "selector_row_count": 14,
+        "trade_now_count": 3,
+        "time_in_trade_now_ratio": 0.12,
+        "selector_stated_mean_net_edge_bps": 2.5
+      },
+      "current_realized": {
+        "total_b2c_score": 7.5,
+        "closed_position_count": 13
+      },
+      "previous_realized": {
+        "total_b2c_score": 7.0,
+        "closed_position_count": 12
+      },
+      "rank_components": {
+        "minimum_total_b2c_score": 7.0,
+        "minimum_closed_position_count": 12,
+        "minimum_trade_now_ratio": 0.12,
+        "minimum_trade_now_count": 3,
+        "minimum_selector_stated_mean_net_edge_bps": 2.5,
+        "exact_key_tiebreak": "PF_TAOUSD__PF_HYPEUSD|1m|COINTEGRATION_Z|SHORT_SPREAD"
+      },
+      "lane_rank": 4,
+      "absent_from_prior_active_set": false
+    },
+    {
+      "key": {
+        "pair_id": "PF_ETHUSD__PF_SOLUSD",
+        "timeframe": "1m",
+        "selected_variant": "COINTEGRATION_Z",
+        "direction": "LONG_SPREAD"
+      },
+      "evidence_class": "SELECTOR_EXPLORATION",
+      "current_selector": {
+        "selector_row_count": 20,
+        "trade_now_count": 6,
+        "time_in_trade_now_ratio": 0.25,
+        "selector_stated_mean_net_edge_bps": 4.0
+      },
+      "previous_selector": {
+        "selector_row_count": 18,
+        "trade_now_count": 5,
+        "time_in_trade_now_ratio": 0.24,
+        "selector_stated_mean_net_edge_bps": 3.8
+      },
+      "current_realized": null,
+      "previous_realized": null,
+      "rank_components": {
+        "minimum_total_b2c_score": null,
+        "minimum_closed_position_count": null,
+        "minimum_trade_now_ratio": 0.24,
+        "minimum_trade_now_count": 5,
+        "minimum_selector_stated_mean_net_edge_bps": 3.8,
+        "exact_key_tiebreak": "PF_ETHUSD__PF_SOLUSD|1m|COINTEGRATION_Z|LONG_SPREAD"
+      },
+      "lane_rank": 1,
+      "absent_from_prior_active_set": true
+    },
+    {
+      "key": {
+        "pair_id": "PF_SUIUSD__PF_ARBUSD",
+        "timeframe": "1m",
+        "selected_variant": "ROBUST_Z",
+        "direction": "SHORT_SPREAD"
+      },
+      "evidence_class": "SELECTOR_EXPLORATION",
+      "current_selector": {
+        "selector_row_count": 18,
+        "trade_now_count": 5,
+        "time_in_trade_now_ratio": 0.2,
+        "selector_stated_mean_net_edge_bps": 3.0
+      },
+      "previous_selector": {
+        "selector_row_count": 17,
+        "trade_now_count": 4,
+        "time_in_trade_now_ratio": 0.19,
+        "selector_stated_mean_net_edge_bps": 2.8
+      },
+      "current_realized": null,
+      "previous_realized": null,
+      "rank_components": {
+        "minimum_total_b2c_score": null,
+        "minimum_closed_position_count": null,
+        "minimum_trade_now_ratio": 0.19,
+        "minimum_trade_now_count": 4,
+        "minimum_selector_stated_mean_net_edge_bps": 2.8,
+        "exact_key_tiebreak": "PF_SUIUSD__PF_ARBUSD|1m|ROBUST_Z|SHORT_SPREAD"
+      },
+      "lane_rank": 2,
+      "absent_from_prior_active_set": true
+    }
+  ],
+  "selection_steps": [
+    {
+      "step": 1,
+      "rule": "RESERVE_BEST_QUALIFYING_ADDITION",
+      "candidate_key": {
+        "pair_id": "PF_ETHUSD__PF_SOLUSD",
+        "timeframe": "1m",
+        "selected_variant": "COINTEGRATION_Z",
+        "direction": "LONG_SPREAD"
+      },
+      "result": "SELECTED"
+    },
+    {
+      "step": 2,
+      "rule": "FILL_REALIZED_SUPPORTED",
+      "candidate_key": {
+        "pair_id": "PF_DOGEUSD__PF_PEPEUSD",
+        "timeframe": "1m",
+        "selected_variant": "ROBUST_Z",
+        "direction": "LONG_SPREAD"
+      },
+      "result": "SELECTED"
+    },
+    {
+      "step": 3,
+      "rule": "FILL_REALIZED_SUPPORTED",
+      "candidate_key": {
+        "pair_id": "PF_DOGEUSD__PF_PEPEUSD",
+        "timeframe": "1m",
+        "selected_variant": "ROBUST_Z",
+        "direction": "SHORT_SPREAD"
+      },
+      "result": "SELECTED"
+    },
+    {
+      "step": 4,
+      "rule": "FILL_REALIZED_SUPPORTED",
+      "candidate_key": {
+        "pair_id": "PF_XBTUSD__PF_BNBUSD",
+        "timeframe": "1m",
+        "selected_variant": "COINTEGRATION_Z",
+        "direction": "LONG_SPREAD"
+      },
+      "result": "SELECTED"
+    },
+    {
+      "step": 5,
+      "rule": "TRUNCATE_AT_CAPACITY",
+      "candidate_key": {
+        "pair_id": "PF_TAOUSD__PF_HYPEUSD",
+        "timeframe": "1m",
+        "selected_variant": "COINTEGRATION_Z",
+        "direction": "SHORT_SPREAD"
+      },
+      "result": "TRUNCATED"
+    },
+    {
+      "step": 6,
+      "rule": "TRUNCATE_AT_CAPACITY",
+      "candidate_key": {
+        "pair_id": "PF_SUIUSD__PF_ARBUSD",
+        "timeframe": "1m",
+        "selected_variant": "ROBUST_Z",
+        "direction": "SHORT_SPREAD"
+      },
+      "result": "TRUNCATED"
+    }
+  ],
+  "selected_entries": [
+    {
+      "key": {
+        "pair_id": "PF_ETHUSD__PF_SOLUSD",
+        "timeframe": "1m",
+        "selected_variant": "COINTEGRATION_Z",
+        "direction": "LONG_SPREAD"
+      },
+      "evidence_class": "SELECTOR_EXPLORATION",
+      "lane_rank": 1,
+      "selection_sequence": 1,
+      "selection_rule": "RESERVE_BEST_QUALIFYING_ADDITION"
+    },
+    {
+      "key": {
+        "pair_id": "PF_DOGEUSD__PF_PEPEUSD",
+        "timeframe": "1m",
+        "selected_variant": "ROBUST_Z",
+        "direction": "LONG_SPREAD"
+      },
+      "evidence_class": "REALIZED_AND_SELECTOR",
+      "lane_rank": 1,
+      "selection_sequence": 2,
+      "selection_rule": "FILL_REALIZED_SUPPORTED"
+    },
+    {
+      "key": {
+        "pair_id": "PF_DOGEUSD__PF_PEPEUSD",
+        "timeframe": "1m",
+        "selected_variant": "ROBUST_Z",
+        "direction": "SHORT_SPREAD"
+      },
+      "evidence_class": "REALIZED_AND_SELECTOR",
+      "lane_rank": 2,
+      "selection_sequence": 3,
+      "selection_rule": "FILL_REALIZED_SUPPORTED"
+    },
+    {
+      "key": {
+        "pair_id": "PF_XBTUSD__PF_BNBUSD",
+        "timeframe": "1m",
+        "selected_variant": "COINTEGRATION_Z",
+        "direction": "LONG_SPREAD"
+      },
+      "evidence_class": "REALIZED_AND_SELECTOR",
+      "lane_rank": 3,
+      "selection_sequence": 4,
+      "selection_rule": "FILL_REALIZED_SUPPORTED"
+    }
+  ],
+  "truncated_candidates": [
+    {
+      "key": {
+        "pair_id": "PF_TAOUSD__PF_HYPEUSD",
+        "timeframe": "1m",
+        "selected_variant": "COINTEGRATION_Z",
+        "direction": "SHORT_SPREAD"
+      },
+      "evidence_class": "REALIZED_AND_SELECTOR",
+      "lane_rank": 4,
+      "reason_code": "TRUNCATED_MAX_SELECTED_ENTRIES"
+    },
+    {
+      "key": {
+        "pair_id": "PF_SUIUSD__PF_ARBUSD",
+        "timeframe": "1m",
+        "selected_variant": "ROBUST_Z",
+        "direction": "SHORT_SPREAD"
+      },
+      "evidence_class": "SELECTOR_EXPLORATION",
+      "lane_rank": 2,
+      "reason_code": "TRUNCATED_MAX_SELECTED_ENTRIES"
+    }
+  ],
+  "skipped_candidates": [],
+  "additions": [
+    {
+      "pair_id": "PF_ETHUSD__PF_SOLUSD",
+      "timeframe": "1m",
+      "selected_variant": "COINTEGRATION_Z",
+      "direction": "LONG_SPREAD"
+    }
+  ],
+  "removals": [
+    {
+      "pair_id": "PF_TAOUSD__PF_HYPEUSD",
+      "timeframe": "1m",
+      "selected_variant": "COINTEGRATION_Z",
+      "direction": "SHORT_SPREAD"
+    }
+  ],
+  "retained_entries": [
+    {
+      "pair_id": "PF_DOGEUSD__PF_PEPEUSD",
+      "timeframe": "1m",
+      "selected_variant": "ROBUST_Z",
+      "direction": "LONG_SPREAD"
+    },
+    {
+      "pair_id": "PF_DOGEUSD__PF_PEPEUSD",
+      "timeframe": "1m",
+      "selected_variant": "ROBUST_Z",
+      "direction": "SHORT_SPREAD"
+    },
+    {
+      "pair_id": "PF_XBTUSD__PF_BNBUSD",
+      "timeframe": "1m",
+      "selected_variant": "COINTEGRATION_Z",
+      "direction": "LONG_SPREAD"
+    }
+  ],
+  "direction_counts": {
+    "selector_long_spread_count": 18,
+    "selector_short_spread_count": 16,
+    "selector_none_count": 30,
+    "selector_null_count": 4,
+    "selector_unknown_count": 0,
+    "realized_long_spread_count": 3,
+    "realized_short_spread_count": 2,
+    "realized_none_count": 0,
+    "realized_null_count": 0,
+    "realized_unknown_count": 0
+  },
+  "gate_results": {
+    "provenance": {
+      "verdict": "PASS",
+      "reason_codes": []
+    },
+    "current_snapshot_schema": {
+      "verdict": "PASS",
+      "reason_codes": []
+    },
+    "previous_snapshot_schema": {
+      "verdict": "PASS",
+      "reason_codes": []
+    },
+    "snapshot_hash_distinct": {
+      "verdict": "PASS",
+      "reason_codes": []
+    },
+    "selector_config_match": {
+      "verdict": "PASS",
+      "reason_codes": []
+    },
+    "source_cutoff_order": {
+      "verdict": "PASS",
+      "reason_codes": []
+    },
+    "source_cutoff_separation": {
+      "verdict": "PASS",
+      "reason_codes": []
+    },
+    "current_source_freshness": {
+      "verdict": "PASS",
+      "reason_codes": []
+    },
+    "evidence_completeness": {
+      "verdict": "PASS",
+      "reason_codes": []
+    },
+    "direction_domain": {
+      "verdict": "PASS",
+      "reason_codes": []
+    },
+    "evidence_segregation": {
+      "verdict": "PASS",
+      "reason_codes": []
+    },
+    "candidate_qualification": {
+      "verdict": "PASS",
+      "reason_codes": []
+    },
+    "transition_limits": {
+      "verdict": "PASS",
+      "reason_codes": []
+    }
+  },
+  "gate_summary": {
+    "pass_count": 13,
+    "block_count": 0,
+    "total_count": 13
+  },
+  "calculations": {
+    "source_cutoff_separation_seconds": 86400,
+    "current_source_age_seconds": 1800,
+    "prior_active_entry_count": 4,
+    "qualifying_candidate_count": 6,
+    "selected_entry_count": 4,
+    "selector_exploration_selected_count": 1,
+    "addition_count": 1,
+    "removal_count": 1,
+    "change_count": 2,
+    "churn_denominator_count": 4,
+    "churn_ratio": 0.5,
+    "pair_concentrations": [
+      {
+        "pair_id": "PF_DOGEUSD__PF_PEPEUSD",
+        "entry_count": 2
+      },
+      {
+        "pair_id": "PF_ETHUSD__PF_SOLUSD",
+        "entry_count": 1
+      },
+      {
+        "pair_id": "PF_XBTUSD__PF_BNBUSD",
+        "entry_count": 1
+      }
+    ],
+    "pair_variant_concentrations": [
+      {
+        "pair_id": "PF_DOGEUSD__PF_PEPEUSD",
+        "timeframe": "1m",
+        "selected_variant": "ROBUST_Z",
+        "direction_count": 2
+      },
+      {
+        "pair_id": "PF_ETHUSD__PF_SOLUSD",
+        "timeframe": "1m",
+        "selected_variant": "COINTEGRATION_Z",
+        "direction_count": 1
+      },
+      {
+        "pair_id": "PF_XBTUSD__PF_BNBUSD",
+        "timeframe": "1m",
+        "selected_variant": "COINTEGRATION_Z",
+        "direction_count": 1
+      }
+    ],
+    "instrument_concentrations": [
+      {
+        "instrument_id": "PF_BNBUSD",
+        "entry_count": 1,
+        "addition_count": 0
+      },
+      {
+        "instrument_id": "PF_DOGEUSD",
+        "entry_count": 2,
+        "addition_count": 0
+      },
+      {
+        "instrument_id": "PF_ETHUSD",
+        "entry_count": 1,
+        "addition_count": 1
+      },
+      {
+        "instrument_id": "PF_PEPEUSD",
+        "entry_count": 2,
+        "addition_count": 0
+      },
+      {
+        "instrument_id": "PF_SOLUSD",
+        "entry_count": 1,
+        "addition_count": 1
+      },
+      {
+        "instrument_id": "PF_XBTUSD",
+        "entry_count": 1,
+        "addition_count": 0
+      }
+    ]
+  },
+  "reason_codes": [],
+  "methodology": {
+    "realized_selector_relation": "SEPARATE_STREAMS_SET_MEMBERSHIP_NO_NUMERIC_MERGE",
+    "none_direction_behavior": "NON_ACTIONABLE_DISTINCT_FROM_NULL",
+    "null_direction_behavior": "NON_ACTIONABLE_MISSING_DIRECTION",
+    "unknown_direction_behavior": "REJECT_INPUT_NO_ARTIFACT",
+    "candidate_overflow_behavior": "DETERMINISTIC_TRUNCATE_AND_RECORD",
+    "concentration_overflow_behavior": "SKIP_AND_CONTINUE",
+    "selection_allocation": "RESERVE_BEST_EXPLORATION_ADDITION_FILL_REALIZED_ALLOW_SECOND_ADDITION",
+    "fallback_behavior": "NO_FALLBACK",
+    "policy_hash_formula": "SHA256_CANONICAL_JSON_POLICY_VERSION_AND_POLICY",
+    "decision_id_formula": "SHA256_CANONICAL_JSON_BOUND_INPUT_HASHES_POLICY_HASH_PRIOR_SET_HASH_EVALUATED_AT",
+    "serialization_behavior": "MINIFIED_KEY_SORTED_UTF8_NO_TRAILING_NEWLINE",
+    "input_behavior": "READ_ONLY_RAW_HASH_BOUND_STABLE_FILES",
+    "output_behavior": "EXCLUSIVE_CREATE_NO_OVERWRITE_REPAIR_OR_REUSE"
+  },
+  "per_output_operator_approval_required": false,
+  "auto2d_verification": {
+    "independent_recomputation_required": true,
+    "policy_envelope_hash_match_required": true,
+    "decision_hash_match_required": true,
+    "raw_input_hash_recheck_required": true,
+    "immutable_universe_required": true,
+    "schema_v1_decision_accepted": false,
+    "raw_snapshot_accepted_as_decision": false,
+    "governor_self_approval_accepted": false
+  },
+  "authority": "non_actuating_requires_independent_auto2d_verification",
+  "authority_boundaries": {
+    "paper_eligibility_authority": false,
+    "paper_configuration_write_authority": false,
+    "paper_trial_start_authority": false,
+    "live_eligibility_authority": false,
+    "execution_authority": false,
+    "deployment_authority": false,
+    "governor_self_approval_authority": false
+  }
+}

@@ -1,0 +1,579 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://apexpark.dev/contracts/autopilot_dynamic_paper_provenance_v2.schema.json",
+  "title": "AutopilotDynamicPaperProvenanceV2",
+  "description": "Append-only paper-only provenance companion for a later AUTO-2D controller. It binds one immutable trial and existing paper decision/position records to an independently verified AUTO-2C v2 decision without replacing the existing paper contracts or granting execution authority.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "mode",
+    "record_type",
+    "trial_id",
+    "recorded_at",
+    "repository_git_sha",
+    "governed_decision",
+    "trial_bounds",
+    "append_only",
+    "universe_immutable",
+    "no_fallback",
+    "automatic_restart",
+    "selection_origin",
+    "subject",
+    "authority_boundaries"
+  ],
+  "properties": {
+    "schema_version": {
+      "type": "integer",
+      "const": 2
+    },
+    "mode": {
+      "type": "string",
+      "const": "auto2d_dynamic_paper_provenance"
+    },
+    "record_type": {
+      "type": "string",
+      "enum": [
+        "TRIAL_MANIFEST",
+        "PAPER_DECISION_BINDING",
+        "PAPER_POSITION_BINDING"
+      ]
+    },
+    "trial_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "recorded_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "repository_git_sha": {
+      "$ref": "#/$defs/git_sha"
+    },
+    "governed_decision": {
+      "$ref": "#/$defs/governed_decision_reference"
+    },
+    "trial_bounds": {
+      "$ref": "#/$defs/trial_bounds"
+    },
+    "append_only": {
+      "type": "boolean",
+      "const": true
+    },
+    "universe_immutable": {
+      "type": "boolean",
+      "const": true
+    },
+    "no_fallback": {
+      "type": "boolean",
+      "const": true
+    },
+    "automatic_restart": {
+      "type": "boolean",
+      "const": false
+    },
+    "selection_origin": {
+      "oneOf": [
+        {
+          "$ref": "#/$defs/selection_origin"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "subject": {
+      "type": "object"
+    },
+    "authority_boundaries": {
+      "$ref": "#/$defs/authority_boundaries"
+    }
+  },
+  "$defs": {
+    "sha256": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "git_sha": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{40}$"
+    },
+    "exact_key": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "pair_id",
+        "timeframe",
+        "selected_variant",
+        "direction"
+      ],
+      "properties": {
+        "pair_id": {
+          "type": "string",
+          "pattern": "^(?!.*__.*__)\\S+__\\S+$"
+        },
+        "timeframe": {
+          "type": "string",
+          "const": "1m"
+        },
+        "selected_variant": {
+          "type": "string",
+          "minLength": 1
+        },
+        "direction": {
+          "type": "string",
+          "enum": [
+            "LONG_SPREAD",
+            "SHORT_SPREAD"
+          ]
+        }
+      }
+    },
+    "selection_origin": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "key",
+        "evidence_class",
+        "lane_rank",
+        "selection_sequence"
+      ],
+      "properties": {
+        "key": {
+          "$ref": "#/$defs/exact_key"
+        },
+        "evidence_class": {
+          "type": "string",
+          "enum": [
+            "REALIZED_AND_SELECTOR",
+            "SELECTOR_EXPLORATION"
+          ]
+        },
+        "lane_rank": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "selection_sequence": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 4
+        }
+      }
+    },
+    "governed_decision_reference": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "path",
+        "sha256",
+        "decision_id",
+        "policy_envelope_sha256",
+        "schema_version",
+        "status",
+        "independent_verification"
+      ],
+      "properties": {
+        "path": {
+          "type": "string",
+          "minLength": 1
+        },
+        "sha256": {
+          "$ref": "#/$defs/sha256"
+        },
+        "decision_id": {
+          "$ref": "#/$defs/sha256"
+        },
+        "policy_envelope_sha256": {
+          "$ref": "#/$defs/sha256"
+        },
+        "schema_version": {
+          "type": "integer",
+          "const": 2
+        },
+        "status": {
+          "type": "string",
+          "const": "POLICY_ELIGIBLE_FOR_AUTO2D_VERIFICATION"
+        },
+        "independent_verification": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "verdict",
+            "recomputed_decision_id_matches",
+            "recomputed_policy_envelope_sha256_matches",
+            "raw_input_hashes_match",
+            "rank_and_transition_recomputed",
+            "decision_unexpired",
+            "configuration_unchanged"
+          ],
+          "properties": {
+            "verdict": {
+              "type": "string",
+              "const": "PASS"
+            },
+            "recomputed_decision_id_matches": {
+              "type": "boolean",
+              "const": true
+            },
+            "recomputed_policy_envelope_sha256_matches": {
+              "type": "boolean",
+              "const": true
+            },
+            "raw_input_hashes_match": {
+              "type": "boolean",
+              "const": true
+            },
+            "rank_and_transition_recomputed": {
+              "type": "boolean",
+              "const": true
+            },
+            "decision_unexpired": {
+              "type": "boolean",
+              "const": true
+            },
+            "configuration_unchanged": {
+              "type": "boolean",
+              "const": true
+            }
+          }
+        }
+      }
+    },
+    "trial_bounds": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "decision_evaluated_at",
+        "decision_valid_until",
+        "controller_started_at",
+        "entry_deadline",
+        "exit_only_deadline",
+        "hard_deadline",
+        "max_selected_universe",
+        "max_simultaneously_open_positions",
+        "max_open_positions_per_pair_id",
+        "max_open_positions_per_full_instrument",
+        "max_open_selector_exploration_positions",
+        "max_open_positions_per_exact_key",
+        "hold_window_bars",
+        "cooldown_seconds",
+        "max_candidate_age_seconds",
+        "max_automatic_start_decision_age_seconds",
+        "entry_window_seconds",
+        "exit_only_grace_seconds",
+        "controller_hard_runtime_seconds"
+      ],
+      "properties": {
+        "decision_evaluated_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "decision_valid_until": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "controller_started_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "entry_deadline": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "exit_only_deadline": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "hard_deadline": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "max_selected_universe": {
+          "type": "integer",
+          "const": 4
+        },
+        "max_simultaneously_open_positions": {
+          "type": "integer",
+          "const": 2
+        },
+        "max_open_positions_per_pair_id": {
+          "type": "integer",
+          "const": 1
+        },
+        "max_open_positions_per_full_instrument": {
+          "type": "integer",
+          "const": 1
+        },
+        "max_open_selector_exploration_positions": {
+          "type": "integer",
+          "const": 1
+        },
+        "max_open_positions_per_exact_key": {
+          "type": "integer",
+          "const": 1
+        },
+        "hold_window_bars": {
+          "type": "integer",
+          "const": 5
+        },
+        "cooldown_seconds": {
+          "type": "integer",
+          "const": 300
+        },
+        "max_candidate_age_seconds": {
+          "type": "integer",
+          "const": 120
+        },
+        "max_automatic_start_decision_age_seconds": {
+          "type": "integer",
+          "const": 300
+        },
+        "entry_window_seconds": {
+          "type": "integer",
+          "const": 86400
+        },
+        "exit_only_grace_seconds": {
+          "type": "integer",
+          "const": 3600
+        },
+        "controller_hard_runtime_seconds": {
+          "type": "integer",
+          "const": 90000
+        }
+      }
+    },
+    "trial_manifest_subject": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "dynamic_universe",
+        "lifecycle_status",
+        "exclusive_trial_root",
+        "start_result",
+        "stop_reason",
+        "unresolved_open_position_count"
+      ],
+      "properties": {
+        "dynamic_universe": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 4,
+          "items": {
+            "$ref": "#/$defs/selection_origin"
+          },
+          "uniqueItems": true
+        },
+        "lifecycle_status": {
+          "type": "string",
+          "enum": [
+            "VERIFIED_NOT_STARTED",
+            "RUNNING",
+            "EXIT_ONLY",
+            "COMPLETE",
+            "NO_GO"
+          ]
+        },
+        "exclusive_trial_root": {
+          "type": "boolean",
+          "const": true
+        },
+        "start_result": {
+          "type": "string",
+          "enum": [
+            "STARTED",
+            "NOT_STARTED"
+          ]
+        },
+        "stop_reason": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "enum": [
+            "ENTRY_DEADLINE_REACHED",
+            "DECISION_EXPIRED",
+            "BOUND_INPUT_CHANGED",
+            "DECISION_HASH_CONFLICT",
+            "POLICY_HASH_CONFLICT",
+            "MALFORMED_STATE",
+            "CONCURRENCY_IDENTITY_LOST",
+            "HARD_RUNTIME_REACHED",
+            "NATURAL_COMPLETION",
+            "NO_GO",
+            null
+          ]
+        },
+        "unresolved_open_position_count": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "paper_decision_binding_subject": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "paper_run_id",
+        "paper_decision_record_sha256",
+        "decision_type",
+        "paper_position_id"
+      ],
+      "properties": {
+        "paper_run_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "paper_decision_record_sha256": {
+          "$ref": "#/$defs/sha256"
+        },
+        "decision_type": {
+          "type": "string",
+          "minLength": 1
+        },
+        "paper_position_id": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "minLength": 1
+        }
+      }
+    },
+    "paper_position_binding_subject": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "paper_run_id",
+        "paper_position_id",
+        "paper_position_record_sha256",
+        "position_status"
+      ],
+      "properties": {
+        "paper_run_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "paper_position_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "paper_position_record_sha256": {
+          "$ref": "#/$defs/sha256"
+        },
+        "position_status": {
+          "type": "string",
+          "enum": [
+            "OPEN",
+            "CLOSED"
+          ]
+        }
+      }
+    },
+    "authority_boundaries": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "paper_only",
+        "live_order_authority",
+        "exchange_order_routing_authority",
+        "execution_service_post_authority",
+        "deployment_authority",
+        "service_configuration_authority"
+      ],
+      "properties": {
+        "paper_only": {
+          "type": "boolean",
+          "const": true
+        },
+        "live_order_authority": {
+          "type": "boolean",
+          "const": false
+        },
+        "exchange_order_routing_authority": {
+          "type": "boolean",
+          "const": false
+        },
+        "execution_service_post_authority": {
+          "type": "boolean",
+          "const": false
+        },
+        "deployment_authority": {
+          "type": "boolean",
+          "const": false
+        },
+        "service_configuration_authority": {
+          "type": "boolean",
+          "const": false
+        }
+      }
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "record_type": {
+            "const": "TRIAL_MANIFEST"
+          }
+        },
+        "required": [
+          "record_type"
+        ]
+      },
+      "then": {
+        "properties": {
+          "selection_origin": {
+            "type": "null"
+          },
+          "subject": {
+            "$ref": "#/$defs/trial_manifest_subject"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "record_type": {
+            "const": "PAPER_DECISION_BINDING"
+          }
+        },
+        "required": [
+          "record_type"
+        ]
+      },
+      "then": {
+        "properties": {
+          "selection_origin": {
+            "$ref": "#/$defs/selection_origin"
+          },
+          "subject": {
+            "$ref": "#/$defs/paper_decision_binding_subject"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "record_type": {
+            "const": "PAPER_POSITION_BINDING"
+          }
+        },
+        "required": [
+          "record_type"
+        ]
+      },
+      "then": {
+        "properties": {
+          "selection_origin": {
+            "$ref": "#/$defs/selection_origin"
+          },
+          "subject": {
+            "$ref": "#/$defs/paper_position_binding_subject"
+          }
+        }
+      }
+    }
+  ]
+}
