@@ -15,8 +15,9 @@ This project follows SemVer as defined in `docs/02-versioning-and-releases.md`.
   realized-paper/selector evidence stays segregated. The contracts grant no
   paper configuration, eligibility, trial-start, live, order, execution,
   deployment, service, or self-approval authority. Version 1, B2-c snapshots,
-  existing paper contracts, and runtime behavior are unchanged; no v2
-  governor or AUTO-2D controller is implemented.
+  existing paper contracts, and runtime behavior are unchanged. The separate
+  v2 governor implementation below does not alter these contracts; no AUTO-2D
+  controller is implemented.
 - AUTO-2C C-a adds the schema-version-1
   `autopilot_dynamic_allowlist_decision` contract, a canonical blocked example,
   and focused E2 validation. The contract records exact snapshot and paper
@@ -29,7 +30,31 @@ This project follows SemVer as defined in `docs/02-versioning-and-releases.md`.
   consumer, eligibility change, service, deployment, or runtime action is
   included.
 
+### Operator tooling
+- Added the separate disabled-by-default
+  `tools/scripts/autopilot_dynamic_allowlist_v2.py` offline governor and its
+  Operator runbook. Explicit enablement requires exact absolute input paths,
+  raw-byte SHA-256 and producer-Git-SHA bindings, the exact v2 policy config,
+  a canonical evaluation time, the first-transition static baseline, and one
+  absent output root. It deterministically qualifies, ranks, skips
+  concentration conflicts, truncates overflow, and emits only non-actuating
+  v2 JSON/Markdown. `--verify-only` reconstructs existing outputs without
+  writes. Malformed/untrusted input creates no artifact; trusted policy
+  failure creates a blocked-empty decision; collisions and future
+  previous-v2-universe input fail closed. V1, B2-c, paper, and merged contract
+  surfaces are unchanged. Genuine E3, AUTO-2D, hosts, eligibility,
+  configuration, and paper/live trading remain separately gated.
+
 ### Governance
+- Recorded PR #261's v2-a landing as
+  `670bba2e5c31374f5d09018ec86355ec352bd15f` after Claude CLEAN at exact head
+  `229b40a776ab442401bf9df981672059d30d5db4`, then recorded the Operator's
+  authorization of only v2-b + C-d under `AG-20260728-017`. E2/E4, inner
+  review, and a Tier 3 draft PR are in scope; genuine E3 is
+  `NOT RUN — separately gated`. AUTO-2D, a second real comparable v2 window,
+  host/artifact work, configuration, eligibility, paper/live trading,
+  CI-1/OBS-1/OBS-3, services, deployment, secrets, merge, and unattended
+  loops remain separate gates.
 - Recorded Claude's CLEAN review of exact PR #260 head
   `b9132de68791bdba5754ba6cd8195e900053d903` and its squash-merge as
   `c1b65389ebf0ead41146df12ca49a07f3889cfc9`. The Operator then reset the

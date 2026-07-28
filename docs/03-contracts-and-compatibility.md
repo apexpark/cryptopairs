@@ -168,6 +168,19 @@ schema-version-1 decision in place. Version 1 remains the historical
 demotion-only advisory interface; a future v2 AUTO-2D controller must reject
 version 1 and raw B2-c snapshots as automatic-paper decisions.
 
+`tools/scripts/autopilot_dynamic_allowlist_v2.py` is the separate offline
+producer for this v2 contract. It preserves the v1 CLI byte-for-byte and
+supports only the first transition from an exact direction-level static paper
+allowlist. Candidate overflow is ranked and truncated, concentration failures
+are skipped and recorded, and output remains non-actuating. Its
+`--verify-only` mode is a same-implementation byte reconstruction for
+Operator evidence; it is not the independent AUTO-2D verifier.
+
+The future prior-set source `PREVIOUS_ACCEPTED_V2_PAPER_UNIVERSE` fails closed
+until AUTO-2D provides an independently accepted and hash-bound predecessor.
+AUTO-2D, paper configuration writes, eligibility, trial start, and live/order
+authority remain outside the v2 governor interface.
+
 The v2 decision may represent at most two evidence-qualified additions,
 deterministically rank and truncate excess candidates, and use
 `POLICY_ELIGIBLE_FOR_AUTO2D_VERIFICATION` to indicate only that a later
