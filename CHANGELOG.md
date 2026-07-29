@@ -15,9 +15,10 @@ This project follows SemVer as defined in `docs/02-versioning-and-releases.md`.
   realized-paper/selector evidence stays segregated. The contracts grant no
   paper configuration, eligibility, trial-start, live, order, execution,
   deployment, service, or self-approval authority. Version 1, B2-c snapshots,
-  existing paper contracts, and runtime behavior are unchanged. The separate
-  v2 governor implementation below does not alter these contracts; no AUTO-2D
-  controller is implemented.
+  existing paper contracts, and default runtime behavior are unchanged. The
+  separate v2 governor and AUTO-2D controller implementations below do not
+  alter these contracts; the controller remains disabled by default and its
+  genuine E3, merge and first operational start remain separate gates.
 - AUTO-2C C-a adds the schema-version-1
   `autopilot_dynamic_allowlist_decision` contract, a canonical blocked example,
   and focused E2 validation. The contract records exact snapshot and paper
@@ -31,6 +32,19 @@ This project follows SemVer as defined in `docs/02-versioning-and-releases.md`.
   included.
 
 ### Operator tooling
+- Added the separate disabled-by-default AUTO-2D bounded paper controller and
+  Operator runbook. Its default invocation performs no I/O; `--verify-only`
+  independently reconstructs the complete exact-hash/provenance-bound AUTO-2C
+  v2 decision without importing the v2 governor or test auditor and creates
+  nothing. The implemented but separately gated `--enabled --start` path
+  exclusively owns one deterministic root, uses the existing immutable
+  `TRIAL_MANIFEST` universe and paper ledger in-process, enforces the ratified
+  paper exposure/lifecycle/idempotency/concurrency/no-fallback/no-restart
+  bounds on a 60-second monotonic cadence, and accepts marks only through an
+  exact GET-only loopback adapter. Existing v1/v2 contracts, examples,
+  governors, B2-c, paper contracts and paper engine are unchanged. Genuine E3,
+  merge, production inputs, host work, eligibility/configuration changes and
+  the first paper trial remain separately gated.
 - Added the separate disabled-by-default
   `tools/scripts/autopilot_dynamic_allowlist_v2.py` offline governor and its
   Operator runbook. Explicit enablement requires exact absolute input paths,
@@ -46,6 +60,15 @@ This project follows SemVer as defined in `docs/02-versioning-and-releases.md`.
   configuration, and paper/live trading remain separately gated.
 
 ### Governance
+- Recorded PR #262's v2 governor/runbook landing as exact SHA
+  `c5a5c1a370112567073eaf00088ff4c121a0170d` after Claude CLEAN at exact head
+  `e82cd6c74f46958a496c0192b163c3c3a2417dde`, then recorded the Operator's
+  authorization of only AUTO-2D BUILD under `AG-20260729-018`. E2/E4, inner
+  review and one Tier 3 draft PR are in scope. Genuine E3 remains
+  `NOT RUN — separately gated` and mandatory before merge authorization. No
+  host/real-artifact work, second production v2 capture, configuration,
+  eligibility, operational start, paper/live trading, CI-1/OBS-1/OBS-3,
+  service, deployment, secret, AUTO-3, merge or unattended loop is included.
 - Recorded PR #261's v2-a landing as
   `670bba2e5c31374f5d09018ec86355ec352bd15f` after Claude CLEAN at exact head
   `229b40a776ab442401bf9df981672059d30d5db4`, then recorded the Operator's

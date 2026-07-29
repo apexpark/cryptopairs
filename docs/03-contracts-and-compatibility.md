@@ -220,5 +220,55 @@ service-configuration authority fixed false.
 
 The complete ratified policy, ranking, transition, exposure, lifecycle, and
 no-authority boundary is recorded in
-`docs/proposals/AUTO-2C-v2-automatic-paper-policy.md`. Implementing the v2
-governor or AUTO-2D remains separately gated.
+`docs/proposals/AUTO-2C-v2-automatic-paper-policy.md`. The separate v2
+governor landed in PR #262; AUTO-2D remained separately gated until the
+Operator authorized only its repository BUILD under `AG-20260729-018`.
+
+### AUTO-2D bounded paper-controller compatibility
+
+`tools/scripts/autopilot_dynamic_paper_controller_v2.py` is a separate
+disabled-by-default consumer. It leaves every v1/v2 decision, provenance,
+B2-c, paper-decision and paper-position contract unchanged. It also leaves
+both governors and the existing paper engine unchanged.
+
+The no-mode invocation performs no file, process or network I/O.
+`--verify-only` is strictly read-only and creates no artifact. It binds a
+clean exact-SHA repository plus the eligible v2 decision, current/previous
+schema-v2 snapshots, paper run config and v2 governor config to exact absolute
+paths, raw-byte SHA-256 hashes, producer Git SHAs and explicit canonical
+times. It independently reconstructs the complete v2 decision, including
+qualification, rankings, exploration reservation, concentration skips,
+truncation, transitions, churn, calculations, policy hash and decision ID.
+It does not import or invoke the v2 governor or test auditor.
+
+Only `--enabled --start` can create output, and operational invocation remains
+separately gated. That mode uses the existing schema-v2 `TRIAL_MANIFEST` as
+the immutable dynamic universe and invokes existing paper mechanics
+in-process. Controller-owned checks add global paper exposure, lifecycle,
+idempotency, exclusive ownership, no-fallback and no-restart enforcement.
+Observe input is one exact stable regular JSONL file; paper marks are GET-only
+from an exact loopback HTTP URL with redirects and proxies disabled.
+
+Compatibility rules:
+
+- only `POLICY_ELIGIBLE_FOR_AUTO2D_VERIFICATION` v2 decisions are accepted;
+- schema v1, blocked decisions, raw snapshots, governor self-approval and
+  fallback universes are rejected;
+- `NONE` and null remain distinct but non-actionable, while unknown selector
+  and non-long/short realized directions fail closed;
+- realized-paper and selector-view evidence remain segregated;
+- the immutable universe contains at most four exact
+  `(pair_id, timeframe=1m, selected_variant, direction)` keys;
+- paper decisions/positions retain their existing schemas and gain separate
+  append-only provenance bindings rather than new fields;
+- output uses one deterministic exclusive trial root, retains partial roots,
+  and never overwrites, repairs, cleans, falls back or automatically restarts;
+  and
+- all live-order, exchange-routing, execution-service POST, deployment and
+  service-configuration authority remains false.
+
+Genuine E3 requires Operator-supplied read-only exact-hash production copies
+from a second comparable schema-v2 selector window. It is mandatory before
+merge authorization and remains `NOT RUN — separately gated`. A clean E3,
+review or merge still does not authorize the separately gated first paper
+trial.
