@@ -12,6 +12,12 @@ Options:
   --repo-root <path>            Repo root on host (default: /opt/cryptopairs)
   --python-bin <path>           Python binary (default: /usr/bin/python3)
   --env-file <path>             Hosted env file (default: /opt/cryptopairs/.env.hosted)
+  --timeout-seconds <seconds>   Per-step timeout (default: 900)
+  --report-timeout-seconds <seconds>
+                               Per-request reporter timeout (default: 300)
+  --deploy-health-retries <n>   Deploy health retries (default: 90)
+  --deploy-health-sleep-secs <n>
+                               Seconds between deploy health retries (default: 2)
   --install                     Install or update cron entry (default)
   --remove                      Remove cron entry
   --show                        Show current cron entry
@@ -25,6 +31,10 @@ TIMEZONE=""
 REPO_ROOT="/opt/cryptopairs"
 PYTHON_BIN="/usr/bin/python3"
 ENV_FILE="/opt/cryptopairs/.env.hosted"
+TIMEOUT_SECONDS="900"
+REPORT_TIMEOUT_SECONDS="300"
+DEPLOY_HEALTH_RETRIES="90"
+DEPLOY_HEALTH_SLEEP_SECS="2"
 MODE="install"
 
 while [[ $# -gt 0 ]]; do
@@ -47,6 +57,22 @@ while [[ $# -gt 0 ]]; do
       ;;
     --env-file)
       ENV_FILE="${2:-}"
+      shift 2
+      ;;
+    --timeout-seconds)
+      TIMEOUT_SECONDS="${2:-}"
+      shift 2
+      ;;
+    --report-timeout-seconds)
+      REPORT_TIMEOUT_SECONDS="${2:-}"
+      shift 2
+      ;;
+    --deploy-health-retries)
+      DEPLOY_HEALTH_RETRIES="${2:-}"
+      shift 2
+      ;;
+    --deploy-health-sleep-secs)
+      DEPLOY_HEALTH_SLEEP_SECS="${2:-}"
       shift 2
       ;;
     --install)
@@ -73,7 +99,7 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-entry_command="cd ${REPO_ROOT} && ${PYTHON_BIN} tools/scripts/strategy_maintenance_cycle.py --env-file ${ENV_FILE} --output-root artifacts/strategy_tuning/runs --latest-report artifacts/strategy_tuning/latest_maintenance_report.json >> artifacts/strategy_tuning/maintenance_cron.log 2>&1"
+entry_command="cd ${REPO_ROOT} && ${PYTHON_BIN} tools/scripts/strategy_maintenance_cycle.py --env-file ${ENV_FILE} --output-root artifacts/strategy_tuning/runs --latest-report artifacts/strategy_tuning/latest_maintenance_report.json --timeout-seconds ${TIMEOUT_SECONDS} --report-timeout-seconds ${REPORT_TIMEOUT_SECONDS} --deploy-health-retries ${DEPLOY_HEALTH_RETRIES} --deploy-health-sleep-secs ${DEPLOY_HEALTH_SLEEP_SECS} --print-summary >> artifacts/strategy_tuning/maintenance_cron.log 2>&1"
 entry_line="${SCHEDULE} ${entry_command} ${MARKER}"
 timezone_line=""
 if [[ -n "${TIMEZONE}" ]]; then

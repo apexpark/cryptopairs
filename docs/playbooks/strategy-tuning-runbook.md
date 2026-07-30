@@ -43,6 +43,8 @@ Dry-run:
 python3 tools/scripts/strategy_tuning_apply.py \
   --mode promote \
   --dry-run \
+  --deploy-health-retries 90 \
+  --deploy-health-sleep-secs 2 \
   --output-json artifacts/strategy_tuning/$(date -u +%Y-%m-%dT%H-%M-%SZ)-apply-promote-dryrun.json
 ```
 
@@ -51,6 +53,8 @@ Live apply:
 ```bash
 python3 tools/scripts/strategy_tuning_apply.py \
   --mode promote \
+  --deploy-health-retries 90 \
+  --deploy-health-sleep-secs 2 \
   --output-json artifacts/strategy_tuning/$(date -u +%Y-%m-%dT%H-%M-%SZ)-apply-promote.json
 ```
 
@@ -74,6 +78,8 @@ Decision semantics:
 ```bash
 python3 tools/scripts/strategy_tuning_apply.py \
   --mode revert \
+  --deploy-health-retries 90 \
+  --deploy-health-sleep-secs 2 \
   --output-json artifacts/strategy_tuning/$(date -u +%Y-%m-%dT%H-%M-%SZ)-apply-revert.json
 ```
 
