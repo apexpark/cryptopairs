@@ -17,6 +17,15 @@ read-only verification is not start authority. Starting one paper trial
 requires a separate exact Operator authorization after genuine E3, independent
 review, merge and fresh host preflight.
 
+The controller independently supports two exact policy versions. The
+historical `auto2c-v2-paper-automatic-acceptance-1` route retains its static
+removal and churn gates. The explicit
+`auto2c-v2-first-bounded-paper-experiment-1` route accepts static overlap only
+as bound reference evidence: removal and churn are recomputed and reported but
+do not gate the isolated experiment. Every other qualification, ranking,
+addition, exploration, concentration, freshness and integrity rule remains
+enforced independently.
+
 ## Fixed policy envelope
 
 - Paper only; no live orders or exchange routing.
@@ -32,6 +41,10 @@ review, merge and fresh host preflight.
 - 86,400-second entry window followed by 3,600 seconds of exit-only grace.
 - 90,000-second hard runtime.
 - No fallback, root reuse, restart, repair, cleanup or alternate universe.
+- The first-experiment universe exists only in the newly created
+  controller-owned root and never mutates shared paper configuration.
+- Trial evidence grants no subsequent paper or live promotion; a separate
+  policy decision is required.
 
 `direction_hint: "NONE"` and a missing/null direction remain distinct and
 non-actionable. Neither can enter the immutable universe. Any other unknown
@@ -189,13 +202,19 @@ The controller re-reads raw bytes and independently verifies:
 - candidate qualification and both deterministic ranking lanes;
 - exploration reservation, concentration skips and deterministic truncation;
 - selected, added, removed and retained exact keys;
-- selection, addition, removal, concentration and 50% churn limits;
+- selection, addition and concentration limits;
+- for the historical route, removal and 50% churn limits;
+- for `FIRST_BOUNDED_PAPER_EXPERIMENT`, exact static-overlap calculations and
+  an explicit report-only removal/churn posture;
 - policy-envelope hash, prior-active-set hash and decision ID;
 - every calculation, gate, reason, methodology and authority field; and
 - exact equality of the complete reconstructed decision.
 
 It accepts no schema-v1 decision, blocked decision, raw snapshot in place of a
 decision, governor self-approval, fallback universe or per-output override.
+It also rejects a policy-version/config mismatch, an experiment decision that
+omits the no-promotion boundary, or any attempt to apply experiment semantics
+to the historical policy version.
 
 ## Separately authorized start command
 
@@ -262,6 +281,11 @@ After root creation:
 - exits are processed before entries;
 - controller-owned portfolio caps are applied before the paper ledger; and
 - every paper decision and position receives an append-only provenance binding.
+
+For `FIRST_BOUNDED_PAPER_EXPERIMENT`, `controller_binding.json` additionally
+records that static overlap is report-only, shared configuration was not
+mutated, the dynamic universe is root-local and immutable, and neither the
+decision nor the trial evidence has later-promotion authority.
 
 At 86,400 seconds the controller appends `EXIT_ONLY` and opens no further
 positions. It completes naturally when no position remains. At 90,000 seconds,

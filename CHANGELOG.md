@@ -5,6 +5,19 @@ This project follows SemVer as defined in `docs/02-versioning-and-releases.md`.
 
 ## Unreleased
 ### Contracts
+- AUTO-2C/AUTO-2D add the separately versioned
+  `auto2c-v2-first-bounded-paper-experiment-1` policy route for one isolated
+  no-capital trial. It preserves two comparable schema-v2 snapshots, exact
+  qualification/ranking, at most four selected keys, at most two additions
+  and selector-exploration keys, all concentration and direction rules,
+  evidence segregation, freshness and fail-closed input validation. Static
+  overlap, removals and churn remain fully reported but are not eligibility
+  gates because the immutable universe can exist only inside a new
+  controller-owned trial root and cannot alter shared paper configuration.
+  The historical v2 policy remains valid and continues enforcing its removal
+  and churn limits. The new route grants no configuration, eligibility,
+  self-approval, later-promotion, live, exchange, deployment or service
+  authority.
 - AUTO-2C v2 adds separate schema-version-2 decision and paper-provenance
   contract families plus canonical eligible, blocked, trial-manifest,
   paper-decision-binding, and paper-position-binding examples. The v2
@@ -32,6 +45,15 @@ This project follows SemVer as defined in `docs/02-versioning-and-releases.md`.
   included.
 
 ### Operator tooling
+- Extended the separate v2 governor and independent AUTO-2D controller to
+  reproduce the explicit first-bounded-paper-experiment policy envelope. The
+  production-shaped synthetic route has four qualifying candidates,
+  deterministically selects three, records one concentration skip and remains
+  eligible without applying static removal/churn gates. Historical policy
+  behavior and the controller's no-I/O default remain unchanged. The
+  controller records the root-local immutable universe and false
+  later-promotion authority; E3, merge and any operational start remain
+  separately gated.
 - Added the separate disabled-by-default AUTO-2D bounded paper controller and
   Operator runbook. Its default invocation performs no I/O; `--verify-only`
   independently reconstructs the complete exact-hash/provenance-bound AUTO-2C
@@ -60,6 +82,16 @@ This project follows SemVer as defined in `docs/02-versioning-and-releases.md`.
   configuration, and paper/live trading remain separately gated.
 
 ### Governance
+- Recorded the Operator's AG-20260807-019 amendment of draft PR #263 from
+  exact starting head `26d3bfcd7579cb7b9266e6e3698c4f0e87099b14` on exact
+  `origin/main` `c5a5c1a370112567073eaf00088ff4c121a0170d`. The amendment adds
+  only the separately versioned first-bounded-paper-experiment route while
+  preserving the historical policy. Full E2/E4, Codex inner review, commit,
+  push and a fresh Claude exact-SHA review are in scope. Genuine E3, host or
+  real-artifact access, capture, configuration/eligibility mutation,
+  controller start, paper/live trading, merge, deployment, services, secrets,
+  CI-1, OBS-1, OBS-3 and AUTO-3 remain unauthorized. The earlier Claude CLEAN
+  at the pre-amendment head is stale after this change.
 - Recorded PR #262's v2 governor/runbook landing as exact SHA
   `c5a5c1a370112567073eaf00088ff4c121a0170d` after Claude CLEAN at exact head
   `e82cd6c74f46958a496c0192b163c3c3a2417dde`, then recorded the Operator's

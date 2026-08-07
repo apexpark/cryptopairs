@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://apexpark.dev/contracts/autopilot_dynamic_allowlist_decision_v2.schema.json",
   "title": "AutopilotDynamicAllowlistDecisionV2",
-  "description": "Non-actuating AUTO-2C v2 decision for independent AUTO-2D paper-only verification. This contract permits bounded additions and deterministic truncation but grants no paper, live, execution, deployment, or self-approval authority.",
+  "description": "Non-actuating AUTO-2C v2 decision for independent AUTO-2D paper-only verification. The historical transition policy and the separately versioned first bounded paper experiment route both permit bounded additions and deterministic truncation but grant no configuration, eligibility, later-promotion, live, execution, deployment, or self-approval authority.",
   "type": "object",
   "additionalProperties": false,
   "required": [
@@ -53,7 +53,10 @@
     },
     "policy_version": {
       "type": "string",
-      "const": "auto2c-v2-paper-automatic-acceptance-1"
+      "enum": [
+        "auto2c-v2-paper-automatic-acceptance-1",
+        "auto2c-v2-first-bounded-paper-experiment-1"
+      ]
     },
     "decision_id": {
       "$ref": "#/$defs/sha256"
@@ -456,8 +459,15 @@
           "const": 1
         },
         "max_removals": {
-          "type": "integer",
-          "const": 2
+          "oneOf": [
+            {
+              "type": "integer",
+              "const": 2
+            },
+            {
+              "type": "null"
+            }
+          ]
         },
         "max_directions_per_pair_variant": {
           "type": "integer",
@@ -476,8 +486,31 @@
           "const": 1
         },
         "max_churn_ratio": {
-          "type": "number",
-          "const": 0.5
+          "oneOf": [
+            {
+              "type": "number",
+              "const": 0.5
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "policy_route": {
+          "type": "string",
+          "const": "FIRST_BOUNDED_PAPER_EXPERIMENT"
+        },
+        "static_baseline_transition_behavior": {
+          "type": "string",
+          "const": "REPORT_OVERLAP_ONLY_NO_REMOVAL_OR_CHURN_GATE"
+        },
+        "trial_universe_scope": {
+          "type": "string",
+          "const": "CONTROLLER_OWNED_IMMUTABLE_TRIAL_ROOT_ONLY"
+        },
+        "post_trial_promotion_behavior": {
+          "type": "string",
+          "const": "SEPARATE_POLICY_DECISION_REQUIRED"
         },
         "churn_measure": {
           "type": "string",
@@ -1259,8 +1292,7 @@
         },
         "removal_count": {
           "type": "integer",
-          "minimum": 0,
-          "maximum": 2
+          "minimum": 0
         },
         "change_count": {
           "type": "integer",
@@ -1389,6 +1421,18 @@
         "output_behavior": {
           "type": "string",
           "const": "EXCLUSIVE_CREATE_NO_OVERWRITE_REPAIR_OR_REUSE"
+        },
+        "static_baseline_transition_behavior": {
+          "type": "string",
+          "const": "REPORT_OVERLAP_ONLY_NO_REMOVAL_OR_CHURN_GATE"
+        },
+        "trial_universe_behavior": {
+          "type": "string",
+          "const": "CONTROLLER_OWNED_IMMUTABLE_TRIAL_ROOT_ONLY"
+        },
+        "post_trial_promotion_behavior": {
+          "type": "string",
+          "const": "SEPARATE_POLICY_DECISION_REQUIRED"
         }
       }
     },
@@ -1480,6 +1524,10 @@
         "governor_self_approval_authority": {
           "type": "boolean",
           "const": false
+        },
+        "subsequent_paper_or_live_promotion_authority": {
+          "type": "boolean",
+          "const": false
         }
       }
     }
@@ -1488,11 +1536,137 @@
     {
       "if": {
         "properties": {
+          "policy_version": {
+            "const": "auto2c-v2-paper-automatic-acceptance-1"
+          }
+        },
+        "required": [
+          "policy_version"
+        ]
+      },
+      "then": {
+        "properties": {
+          "policy": {
+            "properties": {
+              "max_removals": {
+                "const": 2
+              },
+              "max_churn_ratio": {
+                "const": 0.5
+              }
+            },
+            "not": {
+              "anyOf": [
+                {
+                  "required": [
+                    "policy_route"
+                  ]
+                },
+                {
+                  "required": [
+                    "static_baseline_transition_behavior"
+                  ]
+                },
+                {
+                  "required": [
+                    "trial_universe_scope"
+                  ]
+                },
+                {
+                  "required": [
+                    "post_trial_promotion_behavior"
+                  ]
+                }
+              ]
+            }
+          },
+          "methodology": {
+            "not": {
+              "anyOf": [
+                {
+                  "required": [
+                    "static_baseline_transition_behavior"
+                  ]
+                },
+                {
+                  "required": [
+                    "trial_universe_behavior"
+                  ]
+                },
+                {
+                  "required": [
+                    "post_trial_promotion_behavior"
+                  ]
+                }
+              ]
+            }
+          },
+          "authority_boundaries": {
+            "not": {
+              "required": [
+                "subsequent_paper_or_live_promotion_authority"
+              ]
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "policy_version": {
+            "const": "auto2c-v2-first-bounded-paper-experiment-1"
+          }
+        },
+        "required": [
+          "policy_version"
+        ]
+      },
+      "then": {
+        "properties": {
+          "policy": {
+            "required": [
+              "policy_route",
+              "static_baseline_transition_behavior",
+              "trial_universe_scope",
+              "post_trial_promotion_behavior"
+            ],
+            "properties": {
+              "max_removals": {
+                "const": null
+              },
+              "max_churn_ratio": {
+                "const": null
+              }
+            }
+          },
+          "methodology": {
+            "required": [
+              "static_baseline_transition_behavior",
+              "trial_universe_behavior",
+              "post_trial_promotion_behavior"
+            ]
+          },
+          "authority_boundaries": {
+            "required": [
+              "subsequent_paper_or_live_promotion_authority"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "policy_version": {
+            "const": "auto2c-v2-paper-automatic-acceptance-1"
+          },
           "status": {
             "const": "POLICY_ELIGIBLE_FOR_AUTO2D_VERIFICATION"
           }
         },
         "required": [
+          "policy_version",
           "status"
         ]
       },
@@ -1567,6 +1741,89 @@
               },
               "churn_ratio": {
                 "maximum": 0.5
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "policy_version": {
+            "const": "auto2c-v2-first-bounded-paper-experiment-1"
+          },
+          "status": {
+            "const": "POLICY_ELIGIBLE_FOR_AUTO2D_VERIFICATION"
+          }
+        },
+        "required": [
+          "policy_version",
+          "status"
+        ]
+      },
+      "then": {
+        "properties": {
+          "current_snapshot": {
+            "properties": {
+              "selector_view_present": {
+                "const": true
+              },
+              "selector_view_churn_available": {
+                "const": true
+              }
+            }
+          },
+          "previous_snapshot": {
+            "properties": {
+              "selector_view_present": {
+                "const": true
+              },
+              "selector_view_churn_available": {
+                "const": true
+              }
+            }
+          },
+          "selected_entries": {
+            "minItems": 1,
+            "maxItems": 4
+          },
+          "additions": {
+            "maxItems": 2
+          },
+          "reason_codes": {
+            "maxItems": 0
+          },
+          "gate_results": {
+            "$ref": "#/$defs/gate_results_all_pass"
+          },
+          "gate_summary": {
+            "properties": {
+              "pass_count": {
+                "const": 13
+              },
+              "block_count": {
+                "const": 0
+              }
+            }
+          },
+          "calculations": {
+            "properties": {
+              "source_cutoff_separation_seconds": {
+                "minimum": 86400
+              },
+              "current_source_age_seconds": {
+                "maximum": 1800
+              },
+              "selected_entry_count": {
+                "minimum": 1,
+                "maximum": 4
+              },
+              "selector_exploration_selected_count": {
+                "maximum": 2
+              },
+              "addition_count": {
+                "maximum": 2
               }
             }
           }

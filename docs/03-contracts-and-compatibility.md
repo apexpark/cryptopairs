@@ -210,6 +210,24 @@ Compatibility rules:
 - every existing AUTO-2B/B2-c snapshot, AUTO-2A paper, schema-version-1
   decision, and governor surface is unchanged.
 
+The same schema-version-2 decision family also recognizes the additive policy
+version `auto2c-v2-first-bounded-paper-experiment-1`. The historical
+`auto2c-v2-paper-automatic-acceptance-1` policy and its examples remain valid
+and retain static removal and churn enforcement. The new route preserves the
+same snapshot, key, direction, provenance, qualification, ranking, addition,
+exploration and concentration rules, but treats static removals and churn as
+reported overlap rather than eligibility gates for one isolated,
+controller-owned no-capital trial universe.
+
+The experimental route is distinguishable by its exact policy version,
+complete policy envelope, null `max_removals`/`max_churn_ratio`, route-specific
+methodology and explicit false later-promotion authority. A consumer must not
+infer these semantics from an old decision or a mutated policy object. Its
+output cannot write shared paper configuration, promote eligibility, approve
+itself, or authorize any subsequent paper/live promotion. The controller must
+independently reproduce the complete route and may create the immutable
+dynamic universe only inside one exclusive trial root.
+
 `specs/contracts/autopilot_dynamic_paper_provenance_v2.schema.json` is an
 additive append-only provenance companion for a later AUTO-2D controller. It
 binds a synthetic immutable trial manifest and paper decision/position records

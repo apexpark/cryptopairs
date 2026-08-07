@@ -9,14 +9,14 @@
 
 | Field | Value |
 |---|---|
-| Last updated (UTC) | 2026-07-29 |
+| Last updated (UTC) | 2026-08-07 |
 | Updated by | codex |
 | Repo HEAD pin (committed) | `c5a5c1a370112567073eaf00088ff4c121a0170d` |
 | Pin branch | `main` |
 | Sprint base branch | `main` |
-| Pin notes | Pin is `origin/main` after PR #262 merged the AUTO-2C v2 offline governor plus C-d runbook/hardening. The Operator authorized only the isolated AUTO-2D repository BUILD under AG-20260729-018. |
+| Pin notes | Pin remains `origin/main` after PR #262 merged the AUTO-2C v2 offline governor plus C-d runbook/hardening. PR #263 is the unmerged AUTO-2D branch. Under AG-20260807-019 the Operator authorized one backward-compatible first-bounded-paper-experiment amendment to that draft PR; the pin does not advance until an authorized merge lands. |
 | Origin | `https://github.com/apexpark/cryptopairs.git` |
-| Working-tree state | **PR #262 landed the separate AUTO-2C v2 governor/runbook as exact SHA `c5a5c1a370112567073eaf00088ff4c121a0170d`; AUTO-2D completed authorized repository BUILD and Codex inner review on `codex/auto2d-bounded-paper-controller` under AG-20260729-018.** The new controller is disabled by default, independently reconstructs the complete v2 decision without importing the v2 governor/test auditor, exposes a strictly read-only verifier, and keeps the operational start behind explicit `--enabled --start`. Synthetic E2/E4 covers exact bindings, qualification/ranking/truncation/concentration/transition/churn identity, non-actionable `NONE`/null, unknown-direction refusal, immutable provenance, existing in-process paper mechanics, controller-owned exposure/lifecycle/concurrency/no-fallback/no-restart bounds, GET-only literal-loopback paper-trade-to-mark adaptation, deterministic/exclusive roots, partial-root retention and no-actuation surfaces. Focused verification has 43 passes; the full canonical suite has 370 passes plus 70 subtests; Codex inner review is CLEAN after five recorded repairs. Genuine E3 is `NOT RUN — separately gated`; no real second v2 window, host or artifact was accessed or fabricated. Existing contracts/examples, both governors, B2-c, paper contracts and paper engine remain unchanged. No configuration, eligibility, operational start, real trial root/process, paper/live trading, service, deployment, secret, CI-1, OBS-1, OBS-3, AUTO-3, merge or unattended-loop action occurred. The next gate is one Tier 3 draft PR at an exact head and fresh Claude exact-SHA review; genuine E3 remains mandatory before merge authorization. |
+| Working-tree state | **PR #263 is being amended under AG-20260807-019 with one explicit `FIRST_BOUNDED_PAPER_EXPERIMENT` route; merged `main` remains exact SHA `c5a5c1a370112567073eaf00088ff4c121a0170d`.** The route preserves two comparable schema-v2 snapshots, exact qualification, deterministic ranking/truncation, at most four selected keys, at most two additions and exploration keys, every pair/variant/direction/instrument concentration, exact provenance/freshness/direction validation, independent AUTO-2D recomputation and the controller's existing paper exposure/lifecycle bounds. It reports static overlap, removals and churn but does not use removal or churn as eligibility gates for this isolated trial because the dynamic universe exists only inside one exclusive controller-owned trial root and cannot mutate shared paper configuration. The historical policy remains exact and continues enforcing its original removal/churn gates. Later paper/live promotion authority is explicitly false and requires a separate policy decision. Focused verification has 124 passes; full canonical E2 has 385 passes plus 70 subtests using the configured Python with active RFC 3339 validation; 25 bounded E4 command-safety/no-actuation proofs pass. Codex inner review is CLEAN after one test-coverage repair. Genuine E3 is `NOT RUN — separately gated`. No host, real artifact, capture, configuration, eligibility, operational start, trial root/process, paper/live trading, service, deployment, secret, CI-1, OBS-1, OBS-3, AUTO-3, merge or unattended-loop action occurred. The next gate after one updated exact PR head is a fresh Claude exact-SHA review; the earlier CLEAN at `26d3bfcd7579cb7b9266e6e3698c4f0e87099b14` becomes stale. |
 
 If the pin above is not reachable from `HEAD` via fast-forward, this file is stale; if `HEAD` is ahead of the pin, see §"Pin Convention".
 
@@ -56,7 +56,7 @@ If the pin above is not reachable from `HEAD` via fast-forward, this file is sta
 | AUTO-2C C-c - Deterministic one-shot offline governor | **Done — PR #260 merged** | codex (author) / claude (reviewer) | Claude reviewed exact head `b9132de68791bdba5754ba6cd8195e900053d903` CLEAN. The required exact-head, checks, thread, and mergeability gates passed; PR #260 landed as `c1b65389ebf0ead41146df12ca49a07f3889cfc9`. C-c remains schema-v1, advisory, demotion-only, and non-actuating. |
 | AUTO-2C v2-a - Addition, ranking, automatic-paper contract family | **Done — PR #261 merged** | codex (author) / claude (reviewer) | Claude reviewed exact head `229b40a776ab442401bf9df981672059d30d5db4` CLEAN. The required exact-head, checks, thread, and mergeability gates passed; PR #261 landed as `670bba2e5c31374f5d09018ec86355ec352bd15f`. The separate v2 schemas, examples, policy and tests remain non-actuating. |
 | AUTO-2C v2-b + C-d - Offline governor, runbook and hardening | **Done — PR #262 merged** | codex (author) / claude (reviewer) | Claude reviewed exact head `e82cd6c74f46958a496c0192b163c3c3a2417dde` CLEAN. The required exact-head, checks, thread and mergeability gates passed; PR #262 landed as exact SHA `c5a5c1a370112567073eaf00088ff4c121a0170d`. The v2 governor remains advisory and non-actuating. Genuine E3 was not run. |
-| AUTO-2D - Isolated bounded dynamic paper consumer/controller | **INNER CLEAN — Tier 3 draft PR next** | codex (author) / claude (future reviewer) | AG-20260729-018 adds only the separate disabled-by-default controller, full independent v2 recomputation, read-only verify mode, operationally uninvoked two-gate start, immutable provenance universe, in-process paper reuse, controller-owned paper caps/lifecycle/concurrency, exact observe binding, GET-only literal-loopback paper-trade-to-mark adaptation, 43 focused tests and an Operator runbook. Full E2 is 370 passes plus 70 subtests; Codex inner review is CLEAN after five repairs. Existing contracts/examples, governors, B2-c and paper surfaces remain unchanged. Genuine E3 is separately gated and `NOT RUN`; no host, real artifact, configuration, eligibility, trial start or trading action occurred. |
+| AUTO-2D - Isolated bounded dynamic paper consumer/controller | **INNER CLEAN — PR #263 amendment ready to commit/push** | codex (author) / claude (reviewer after push) | AG-20260729-018 supplied the disabled-by-default controller and its independent verifier. AG-20260807-019 adds one separately versioned first-bounded-paper-experiment route in the same draft PR: four production-shaped candidates qualify, three are selected deterministically, one addition is skipped by concentration, and static removal/churn values remain reported without gating the root-local trial. The historical route is preserved byte-for-byte in a direct pre/post output witness. Focused E2 is 124 passes, the full canonical suite is 385 passes plus 70 subtests, and 25 bounded E4 proofs pass. Codex inner review is CLEAN after one test-coverage repair. Genuine E3 is separately gated and `NOT RUN`; the prior Claude CLEAN applies only to obsolete head `26d3bfcd7579cb7b9266e6e3698c4f0e87099b14`. No host, real artifact, configuration, eligibility, trial start or trading action occurred. |
 | GOV-ROLESWAP - Swap Claude/Codex roles (OP-44) | **Merged and operative** | claude | PR #253 merged at `ecc9cbd` on `main`. B2-b PR #252 completed under the prior roles and merged as `04826d1`, making the swap operative per OP-44's transition clause and OP-45(a)/(g). Codex → Lead Coder + Operator Interface; Claude → Independent Reviewer. Added `CODEX.md`; updated ai_workflow/git-github/CLAUDE role sections, codex_prompt_pack note, CODEOWNERS, project.yaml. |
 | GOV-SCAFFOLD-1 - Install dual-agent governance scaffold v0 (`.agentic/**`) | **Merged** | claude | PR #245 squash-merged at `2516fc5` (Codex CLEAN at `7c0efe2` after three exact-SHA review cycles; Operator-executed merge, recorded in `.agentic/registers/decisions.md`). Branch `claude/agentic-scaffold-v0` builds on `codex/agentic-loop-harness-adapter` (build-on, not supersede; Operator decision 2026-07-12). Adds constitution/permissions/evidence/git/context policies, seeded decisions/risks/assumptions/capabilities/agent-runs registers, nine work-order/review/handoff templates, and intake/dispatch/review/blocked playbooks. Docs-only; grants no new authority — the 2026-07-12 merge tiers are recorded as adopted but non-operative until `docs/ops/ai_workflow.md` is amended (Slice 2); protected-path list recorded in `.agentic/registers/decisions.md`. Tier 3 flow: Codex exact-SHA review + Operator authorization required. Follow-on slices: dual-agent workflow manual (Slice 2), `CLAUDE.md` Autonomy Doctrine mapped to the AUTO ladder (Slice 3), CODEOWNERS/PR-template expansion (Slice 4). |
 | GOV-SCAFFOLD-2 - Make merge-authority tiers operative | **Merged** | claude | PR #246 squash-merged at `7041b41` (Codex CLEAN at `053da11` after three exact-SHA cycles; Operator-executed merge; authorization recorded in the decisions register). Tiers 1–2 delegated merge operative from that merge under the hardened standing-delegation conditions. |
@@ -127,7 +127,7 @@ Source of truth for shipped behavior is `CHANGELOG.md` `## Unreleased` section. 
   `29de6028b564869298bc0be7e581ed28df78bbf2`). The Operator accepted the
   corrected B2-cR preserved-evidence replay; its output remains advisory and
   cannot control paper entries.
-- **Merged through v2-b + C-d; AUTO-2D in repository BUILD**: PR #257 landed the AUTO-2C design as
+- **Merged through v2-b + C-d; AUTO-2D draft PR amendment in verification**: PR #257 landed the AUTO-2C design as
   `f1da80f11e5a8d2244ebc9715d026f30068c0fb3`; PR #258 then landed the C-a
   governed-decision contract/example as
   `b29118e0373c7f8149051f687c91eef9f5281119`; PR #259 landed C-b as
@@ -136,8 +136,10 @@ Source of truth for shipped behavior is `CHANGELOG.md` `## Unreleased` section. 
   separately versioned v2 contracts as
   `670bba2e5c31374f5d09018ec86355ec352bd15f`; and PR #262 landed the separate
   v2 governor/runbook as `c5a5c1a370112567073eaf00088ff4c121a0170d`.
-  Under AG-20260729-018 the Operator authorized only the isolated AUTO-2D
-  repository BUILD and one Tier 3 draft PR. Genuine E3 remains
+  Under AG-20260729-018 the Operator authorized the isolated AUTO-2D
+  repository BUILD and one Tier 3 draft PR. Under AG-20260807-019 the Operator
+  authorized the backward-compatible first-bounded-paper-experiment route in
+  the same PR, while preserving the historical policy. Genuine E3 remains
   `NOT RUN — separately gated`. Every host, real artifact, second v2 window,
   configuration, eligibility, operational trial, service, deployment, secret,
   or trading action remains unauthorized.
@@ -565,15 +567,16 @@ B2-d end-to-end validation. Its snapshot is advisory-only:
 `churn.selector_view=null`, so no second comparable v2 selector window exists
 and the replay cannot confer actionable paper eligibility.
 
-1. **Codex: open one AUTO-2D Tier 3 draft PR at an exact head SHA** — E2/E4
-   and Codex inner review are CLEAN; genuine E3 stays separately gated and
-   must remain `NOT RUN`.
-2. **Claude: independently review AUTO-2D at that exact SHA** — verify full
+1. **Codex: complete AG-20260807-019 E2/E4 and inner review, then push one
+   amended AUTO-2D PR #263 head** — the historical policy must remain
+   compatible; genuine E3 stays separately gated and `NOT RUN`.
+2. **Claude: independently review the amended AUTO-2D exact SHA** — verify full
    independent v2 recomputation, input/repository bindings, decision age,
-   immutable universe, existing-paper-engine reuse, controller-owned exposure
-   and lifecycle caps, concurrency/exclusive-root behavior, no fallback or
-   restart, GET-only loopback marks, provenance, runbook safety, protected
-   surface preservation and claimed E2/E4 evidence.
+   both policy routes, report-only static transition under the isolated route,
+   immutable root-local universe, existing-paper-engine reuse, controller-owned
+   exposure and lifecycle caps, concurrency/exclusive-root behavior, no fallback
+   or restart, GET-only loopback marks, provenance, no-later-promotion boundary,
+   runbook safety, protected-surface preservation and claimed E2/E4 evidence.
 3. **Operator: after Claude CLEAN, separately authorize genuine read-only E3
    inputs** — supply exact-hash copies from two distinct comparable production
    schema-v2 selector windows plus the eligible decision, paper/governor

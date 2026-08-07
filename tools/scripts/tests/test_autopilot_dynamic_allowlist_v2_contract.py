@@ -36,6 +36,12 @@ BLOCKED_EXAMPLE_PATH = (
     / "examples"
     / "autopilot_dynamic_allowlist_decision_v2.blocked.example.json"
 )
+FIRST_EXPERIMENT_EXAMPLE_PATH = (
+    REPO_ROOT
+    / "specs"
+    / "examples"
+    / "autopilot_dynamic_allowlist_decision_v2.first_bounded_paper_experiment.example.json"
+)
 PROVENANCE_EXAMPLE_PATHS = [
     REPO_ROOT
     / "specs"
@@ -51,20 +57,13 @@ PROVENANCE_EXAMPLE_PATHS = [
     / "autopilot_dynamic_paper_position_binding_v2.example.json",
 ]
 PROTECTED_V1_HASHES = {
-    "specs/contracts/autopilot_dynamic_allowlist_decision.schema.json":
-        "6c35dbefab09930792e37687ce96b8c7360759386bdb182cc71693cc9899ce37",
-    "specs/examples/autopilot_dynamic_allowlist_decision.example.json":
-        "3b2dacf18a2d2ff07241006934c27b2327e02300ec70808f31b68559e9169a42",
-    "tools/scripts/tests/test_autopilot_dynamic_allowlist_contract.py":
-        "6f5229cd15b87ae47d51183210c7976739af8e82161ef8ceeb27119bc4ae2175",
-    "specs/contracts/autopilot_paper_decision_record.schema.json":
-        "e38aa099abf52f2375a31c1df695f5feeafa5ca5341aa151dc8dd84ba06dae15",
-    "specs/contracts/autopilot_paper_position.schema.json":
-        "0b1497f4cd877dbcbb03a96ad512397b1cd3860678867fb5ba628ff35d7e97a8",
-    "tools/scripts/autopilot_dynamic_allowlist.py":
-        "86e1ef61d2a1ff34314e7dab6477b2e8c84977645882d9acbd9db9d6c542f2ae",
-    "tools/scripts/autopilot_paper.py":
-        "d894c7819814af9084de8c3245986c725a775d7c77194a39f94f6fee8828d2cd",
+    "specs/contracts/autopilot_dynamic_allowlist_decision.schema.json": "6c35dbefab09930792e37687ce96b8c7360759386bdb182cc71693cc9899ce37",
+    "specs/examples/autopilot_dynamic_allowlist_decision.example.json": "3b2dacf18a2d2ff07241006934c27b2327e02300ec70808f31b68559e9169a42",
+    "tools/scripts/tests/test_autopilot_dynamic_allowlist_contract.py": "6f5229cd15b87ae47d51183210c7976739af8e82161ef8ceeb27119bc4ae2175",
+    "specs/contracts/autopilot_paper_decision_record.schema.json": "e38aa099abf52f2375a31c1df695f5feeafa5ca5341aa151dc8dd84ba06dae15",
+    "specs/contracts/autopilot_paper_position.schema.json": "0b1497f4cd877dbcbb03a96ad512397b1cd3860678867fb5ba628ff35d7e97a8",
+    "tools/scripts/autopilot_dynamic_allowlist.py": "86e1ef61d2a1ff34314e7dab6477b2e8c84977645882d9acbd9db9d6c542f2ae",
+    "tools/scripts/autopilot_paper.py": "d894c7819814af9084de8c3245986c725a775d7c77194a39f94f6fee8828d2cd",
 }
 RFC3339_TIMESTAMP_RE = re.compile(
     r"^\d{4}-\d{2}-\d{2}[Tt]\d{2}:\d{2}:\d{2}"
@@ -91,7 +90,9 @@ def sha256_bytes(value: bytes) -> str:
 
 
 def parse_rfc3339(value: str) -> dt.datetime:
-    return dt.datetime.fromisoformat(value.replace("Z", "+00:00").replace("z", "+00:00"))
+    return dt.datetime.fromisoformat(
+        value.replace("Z", "+00:00").replace("z", "+00:00")
+    )
 
 
 def is_rfc3339_timestamp(value: object) -> bool:
@@ -177,7 +178,9 @@ def instrument_ids(key: dict) -> tuple[str, str]:
     return left, right
 
 
-def concentrations(entries: list[dict], additions: list[dict]) -> tuple[Counter, Counter, Counter]:
+def concentrations(
+    entries: list[dict], additions: list[dict]
+) -> tuple[Counter, Counter, Counter]:
     pair_counts: Counter = Counter()
     pair_variant_direction_counts: Counter = Counter()
     instrument_counts: Counter = Counter()
@@ -205,9 +208,12 @@ def audit_common(payload: dict) -> None:
     assert payload["policy_envelope_sha256"] == policy_hash(payload)
     assert payload["prior_active_set_sha256"] == prior_set_hash(payload)
     assert payload["decision_id"] == decision_id(payload)
-    assert payload["current_snapshot"]["sha256"] != payload["previous_snapshot"]["sha256"]
-    assert payload["current_snapshot"]["selector_config_sha256"] == (
-        payload["previous_snapshot"]["selector_config_sha256"]
+    assert (
+        payload["current_snapshot"]["sha256"] != payload["previous_snapshot"]["sha256"]
+    )
+    assert (
+        payload["current_snapshot"]["selector_config_sha256"]
+        == (payload["previous_snapshot"]["selector_config_sha256"])
     )
     assert payload["current_snapshot"]["schema_version"] == 2
     assert payload["previous_snapshot"]["schema_version"] == 2
@@ -237,17 +243,25 @@ def audit_common(payload: dict) -> None:
     assert not any(payload["authority_boundaries"].values())
     assert payload["policy"]["fallback_behavior"] == "NO_FALLBACK"
     assert (
-        parse_rfc3339(payload["valid_until"])
-        - parse_rfc3339(payload["evaluated_at"])
+        parse_rfc3339(payload["valid_until"]) - parse_rfc3339(payload["evaluated_at"])
     ).total_seconds() == payload["policy"]["decision_validity_seconds"]
 
 
 def audit_eligible(payload: dict) -> None:
     audit_common(payload)
+    first_experiment = (
+        payload["policy_version"] == "auto2c-v2-first-bounded-paper-experiment-1"
+    )
     assert payload["status"] == "POLICY_ELIGIBLE_FOR_AUTO2D_VERIFICATION"
     assert payload["reason_codes"] == []
-    assert all(result["verdict"] == "PASS" for result in payload["gate_results"].values())
-    assert payload["gate_summary"] == {"pass_count": 13, "block_count": 0, "total_count": 13}
+    assert all(
+        result["verdict"] == "PASS" for result in payload["gate_results"].values()
+    )
+    assert payload["gate_summary"] == {
+        "pass_count": 13,
+        "block_count": 0,
+        "total_count": 13,
+    }
 
     separation = (
         parse_rfc3339(payload["current_snapshot"]["source_cutoff_at"])
@@ -271,9 +285,18 @@ def audit_eligible(payload: dict) -> None:
         assert rank["exact_key_tiebreak"] == key_string(key)
         for snapshot_name in ("current_selector", "previous_selector"):
             selector = candidate[snapshot_name]
-            assert selector["selector_row_count"] >= payload["policy"]["min_selector_rows_each_snapshot"]
-            assert selector["trade_now_count"] >= payload["policy"]["min_trade_now_count_each_snapshot"]
-            assert selector["time_in_trade_now_ratio"] >= payload["policy"]["min_trade_now_ratio_each_snapshot"]
+            assert (
+                selector["selector_row_count"]
+                >= payload["policy"]["min_selector_rows_each_snapshot"]
+            )
+            assert (
+                selector["trade_now_count"]
+                >= payload["policy"]["min_trade_now_count_each_snapshot"]
+            )
+            assert (
+                selector["time_in_trade_now_ratio"]
+                >= payload["policy"]["min_trade_now_ratio_each_snapshot"]
+            )
             assert math.isfinite(selector["selector_stated_mean_net_edge_bps"])
             assert selector["selector_stated_mean_net_edge_bps"] > 0
         assert rank["minimum_trade_now_ratio"] == min(
@@ -333,7 +356,9 @@ def audit_eligible(payload: dict) -> None:
         selected[0]["key"]
     )
     assert selected[0]["evidence_class"] == "SELECTOR_EXPLORATION"
-    assert selected[0]["key"]["pair_id"] == "PF_ETHUSD__PF_SOLUSD"
+    assert selected[0]["key"]["pair_id"] == (
+        "PF_SUIUSD__PF_ARBUSD" if first_experiment else "PF_ETHUSD__PF_SOLUSD"
+    )
 
     additions = payload["additions"]
     removals = payload["removals"]
@@ -344,28 +369,56 @@ def audit_eligible(payload: dict) -> None:
     )
     assert payload["calculations"]["change_count"] == len(symmetric_difference)
     assert payload["calculations"]["churn_denominator_count"] == denominator
-    assert payload["calculations"]["churn_ratio"] == len(symmetric_difference) / denominator
+    assert (
+        payload["calculations"]["churn_ratio"]
+        == len(symmetric_difference) / denominator
+    )
     assert len(selected) <= payload["policy"]["max_selected_entries"]
     assert len(additions) <= payload["policy"]["max_additions"]
-    assert len(removals) <= payload["policy"]["max_removals"]
+    if first_experiment:
+        assert payload["policy"]["max_removals"] is None
+        assert payload["policy"]["max_churn_ratio"] is None
+        assert payload["methodology"]["static_baseline_transition_behavior"] == (
+            "REPORT_OVERLAP_ONLY_NO_REMOVAL_OR_CHURN_GATE"
+        )
+        assert (
+            payload["authority_boundaries"][
+                "subsequent_paper_or_live_promotion_authority"
+            ]
+            is False
+        )
+    else:
+        assert len(removals) <= payload["policy"]["max_removals"]
+        assert (
+            payload["calculations"]["churn_ratio"]
+            <= payload["policy"]["max_churn_ratio"]
+        )
     exploration_count = sum(
         item["evidence_class"] == "SELECTOR_EXPLORATION" for item in selected
     )
-    assert exploration_count == payload["calculations"]["selector_exploration_selected_count"]
-    assert 1 <= exploration_count <= payload["policy"]["max_selector_exploration_entries"]
+    assert (
+        exploration_count
+        == payload["calculations"]["selector_exploration_selected_count"]
+    )
+    assert (
+        1 <= exploration_count <= payload["policy"]["max_selector_exploration_entries"]
+    )
 
     pair_counts, pair_variant_counts, instrument_counts, addition_instrument_counts = (
         concentrations(selected, additions)
     )
     assert max(pair_counts.values()) <= payload["policy"]["max_entries_per_pair_id"]
-    assert max(pair_variant_counts.values()) <= (
-        payload["policy"]["max_directions_per_pair_variant"]
+    assert (
+        max(pair_variant_counts.values())
+        <= (payload["policy"]["max_directions_per_pair_variant"])
     )
-    assert max(instrument_counts.values()) <= (
-        payload["policy"]["max_entries_per_full_instrument"]
+    assert (
+        max(instrument_counts.values())
+        <= (payload["policy"]["max_entries_per_full_instrument"])
     )
-    assert max(addition_instrument_counts.values()) <= (
-        payload["policy"]["max_new_additions_per_full_instrument"]
+    assert (
+        max(addition_instrument_counts.values())
+        <= (payload["policy"]["max_new_additions_per_full_instrument"])
     )
     assert payload["calculations"]["selected_entry_count"] == len(selected)
     assert payload["calculations"]["addition_count"] == len(additions)
@@ -374,12 +427,15 @@ def audit_eligible(payload: dict) -> None:
 
 
 def fits_concentration(selected: list[dict], candidate: dict, policy: dict) -> bool:
-    pair_counts, pair_variant_counts, instrument_counts, _ = concentrations(selected, [])
+    pair_counts, pair_variant_counts, instrument_counts, _ = concentrations(
+        selected, []
+    )
     key = candidate["key"]
     pair_variant = (key["pair_id"], key["timeframe"], key["selected_variant"])
     return (
         pair_counts[key["pair_id"]] < policy["max_entries_per_pair_id"]
-        and pair_variant_counts[pair_variant] < policy["max_directions_per_pair_variant"]
+        and pair_variant_counts[pair_variant]
+        < policy["max_directions_per_pair_variant"]
         and all(
             instrument_counts[instrument] < policy["max_entries_per_full_instrument"]
             for instrument in instrument_ids(key)
@@ -398,6 +454,11 @@ def blocked() -> dict:
 
 
 @pytest.fixture
+def first_experiment() -> dict:
+    return load_json(FIRST_EXPERIMENT_EXAMPLE_PATH)
+
+
+@pytest.fixture
 def decision_validator() -> Draft202012Validator:
     return make_validator(DECISION_SCHEMA_PATH)
 
@@ -412,15 +473,59 @@ def test_v2_schemas_and_examples_validate(
     provenance_validator: Draft202012Validator,
     eligible: dict,
     blocked: dict,
+    first_experiment: dict,
 ) -> None:
     assert list(decision_validator.iter_errors(eligible)) == []
     assert list(decision_validator.iter_errors(blocked)) == []
+    assert list(decision_validator.iter_errors(first_experiment)) == []
     for path in PROVENANCE_EXAMPLE_PATHS:
         assert list(provenance_validator.iter_errors(load_json(path))) == []
 
 
 def test_eligible_example_passes_independent_semantic_audit(eligible: dict) -> None:
     audit_eligible(eligible)
+
+
+def test_first_experiment_example_passes_independent_semantic_audit(
+    first_experiment: dict,
+) -> None:
+    audit_eligible(first_experiment)
+    assert len(first_experiment["candidates"]) == 4
+    assert len(first_experiment["selected_entries"]) == 3
+    assert len(first_experiment["skipped_candidates"]) == 1
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        lambda payload: payload["policy"].__setitem__("max_removals", 2),
+        lambda payload: payload["policy"].__setitem__("max_churn_ratio", 0.5),
+        lambda payload: payload["policy"].pop("policy_route"),
+        lambda payload: payload["methodology"].pop(
+            "static_baseline_transition_behavior"
+        ),
+        lambda payload: payload["authority_boundaries"].pop(
+            "subsequent_paper_or_live_promotion_authority"
+        ),
+    ],
+)
+def test_first_experiment_route_metadata_is_contractual(
+    decision_validator: Draft202012Validator,
+    first_experiment: dict,
+    mutation,
+) -> None:
+    payload = copy.deepcopy(first_experiment)
+    mutation(payload)
+    assert list(decision_validator.iter_errors(payload))
+
+
+def test_historical_policy_cannot_smuggle_experiment_route_fields(
+    decision_validator: Draft202012Validator,
+    eligible: dict,
+) -> None:
+    payload = copy.deepcopy(eligible)
+    payload["policy"]["policy_route"] = "FIRST_BOUNDED_PAPER_EXPERIMENT"
+    assert list(decision_validator.iter_errors(payload))
 
 
 def test_blocked_decision_is_empty_non_actuating_and_reasoned(blocked: dict) -> None:
@@ -511,7 +616,9 @@ def test_ranking_mutations_fail_independent_audit(eligible: dict) -> None:
             audit_eligible(payload)
 
 
-def test_hash_identity_and_time_mutations_fail_independent_audit(eligible: dict) -> None:
+def test_hash_identity_and_time_mutations_fail_independent_audit(
+    eligible: dict,
+) -> None:
     for mutation in (
         lambda payload: payload.__setitem__("decision_id", "0" * 64),
         lambda payload: payload.__setitem__("policy_envelope_sha256", "0" * 64),
@@ -588,14 +695,20 @@ def test_blocked_status_rejects_nonempty_proposed_state(
 
 def test_automatic_acceptance_is_independent_and_non_actuating(eligible: dict) -> None:
     assert eligible["per_output_operator_approval_required"] is False
-    assert eligible["authority"] == "non_actuating_requires_independent_auto2d_verification"
-    assert all(eligible["auto2d_verification"][field] is True for field in (
-        "independent_recomputation_required",
-        "policy_envelope_hash_match_required",
-        "decision_hash_match_required",
-        "raw_input_hash_recheck_required",
-        "immutable_universe_required",
-    ))
+    assert (
+        eligible["authority"]
+        == "non_actuating_requires_independent_auto2d_verification"
+    )
+    assert all(
+        eligible["auto2d_verification"][field] is True
+        for field in (
+            "independent_recomputation_required",
+            "policy_envelope_hash_match_required",
+            "decision_hash_match_required",
+            "raw_input_hash_recheck_required",
+            "immutable_universe_required",
+        )
+    )
     assert not any(eligible["authority_boundaries"].values())
 
 
@@ -653,7 +766,9 @@ def test_direction_and_authority_mutations_fail_schema(
         assert list(decision_validator.iter_errors(payload))
 
 
-def test_provenance_examples_bind_exact_decision_and_trial_limits(eligible: dict) -> None:
+def test_provenance_examples_bind_exact_decision_and_trial_limits(
+    eligible: dict,
+) -> None:
     raw_decision_sha = sha256_bytes(ELIGIBLE_EXAMPLE_PATH.read_bytes())
     selected_by_key = {
         key_tuple(item["key"]): item for item in eligible["selected_entries"]
@@ -671,7 +786,9 @@ def test_provenance_examples_bind_exact_decision_and_trial_limits(eligible: dict
         assert payload["automatic_restart"] is False
         assert payload["trial_bounds"]["max_selected_universe"] == 4
         assert payload["trial_bounds"]["max_simultaneously_open_positions"] == 2
-        assert payload["trial_bounds"]["max_automatic_start_decision_age_seconds"] == 300
+        assert (
+            payload["trial_bounds"]["max_automatic_start_decision_age_seconds"] == 300
+        )
         assert payload["trial_bounds"]["entry_window_seconds"] == 86400
         assert payload["trial_bounds"]["exit_only_grace_seconds"] == 3600
         assert payload["trial_bounds"]["controller_hard_runtime_seconds"] == 90000
@@ -693,11 +810,7 @@ def test_manifest_universe_exactly_matches_governor_selection(eligible: dict) ->
     manifest = load_json(PROVENANCE_EXAMPLE_PATHS[0])
     assert manifest["record_type"] == "TRIAL_MANIFEST"
     expected_universe = [
-        {
-            field: value
-            for field, value in selected.items()
-            if field != "selection_rule"
-        }
+        {field: value for field, value in selected.items() if field != "selection_rule"}
         for selected in eligible["selected_entries"]
     ]
     assert manifest["subject"]["dynamic_universe"] == expected_universe

@@ -57,8 +57,16 @@ def write_json(path: Path, payload: object, *, newline: bool = True) -> str:
     return hashlib.sha256(raw).hexdigest()
 
 
-def generated_inputs(tmp_path: Path) -> tuple[dict[str, object], Path, str]:
-    inputs = support.production_inputs(tmp_path / "inputs")
+def generated_inputs(
+    tmp_path: Path,
+    *,
+    first_bounded_paper_experiment: bool = False,
+) -> tuple[dict[str, object], Path, str]:
+    inputs = (
+        support.first_bounded_paper_experiment_inputs(tmp_path / "inputs")
+        if first_bounded_paper_experiment
+        else support.production_inputs(tmp_path / "inputs")
+    )
     output_root = tmp_path / "governor-output"
     args = governor.parse_args(support.arguments(inputs, output_root))
     result = governor.run_enabled(args)
@@ -258,6 +266,70 @@ def test_independent_recomputation_matches_production_shaped_decision(
         item["key"]["direction"] in controller.ACTIONABLE_DIRECTIONS
         for item in verification.selected_entries
     )
+
+
+def test_first_bounded_paper_experiment_is_independently_verified_and_root_scoped(
+    tmp_path: Path,
+) -> None:
+    inputs, decision_path, decision_hash = generated_inputs(
+        tmp_path,
+        first_bounded_paper_experiment=True,
+    )
+    args = controller_args(inputs, decision_path, decision_hash, tmp_path=tmp_path)
+    verification = controller.read_and_verify(args)
+    decision = verification.decision
+    assert decision == verification.expected_decision
+    assert decision["policy_version"] == (
+        controller.FIRST_BOUNDED_PAPER_EXPERIMENT_POLICY_VERSION
+    )
+    assert decision["status"] == controller.ELIGIBLE_STATUS
+    assert len(decision["candidates"]) == 4
+    assert len(verification.selected_entries) == 3
+    assert decision["calculations"]["removal_count"] == 3
+    assert decision["calculations"]["churn_ratio"] == 1.25
+    assert decision["calculations"]["selector_exploration_selected_count"] == 2
+
+    observe_source = Path(args.observe_source_jsonl)
+    trial_parent = Path(args.trial_root_parent)
+    paths = controller.create_initial_outputs(
+        parent=trial_parent,
+        verification=verification,
+        repository_root=REPO_ROOT,
+        repository_git_sha="a" * 40,
+        started_at=verification.evaluated_at,
+        observe_source=observe_source,
+        observe_identity=(observe_source.stat().st_dev, observe_source.stat().st_ino),
+        marks_url=str(args.marks_url),
+    )
+    binding = json.loads(paths.binding.read_text(encoding="utf-8"))
+    assert binding["universe_immutable"] is True
+    assert binding["no_fallback"] is True
+    assert binding["automatic_restart"] is False
+    assert binding["first_bounded_paper_experiment"] == {
+        "static_baseline_overlap_report_only": True,
+        "static_paper_configuration_mutated": False,
+        "dynamic_universe_scope": "CONTROLLER_OWNED_IMMUTABLE_TRIAL_ROOT_ONLY",
+        "subsequent_paper_or_live_promotion_authority": False,
+        "separate_promotion_policy_decision_required": True,
+    }
+
+
+def test_first_experiment_static_transition_mutation_fails_independent_recompute(
+    tmp_path: Path,
+) -> None:
+    inputs, decision_path, _decision_hash = generated_inputs(
+        tmp_path,
+        first_bounded_paper_experiment=True,
+    )
+    decision = json.loads(decision_path.read_text(encoding="utf-8"))
+    decision["policy"]["max_removals"] = 2
+    decision_hash = write_json(decision_path, decision, newline=False)
+    args = controller_args(inputs, decision_path, decision_hash, tmp_path=tmp_path)
+    with pytest.raises(
+        controller.ControllerInputError,
+        match="DECISION_INDEPENDENT_RECOMPUTATION_MISMATCH",
+    ):
+        controller.read_and_verify(args)
 
 
 def test_production_controller_does_not_import_v2_governor_or_test_oracle() -> None:
