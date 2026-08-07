@@ -36,6 +36,9 @@ DISABLED_DIAGNOSTIC = {
 }
 
 POLICY_VERSION = "auto2c-v2-paper-automatic-acceptance-1"
+FIRST_BOUNDED_PAPER_EXPERIMENT_POLICY_VERSION = (
+    "auto2c-v2-first-bounded-paper-experiment-1"
+)
 OUTPUT_JSON_NAME = "autopilot_dynamic_allowlist_decision_v2.json"
 OUTPUT_MARKDOWN_NAME = "autopilot_dynamic_allowlist_decision_v2.md"
 PRIOR_SOURCE = "STATIC_PAPER_ALLOWLIST"
@@ -91,9 +94,25 @@ POLICY: dict[str, Any] = {
     "controller_hard_runtime_seconds": 90000,
 }
 
+FIRST_BOUNDED_PAPER_EXPERIMENT_POLICY: dict[str, Any] = {
+    **POLICY,
+    "max_removals": None,
+    "max_churn_ratio": None,
+    "policy_route": "FIRST_BOUNDED_PAPER_EXPERIMENT",
+    "static_baseline_transition_behavior": (
+        "REPORT_OVERLAP_ONLY_NO_REMOVAL_OR_CHURN_GATE"
+    ),
+    "trial_universe_scope": "CONTROLLER_OWNED_IMMUTABLE_TRIAL_ROOT_ONLY",
+    "post_trial_promotion_behavior": "SEPARATE_POLICY_DECISION_REQUIRED",
+}
+
 GOVERNOR_CONFIG = {
     "policy_version": POLICY_VERSION,
     "policy": POLICY,
+}
+FIRST_BOUNDED_PAPER_EXPERIMENT_GOVERNOR_CONFIG = {
+    "policy_version": FIRST_BOUNDED_PAPER_EXPERIMENT_POLICY_VERSION,
+    "policy": FIRST_BOUNDED_PAPER_EXPERIMENT_POLICY,
 }
 
 GATE_NAMES = (
@@ -208,6 +227,25 @@ class Evaluation:
 
 
 @dataclasses.dataclass(frozen=True)
+class PolicyRoute:
+    version: str
+    policy: Mapping[str, Any]
+    enforce_static_removal_and_churn: bool
+
+
+HISTORICAL_POLICY_ROUTE = PolicyRoute(
+    version=POLICY_VERSION,
+    policy=POLICY,
+    enforce_static_removal_and_churn=True,
+)
+FIRST_BOUNDED_PAPER_EXPERIMENT_ROUTE = PolicyRoute(
+    version=FIRST_BOUNDED_PAPER_EXPERIMENT_POLICY_VERSION,
+    policy=FIRST_BOUNDED_PAPER_EXPERIMENT_POLICY,
+    enforce_static_removal_and_churn=False,
+)
+
+
+@dataclasses.dataclass(frozen=True)
 class RawBoundFile:
     path: Path
     expected_sha256: str
@@ -216,22 +254,29 @@ class RawBoundFile:
     stat_identity: tuple[int, int, int, int]
 
 
-def policy_envelope_sha256() -> str:
+def policy_envelope_sha256(route: PolicyRoute = HISTORICAL_POLICY_ROUTE) -> str:
     return hashlib.sha256(
         v1.canonical_json_bytes(
             {
-                "policy_version": POLICY_VERSION,
-                "policy": POLICY,
+                "policy_version": route.version,
+                "policy": route.policy,
             }
         )
     ).hexdigest()
 
 
+def resolve_policy_route(payload: object) -> PolicyRoute:
+    if payload == GOVERNOR_CONFIG:
+        return HISTORICAL_POLICY_ROUTE
+    if payload == FIRST_BOUNDED_PAPER_EXPERIMENT_GOVERNOR_CONFIG:
+        return FIRST_BOUNDED_PAPER_EXPERIMENT_ROUTE
+    v1.fail("GOVERNOR_CONFIG_MISMATCH")
+    raise AssertionError("unreachable")
+
+
 def prior_active_set_sha256(baseline: frozenset[ExactKey]) -> str:
     return hashlib.sha256(
-        v1.canonical_json_bytes(
-            [v1.key_object(key) for key in sorted(baseline)]
-        )
+        v1.canonical_json_bytes([v1.key_object(key) for key in sorted(baseline)])
     ).hexdigest()
 
 
@@ -490,9 +535,8 @@ def build_candidates(
     previous: SnapshotDetails,
     baseline: frozenset[ExactKey],
 ) -> list[Candidate]:
-    selector_keys = (
-        set(current.selector_prominent_metrics)
-        & set(previous.selector_prominent_metrics)
+    selector_keys = set(current.selector_prominent_metrics) & set(
+        previous.selector_prominent_metrics
     )
     realized: list[Candidate] = []
     exploration: list[Candidate] = []
@@ -508,12 +552,10 @@ def build_candidates(
             | previous.evidence.quarantined
         )
         selected_both = (
-            key in current.evidence.selected
-            and key in previous.evidence.selected
+            key in current.evidence.selected and key in previous.evidence.selected
         )
         absent_both = (
-            key not in current_realized_sets
-            and key not in previous_realized_sets
+            key not in current_realized_sets and key not in previous_realized_sets
         )
         if selected_both and key in baseline:
             evidence_class = "REALIZED_AND_SELECTOR"
@@ -591,16 +633,17 @@ def concentration_failure(
     selected: Sequence[Candidate],
     candidate: Candidate,
     baseline: frozenset[ExactKey],
+    policy: Mapping[str, Any] = POLICY,
 ) -> str | None:
     proposed = [item.key for item in selected] + [candidate.key]
     pair_variant = Counter((key[0], key[1], key[2]) for key in proposed)
     if (
         pair_variant[(candidate.key[0], candidate.key[1], candidate.key[2])]
-        > POLICY["max_directions_per_pair_variant"]
+        > policy["max_directions_per_pair_variant"]
     ):
         return "SKIPPED_PAIR_CONCENTRATION"
     pairs = Counter(key[0] for key in proposed)
-    if pairs[candidate.key[0]] > POLICY["max_entries_per_pair_id"]:
+    if pairs[candidate.key[0]] > policy["max_entries_per_pair_id"]:
         return "SKIPPED_PAIR_CONCENTRATION"
     instruments: Counter[str] = Counter()
     addition_instruments: Counter[str] = Counter()
@@ -610,12 +653,12 @@ def concentration_failure(
             if key not in baseline:
                 addition_instruments[instrument] += 1
     if any(
-        count > POLICY["max_entries_per_full_instrument"]
+        count > policy["max_entries_per_full_instrument"]
         for count in instruments.values()
     ):
         return "SKIPPED_INSTRUMENT_CONCENTRATION"
     if any(
-        count > POLICY["max_new_additions_per_full_instrument"]
+        count > policy["max_new_additions_per_full_instrument"]
         for count in addition_instruments.values()
     ):
         return "SKIPPED_ADDITION_INSTRUMENT_CONCENTRATION"
@@ -635,13 +678,19 @@ def reservation_transition_safety(
     candidate: Candidate,
     realized: Sequence[Candidate],
     baseline: frozenset[ExactKey],
+    route: PolicyRoute = HISTORICAL_POLICY_ROUTE,
 ) -> tuple[bool, str | None]:
     simulated = [candidate]
     first_concentration_failure: str | None = None
     for realized_candidate in realized:
-        if len(simulated) >= POLICY["max_selected_entries"]:
+        if len(simulated) >= route.policy["max_selected_entries"]:
             break
-        reason = concentration_failure(simulated, realized_candidate, baseline)
+        reason = concentration_failure(
+            simulated,
+            realized_candidate,
+            baseline,
+            route.policy,
+        )
         if reason is not None:
             if first_concentration_failure is None:
                 first_concentration_failure = reason
@@ -652,7 +701,7 @@ def reservation_transition_safety(
         for index, item in enumerate(simulated, 1)
     ]
     return (
-        transition_is_valid(selections, [candidate], baseline),
+        transition_is_valid(selections, [candidate], baseline, route),
         first_concentration_failure,
     )
 
@@ -660,7 +709,11 @@ def reservation_transition_safety(
 def allocate_candidates(
     candidates: Sequence[Candidate],
     baseline: frozenset[ExactKey],
-) -> tuple[list[Selection], list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]]]:
+    route: PolicyRoute = HISTORICAL_POLICY_ROUTE,
+) -> tuple[
+    list[Selection], list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]]
+]:
+    policy = route.policy
     realized = [
         candidate
         for candidate in candidates
@@ -692,7 +745,7 @@ def allocate_candidates(
 
     def process(candidate: Candidate, rule: str) -> None:
         step = len(steps) + 1
-        if len(selected) >= POLICY["max_selected_entries"]:
+        if len(selected) >= policy["max_selected_entries"]:
             result = "TRUNCATED"
             reason = "TRUNCATED_MAX_SELECTED_ENTRIES"
             truncated.append(outcome(candidate, reason))
@@ -700,14 +753,14 @@ def allocate_candidates(
         elif (
             candidate.key not in baseline
             and sum(item.key not in baseline for item in selected)
-            >= POLICY["max_additions"]
+            >= policy["max_additions"]
         ):
             result = "SKIPPED"
             reason = "SKIPPED_MAX_ADDITIONS"
             skipped.append(outcome(candidate, reason))
             step_rule = "SKIP_CONCENTRATION_AND_CONTINUE"
         else:
-            reason = concentration_failure(selected, candidate, baseline)
+            reason = concentration_failure(selected, candidate, baseline, policy)
             if reason is not None:
                 result = "SKIPPED"
                 skipped.append(outcome(candidate, reason))
@@ -732,6 +785,7 @@ def allocate_candidates(
             candidate,
             realized,
             baseline,
+            route,
         )
         if not transition_safe and prospective_reason is not None:
             record_skip(candidate, prospective_reason)
@@ -749,7 +803,7 @@ def allocate_candidates(
     for candidate in exploration:
         if candidate.key in processed:
             continue
-        if exploration_selected >= POLICY["max_selector_exploration_entries"]:
+        if exploration_selected >= policy["max_selector_exploration_entries"]:
             process(candidate, "FILL_SECOND_QUALIFYING_ADDITION")
             continue
         before = len(selected)
@@ -764,19 +818,20 @@ def transition_is_valid(
     selections: Sequence[Selection],
     candidates: Sequence[Candidate],
     baseline: frozenset[ExactKey],
+    route: PolicyRoute = HISTORICAL_POLICY_ROUTE,
 ) -> bool:
+    policy = route.policy
     proposed = frozenset(item.candidate.key for item in selections)
     additions = proposed - baseline
     removals = baseline - proposed
     change_count = len(additions) + len(removals)
-    denominator = max(POLICY["churn_floor_capacity"], len(baseline))
+    denominator = max(policy["churn_floor_capacity"], len(baseline))
     churn = change_count / denominator
     exploration_qualifies = any(
         item.evidence_class == "SELECTOR_EXPLORATION" for item in candidates
     )
     exploration_selected = sum(
-        item.candidate.evidence_class == "SELECTOR_EXPLORATION"
-        for item in selections
+        item.candidate.evidence_class == "SELECTOR_EXPLORATION" for item in selections
     )
     pair_counts = Counter(key[0] for key in proposed)
     pair_variant_counts = Counter((key[0], key[1], key[2]) for key in proposed)
@@ -787,37 +842,42 @@ def transition_is_valid(
             instrument_counts[instrument] += 1
             if key in additions:
                 addition_instrument_counts[instrument] += 1
-    return bool(proposed) and all(
+    common_limits_pass = all(
         (
-            len(proposed) <= POLICY["max_selected_entries"],
-            len(additions) <= POLICY["max_additions"],
-            len(removals) <= POLICY["max_removals"],
-            exploration_selected <= POLICY["max_selector_exploration_entries"],
+            len(proposed) <= policy["max_selected_entries"],
+            len(additions) <= policy["max_additions"],
+            exploration_selected <= policy["max_selector_exploration_entries"],
             (
                 not exploration_qualifies
                 or exploration_selected
-                >= POLICY[
+                >= policy[
                     "min_selector_exploration_entries_when_qualified_and_transition_safe"
                 ]
             ),
-            churn <= POLICY["max_churn_ratio"],
             all(
-                count <= POLICY["max_entries_per_pair_id"]
+                count <= policy["max_entries_per_pair_id"]
                 for count in pair_counts.values()
             ),
             all(
-                count <= POLICY["max_directions_per_pair_variant"]
+                count <= policy["max_directions_per_pair_variant"]
                 for count in pair_variant_counts.values()
             ),
             all(
-                count <= POLICY["max_entries_per_full_instrument"]
+                count <= policy["max_entries_per_full_instrument"]
                 for count in instrument_counts.values()
             ),
             all(
-                count <= POLICY["max_new_additions_per_full_instrument"]
+                count <= policy["max_new_additions_per_full_instrument"]
                 for count in addition_instrument_counts.values()
             ),
         )
+    )
+    if not proposed or not common_limits_pass:
+        return False
+    if not route.enforce_static_removal_and_churn:
+        return True
+    return bool(
+        len(removals) <= policy["max_removals"] and churn <= policy["max_churn_ratio"]
     )
 
 
@@ -909,7 +969,9 @@ def build_decision(
     previous_producer_git_sha: str,
     paper_producer_git_sha: str,
     evaluated_at: dt.datetime,
+    route: PolicyRoute = HISTORICAL_POLICY_ROUTE,
 ) -> dict[str, Any]:
+    policy = route.policy
     if current.evidence.bound.sha256 == previous.evidence.bound.sha256:
         v1.fail("SNAPSHOT_HASH_REUSED")
     if current.evidence.source_cutoff_at <= previous.evidence.source_cutoff_at:
@@ -921,18 +983,15 @@ def build_decision(
     v1.validate_current_churn(current.evidence, previous.evidence)
 
     separation_seconds = (
-        current.evidence.source_cutoff_at
-        - previous.evidence.source_cutoff_at
+        current.evidence.source_cutoff_at - previous.evidence.source_cutoff_at
     ).total_seconds()
-    age_seconds = (
-        evaluated_at - current.evidence.source_cutoff_at
-    ).total_seconds()
+    age_seconds = (evaluated_at - current.evidence.source_cutoff_at).total_seconds()
     separation = int(separation_seconds)
     age = int(age_seconds)
     reasons: list[str] = []
-    if separation_seconds < POLICY["min_source_cutoff_separation_seconds"]:
+    if separation_seconds < policy["min_source_cutoff_separation_seconds"]:
         reasons.append("SOURCE_CUTOFF_SEPARATION_TOO_SHORT")
-    if age_seconds > POLICY["max_current_source_age_seconds"]:
+    if age_seconds > policy["max_current_source_age_seconds"]:
         reasons.append("CURRENT_SOURCE_STALE")
 
     candidates: list[Candidate] = []
@@ -950,8 +1009,9 @@ def build_decision(
         selections, steps, truncated, skipped = allocate_candidates(
             candidates,
             baseline,
+            route,
         )
-        if not transition_is_valid(selections, candidates, baseline):
+        if not transition_is_valid(selections, candidates, baseline, route):
             reasons.append("TRANSITION_LIMITS_UNSATISFIABLE")
             selections = []
             steps = []
@@ -959,16 +1019,14 @@ def build_decision(
             skipped = []
 
     status = (
-        "GOVERNOR_BLOCKED"
-        if reasons
-        else "POLICY_ELIGIBLE_FOR_AUTO2D_VERIFICATION"
+        "GOVERNOR_BLOCKED" if reasons else "POLICY_ELIGIBLE_FOR_AUTO2D_VERIFICATION"
     )
     proposed = frozenset(item.candidate.key for item in selections)
     additions = proposed - baseline if not reasons else frozenset()
     removals = baseline - proposed if not reasons else frozenset()
     retained = proposed & baseline if not reasons else frozenset()
     change_count = len(additions) + len(removals)
-    churn_denominator = max(POLICY["churn_floor_capacity"], len(baseline))
+    churn_denominator = max(policy["churn_floor_capacity"], len(baseline))
     churn_ratio = change_count / churn_denominator if selections else 0
     pair_counts, pair_variant_counts, instrument_counts = concentration_calculations(
         proposed,
@@ -977,15 +1035,60 @@ def build_decision(
     gates, gate_summary = gate_results(reasons)
     evaluated_text = v1.format_timestamp(evaluated_at)
     valid_until = v1.format_timestamp(
-        evaluated_at + dt.timedelta(seconds=POLICY["decision_validity_seconds"])
+        evaluated_at + dt.timedelta(seconds=policy["decision_validity_seconds"])
     )
-    policy_hash = policy_envelope_sha256()
+    policy_hash = policy_envelope_sha256(route)
     prior_hash = prior_active_set_sha256(baseline)
+
+    methodology = {
+        "realized_selector_relation": (
+            "SEPARATE_STREAMS_SET_MEMBERSHIP_NO_NUMERIC_MERGE"
+        ),
+        "none_direction_behavior": "NON_ACTIONABLE_DISTINCT_FROM_NULL",
+        "null_direction_behavior": "NON_ACTIONABLE_MISSING_DIRECTION",
+        "unknown_direction_behavior": "REJECT_INPUT_NO_ARTIFACT",
+        "candidate_overflow_behavior": "DETERMINISTIC_TRUNCATE_AND_RECORD",
+        "concentration_overflow_behavior": "SKIP_AND_CONTINUE",
+        "selection_allocation": (
+            "RESERVE_BEST_EXPLORATION_ADDITION_FILL_REALIZED_ALLOW_SECOND_ADDITION"
+        ),
+        "fallback_behavior": "NO_FALLBACK",
+        "policy_hash_formula": "SHA256_CANONICAL_JSON_POLICY_VERSION_AND_POLICY",
+        "decision_id_formula": (
+            "SHA256_CANONICAL_JSON_BOUND_INPUT_HASHES_POLICY_HASH_"
+            "PRIOR_SET_HASH_EVALUATED_AT"
+        ),
+        "serialization_behavior": "MINIFIED_KEY_SORTED_UTF8_NO_TRAILING_NEWLINE",
+        "input_behavior": "READ_ONLY_RAW_HASH_BOUND_STABLE_FILES",
+        "output_behavior": "EXCLUSIVE_CREATE_NO_OVERWRITE_REPAIR_OR_REUSE",
+    }
+    authority_boundaries = {
+        "paper_eligibility_authority": False,
+        "paper_configuration_write_authority": False,
+        "paper_trial_start_authority": False,
+        "live_eligibility_authority": False,
+        "execution_authority": False,
+        "deployment_authority": False,
+        "governor_self_approval_authority": False,
+    }
+    if not route.enforce_static_removal_and_churn:
+        methodology.update(
+            {
+                "static_baseline_transition_behavior": (
+                    "REPORT_OVERLAP_ONLY_NO_REMOVAL_OR_CHURN_GATE"
+                ),
+                "trial_universe_behavior": (
+                    "CONTROLLER_OWNED_IMMUTABLE_TRIAL_ROOT_ONLY"
+                ),
+                "post_trial_promotion_behavior": ("SEPARATE_POLICY_DECISION_REQUIRED"),
+            }
+        )
+        authority_boundaries["subsequent_paper_or_live_promotion_authority"] = False
 
     decision = {
         "schema_version": 2,
         "mode": DECISION_MODE,
-        "policy_version": POLICY_VERSION,
+        "policy_version": route.version,
         "decision_id": decision_id(
             current_snapshot_sha256=current.evidence.bound.sha256,
             previous_snapshot_sha256=previous.evidence.bound.sha256,
@@ -1019,12 +1122,10 @@ def build_decision(
             "sha256": governor.sha256,
         },
         "selector_config": v1.SELECTOR_CONFIG,
-        "policy": POLICY,
+        "policy": policy,
         "prior_active_set_source": PRIOR_SOURCE,
         "prior_active_set_sha256": prior_hash,
-        "prior_active_entries": [
-            v1.key_object(key) for key in sorted(baseline)
-        ],
+        "prior_active_entries": [v1.key_object(key) for key in sorted(baseline)],
         "candidates": [candidate.as_dict() for candidate in candidates],
         "selection_steps": steps,
         "selected_entries": [selection.as_dict() for selection in selections],
@@ -1056,29 +1157,7 @@ def build_decision(
             "instrument_concentrations": instrument_counts,
         },
         "reason_codes": reasons,
-        "methodology": {
-            "realized_selector_relation": (
-                "SEPARATE_STREAMS_SET_MEMBERSHIP_NO_NUMERIC_MERGE"
-            ),
-            "none_direction_behavior": "NON_ACTIONABLE_DISTINCT_FROM_NULL",
-            "null_direction_behavior": "NON_ACTIONABLE_MISSING_DIRECTION",
-            "unknown_direction_behavior": "REJECT_INPUT_NO_ARTIFACT",
-            "candidate_overflow_behavior": "DETERMINISTIC_TRUNCATE_AND_RECORD",
-            "concentration_overflow_behavior": "SKIP_AND_CONTINUE",
-            "selection_allocation": (
-                "RESERVE_BEST_EXPLORATION_ADDITION_FILL_REALIZED_"
-                "ALLOW_SECOND_ADDITION"
-            ),
-            "fallback_behavior": "NO_FALLBACK",
-            "policy_hash_formula": "SHA256_CANONICAL_JSON_POLICY_VERSION_AND_POLICY",
-            "decision_id_formula": (
-                "SHA256_CANONICAL_JSON_BOUND_INPUT_HASHES_POLICY_HASH_"
-                "PRIOR_SET_HASH_EVALUATED_AT"
-            ),
-            "serialization_behavior": "MINIFIED_KEY_SORTED_UTF8_NO_TRAILING_NEWLINE",
-            "input_behavior": "READ_ONLY_RAW_HASH_BOUND_STABLE_FILES",
-            "output_behavior": "EXCLUSIVE_CREATE_NO_OVERWRITE_REPAIR_OR_REUSE",
-        },
+        "methodology": methodology,
         "per_output_operator_approval_required": False,
         "auto2d_verification": {
             "independent_recomputation_required": True,
@@ -1091,15 +1170,7 @@ def build_decision(
             "governor_self_approval_accepted": False,
         },
         "authority": "non_actuating_requires_independent_auto2d_verification",
-        "authority_boundaries": {
-            "paper_eligibility_authority": False,
-            "paper_configuration_write_authority": False,
-            "paper_trial_start_authority": False,
-            "live_eligibility_authority": False,
-            "execution_authority": False,
-            "deployment_authority": False,
-            "governor_self_approval_authority": False,
-        },
+        "authority_boundaries": authority_boundaries,
     }
     validate_decision_semantics(decision)
     return decision
@@ -1231,6 +1302,18 @@ def render_markdown(decision: Mapping[str, Any]) -> str:
         )
     else:
         lines.append("- none")
+    if decision["policy_version"] == FIRST_BOUNDED_PAPER_EXPERIMENT_POLICY_VERSION:
+        lines.extend(
+            [
+                "",
+                "## First bounded paper experiment",
+                "",
+                "- Static-baseline overlap is reported but removal and churn are not eligibility gates.",
+                "- The selected universe exists only inside one new controller-owned immutable trial root.",
+                "- This experiment cannot mutate static paper configuration or grant later promotion.",
+                "- Any later paper or live promotion requires a separate policy decision.",
+            ]
+        )
     lines.extend(
         [
             "",
@@ -1310,7 +1393,9 @@ def read_bound_raw(
         after = os.fstat(descriptor)
     finally:
         os.close(descriptor)
-    if not stat.S_ISREG(before.st_mode) or v1.file_stat_identity(before) != v1.file_stat_identity(after):
+    if not stat.S_ISREG(before.st_mode) or v1.file_stat_identity(
+        before
+    ) != v1.file_stat_identity(after):
         v1.fail(f"{source}_CHANGED_DURING_READ")
     if (path_lstat.st_dev, path_lstat.st_ino) != (before.st_dev, before.st_ino):
         v1.fail(f"{source}_PATH_RACE")
@@ -1380,8 +1465,7 @@ def read_and_evaluate(args: argparse.Namespace) -> Evaluation:
     )
     bound_inputs = (current_bound, previous_bound, paper, governor)
     require_distinct_bound_inputs(bound_inputs)
-    if governor.payload != GOVERNOR_CONFIG:
-        v1.fail("GOVERNOR_CONFIG_MISMATCH")
+    route = resolve_policy_route(governor.payload)
     baseline = v1.validate_paper_config(paper)
     current = validate_snapshot_v2(current_bound, "CURRENT")
     previous = validate_snapshot_v2(previous_bound, "PREVIOUS")
@@ -1395,6 +1479,7 @@ def read_and_evaluate(args: argparse.Namespace) -> Evaluation:
         previous_producer_git_sha=previous_producer,
         paper_producer_git_sha=paper_producer,
         evaluated_at=evaluated_at,
+        route=route,
     )
     return Evaluation(
         decision=decision,
@@ -1405,7 +1490,12 @@ def read_and_evaluate(args: argparse.Namespace) -> Evaluation:
 
 def recheck_inputs(inputs: Sequence[v1.BoundInput]) -> None:
     for source, bound in zip(
-        ("CURRENT_SNAPSHOT", "PREVIOUS_SNAPSHOT", "PAPER_RUN_CONFIG", "GOVERNOR_CONFIG"),
+        (
+            "CURRENT_SNAPSHOT",
+            "PREVIOUS_SNAPSHOT",
+            "PAPER_RUN_CONFIG",
+            "GOVERNOR_CONFIG",
+        ),
         inputs,
     ):
         v1.recheck_bound_input(bound, source)

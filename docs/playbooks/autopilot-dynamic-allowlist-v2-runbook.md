@@ -51,6 +51,15 @@ allowlist. The future
 `PREVIOUS_ACCEPTED_V2_PAPER_UNIVERSE` route is not implemented and fails
 closed.
 
+The historical policy version
+`auto2c-v2-paper-automatic-acceptance-1` continues to apply its static
+removal and churn gates. The separately versioned
+`auto2c-v2-first-bounded-paper-experiment-1` route uses the same exact static
+allowlist only as a hash-bound overlap reference. It does not apply static
+removal or churn gates because its selected universe can exist only inside
+one new controller-owned trial root and cannot modify or replace shared paper
+configuration.
+
 ## Fail-closed preflight
 
 Before creating an evidence root, verify and record:
@@ -129,6 +138,44 @@ The bound governor-config JSON must contain exactly:
 Create this file only through a separately authorized Operator procedure. Do
 not hand-edit any evidence or reuse a config with a different raw hash.
 
+### First bounded paper experiment policy
+
+The experimental route is explicit and exact-hash bound. Its governor config
+must equal the historical configuration above except for precisely these
+changes:
+
+```json
+{
+  "policy_version": "auto2c-v2-first-bounded-paper-experiment-1",
+  "policy": {
+    "max_removals": null,
+    "max_churn_ratio": null,
+    "policy_route": "FIRST_BOUNDED_PAPER_EXPERIMENT",
+    "static_baseline_transition_behavior": "REPORT_OVERLAP_ONLY_NO_REMOVAL_OR_CHURN_GATE",
+    "trial_universe_scope": "CONTROLLER_OWNED_IMMUTABLE_TRIAL_ROOT_ONLY",
+    "post_trial_promotion_behavior": "SEPARATE_POLICY_DECISION_REQUIRED"
+  }
+}
+```
+
+The `policy` object in that illustration is a delta: every omitted policy key
+must remain byte-for-byte equivalent in value to the full historical block.
+The bound JSON itself must contain the complete policy object. It still
+requires two complete comparable schema-v2 snapshots, exact provenance,
+freshness, selector churn, positive per-key edge, at most four selected keys,
+at most two additions and selector-exploration keys, and every pair,
+pair/variant/direction and instrument concentration limit.
+
+The complete canonical example is
+`specs/examples/autopilot_dynamic_allowlist_governor_config_v2.first_bounded_paper_experiment.example.json`.
+
+For this route, `removals`, `retained_entries`, `change_count` and
+`churn_ratio` report static-baseline overlap only. They do not grant shared
+configuration authority and do not block an otherwise eligible isolated
+trial. The decision and Markdown must state that no later paper or live
+promotion is authorized; any such promotion requires a separate policy
+decision.
+
 ## One-shot invocation
 
 The Operator wrapper may create one timestamped evidence root and persist one
@@ -187,6 +234,11 @@ recorded reason, and otherwise qualifying excess candidates are truncated and
 recorded. Realized-paper and selector-view evidence remain separate
 set-membership streams and are never numerically merged.
 
+For `FIRST_BOUNDED_PAPER_EXPERIMENT`, static-baseline removal and churn values
+are reported but are not transition gates. All other qualification,
+selection, addition, exploration and concentration gates remain active. The
+historical policy continues to enforce the 2-removal and 0.5-churn limits.
+
 ## Post-run validation
 
 Before accepting the result as evidence:
@@ -200,8 +252,9 @@ Before accepting the result as evidence:
 4. recompute `decision_id` from the four raw input hashes, policy hash,
    prior-set hash, and canonical `evaluated_at`;
 5. verify every candidate metric, lane rank, exact-key tie-break,
-   selection/skip/truncation step, concentration, transition, churn, freshness,
-   cutoff, validity, and direction count;
+   selection/skip/truncation step, concentration, policy-route treatment of
+   static overlap, transition reporting, freshness, cutoff, validity, and
+   direction count;
 6. require all authority-boundary fields false;
 7. hash the JSON, Markdown, and transcript;
 8. re-hash every input and verify bytes and file metadata remain unchanged;

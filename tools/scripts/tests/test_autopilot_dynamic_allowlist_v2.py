@@ -19,10 +19,7 @@ from jsonschema import Draft202012Validator, FormatChecker
 REPO_ROOT = Path(__file__).resolve().parents[3]
 SCRIPTS_ROOT = REPO_ROOT / "tools" / "scripts"
 FIXTURE_PATH = (
-    SCRIPTS_ROOT
-    / "tests"
-    / "fixtures"
-    / "autopilot_dynamic_allowlist_v2_cases.json"
+    SCRIPTS_ROOT / "tests" / "fixtures" / "autopilot_dynamic_allowlist_v2_cases.json"
 )
 SCHEMA_PATH = (
     REPO_ROOT
@@ -37,10 +34,13 @@ SNAPSHOT_EXAMPLE_PATH = (
     / "autopilot_shadow_allowlist_snapshot.example.json"
 )
 RUNBOOK_PATH = (
+    REPO_ROOT / "docs" / "playbooks" / "autopilot-dynamic-allowlist-v2-runbook.md"
+)
+FIRST_EXPERIMENT_CONFIG_EXAMPLE_PATH = (
     REPO_ROOT
-    / "docs"
-    / "playbooks"
-    / "autopilot-dynamic-allowlist-v2-runbook.md"
+    / "specs"
+    / "examples"
+    / "autopilot_dynamic_allowlist_governor_config_v2.first_bounded_paper_experiment.example.json"
 )
 WORK_ORDER_PATH = (
     REPO_ROOT
@@ -59,9 +59,6 @@ import autopilot_dynamic_allowlist_v2 as governor  # noqa: E402
 PROTECTED_HASHES = {
     "tools/scripts/autopilot_dynamic_allowlist.py": (
         "86e1ef61d2a1ff34314e7dab6477b2e8c84977645882d9acbd9db9d6c542f2ae"
-    ),
-    "specs/contracts/autopilot_dynamic_allowlist_decision_v2.schema.json": (
-        "e21546e5428eecffbb39211e68284cb90ed9b4c88921f808a6c6a985c3b438d7"
     ),
     "specs/contracts/autopilot_dynamic_paper_provenance_v2.schema.json": (
         "6abf514fd1a88a61cf7868078d2eab230358ffd73430410beba7131cb8d11686"
@@ -403,6 +400,131 @@ def production_inputs(tmp_path: Path) -> dict[str, object]:
     }
 
 
+def first_bounded_paper_experiment_inputs(tmp_path: Path) -> dict[str, object]:
+    inputs = production_inputs(tmp_path)
+    keys = inputs["fixture"]["keys"]
+    assert isinstance(keys, dict)
+    baseline_names = (
+        "baseline_long",
+        "baseline_short",
+        "baseline_xbt",
+        "baseline_tao",
+    )
+    baseline = [keys[name] for name in baseline_names]
+    sui_long = {
+        **keys["exploration_sui"],
+        "direction": "LONG_SPREAD",
+    }
+    xbt_short = {
+        **keys["baseline_xbt"],
+        "direction": "SHORT_SPREAD",
+    }
+
+    for current_flag, name in ((False, "previous"), (True, "current")):
+        snapshot = inputs[name]
+        assert isinstance(snapshot, dict)
+        selected = [
+            row
+            for row in snapshot["selected"]
+            if key_tuple(row) == key_tuple(keys["baseline_xbt"])
+        ]
+        template = snapshot["selector_view"]["selector_view_prominent"][0]
+        specs = (
+            (keys["baseline_xbt"], 20, 4, 3.5),
+            (keys["exploration_sui"], 20, 6, 4.2),
+            (sui_long, 20, 5, 3.8),
+            (xbt_short, 20, 4, 3.4),
+        )
+        if not current_flag:
+            specs = (
+                (keys["baseline_xbt"], 20, 3, 3.2),
+                (keys["exploration_sui"], 20, 5, 4.0),
+                (sui_long, 20, 4, 3.6),
+                (xbt_short, 20, 3, 3.1),
+            )
+        prominent = sorted(
+            [
+                selector_row(
+                    template,
+                    key,
+                    rows=rows,
+                    trade_now=trade_now,
+                    edge=edge,
+                )
+                for key, rows, trade_now, edge in specs
+            ],
+            key=key_tuple,
+        )
+        snapshot["selected"] = selected
+        snapshot["summary"].update(
+            {
+                "eligible_universe_count": 1,
+                "selected_count": 1,
+                "rejected_count": 0,
+                "quarantined_count": 0,
+            }
+        )
+        snapshot["selector_view"]["selector_view_prominent"] = prominent
+        snapshot["static_allowlist_comparison"] = {
+            "static_allowlist_size": 4,
+            "shadow_selected_size": 1,
+            "overlap_count": 1,
+            "static_only_count": 3,
+            "shadow_only_count": 0,
+            "overlap": [keys["baseline_xbt"]],
+            "static_only": sorted(
+                [keys[name] for name in baseline_names if name != "baseline_xbt"],
+                key=key_tuple,
+            ),
+            "shadow_only": [],
+        }
+        snapshot["churn"].update(
+            {
+                "previous_selected_count": 1,
+                "selected_added": [],
+                "selected_removed": [],
+                "selected_retained_count": 1,
+                "churn_count": 0,
+                "stability_ratio": 1.0,
+                "selector_view": {
+                    "previous_prominent_count": 4,
+                    "prominent_added": [],
+                    "prominent_removed": [],
+                    "prominent_retained_count": 4,
+                    "churn_count": 0,
+                    "stability_ratio": 1.0,
+                },
+            }
+        )
+        snapshot["universe"] = {
+            "bucket_universe_counts": {
+                "TRADE_NOW": 4,
+                "WATCHLIST": 2,
+                "EXCLUDED": 0,
+            },
+            "paper_evidenced_count": 1,
+            "selector_view_only": sorted(
+                [keys["exploration_sui"], sui_long, xbt_short],
+                key=key_tuple,
+            ),
+            "static_allowlist_overlap_count": 1,
+        }
+
+    paper = inputs["paper"]
+    assert isinstance(paper, dict)
+    paper["static_allowlist"] = [paper_key(key) for key in baseline]
+    inputs["governor"] = copy.deepcopy(
+        governor.FIRST_BOUNDED_PAPER_EXPERIMENT_GOVERNOR_CONFIG
+    )
+    paths = inputs["paths"]
+    hashes = inputs["hashes"]
+    assert isinstance(paths, dict)
+    assert isinstance(hashes, dict)
+    for name in ("current", "previous", "paper", "governor"):
+        hashes[name] = write_json(paths[name], inputs[name])
+    return inputs
+
+
 def arguments(inputs: dict[str, object], output_root: Path) -> list[str]:
     paths = inputs["paths"]
     hashes = inputs["hashes"]
@@ -481,8 +603,7 @@ def test_default_mode_is_bounded_disabled_and_performs_no_io(
         assert governor.main(args) == 0
     captured = capsys.readouterr()
     assert captured.out == (
-        '{"artifact_created":false,"mode":"auto2c_v2_governor",'
-        '"status":"DISABLED"}\n'
+        '{"artifact_created":false,"mode":"auto2c_v2_governor","status":"DISABLED"}\n'
     )
     assert captured.err == ""
 
@@ -518,6 +639,147 @@ def test_enabled_creates_schema_valid_ranked_truncated_non_actuating_decision(
     assert b"advisory and non-actuating" in markdown
 
 
+def test_first_bounded_paper_experiment_selects_three_of_four_without_static_churn_gate(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    inputs = first_bounded_paper_experiment_inputs(tmp_path)
+    diagnostic, raw, markdown = run_success(inputs, tmp_path / "experiment", capsys)
+    decision = json.loads(raw)
+    assert list(decision_validator().iter_errors(decision)) == []
+    assert diagnostic["status"] == "POLICY_ELIGIBLE_FOR_AUTO2D_VERIFICATION"
+    assert decision["policy_version"] == (
+        governor.FIRST_BOUNDED_PAPER_EXPERIMENT_POLICY_VERSION
+    )
+    assert decision["policy"] == governor.FIRST_BOUNDED_PAPER_EXPERIMENT_POLICY
+    assert len(decision["candidates"]) == 4
+    assert [
+        (
+            item["key"]["pair_id"],
+            item["key"]["direction"],
+            item["evidence_class"],
+        )
+        for item in decision["selected_entries"]
+    ] == [
+        ("PF_SUIUSD__PF_ARBUSD", "SHORT_SPREAD", "SELECTOR_EXPLORATION"),
+        ("PF_XBTUSD__PF_BNBUSD", "LONG_SPREAD", "REALIZED_AND_SELECTOR"),
+        ("PF_XBTUSD__PF_BNBUSD", "SHORT_SPREAD", "SELECTOR_EXPLORATION"),
+    ]
+    assert decision["truncated_candidates"] == []
+    assert [item["reason_code"] for item in decision["skipped_candidates"]] == [
+        "SKIPPED_ADDITION_INSTRUMENT_CONCENTRATION"
+    ]
+    assert decision["calculations"]["selector_exploration_selected_count"] == 2
+    assert decision["calculations"]["removal_count"] == 3
+    assert decision["calculations"]["churn_ratio"] == 1.25
+    assert decision["gate_results"]["transition_limits"] == {
+        "verdict": "PASS",
+        "reason_codes": [],
+    }
+    assert decision["methodology"]["static_baseline_transition_behavior"] == (
+        "REPORT_OVERLAP_ONLY_NO_REMOVAL_OR_CHURN_GATE"
+    )
+    assert (
+        decision["authority_boundaries"]["subsequent_paper_or_live_promotion_authority"]
+        is False
+    )
+    assert b"Static-baseline overlap is reported" in markdown
+    assert b"separate policy decision" in markdown
+
+
+def test_historical_policy_still_blocks_same_static_transition(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    inputs = first_bounded_paper_experiment_inputs(tmp_path)
+    inputs["governor"] = copy.deepcopy(governor.GOVERNOR_CONFIG)
+    paths = inputs["paths"]
+    hashes = inputs["hashes"]
+    assert isinstance(paths, dict)
+    assert isinstance(hashes, dict)
+    hashes["governor"] = write_json(paths["governor"], inputs["governor"])
+    diagnostic, raw, _ = run_success(inputs, tmp_path / "historical", capsys)
+    decision = json.loads(raw)
+    assert list(decision_validator().iter_errors(decision)) == []
+    assert diagnostic["status"] == "GOVERNOR_BLOCKED"
+    assert decision["policy_version"] == governor.POLICY_VERSION
+    assert decision["reason_codes"] == ["TRANSITION_LIMITS_UNSATISFIABLE"]
+    assert decision["selected_entries"] == []
+
+
+def test_first_experiment_policy_hash_and_decision_id_recompute_exactly(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    inputs = first_bounded_paper_experiment_inputs(tmp_path)
+    _, raw, _ = run_success(inputs, tmp_path / "identity", capsys)
+    decision = json.loads(raw)
+    assert decision["policy_envelope_sha256"] == governor.policy_envelope_sha256(
+        governor.FIRST_BOUNDED_PAPER_EXPERIMENT_ROUTE
+    )
+    assert decision["decision_id"] == governor.decision_id(
+        current_snapshot_sha256=decision["current_snapshot"]["sha256"],
+        previous_snapshot_sha256=decision["previous_snapshot"]["sha256"],
+        paper_run_config_sha256=decision["paper_run_config"]["sha256"],
+        governor_config_sha256=decision["governor_config_source"]["sha256"],
+        policy_hash=decision["policy_envelope_sha256"],
+        prior_set_hash=decision["prior_active_set_sha256"],
+        evaluated_at=decision["evaluated_at"],
+    )
+
+
+def test_first_experiment_governor_config_example_is_exact() -> None:
+    assert (
+        json.loads(FIRST_EXPERIMENT_CONFIG_EXAMPLE_PATH.read_text(encoding="utf-8"))
+        == governor.FIRST_BOUNDED_PAPER_EXPERIMENT_GOVERNOR_CONFIG
+    )
+
+
+def test_first_experiment_stale_evidence_is_schema_valid_blocked_and_empty(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    inputs = first_bounded_paper_experiment_inputs(tmp_path)
+    inputs["fixture"]["evaluated_at"] = "2026-07-28T00:30:01Z"
+    _, raw, _ = run_success(inputs, tmp_path / "stale-experiment", capsys)
+    decision = json.loads(raw)
+    assert list(decision_validator().iter_errors(decision)) == []
+    assert decision["policy_version"] == (
+        governor.FIRST_BOUNDED_PAPER_EXPERIMENT_POLICY_VERSION
+    )
+    assert decision["status"] == "GOVERNOR_BLOCKED"
+    assert decision["reason_codes"] == ["CURRENT_SOURCE_STALE"]
+    for field in (
+        "candidates",
+        "selection_steps",
+        "selected_entries",
+        "truncated_candidates",
+        "skipped_candidates",
+        "additions",
+        "removals",
+        "retained_entries",
+    ):
+        assert decision[field] == []
+
+
+def test_first_experiment_config_mutation_rejects_without_artifact(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    inputs = first_bounded_paper_experiment_inputs(tmp_path)
+    governor_config = copy.deepcopy(inputs["governor"])
+    governor_config["policy"]["max_removals"] = 2
+    paths = inputs["paths"]
+    hashes = inputs["hashes"]
+    assert isinstance(paths, dict)
+    assert isinstance(hashes, dict)
+    hashes["governor"] = write_json(paths["governor"], governor_config)
+    root = tmp_path / "mutated-experiment"
+    assert governor.main(arguments(inputs, root)) == 2
+    assert "GOVERNOR_CONFIG_MISMATCH" in capsys.readouterr().err
+    assert not root.exists()
+
+
 def test_policy_hash_prior_hash_and_decision_id_recompute_exactly(
     tmp_path: Path,
     capsys: pytest.CaptureFixture[str],
@@ -527,9 +789,7 @@ def test_policy_hash_prior_hash_and_decision_id_recompute_exactly(
     _, raw, _ = run_success(inputs, root, capsys)
     decision = json.loads(raw)
     assert decision["policy_envelope_sha256"] == governor.policy_envelope_sha256()
-    baseline = frozenset(
-        key_tuple(item) for item in decision["prior_active_entries"]
-    )
+    baseline = frozenset(key_tuple(item) for item in decision["prior_active_entries"])
     assert decision["prior_active_set_sha256"] == governor.prior_active_set_sha256(
         baseline
     )
@@ -552,9 +812,7 @@ def test_production_output_passes_merged_independent_contract_auditor(
     root = tmp_path / "independent-audit"
     _, raw, _ = run_success(inputs, root, capsys)
     auditor_path = (
-        SCRIPTS_ROOT
-        / "tests"
-        / "test_autopilot_dynamic_allowlist_v2_contract.py"
+        SCRIPTS_ROOT / "tests" / "test_autopilot_dynamic_allowlist_v2_contract.py"
     )
     spec = importlib.util.spec_from_file_location(
         "merged_v2_contract_auditor",
@@ -616,16 +874,14 @@ def test_verify_only_reconstructs_existing_output_without_modification(
         ]
     )
     before = {
-        path: (path.read_bytes(), path.stat().st_mtime_ns)
-        for path in root.iterdir()
+        path: (path.read_bytes(), path.stat().st_mtime_ns) for path in root.iterdir()
     }
     assert governor.main(verify_args) == 0
     diagnostic = json.loads(capsys.readouterr().out)
     assert diagnostic["verification"] == "PASS"
     assert diagnostic["artifact_created"] is False
     assert {
-        path: (path.read_bytes(), path.stat().st_mtime_ns)
-        for path in root.iterdir()
+        path: (path.read_bytes(), path.stat().st_mtime_ns) for path in root.iterdir()
     } == before
 
 
@@ -734,10 +990,7 @@ def test_fractional_second_snapshot_time_rejects_without_rounding_open(
     hashes["previous"] = write_json(paths["previous"], previous)
     root = tmp_path / "fractional-stale"
     assert governor.main(arguments(inputs, root)) == 2
-    assert (
-        "CURRENT_SNAPSHOT_TIMESTAMP_NOT_CANONICAL_SECONDS"
-        in capsys.readouterr().err
-    )
+    assert "CURRENT_SNAPSHOT_TIMESTAMP_NOT_CANONICAL_SECONDS" in capsys.readouterr().err
     assert not root.exists()
 
 
@@ -1017,8 +1270,7 @@ def test_previous_accepted_v2_prior_source_fails_before_any_file_access(
     ):
         assert governor.main(args) == 2
     assert (
-        "PREVIOUS_ACCEPTED_V2_PAPER_UNIVERSE_NOT_IMPLEMENTED"
-        in capsys.readouterr().err
+        "PREVIOUS_ACCEPTED_V2_PAPER_UNIVERSE_NOT_IMPLEMENTED" in capsys.readouterr().err
     )
 
 
@@ -1064,8 +1316,9 @@ def test_candidate_ranking_ties_use_exact_key_and_overflow_never_blocks(
     ]
     assert tied == sorted(tied)
     assert decision["status"] == "POLICY_ELIGIBLE_FOR_AUTO2D_VERIFICATION"
-    assert decision["calculations"]["qualifying_candidate_count"] > (
-        decision["calculations"]["selected_entry_count"]
+    assert (
+        decision["calculations"]["qualifying_candidate_count"]
+        > (decision["calculations"]["selected_entry_count"])
     )
 
 
@@ -1176,8 +1429,7 @@ def test_reserved_exploration_skips_transition_unsafe_top_rank_and_uses_next() -
         )
 
     realized_lane = [
-        realized(key, rank)
-        for rank, key in enumerate(sorted(baseline), 1)
+        realized(key, rank) for rank, key in enumerate(sorted(baseline), 1)
     ]
     unsafe = exploration(
         ("PF_XBTUSD__PF_SOLUSD", "1m", "ROBUST_Z", "LONG_SPREAD"),
@@ -1205,7 +1457,9 @@ def test_reserved_exploration_skips_transition_unsafe_top_rank_and_uses_next() -
 
 def test_schema_and_contract_surfaces_are_preserved_byte_identically() -> None:
     for relative, expected in PROTECTED_HASHES.items():
-        assert hashlib.sha256((REPO_ROOT / relative).read_bytes()).hexdigest() == expected
+        assert (
+            hashlib.sha256((REPO_ROOT / relative).read_bytes()).hexdigest() == expected
+        )
 
 
 def test_runbook_documents_exact_config_cli_modes_and_fail_closed_boundaries() -> None:
@@ -1292,8 +1546,7 @@ def test_bounded_subprocess_default_and_unsupported_prior_create_no_output(
     )
     assert completed.returncode == 0
     assert completed.stdout == (
-        '{"artifact_created":false,"mode":"auto2c_v2_governor",'
-        '"status":"DISABLED"}\n'
+        '{"artifact_created":false,"mode":"auto2c_v2_governor","status":"DISABLED"}\n'
     )
     output = tmp_path / "must-not-exist"
     completed = subprocess.run(
